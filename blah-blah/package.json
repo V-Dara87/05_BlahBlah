@@ -10,6 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "lucide-react": "^1.37.0",
+    "mp4-muxer": "^5.2.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
