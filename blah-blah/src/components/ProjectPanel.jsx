@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { formatTimecode } from '../utils/timeFormat';
 import { createSyntheticAudio, createSyntheticVideo } from '../utils/sampleMedia';
-
+ 
 export const ProjectPanel = memo(function ProjectPanel({
   mediaAssets,
   prefabs,
@@ -29,16 +29,16 @@ export const ProjectPanel = memo(function ProjectPanel({
   const [searchQuery, setSearchQuery] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const fileInputRef = useRef(null);
-
+ 
   const handleFileUpload = (files) => {
     Array.from(files).forEach((file) => {
       const isVideo = file.type.startsWith('video/');
       const isAudio = file.type.startsWith('audio/');
       if (!isVideo && !isAudio) return;
-
+ 
       const url = URL.createObjectURL(file);
       const id = `asset-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
-
+ 
       if (isVideo) {
         const video = document.createElement('video');
         video.src = url;
@@ -68,7 +68,7 @@ export const ProjectPanel = memo(function ProjectPanel({
       }
     });
   };
-
+ 
   const handleQuickSynthAudio = () => {
     setIsGenerating(true);
     setTimeout(() => {
@@ -87,7 +87,7 @@ export const ProjectPanel = memo(function ProjectPanel({
       }
     }, 100);
   };
-
+ 
   const handleQuickMotionVideo = async () => {
     setIsGenerating(true);
     try {
@@ -104,7 +104,7 @@ export const ProjectPanel = memo(function ProjectPanel({
       setIsGenerating(false);
     }
   };
-
+ 
   const handleCreateNewMotionScript = () => {
     const newScript = {
       id: `script-${Date.now()}`,
@@ -115,7 +115,7 @@ export const ProjectPanel = memo(function ProjectPanel({
     speed: { type: 'number', default: 2.0, min: 0.1, max: 10, step: 0.1 },
     amplitude: { type: 'number', default: 30.0, min: 0, max: 200, step: 1 },
   };
-
+ 
   onStart({ transform, tween, props }) {
     tween.to(transform.position, { y: -props.amplitude }, {
       duration: 1.0,
@@ -123,7 +123,7 @@ export const ProjectPanel = memo(function ProjectPanel({
       loop: 'yoyo'
     });
   }
-
+ 
   onUpdate({ transform, time, props }) {
     transform.rotation += (1 / 60) * props.speed * 30.0;
   }
@@ -132,18 +132,23 @@ export const ProjectPanel = memo(function ProjectPanel({
     onCreateScript(newScript);
     onOpenScriptEditor(newScript);
   };
-
+ 
   const handleCreateNewReactClip = () => {
     const newScript = {
       id: `script-${Date.now()}`,
       name: 'CustomClip.jsx',
-      description: 'Custom React JSX Clip Component',
-      code: `export default function CustomClip({
+      description: 'Custom React Clip Component',
+      code: `// Plain JavaScript, no JSX: use h(tag, props, children) which is a
+// shorthand for React.createElement(tag, props, children). This runs
+// directly in the browser with no build step, so JSX angle-bracket
+// syntax (<div>...</div>) is not supported here - h(...) is the
+// JSX-free equivalent.
+export default function CustomClip({
   title = "MY REACT CLIP",
   color = "#38bdf8"
 }) {
-  return (
-    <div style={{
+  return h('div', {
+    style: {
       padding: '20px 32px',
       background: 'rgba(15, 23, 42, 0.85)',
       borderRadius: '16px',
@@ -154,12 +159,10 @@ export const ProjectPanel = memo(function ProjectPanel({
       fontSize: '22px',
       fontWeight: 'bold',
       textAlign: 'center'
-    }}>
-      {title}
-    </div>
-  );
+    }
+  }, title);
 }
-
+ 
 CustomClip.props = {
   title: { type: 'string', default: 'MY REACT CLIP' },
   color: { type: 'color', default: '#38bdf8' }
@@ -168,13 +171,13 @@ CustomClip.props = {
     onCreateScript(newScript);
     onOpenScriptEditor(newScript);
   };
-
+ 
   // Drag-and-drop support
   const handleDragStart = (e, itemType, itemData) => {
     e.dataTransfer.setData('application/json', JSON.stringify({ itemType, itemData }));
     e.dataTransfer.effectAllowed = 'copy';
   };
-
+ 
   return (
     <aside className="project-panel">
       {/* Panel Header */}
@@ -190,7 +193,7 @@ CustomClip.props = {
           />
         </div>
       </div>
-
+ 
       {/* Tabs */}
       <div className="project-tab-bar">
         <button
@@ -215,7 +218,7 @@ CustomClip.props = {
           <span>Scripts / JSX</span>
         </button>
       </div>
-
+ 
       {/* Tab Actions */}
       <div className="project-actions-row">
         {activeTab === 'media' && (
@@ -245,7 +248,7 @@ CustomClip.props = {
             </button>
           </>
         )}
-
+ 
         {activeTab === 'scripts' && (
           <div className="script-add-row" style={{ display: 'flex', gap: '6px', width: '100%' }}>
             <button
@@ -266,13 +269,13 @@ CustomClip.props = {
             </button>
           </div>
         )}
-
+ 
         {activeTab === 'prefabs' && (
           <p className="tab-helper-text">
             Drag a Prefab or click <strong>+</strong> to place onto the timeline:
           </p>
         )}
-
+ 
         <input
           type="file"
           ref={fileInputRef}
@@ -282,7 +285,7 @@ CustomClip.props = {
           onChange={(e) => handleFileUpload(e.target.files)}
         />
       </div>
-
+ 
       {/* Asset List Content */}
       <div className="project-asset-list">
         {/* PREFABS TAB */}
@@ -324,7 +327,7 @@ CustomClip.props = {
               ))}
           </>
         )}
-
+ 
         {/* MEDIA TAB */}
         {activeTab === 'media' && (
           <>
@@ -365,7 +368,7 @@ CustomClip.props = {
               ))}
           </>
         )}
-
+ 
         {/* SCRIPTS TAB */}
         {activeTab === 'scripts' && (
           <>
@@ -397,3 +400,4 @@ CustomClip.props = {
     </aside>
   );
 });
+ 

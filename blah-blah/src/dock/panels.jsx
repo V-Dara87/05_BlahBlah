@@ -1,15 +1,16 @@
 import { ProjectPanel } from '../components/ProjectPanel';
+import { ClipListPanel } from '../components/ClipListPanel';
 import { EntityRenderer } from '../components/EntityRenderer';
 import { UnityInspector } from '../components/UnityInspector';
 import { Timeline } from '../components/Timeline/Timeline';
 import { useEditorContext } from './EditorContext';
-
+ 
 // Each of these is registered with dockview under a string key (see
 // DOCK_COMPONENTS in DockLayout.jsx) and rendered inside a dockview "panel"
 // (which supplies its own tab, drag handle, close/split affordances).
 // They stay razor-thin on purpose — all real logic lives in the original
 // components, untouched.
-
+ 
 export function ProjectDockPanel() {
   const {
     mediaAssets, prefabs, scripts,
@@ -17,7 +18,7 @@ export function ProjectDockPanel() {
     onCreateScript, onOpenScriptEditor,
     onAddPrefabToTimeline, onAddMediaToTimeline,
   } = useEditorContext();
-
+ 
   return (
     <ProjectPanel
       mediaAssets={mediaAssets}
@@ -33,14 +34,30 @@ export function ProjectDockPanel() {
     />
   );
 }
-
+ 
+export function ClipsDockPanel() {
+  const {
+    entities, tracks, selectedEntityId, setSelectedEntityId, handleDeleteEntity,
+  } = useEditorContext();
+ 
+  return (
+    <ClipListPanel
+      entities={entities}
+      tracks={tracks}
+      selectedEntityId={selectedEntityId}
+      onSelectEntity={setSelectedEntityId}
+      onDeleteEntity={handleDeleteEntity}
+    />
+  );
+}
+ 
 export function PreviewDockPanel() {
   const {
     entities, tracks, scripts, currentTime, calculatedDuration,
     isPlaying, isLooping, selectedEntityId, setSelectedEntityId,
-    togglePlay, seek, setIsLooping,
+    handleUpdateEntity, togglePlay, seek, setIsLooping,
   } = useEditorContext();
-
+ 
   return (
     <EntityRenderer
       entities={entities}
@@ -52,22 +69,23 @@ export function PreviewDockPanel() {
       isLooping={isLooping}
       selectedEntityId={selectedEntityId}
       onSelectEntity={setSelectedEntityId}
+      onUpdateEntity={handleUpdateEntity}
       onTogglePlay={togglePlay}
       onSeek={seek}
       onToggleLoop={() => setIsLooping((v) => !v)}
     />
   );
 }
-
+ 
 export function InspectorDockPanel() {
   const {
     entities, selectedEntityId, tracks, scripts,
     handleUpdateEntity, handleDeleteEntity,
     onOpenScriptEditor, handleSaveAsPrefab,
   } = useEditorContext();
-
+ 
   const selectedEntity = entities.find((e) => e.id === selectedEntityId);
-
+ 
   return (
     <UnityInspector
       selectedEntity={selectedEntity}
@@ -80,7 +98,7 @@ export function InspectorDockPanel() {
     />
   );
 }
-
+ 
 export function TimelineDockPanel() {
   const {
     tracks, entities, currentTime, calculatedDuration, pixelsPerSecond,
@@ -88,7 +106,7 @@ export function TimelineDockPanel() {
     seek, handleUpdateEntity, handleUpdateTrack,
     handleAddTrack, handleAddEmptyClip, handleDropItemOnTrack,
   } = useEditorContext();
-
+ 
   return (
     <Timeline
       tracks={tracks}
@@ -108,3 +126,4 @@ export function TimelineDockPanel() {
     />
   );
 }
+ 

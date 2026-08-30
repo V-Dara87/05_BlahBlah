@@ -46,15 +46,18 @@ export function EntityRenderer({
   isLooping,
   selectedEntityId,
   onSelectEntity,
+  onUpdateEntity,
   onTogglePlay,
   onSeek,
   onToggleLoop,
 }) {
   const containerRef = useRef(null);
+  const canvasFrameRef = useRef(null);
   const videoRefs = useRef({});
   const audioRefs = useRef({});
   const canvasContainerRefs = useRef({});
   const wasPlayingRef = useRef(isPlaying);
+  const gizmoDragRef = useRef(null);
  
   // Filter visible and active entities at currentTime
   const activeEntities = entities.filter((entity) => {
@@ -235,6 +238,110 @@ export function EntityRenderer({
     };
   }, []);
  
+  // Viewport gizmo — drag-to-move / drag-to-rotate directly on the
+  // selected clip in the preview, matching Unity's Scene view move/rotate
+  // handles. `x`/`y`/`rotation` are stored in the Transform component in
+  // the same logical-pixel space used by the render `translate(...)`
+  // above (see App.css .preview-canvas-frame, up to max-width: 860px) —
+  // but the frame can render smaller than that on narrow windows, so
+  // screen-space drag deltas are divided by the frame's actual on-screen
+  // size vs its intrinsic logical width to stay accurate at any zoom.
+  const updateSelectedTransform = (entityId, updates) => {
+    if (!onUpdateEntity) return;
+    const entity = entities.find((e) => e.id === entityId);
+    if (!entity) return;
+    const hasTransform = entity.components.some((c) => c.type === 'Transform');
+    const updatedComponents = hasTransform
+      ? entity.components.map((c) => (c.type === 'Transform' ? { ...c, ...updates } : c))
+      : [{ type: 'Transform', x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1, ...updates }, ...entity.components];
+    onUpdateEntity(entityId, { components: updatedComponents });
+  };
+ 
+  const handleMoveGizmoPointerDown = (e, entity, transform) => {
+    if (!onUpdateEntity) return;
+    e.stopPropagation();
+    e.preventDefault();
+    onSelectEntity(entity.id);
+ 
+    const frameEl = canvasFrameRef.current;
+    const frameRect = frameEl ? frameEl.getBoundingClientRect() : null;
+    // Screen px -> logical px ratio: the frame's rendered width vs the
+    // logical coordinate space (its own clientWidth, since x/y positions
+    // are defined relative to this element regardless of CSS scaling).
+    const scale = frameRect && frameEl.clientWidth ? frameRect.width / frameEl.clientWidth : 1;
+ 
+    gizmoDragRef.current = {
+      mode: 'move',
+      entityId: entity.id,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startX: transform.x,
+      startY: transform.y,
+      scale,
+    };
+ 
+    const handlePointerMove = (moveEvent) => {
+      const drag = gizmoDragRef.current;
+      if (!drag || drag.mode !== 'move') return;
+      const dx = (moveEvent.clientX - drag.startClientX) / (drag.scale || 1);
+      const dy = (moveEvent.clientY - drag.startClientY) / (drag.scale || 1);
+      updateSelectedTransform(drag.entityId, { x: drag.startX + dx, y: drag.startY + dy });
+    };
+    const handlePointerUp = () => {
+      gizmoDragRef.current = null;
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+  };
+ 
+  const handleRotateGizmoPointerDown = (e, entity, transform) => {
+    if (!onUpdateEntity) return;
+    e.stopPropagation();
+    e.preventDefault();
+    onSelectEntity(entity.id);
+ 
+    const frameEl = canvasFrameRef.current;
+    if (!frameEl) return;
+    const frameRect = frameEl.getBoundingClientRect();
+    // Rotation pivot is the entity's own center on screen: frame origin
+    // (top-left) + frame center + the entity's current logical x/y scaled
+    // to screen px (mirrors the translate(-50%, -50%) + x/y used to render it).
+    const scale = frameEl.clientWidth ? frameRect.width / frameEl.clientWidth : 1;
+    const pivotX = frameRect.left + frameRect.width / 2 + transform.x * scale;
+    const pivotY = frameRect.top + frameRect.height / 2 + transform.y * scale;
+ 
+    const startAngle = Math.atan2(e.clientY - pivotY, e.clientX - pivotX) * (180 / Math.PI);
+ 
+    gizmoDragRef.current = {
+      mode: 'rotate',
+      entityId: entity.id,
+      pivotX,
+      pivotY,
+      startAngle,
+      startRotation: transform.rotation || 0,
+    };
+ 
+    const handlePointerMove = (moveEvent) => {
+      const drag = gizmoDragRef.current;
+      if (!drag || drag.mode !== 'rotate') return;
+      const angle = Math.atan2(moveEvent.clientY - drag.pivotY, moveEvent.clientX - drag.pivotX) * (180 / Math.PI);
+      let nextRotation = drag.startRotation + (angle - drag.startAngle);
+      // Shift snaps to 15-degree increments, same modifier convention as
+      // most design tools (Figma, Unity's rotate gizmo with Shift held).
+      if (moveEvent.shiftKey) nextRotation = Math.round(nextRotation / 15) * 15;
+      updateSelectedTransform(drag.entityId, { rotation: nextRotation });
+    };
+    const handlePointerUp = () => {
+      gizmoDragRef.current = null;
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+  };
+ 
   const toggleFullscreen = () => {
     if (!containerRef.current) return;
     if (!document.fullscreenElement) {
@@ -253,7 +360,7 @@ export function EntityRenderer({
           if (e.target === e.currentTarget) onSelectEntity(null);
         }}
       >
-        <div className="preview-canvas-frame">
+        <div className="preview-canvas-frame" ref={canvasFrameRef}>
           {/* 1. Background Video Layer */}
           {activeVideoItems.map(({ entity, transform }) => {
             const isSelected = entity.id === selectedEntityId;
@@ -336,7 +443,7 @@ export function EntityRenderer({
             return (
               <div
                 key={entity.id}
-                className={`preview-render-layer ${isSelected ? 'selected' : ''}`}
+                className={`preview-render-layer ${isSelected ? 'selected' : ''} ${onUpdateEntity ? 'gizmo-draggable' : ''}`}
                 style={{
                   transform: `translate(calc(-50% + ${transform.x}px), calc(-50% + ${transform.y}px)) rotate(${transform.rotation}deg) scale(${transform.scaleX}, ${transform.scaleY})`,
                   opacity: transform.opacity,
@@ -346,6 +453,15 @@ export function EntityRenderer({
                 onClick={(e) => {
                   e.stopPropagation();
                   onSelectEntity(entity.id);
+                }}
+                onPointerDown={(e) => {
+                  // Only the currently-selected entity is draggable directly;
+                  // a first click just selects (matches onClick above) and a
+                  // second press-drag on an already-selected clip moves it —
+                  // avoids fighting with the plain-click-to-select gesture.
+                  if (isSelected && onUpdateEntity) {
+                    handleMoveGizmoPointerDown(e, entity, transform);
+                  }
                 }}
               >
                 <EntityErrorBoundary entityName={entity.name} resetKey={reactComp?.scriptId || canvasComp?.scriptId}>
@@ -408,6 +524,20 @@ export function EntityRenderer({
                     </div>
                   )}
                 </EntityErrorBoundary>
+ 
+                {/* Rotate handle — small circle above the clip, drag to
+                    rotate around the clip's own center. Only shown on the
+                    selected clip so unselected clips stay uncluttered. */}
+                {isSelected && onUpdateEntity && (
+                  <>
+                    <div className="gizmo-rotate-stem" />
+                    <div
+                      className="gizmo-rotate-handle"
+                      title="Drag to rotate (hold Shift to snap to 15°)"
+                      onPointerDown={(e) => handleRotateGizmoPointerDown(e, entity, transform)}
+                    />
+                  </>
+                )}
               </div>
             );
           })}

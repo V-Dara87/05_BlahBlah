@@ -587,6 +587,55 @@
   cursor: pointer;
 }
  
+/* Selection outline for the active clip in the Game preview — previously
+   the "selected" class was applied but had no visible styling here, so a
+   selected clip looked identical to an unselected one in the viewport. */
+.preview-render-layer.selected {
+  outline: 1.5px solid var(--unity-accent, #38bdf8);
+  outline-offset: 4px;
+}
+ 
+.preview-render-layer.gizmo-draggable.selected {
+  cursor: move;
+}
+ 
+/* Rotate gizmo — a short stem plus a circular handle above the clip's
+   selection outline, matching Unity's Scene view rotate tool convention.
+   Positioned in the same rotated/scaled coordinate space as the clip
+   itself (both are children of .preview-render-layer, which already
+   carries the entity's rotate/scale transform), so the stem always points
+   "up" relative to the clip's own current rotation, not the screen. */
+.gizmo-rotate-stem {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  width: 1px;
+  height: 28px;
+  background: var(--unity-accent, #38bdf8);
+  opacity: 0.7;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+ 
+.gizmo-rotate-handle {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 28px);
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  margin-bottom: -6px;
+  border-radius: 50%;
+  background: var(--unity-accent, #38bdf8);
+  border: 1.5px solid #0d0e12;
+  cursor: grab;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15);
+}
+ 
+.gizmo-rotate-handle:active {
+  cursor: grabbing;
+}
+ 
 .rendered-text-node {
   white-space: nowrap;
   font-weight: 800;
@@ -906,6 +955,11 @@
   grid-template-columns: 75px 1fr;
   align-items: center;
   gap: 4px;
+  /* Lets the grid track actually shrink below its content's intrinsic
+     width, which is required for width: 100% + text-overflow: ellipsis
+     children (.drag-number-field / .drag-number-value below) to size
+     correctly instead of overflowing the track. */
+  min-width: 0;
 }
  
 .row-label {
@@ -1631,6 +1685,7 @@
 /* Single drag-number field */
 .drag-number-field {
   flex: 1;
+  width: 100%;
   display: flex;
   align-items: center;
   background: #1a1b20;
@@ -1639,6 +1694,7 @@
   overflow: hidden;
   height: 20px;
   min-width: 0;
+  box-sizing: border-box;
 }
  
 .drag-number-field:hover {

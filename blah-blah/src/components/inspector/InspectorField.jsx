@@ -89,10 +89,32 @@ export function InspectorField({ field, value, onChange }) {
  * standard "no exposed props" hint when the schema is empty. Used for the
  * script-driven component types (ReactRenderer / ScriptComponent /
  * CanvasRenderer) whose fields come from `extractScriptProps`.
+ *
+ * `bare: true` skips the per-field `.inspector-row` wrapper and just
+ * renders each field's `InspectorField` directly. Needed for grouped
+ * multi-field rows (Position X/Y, Scale X/Y in TRANSFORM_FIELD_GROUPS):
+ * those already have their own single row label + `.drag-number-group`
+ * flex wrapper (see UnityInspector.jsx), so wrapping each individual field
+ * in its own `.inspector-row` nested a 75px grid label column inside that
+ * flex row per field — collapsing each DragNumber's actual width to
+ * almost nothing, since `.drag-number-field`'s `flex: 1` had no grid
+ * track to fill inside the outer .inspector-row it was accidentally
+ * nested in.
  */
-export function InspectorFieldList({ fields, values, onFieldChange, emptyHint }) {
+export function InspectorFieldList({ fields, values, onFieldChange, emptyHint, bare = false }) {
   if (!fields || fields.length === 0) {
     return emptyHint ? <p className="hint-text-sm">{emptyHint}</p> : null;
+  }
+ 
+  if (bare) {
+    return fields.map((field) => (
+      <InspectorField
+        key={field.name}
+        field={field}
+        value={values?.[field.name]}
+        onChange={(v) => onFieldChange(field.name, v)}
+      />
+    ));
   }
  
   return fields.map((field) => (

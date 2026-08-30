@@ -15,7 +15,7 @@ import {
   Sparkles,
   Boxes
 } from 'lucide-react';
-import { extractScriptProps, getScriptError } from '../engine/scriptRunner';
+import { extractScriptProps, getScriptError, detectScriptKind } from '../engine/scriptRunner';
 import { DragNumber } from './DragNumber';
 import { InspectorFieldList, TRANSFORM_FIELD_GROUPS } from './inspector/InspectorField';
  
@@ -30,6 +30,19 @@ import { InspectorFieldList, TRANSFORM_FIELD_GROUPS } from './inspector/Inspecto
  * select, paired W/H drag-numbers, etc.) don't map cleanly onto the
  * single-field-per-row schema, and folding them in isn't required to
  * unblock CanvasRenderer or close the roadmap item.
+ *
+ * Add Component script-kind filtering (bugfix) — previously every section
+ * (React Clips / Canvas Components / Motion Scripts) listed the *entire*
+ * `scripts` array unconditionally, so a single file could show up in all
+ * three lists regardless of which runtime contract it actually implements
+ * (a script written as a React component would still appear as a pickable
+ * "Motion Script", and attaching it there produced a component that just
+ * didn't do anything at render time). Each section is now filtered through
+ * `detectScriptKind`, which sniffs the script body once (onMount → canvas,
+ * onStart/onUpdate(transform) → motion, returns JSX → react) so a given
+ * script only appears where it will actually work. Scripts whose kind is
+ * still 'unknown' (e.g. a brand new empty script) are shown in every
+ * section so they aren't hidden while being written.
  */
 export const UnityInspector = memo(function UnityInspector({
   selectedEntity,
@@ -47,57 +60,14 @@ export const UnityInspector = memo(function UnityInspector({
   });
   const [showAddComponent, setShowAddComponent] = useState(false);
   const [savedPrefab, setSavedPrefab] = useState(false);
-  const [isDropTarget, setIsDropTarget] = useState(false);
- 
-  // Drag-and-drop: accept a script dragged from the Project Panel and
-  // attach it to whichever GameObject is currently selected, instead of
-  // requiring the Add Component -> pick-from-list flow. Reuses the exact
-  // same categorization heuristic as the popover above (.jsx/return/div
-  // -> ReactRenderer, everything else -> ScriptComponent) so dropping
-  // produces the same component the popover would have added.
-  const handleScriptDragOver = (e) => {
-    if (!selectedEntity) return;
-    if (!e.dataTransfer.types.includes('application/json')) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'copy';
-    setIsDropTarget(true);
-  };
- 
-  const handleScriptDragLeave = () => {
-    setIsDropTarget(false);
-  };
- 
-  const handleScriptDrop = (e) => {
-    e.preventDefault();
-    setIsDropTarget(false);
-    if (!selectedEntity) return;
- 
-    let payload;
-    try {
-      payload = JSON.parse(e.dataTransfer.getData('application/json'));
-    } catch {
-      return;
-    }
-    if (!payload || payload.itemType !== 'script' || !payload.itemData) return;
- 
-    const script = payload.itemData;
-    const isReactClip = script.name.endsWith('.jsx') || script.code?.includes('return') || script.code?.includes('div');
-    handleAddComponent(isReactClip ? 'ReactRenderer' : 'ScriptComponent', script.id);
-  };
  
   if (!selectedEntity) {
     return (
-      <aside
-        className={`inspector-sidebar empty ${isDropTarget ? 'drop-target' : ''}`}
-        onDragOver={(e) => {
-          if (!e.dataTransfer.types.includes('application/json')) return;
-          e.preventDefault();
-        }}
-      >
+      <aside className="inspector-sidebar empty">
         <div className="inspector-empty-msg">
           <Sliders size={32} className="empty-icon" />
           <h4>Inspector</h4>
-          <p>Select any clip or GameObject on the timeline to configure its Transform, React Components, and JS Motion Scripts. Drag a script here once one is selected to attach it directly.</p>
+          <p>Select any clip or GameObject on the timeline to configure its Transform, React Components, and JS Motion Scripts.</p>
         </div>
       </aside>
     );
@@ -220,19 +190,26 @@ export const UnityInspector = memo(function UnityInspector({
     setTimeout(() => setSavedPrefab(false), 2000);
   };
  
-  // Canvas scripts: same file pool as motion scripts, no fixed naming
-  // convention distinguishes them (a CanvasRenderer script is just any
-  // script whose default export follows the onMount/onUpdate/onUnmount
-  // contract) — so, like Motion Scripts below, every script is offered.
-  const canvasScripts = scripts;
+  // Script-kind filtering (bugfix): each Add Component section now only
+  // lists scripts whose body actually matches that section's runtime
+  // contract, instead of every script appearing in every section. A script
+  // whose kind can't be determined yet ('unknown' — e.g. brand new/empty)
+  // is still shown everywhere so it isn't hidden while being written.
+  const reactScripts = scripts.filter(s => {
+    const kind = detectScriptKind(s.code);
+    return kind === 'react' || kind === 'unknown';
+  });
+  const canvasScripts = scripts.filter(s => {
+    const kind = detectScriptKind(s.code);
+    return kind === 'canvas' || kind === 'unknown';
+  });
+  const motionScripts = scripts.filter(s => {
+    const kind = detectScriptKind(s.code);
+    return kind === 'motion' || kind === 'unknown';
+  });
  
   return (
-    <aside
-      className={`inspector-sidebar ${isDropTarget ? 'drop-target' : ''}`}
-      onDragOver={handleScriptDragOver}
-      onDragLeave={handleScriptDragLeave}
-      onDrop={handleScriptDrop}
-    >
+    <aside className="inspector-sidebar">
       {/* GameObject Name & Track */}
       <div className="inspector-header-box">
         <div className="inspector-header-field">
@@ -282,6 +259,7 @@ export const UnityInspector = memo(function UnityInspector({
                         fields={group.fields}
                         values={transformComp}
                         onFieldChange={(name, v) => updateTransform({ [name]: v })}
+                        bare
                       />
                     </div>
                   ) : (
@@ -606,12 +584,15 @@ export const UnityInspector = memo(function UnityInspector({
               )}
  
               <div className="popover-heading">React Clips (.jsx)</div>
-              {scripts.filter(s => s.name.endsWith('.jsx') || s.code?.includes('return') || s.code?.includes('div')).map(s => (
+              {reactScripts.map(s => (
                 <button key={s.id} className="popover-item" onClick={() => handleAddComponent('ReactRenderer', s.id)}>
                   <Sparkles size={12} className="text-cyan" />
                   <span>{s.name}</span>
                 </button>
               ))}
+              {reactScripts.length === 0 && (
+                <div className="popover-empty-hint">No scripts matching React Clip contract yet.</div>
+              )}
  
               {!canvasComp && (
                 <>
@@ -622,16 +603,22 @@ export const UnityInspector = memo(function UnityInspector({
                       <span>{s.name}</span>
                     </button>
                   ))}
+                  {canvasScripts.length === 0 && (
+                    <div className="popover-empty-hint">No scripts matching Canvas Component contract yet.</div>
+                  )}
                 </>
               )}
  
               <div className="popover-heading">Motion Scripts (.js)</div>
-              {scripts.map(s => (
+              {motionScripts.map(s => (
                 <button key={s.id} className="popover-item" onClick={() => handleAddComponent('ScriptComponent', s.id)}>
                   <FileCode size={12} className="text-emerald" />
                   <span>{s.name}</span>
                 </button>
               ))}
+              {motionScripts.length === 0 && (
+                <div className="popover-empty-hint">No scripts matching Motion Script contract yet.</div>
+              )}
             </div>
           )}
         </div>
@@ -649,4 +636,3 @@ export const UnityInspector = memo(function UnityInspector({
     </aside>
   );
 });
- 

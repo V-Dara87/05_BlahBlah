@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { X, Check, Save, FileCode, Sparkles } from 'lucide-react';
-
+ 
 const SNIPPET_TEMPLATES = {
   floatBounce: {
     name: 'Float & Rock (MotionTween)',
@@ -10,7 +10,7 @@ const SNIPPET_TEMPLATES = {
     duration: { type: 'number', default: 1.2, min: 0.1, max: 10, step: 0.1 },
     rotationAngle: { type: 'number', default: 12, min: -180, max: 180, step: 1 },
   };
-
+ 
   onStart({ transform, tween, props }) {
     // Smooth Yoyo float on Y axis
     tween.to(transform.position, { y: -props.amplitude }, {
@@ -18,7 +18,7 @@ const SNIPPET_TEMPLATES = {
       ease: 'inOutSine',
       loop: 'yoyo'
     });
-
+ 
     // Rocking rotation
     tween.to(transform, { rotation: props.rotationAngle }, {
       duration: props.duration * 1.4,
@@ -36,12 +36,12 @@ const SNIPPET_TEMPLATES = {
     bounceDuration: { type: 'number', default: 0.9, min: 0.2, max: 5, step: 0.1 },
     targetScale: { type: 'number', default: 1.0, min: 0.1, max: 3, step: 0.05 },
   };
-
+ 
   onStart({ transform, tween, props }) {
     transform.position.y -= props.dropDistance;
     transform.scale.x = 0.2;
     transform.scale.y = 0.2;
-
+ 
     tween.to(transform.position, { y: 0 }, { duration: props.bounceDuration, ease: 'outBounce' });
     tween.to(transform.scale, { scale: props.targetScale }, { duration: props.bounceDuration, ease: 'outBack' });
   }
@@ -54,7 +54,7 @@ const SNIPPET_TEMPLATES = {
     maxScale: { type: 'number', default: 1.25, min: 0.5, max: 3, step: 0.05 },
     pulseSpeed: { type: 'number', default: 0.6, min: 0.1, max: 5, step: 0.1 },
   };
-
+ 
   onStart({ transform, tween, props }) {
     tween.to(transform.scale, { scale: props.maxScale }, {
       duration: props.pulseSpeed,
@@ -72,7 +72,7 @@ const SNIPPET_TEMPLATES = {
     amplitude: { type: 'number', default: 30.0, min: 0, max: 200, step: 1 },
     spinSpeed: { type: 'number', default: 60.0, min: -360, max: 360, step: 5 },
   };
-
+ 
   onUpdate({ transform, time, props }) {
     transform.position.y += Math.sin(time * props.frequency) * props.amplitude;
     transform.position.x += Math.cos(time * (props.frequency * 0.5)) * (props.amplitude * 0.5);
@@ -81,14 +81,16 @@ const SNIPPET_TEMPLATES = {
 }`
   },
   glassCard: {
-    name: 'Glassmorphic Card (React JSX)',
-    code: `export default function GlassCard({
+    name: 'Glassmorphic Card (React, no JSX)',
+    code: `// Plain JavaScript, no JSX: h(tag, props, children) is shorthand for
+// React.createElement(tag, props, children).
+export default function GlassCard({
   title = "BLAHBLAH STUDIO",
   badge = "REACT COMPONENT",
   accentColor = "#6366f1"
 }) {
-  return (
-    <div style={{
+  return h('div', {
+    style: {
       padding: '24px 36px',
       background: 'rgba(15, 23, 42, 0.8)',
       backdropFilter: 'blur(20px)',
@@ -99,8 +101,11 @@ const SNIPPET_TEMPLATES = {
       alignItems: 'center',
       gap: '16px',
       fontFamily: 'Inter, sans-serif'
-    }}>
-      <span style={{
+    }
+  }, [
+    h('span', {
+      key: 'badge',
+      style: {
         background: accentColor,
         color: '#ffffff',
         padding: '6px 14px',
@@ -108,21 +113,20 @@ const SNIPPET_TEMPLATES = {
         fontSize: '12px',
         fontWeight: '800',
         letterSpacing: '0.05em'
-      }}>
-        {badge}
-      </span>
-      <h2 style={{
+      }
+    }, badge),
+    h('h2', {
+      key: 'title',
+      style: {
         margin: 0,
         color: '#ffffff',
         fontSize: '24px',
         fontWeight: '800'
-      }}>
-        {title}
-      </h2>
-    </div>
-  );
+      }
+    }, title)
+  ]);
 }
-
+ 
 GlassCard.props = {
   title: { type: 'string', default: 'BLAHBLAH STUDIO' },
   badge: { type: 'string', default: 'REACT COMPONENT' },
@@ -130,14 +134,16 @@ GlassCard.props = {
 };`
   },
   neonTitle: {
-    name: 'Kinetic Neon Title (React JSX)',
-    code: `export default function NeonTitle({
+    name: 'Kinetic Neon Title (React, no JSX)',
+    code: `// Plain JavaScript, no JSX: h(tag, props, children) is shorthand for
+// React.createElement(tag, props, children).
+export default function NeonTitle({
   text = "NEXT-GEN VIDEO",
   glowColor = "#38bdf8",
   fontSize = 44
 }) {
-  return (
-    <div style={{
+  return h('div', {
+    style: {
       fontSize: fontSize + 'px',
       fontWeight: '900',
       color: '#ffffff',
@@ -145,12 +151,10 @@ GlassCard.props = {
       textShadow: '0 0 25px ' + glowColor + ', 0 0 50px ' + glowColor,
       letterSpacing: '0.04em',
       textAlign: 'center'
-    }}>
-      {text}
-    </div>
-  );
+    }
+  }, text);
 }
-
+ 
 NeonTitle.props = {
   text: { type: 'string', default: 'NEXT-GEN VIDEO' },
   glowColor: { type: 'color', default: '#38bdf8' },
@@ -158,7 +162,7 @@ NeonTitle.props = {
 };`
   }
 };
-
+ 
 export function ScriptEditorModal({
   isOpen,
   onClose,
@@ -166,7 +170,7 @@ export function ScriptEditorModal({
   onSaveScript
 }) {
   if (!isOpen || !script) return null;
-
+ 
   return (
     <ScriptEditorModalContent
       onClose={onClose}
@@ -175,7 +179,7 @@ export function ScriptEditorModal({
     />
   );
 }
-
+ 
 function ScriptEditorModalContent({
   onClose,
   script,
@@ -184,7 +188,7 @@ function ScriptEditorModalContent({
   const [code, setCode] = useState(() => script.code || '');
   const [name, setName] = useState(() => script.name || 'NewScript.js');
   const [saved, setSaved] = useState(false);
-
+ 
   const handleSave = () => {
     onSaveScript(script.id, {
       name,
@@ -193,7 +197,7 @@ function ScriptEditorModalContent({
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
-
+ 
   const handleInsertTemplate = (key) => {
     const tmpl = SNIPPET_TEMPLATES[key];
     if (tmpl) {
@@ -205,9 +209,9 @@ function ScriptEditorModalContent({
       }
     }
   };
-
+ 
   const isJsx = name.endsWith('.jsx') || code.includes('return') || code.includes('<div');
-
+ 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-card script-modal-card" onClick={(e) => e.stopPropagation()}>
@@ -223,7 +227,7 @@ function ScriptEditorModalContent({
                 placeholder="MyComponent.js"
               />
               <span className="script-badge">
-                {isJsx ? 'React JSX Component' : 'JavaScript Motion Script'}
+                {isJsx ? 'React Component (no JSX)' : 'JavaScript Motion Script'}
               </span>
             </div>
           </div>
@@ -231,11 +235,11 @@ function ScriptEditorModalContent({
             <X size={16} />
           </button>
         </div>
-
+ 
         <div className="modal-body script-modal-body">
           <div className="script-toolbar">
             <span className="script-hint">
-              Define <code>static props = &#123; speed: 2.5 &#125;</code> to auto-expose interactive controls in the Inspector!
+              Define <code>static props = &#123; speed: 2.5 &#125;</code> to auto-expose interactive controls in the Inspector! For visual components, use <code>h(tag, props, children)</code> instead of JSX (no build step here, so angle-bracket tags aren't supported).
             </span>
             <div className="snippet-dropdown-group">
               <span className="snippet-label">Insert Snippet:</span>
@@ -252,19 +256,19 @@ function ScriptEditorModalContent({
                 <option value="bounceEnter">Bounce Drop (OutBounce)</option>
                 <option value="pulseScale">Breathing Pulse</option>
                 <option value="mathWave">Trig Wave (Motion Canvas)</option>
-                <option value="glassCard">Glassmorphic Card (React JSX)</option>
-                <option value="neonTitle">Kinetic Neon Title (React JSX)</option>
+                <option value="glassCard">Glassmorphic Card (React, no JSX)</option>
+                <option value="neonTitle">Kinetic Neon Title (React, no JSX)</option>
               </select>
             </div>
           </div>
-
+ 
           <textarea
             className="script-code-textarea"
             value={code}
             onChange={(e) => setCode(e.target.value)}
             spellCheck={false}
           />
-
+ 
           <div className="script-footer">
             <button className="unity-btn unity-btn-secondary" onClick={onClose}>
               Cancel
@@ -279,3 +283,4 @@ function ScriptEditorModalContent({
     </div>
   );
 }
+ 

@@ -165,13 +165,16 @@ export const DEFAULT_SCRIPTS = [
     id: 'script-glass-card',
     name: 'GlassCard.jsx',
     description: 'Rich React Component clip with backdrop blur and customizable props',
-    code: `export default function GlassCard({
+    code: `// Plain JavaScript, no JSX: h(tag, props, children) is shorthand for
+// React.createElement(tag, props, children). Nest calls for nested
+// elements; pass an array as children for multiple siblings.
+export default function GlassCard({
   title = "BLAHBLAH STUDIO",
   badge = "MOTION ENGINE",
   accentColor = "#6366f1"
 }) {
-  return (
-    <div style={{
+  return h('div', {
+    style: {
       padding: '24px 36px',
       background: 'rgba(15, 23, 42, 0.75)',
       backdropFilter: 'blur(20px)',
@@ -182,8 +185,11 @@ export const DEFAULT_SCRIPTS = [
       alignItems: 'center',
       gap: '16px',
       fontFamily: 'Inter, sans-serif'
-    }}>
-      <span style={{
+    }
+  }, [
+    h('span', {
+      key: 'badge',
+      style: {
         background: accentColor,
         color: '#ffffff',
         padding: '5px 12px',
@@ -191,20 +197,19 @@ export const DEFAULT_SCRIPTS = [
         fontSize: '12px',
         fontWeight: '800',
         letterSpacing: '0.05em'
-      }}>
-        {badge}
-      </span>
-      <h2 style={{
+      }
+    }, badge),
+    h('h2', {
+      key: 'title',
+      style: {
         margin: 0,
         color: '#ffffff',
         fontSize: '24px',
         fontWeight: '800',
         letterSpacing: '-0.02em'
-      }}>
-        {title}
-      </h2>
-    </div>
-  );
+      }
+    }, title)
+  ]);
 }
  
 GlassCard.props = {
