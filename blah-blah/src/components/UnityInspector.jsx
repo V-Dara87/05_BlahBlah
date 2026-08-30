@@ -47,14 +47,57 @@ export const UnityInspector = memo(function UnityInspector({
   });
   const [showAddComponent, setShowAddComponent] = useState(false);
   const [savedPrefab, setSavedPrefab] = useState(false);
+  const [isDropTarget, setIsDropTarget] = useState(false);
+ 
+  // Drag-and-drop: accept a script dragged from the Project Panel and
+  // attach it to whichever GameObject is currently selected, instead of
+  // requiring the Add Component -> pick-from-list flow. Reuses the exact
+  // same categorization heuristic as the popover above (.jsx/return/div
+  // -> ReactRenderer, everything else -> ScriptComponent) so dropping
+  // produces the same component the popover would have added.
+  const handleScriptDragOver = (e) => {
+    if (!selectedEntity) return;
+    if (!e.dataTransfer.types.includes('application/json')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    setIsDropTarget(true);
+  };
+ 
+  const handleScriptDragLeave = () => {
+    setIsDropTarget(false);
+  };
+ 
+  const handleScriptDrop = (e) => {
+    e.preventDefault();
+    setIsDropTarget(false);
+    if (!selectedEntity) return;
+ 
+    let payload;
+    try {
+      payload = JSON.parse(e.dataTransfer.getData('application/json'));
+    } catch {
+      return;
+    }
+    if (!payload || payload.itemType !== 'script' || !payload.itemData) return;
+ 
+    const script = payload.itemData;
+    const isReactClip = script.name.endsWith('.jsx') || script.code?.includes('return') || script.code?.includes('div');
+    handleAddComponent(isReactClip ? 'ReactRenderer' : 'ScriptComponent', script.id);
+  };
  
   if (!selectedEntity) {
     return (
-      <aside className="inspector-sidebar empty">
+      <aside
+        className={`inspector-sidebar empty ${isDropTarget ? 'drop-target' : ''}`}
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes('application/json')) return;
+          e.preventDefault();
+        }}
+      >
         <div className="inspector-empty-msg">
           <Sliders size={32} className="empty-icon" />
           <h4>Inspector</h4>
-          <p>Select any clip or GameObject on the timeline to configure its Transform, React Components, and JS Motion Scripts.</p>
+          <p>Select any clip or GameObject on the timeline to configure its Transform, React Components, and JS Motion Scripts. Drag a script here once one is selected to attach it directly.</p>
         </div>
       </aside>
     );
@@ -184,7 +227,12 @@ export const UnityInspector = memo(function UnityInspector({
   const canvasScripts = scripts;
  
   return (
-    <aside className="inspector-sidebar">
+    <aside
+      className={`inspector-sidebar ${isDropTarget ? 'drop-target' : ''}`}
+      onDragOver={handleScriptDragOver}
+      onDragLeave={handleScriptDragLeave}
+      onDrop={handleScriptDrop}
+    >
       {/* GameObject Name & Track */}
       <div className="inspector-header-box">
         <div className="inspector-header-field">

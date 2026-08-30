@@ -1,14 +1,12 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useUndoableState } from './hooks/useUndoableState';
 import { UnityHeader } from './components/UnityHeader';
-import { ProjectPanel } from './components/ProjectPanel';
-import { EntityRenderer } from './components/EntityRenderer';
-import { UnityInspector } from './components/UnityInspector';
-import { Timeline } from './components/Timeline/Timeline';
 import { ProjectJsonModal } from './components/ProjectJsonModal';
 import { ScriptEditorModal } from './components/ScriptEditorModal';
 import { ExportModal } from './components/ExportModal';
 import { NewProjectModal } from './components/NewProjectModal';
+import { DockLayout } from './dock/DockLayout';
+import { EditorContext } from './dock/EditorContext';
 import { useTimelinePlayback } from './hooks/useTimelinePlayback';
 import { INITIAL_TRACKS, DEFAULT_PIXELS_PER_SECOND } from './types';
 import { createSyntheticAudio, createSyntheticVideo } from './utils/sampleMedia';
@@ -685,8 +683,6 @@ export function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [togglePlay, selectedEntityId, handleSplitEntity, handleDeleteEntity, seek, currentTime, handleSaveProjectToDisk, undo, redo]);
  
-  const selectedEntity = entities.find(e => e.id === selectedEntityId);
- 
   return (
     <div className="app-container">
       {/* Top Navigation Bar */}
@@ -721,69 +717,35 @@ export function App() {
         onLoadDemoScene={handleLoadDemoScene}
       />
  
-      {/* Main 3-Column Stage */}
-      <main className="editor-top-stage">
-        {/* Left: Project Assets Panel */}
-        <ProjectPanel
-          mediaAssets={mediaAssets}
-          prefabs={prefabs}
-          scripts={scripts}
-          onAddMediaAsset={handleAddMediaAsset}
-          onRemoveMediaAsset={handleRemoveMediaAsset}
-          onRemovePrefab={handleRemovePrefab}
-          onCreateScript={handleCreateScript}
-          onOpenScriptEditor={handleOpenScriptEditor}
-          onAddPrefabToTimeline={handleAddPrefabToTimeline}
-          onAddMediaToTimeline={handleAddMediaToTimeline}
-        />
- 
-        {/* Center: Normal Video Preview Player Window */}
-        <EntityRenderer
-          entities={entities}
-          tracks={tracks}
-          scripts={scripts}
-          currentTime={currentTime}
-          totalDuration={calculatedDuration}
-          isPlaying={isPlaying}
-          isLooping={isLooping}
-          selectedEntityId={selectedEntityId}
-          onSelectEntity={setSelectedEntityId}
-          onTogglePlay={togglePlay}
-          onSeek={seek}
-          onToggleLoop={() => setIsLooping(!isLooping)}
-        />
- 
-        {/* Right: Inspector */}
-        <UnityInspector
-          selectedEntity={selectedEntity}
-          tracks={tracks}
-          scripts={scripts}
-          onUpdateEntity={handleUpdateEntity}
-          onDeleteEntity={handleDeleteEntity}
-          onOpenScriptEditor={handleOpenScriptEditor}
-          onSaveAsPrefab={handleSaveAsPrefab}
-        />
-      </main>
- 
-      {/* Bottom Unified Multi-Track Timeline */}
-      <footer className="editor-bottom-timeline">
-        <Timeline
-          tracks={tracks}
-          clips={entities}
-          currentTime={currentTime}
-          totalDuration={calculatedDuration}
-          pixelsPerSecond={pixelsPerSecond}
-          selectedClipId={selectedEntityId}
-          snappingEnabled={snappingEnabled}
-          onSeek={seek}
-          onSelectClip={setSelectedEntityId}
-          onUpdateClip={handleUpdateEntity}
-          onUpdateTrack={handleUpdateTrack}
-          onAddTrack={handleAddTrack}
-          onAddEmptyClip={handleAddEmptyClip}
-          onDropItemOnTrack={handleDropItemOnTrack}
-        />
-      </footer>
+      {/* Unity-style dockable workspace: every panel below (Project,
+          Game/Preview, Inspector, Timeline) can be dragged to any edge,
+          split, or merged into tabs, same as Unity's editor windows.
+          Panels read their props from EditorContext instead of being
+          passed props directly, since dockview owns their mounting. */}
+      <EditorContext.Provider
+        value={{
+          // data
+          entities, tracks, scripts, prefabs, mediaAssets,
+          currentTime, calculatedDuration, isPlaying, isLooping,
+          selectedEntityId, pixelsPerSecond, snappingEnabled,
+          // setters
+          setSelectedEntityId, setIsLooping,
+          // handlers
+          togglePlay, seek,
+          handleUpdateEntity, handleDeleteEntity, handleSaveAsPrefab,
+          handleUpdateTrack, handleAddTrack, handleAddEmptyClip,
+          handleDropItemOnTrack,
+          onAddMediaAsset: handleAddMediaAsset,
+          onRemoveMediaAsset: handleRemoveMediaAsset,
+          onRemovePrefab: handleRemovePrefab,
+          onCreateScript: handleCreateScript,
+          onOpenScriptEditor: handleOpenScriptEditor,
+          onAddPrefabToTimeline: handleAddPrefabToTimeline,
+          onAddMediaToTimeline: handleAddMediaToTimeline,
+        }}
+      >
+        <DockLayout />
+      </EditorContext.Provider>
  
       {/* Modals */}
       <NewProjectModal

@@ -1,0 +1,90 @@
+/* ========================================================
+   DOCKVIEW THEME — mapped onto existing --unity-* CSS vars
+   so the dockable panels match the rest of the app instead
+   of dockview's stock light/dark theme.
+   ======================================================== */
+
+.dock-root {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--unity-darkest);
+}
+
+.dockview-theme-unity {
+  flex: 1;
+  min-height: 0;
+  --dv-background-color: var(--unity-darkest);
+  --dv-paneview-active-outline-color: #38bdf8;
+
+  --dv-tabs-and-actions-container-background-color: var(--unity-panel);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--unity-darkest);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--unity-panel);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--unity-darkest);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--unity-panel);
+
+  --dv-tab-close-icon: var(--unity-text-dim);
+  --dv-drag-over-background-color: rgba(56, 189, 248, 0.15);
+  --dv-drag-over-border-color: #38bdf8;
+
+  --dv-tabs-container-scrollbar-color: var(--unity-border-light);
+
+  --dv-icon-hover-background-color: var(--unity-subtle);
+  --dv-floating-box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+
+  --dv-active-sash-color: #38bdf8;
+
+  --dv-separator-border: 1px solid var(--unity-border);
+
+  --dv-paneview-header-border-color: var(--unity-border);
+
+  font-family: inherit;
+}
+
+/* Tab text + active-tab accent, matched to the app's blue accent used
+   elsewhere (unity-transport-btn.active-play, tab-btn-pill.active, etc.) */
+.dockview-theme-unity .dv-tab {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--unity-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.dockview-theme-unity .dv-tab.dv-active-tab {
+  color: #fff;
+  box-shadow: inset 0 -2px 0 #38bdf8;
+}
+
+.dockview-theme-unity .dv-groupview {
+  border: 1px solid var(--unity-border);
+}
+
+/* Reset-layout affordance, floats top-right above the dock area */
+.dock-reset-btn {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--unity-text-muted);
+  background: var(--unity-subtle);
+  border: 1px solid var(--unity-border-light);
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.dock-reset-btn:hover {
+  opacity: 1;
+  background: var(--unity-hover);
+  color: #fff;
+}
