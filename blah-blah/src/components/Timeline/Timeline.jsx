@@ -18,6 +18,7 @@ export function Timeline({
   onUpdateClip,
   onUpdateTrack,
   onAddTrack,
+  onAddEmptyClip,
   onDropItemOnTrack,
 }) {
   const lanesScrollRef = useRef(null);
@@ -49,14 +50,24 @@ export function Timeline({
       {/* Top Header of Timeline */}
       <div className="timeline-top-bar">
         <span className="timeline-title-label">TIMELINE</span>
-        <button 
-          className="add-track-action-btn" 
-          onClick={onAddTrack}
-          title="Add New Layer Track"
-        >
-          <Plus size={12} />
-          <span>Add Track</span>
-        </button>
+        <div className="timeline-actions-group" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <button 
+            className="add-clip-action-btn" 
+            onClick={() => onAddEmptyClip && onAddEmptyClip(tracks[0]?.id || 'track-1', currentTime)}
+            title="Create New Clip at Playhead"
+          >
+            <Plus size={12} className="text-cyan" />
+            <span>+ Add Clip</span>
+          </button>
+          <button 
+            className="add-track-action-btn" 
+            onClick={onAddTrack}
+            title="Add New Layer Track"
+          >
+            <Plus size={12} />
+            <span>Add Track</span>
+          </button>
+        </div>
       </div>
 
       <div className="timeline-split-wrapper">
@@ -67,6 +78,7 @@ export function Timeline({
               key={track.id}
               track={track}
               onUpdateTrack={onUpdateTrack}
+              onAddEmptyClip={onAddEmptyClip}
             />
           ))}
         </div>
@@ -108,6 +120,7 @@ export function Timeline({
                   selectedClipId={selectedClipId}
                   onSelectClip={onSelectClip}
                   onUpdateClip={onUpdateClip}
+                  onAddEmptyClip={onAddEmptyClip}
                   onDropItemOnTrack={onDropItemOnTrack}
                   snappingPoints={snappingPoints}
                   snappingEnabled={snappingEnabled}

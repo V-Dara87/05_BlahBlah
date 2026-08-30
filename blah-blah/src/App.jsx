@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useUndoableState } from './hooks/useUndoableState';
 import { UnityHeader } from './components/UnityHeader';
 import { ProjectPanel } from './components/ProjectPanel';
-import { PreviewWindow } from './components/PreviewWindow';
+import { EntityRenderer } from './components/EntityRenderer';
 import { UnityInspector } from './components/UnityInspector';
 import { Timeline } from './components/Timeline/Timeline';
 import { ProjectJsonModal } from './components/ProjectJsonModal';
@@ -11,7 +12,7 @@ import { NewProjectModal } from './components/NewProjectModal';
 import { useTimelinePlayback } from './hooks/useTimelinePlayback';
 import { INITIAL_TRACKS, DEFAULT_PIXELS_PER_SECOND } from './types';
 import { createSyntheticAudio, createSyntheticVideo } from './utils/sampleMedia';
-import { DEFAULT_CSHARP_SCRIPTS, DEFAULT_PREFABS, createGameObject, createDefaultTransform } from './engine/ecs';
+import { DEFAULT_SCRIPTS, DEFAULT_PREFABS, createGameObject, createDefaultTransform } from './engine/ecs';
 import { 
   pickProjectDirectory, 
   loadProjectFromDirectory, 
@@ -21,38 +22,79 @@ import {
   writeScriptFile
 } from './services/projectFileSystem';
 import './App.css';
-
+ 
 export function App() {
   const [projectName, setProjectName] = useState('new-project');
-  const [tracks, setTracks] = useState(INITIAL_TRACKS);
-  const [scripts, setScripts] = useState([]);
-  const [prefabs, setPrefabs] = useState([]);
+ 
+  // Undo/Redo: entities, tracks, scripts & prefabs live together in one
+  // history stack so a single Ctrl+Z reverts the last logical edit across
+  // all of them. mediaAssets/projectName/selection are intentionally left
+  // out of the undo scope (matching how most editors treat asset imports
+  // and selection as non-undoable housekeeping, not content edits).
+  const {
+    present: projectHistoryState,
+    set: setProjectHistoryState,
+    undo,
+    redo,
+    reset: resetProjectHistoryState,
+    canUndo,
+    canRedo,
+  } = useUndoableState({ entities: [], tracks: INITIAL_TRACKS, scripts: [], prefabs: [] });
+  const { entities, tracks, scripts, prefabs } = projectHistoryState;
+ 
+  const setEntities = useCallback((updater, options) => {
+    setProjectHistoryState((prev) => ({
+      ...prev,
+      entities: typeof updater === 'function' ? updater(prev.entities) : updater,
+    }), options);
+  }, [setProjectHistoryState]);
+ 
+  const setTracks = useCallback((updater, options) => {
+    setProjectHistoryState((prev) => ({
+      ...prev,
+      tracks: typeof updater === 'function' ? updater(prev.tracks) : updater,
+    }), options);
+  }, [setProjectHistoryState]);
+ 
+  const setScripts = useCallback((updater, options) => {
+    setProjectHistoryState((prev) => ({
+      ...prev,
+      scripts: typeof updater === 'function' ? updater(prev.scripts) : updater,
+    }), options);
+  }, [setProjectHistoryState]);
+ 
+  const setPrefabs = useCallback((updater, options) => {
+    setProjectHistoryState((prev) => ({
+      ...prev,
+      prefabs: typeof updater === 'function' ? updater(prev.prefabs) : updater,
+    }), options);
+  }, [setProjectHistoryState]);
+ 
   const [mediaAssets, setMediaAssets] = useState([]);
-  const [entities, setEntities] = useState([]);
-
+ 
   const [selectedEntityId, setSelectedEntityId] = useState(null);
   const [pixelsPerSecond, setPixelsPerSecond] = useState(DEFAULT_PIXELS_PER_SECOND);
   const [snappingEnabled, setSnappingEnabled] = useState(true);
-
+ 
   // Project Folder Handle & Disk Save State
   const [projectFolderHandle, setProjectFolderHandle] = useState(null);
   const [saveStatus, setSaveStatus] = useState('in-memory'); // 'saved' | 'saving' | 'in-memory'
   const isAutoSavingRef = useRef(false);
-
+ 
   // Modals
   const [isNewProjectOpen, setIsNewProjectOpen] = useState(false);
   const [isProjectJsonOpen, setIsProjectJsonOpen] = useState(false);
   const [isScriptEditorOpen, setIsScriptEditorOpen] = useState(false);
   const [editingScript, setEditingScript] = useState(null);
   const [isExportOpen, setIsExportOpen] = useState(false);
-
+ 
   // Calculate timeline duration based on entity placements
   const calculatedDuration = useMemo(() => {
     if (entities.length === 0) return 30;
     const maxEnd = Math.max(...entities.map((e) => e.startTime + e.duration));
     return Math.max(30, Math.ceil(maxEnd + 5));
   }, [entities]);
-
+ 
   const {
     isPlaying,
     currentTime,
@@ -61,13 +103,13 @@ export function App() {
     seek,
     setIsLooping,
   } = useTimelinePlayback(calculatedDuration);
-
+ 
   // Helper to load sample demo scene with animated clips & scripts
   const handleLoadDemoScene = useCallback(async () => {
     try {
       const audioUrl = createSyntheticAudio(12);
       const videoUrl = await createSyntheticVideo(8, 640, 360);
-
+ 
       const demoMedia = [
         {
           id: 'asset-intro-video',
@@ -86,46 +128,47 @@ export function App() {
           size: 2100000
         }
       ];
-
+ 
       const demoGOs = [
         createGameObject({
-          name: 'Neon Title (C# Float)',
+          name: 'Glass Card (React Clip)',
           trackId: 'track-1',
           startTime: 0,
           duration: 8,
-          type: 'text',
+          type: 'react',
           components: [
-            createDefaultTransform({ x: 0, y: -40 }),
+            createDefaultTransform({ x: 0, y: -45 }),
             {
-              type: 'TextRenderer',
-              text: 'BLAHBLAH STUDIO',
-              fontSize: 42,
-              fontColor: '#ffffff',
-              fontFamily: 'Inter',
-              shadowColor: 'rgba(99, 102, 241, 0.95)',
-              shadowBlur: 24
+              type: 'ReactRenderer',
+              scriptId: 'script-glass-card',
+              scriptName: 'GlassCard.jsx',
+              props: {
+                title: 'BLAHBLAH STUDIO',
+                badge: 'REACT COMPONENT',
+                accentColor: '#6366f1'
+              }
             },
             {
-              type: 'MonoBehaviour',
+              type: 'ScriptComponent',
               scriptId: 'script-float-bounce',
-              scriptName: 'FloatAndBounce.cs',
+              scriptName: 'FloatAndBounce.js',
               enabled: true,
               props: {
-                amplitude: 30,
+                amplitude: 25,
                 duration: 1.2,
-                rotationAngle: 8
+                rotationAngle: 6
               }
             }
           ]
         }),
         createGameObject({
-          name: 'Glowing Badge (C# Pulse)',
+          name: 'Glowing Badge (JS Pulse)',
           trackId: 'track-2',
           startTime: 0,
           duration: 8,
           type: 'shape',
           components: [
-            createDefaultTransform({ x: 0, y: 50 }),
+            createDefaultTransform({ x: 0, y: 55 }),
             {
               type: 'ShapeRenderer',
               shapeType: 'rounded-rect',
@@ -138,15 +181,15 @@ export function App() {
             },
             {
               type: 'TextRenderer',
-              text: '⚡ BLAHTWEEN MOTION',
+              text: '⚡ MOTION ENGINE',
               fontSize: 13,
               fontColor: '#ffffff',
               fontFamily: 'Inter'
             },
             {
-              type: 'MonoBehaviour',
+              type: 'ScriptComponent',
               scriptId: 'script-pulse-scale',
-              scriptName: 'PulseScale.cs',
+              scriptName: 'PulseScale.js',
               enabled: true,
               props: {
                 maxScale: 1.18,
@@ -191,46 +234,55 @@ export function App() {
           ]
         })
       ];
-
+ 
       setProjectName('demo-scene');
-      setTracks(INITIAL_TRACKS);
-      setScripts(DEFAULT_CSHARP_SCRIPTS);
-      setPrefabs(DEFAULT_PREFABS);
+      // Loading a whole demo scene is a "swap the project" action, not an
+      // editable step in the current one — start its own fresh undo history
+      // instead of stacking on top of (or being undoable back into) whatever
+      // was open before.
+      resetProjectHistoryState({
+        entities: demoGOs,
+        tracks: INITIAL_TRACKS,
+        scripts: DEFAULT_SCRIPTS,
+        prefabs: DEFAULT_PREFABS,
+      });
       setMediaAssets(demoMedia);
-      setEntities(demoGOs);
       setSelectedEntityId(demoGOs[0].id);
     } catch (err) {
       console.warn('Could not load demo scene:', err);
     }
-  }, []);
-
-  // Update entity properties / components
+  }, [resetProjectHistoryState]);
+ 
+  // Update entity properties / components. Coalesced: this fires on every
+  // intermediate value while dragging a clip or scrubbing an Inspector
+  // number field, so we merge those into one undo step per gesture instead
+  // of one per pixel/tick.
   const handleUpdateEntity = useCallback((entityId, updates) => {
-    setEntities(prev => prev.map(e => e.id === entityId ? { ...e, ...updates } : e));
-  }, []);
-
+    setEntities(prev => prev.map(e => e.id === entityId ? { ...e, ...updates } : e), { coalesce: true });
+  }, [setEntities]);
+ 
   // Delete entity
   const handleDeleteEntity = useCallback((entityId) => {
     setEntities(prev => prev.filter(e => e.id !== entityId));
     if (selectedEntityId === entityId) setSelectedEntityId(null);
   }, [selectedEntityId]);
-
+ 
   // Split entity at playhead
   const handleSplitEntity = useCallback((entityId) => {
     const target = entities.find(e => e.id === (entityId || selectedEntityId));
     if (!target) return;
-
+ 
     const splitPoint = currentTime;
     const start = target.startTime;
     const end = target.startTime + target.duration;
-
+ 
     if (splitPoint <= start + 0.1 || splitPoint >= end - 0.1) return;
-
+ 
     const part1Dur = splitPoint - start;
     const part2Dur = end - splitPoint;
-
+ 
     const part1 = { ...target, duration: part1Dur };
-
+ 
     // Update mediaOffset for part 2 so it continues seamlessly
     const part2Components = target.components?.map(c => {
       if (c.type === 'VideoRenderer' || c.type === 'AudioSource') {
@@ -242,7 +294,7 @@ export function App() {
       }
       return JSON.parse(JSON.stringify(c));
     }) || [];
-
+ 
     const part2 = {
       ...target,
       id: `go-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
@@ -251,11 +303,38 @@ export function App() {
       duration: part2Dur,
       components: part2Components
     };
-
+ 
     setEntities(prev => prev.map(e => e.id === target.id ? part1 : e).concat(part2));
     setSelectedEntityId(part2.id);
   }, [entities, selectedEntityId, currentTime]);
-
+ 
+  // Create an Empty Clip with Transform & Shape / Renderer
+  const handleAddEmptyClip = useCallback((targetTrackId = 'track-1', startTime = currentTime) => {
+    const newGO = createGameObject({
+      name: 'New Clip',
+      trackId: targetTrackId || 'track-1',
+      startTime: startTime !== undefined ? startTime : currentTime,
+      duration: 5,
+      type: 'shape',
+      components: [
+        createDefaultTransform({ x: 0, y: 0 }),
+        {
+          type: 'ShapeRenderer',
+          shapeType: 'rounded-rect',
+          width: 140,
+          height: 140,
+          color: '#4f46e5',
+          strokeColor: '#38bdf8',
+          strokeWidth: 2,
+          borderRadius: 12
+        }
+      ]
+    });
+ 
+    setEntities(prev => [...prev, newGO]);
+    setSelectedEntityId(newGO.id);
+  }, [currentTime]);
+ 
   // Add Prefab to Timeline
   const handleAddPrefabToTimeline = (prefab, targetTrackId = 'track-1', startTime = currentTime) => {
     const newGO = createGameObject({
@@ -266,15 +345,15 @@ export function App() {
       type: prefab.type || 'text',
       components: JSON.parse(JSON.stringify(prefab.components || []))
     });
-
+ 
     setEntities(prev => [...prev, newGO]);
     setSelectedEntityId(newGO.id);
   };
-
+ 
   // Add Media to Timeline
   const handleAddMediaToTimeline = (asset, targetTrackId = 'track-3', startTime = currentTime) => {
     const isAudio = asset.type === 'audio';
-
+ 
     const newGO = createGameObject({
       name: asset.name.replace(/\.[^.]+$/, ''),
       trackId: targetTrackId,
@@ -301,11 +380,11 @@ export function App() {
             }
       ]
     });
-
+ 
     setEntities(prev => [...prev, newGO]);
     setSelectedEntityId(newGO.id);
   };
-
+ 
   // Drag-and-Drop from Project Panel onto a Timeline Track
   const handleDropItemOnTrack = ({ itemType, itemId, targetTrackId, startTime }) => {
     if (itemType === 'prefab') {
@@ -317,8 +396,24 @@ export function App() {
     } else if (itemType === 'script') {
       const script = scripts.find(s => s.id === itemId);
       if (script) {
-        const newGO = createGameObject({
-          name: `${script.name.replace(/\.cs$/i, '')} Clip`,
+        const isJsx = script.name.endsWith('.jsx') || script.code?.includes('return') || script.code?.includes('div');
+        const newGO = isJsx ? createGameObject({
+          name: `${script.name.replace(/\.(jsx|js|cs)$/i, '')} Clip`,
+          trackId: targetTrackId,
+          startTime: startTime,
+          duration: 5,
+          type: 'react',
+          components: [
+            createDefaultTransform({ x: 0, y: 0 }),
+            {
+              type: 'ReactRenderer',
+              scriptId: script.id,
+              scriptName: script.name,
+              props: {}
+            }
+          ]
+        }) : createGameObject({
+          name: `${script.name.replace(/\.(jsx|js|cs)$/i, '')} Clip`,
           trackId: targetTrackId,
           startTime: startTime,
           duration: 5,
@@ -336,7 +431,7 @@ export function App() {
               borderRadius: 12
             },
             {
-              type: 'MonoBehaviour',
+              type: 'ScriptComponent',
               scriptId: script.id,
               scriptName: script.name,
               enabled: true,
@@ -349,7 +444,7 @@ export function App() {
       }
     }
   };
-
+ 
   // Upload Media File
   const handleAddMediaAsset = async (asset, originalFile = null) => {
     setMediaAssets(prev => [asset, ...prev]);
@@ -357,11 +452,11 @@ export function App() {
       await saveMediaFileToFolder(projectFolderHandle, originalFile).catch(() => {});
     }
   };
-
+ 
   const handleRemoveMediaAsset = (assetId) => {
     setMediaAssets(prev => prev.filter(a => a.id !== assetId));
   };
-
+ 
   // Save GameObject as Prefab
   const handleSaveAsPrefab = (entity) => {
     const newPrefab = {
@@ -372,11 +467,11 @@ export function App() {
     };
     setPrefabs(prev => [...prev, newPrefab]);
   };
-
+ 
   const handleRemovePrefab = (prefabId) => {
     setPrefabs(prev => prev.filter(p => p.id !== prefabId));
   };
-
+ 
   // Create & Save C# Script
   const handleCreateScript = async (newScript) => {
     setScripts(prev => [...prev, newScript]);
@@ -384,7 +479,7 @@ export function App() {
       await writeScriptFile(projectFolderHandle, newScript.name, newScript.code).catch(() => {});
     }
   };
-
+ 
   const handleSaveScript = async (scriptId, updates) => {
     setScripts(prev => prev.map(s => s.id === scriptId ? { ...s, ...updates } : s));
     const scriptObj = scripts.find(s => s.id === scriptId);
@@ -394,22 +489,31 @@ export function App() {
       await writeScriptFile(projectFolderHandle, name, code).catch(() => {});
     }
   };
-
+ 
   const handleOpenScriptEditor = (script) => {
     setEditingScript(script);
     setIsScriptEditorOpen(true);
   };
-
-  // Apply JSON state to Project
+ 
+  // Apply JSON state to Project. Editing/pasting Project JSON is a single
+  // deliberate action, so any entities/tracks/scripts/prefabs changes it
+  // carries land as ONE combined undo step (a single Ctrl+Z reverts the
+  // whole paste), rather than resetting history or splitting into four.
   const handleApplyProjectJson = (projectJson) => {
     if (projectJson.name) setProjectName(projectJson.name);
-    if (projectJson.tracks) setTracks(projectJson.tracks);
-    if (projectJson.scripts) setScripts(projectJson.scripts);
-    if (projectJson.prefabs) setPrefabs(projectJson.prefabs);
     if (projectJson.mediaAssets) setMediaAssets(projectJson.mediaAssets);
-    if (projectJson.entities) setEntities(projectJson.entities);
+ 
+    const touchesHistoryState = projectJson.tracks || projectJson.scripts || projectJson.prefabs || projectJson.entities;
+    if (touchesHistoryState) {
+      setProjectHistoryState((prev) => ({
+        entities: projectJson.entities || prev.entities,
+        tracks: projectJson.tracks || prev.tracks,
+        scripts: projectJson.scripts || prev.scripts,
+        prefabs: projectJson.prefabs || prev.prefabs,
+      }));
+    }
   };
-
+ 
   // Current project state object
   const projectState = useMemo(() => ({
     projectName,
@@ -422,32 +526,34 @@ export function App() {
     mediaAssets,
     entities
   }), [projectName, tracks, scripts, prefabs, mediaAssets, entities]);
-
-  // Handle Project Creation from New Project Modal
+ 
+  // Handle Project Creation from New Project Modal — a brand new project
+  // folder, so it gets a brand new (empty) undo history too.
   const handleProjectCreated = (result) => {
     setProjectFolderHandle(result.dirHandle);
     setProjectName(result.projectName);
-    setTracks(result.tracks);
-    setEntities([]);
-    setScripts([]);
-    setPrefabs([]);
+    resetProjectHistoryState({ entities: [], tracks: result.tracks, scripts: [], prefabs: [] });
     setMediaAssets([]);
     setSelectedEntityId(null);
     setSaveStatus('saved');
   };
-
+ 
   // Open & Load an existing Project Folder from Disk
   const handleOpenProjectFolder = useCallback(async () => {
     try {
       const dirHandle = await pickProjectDirectory();
       const loaded = await loadProjectFromDirectory(dirHandle, INITIAL_TRACKS);
-
+ 
       setProjectFolderHandle(dirHandle);
       setProjectName(loaded.projectName);
-      setTracks(loaded.tracks);
-      setEntities(loaded.entities); // 0 clips if empty project!
-      setScripts(loaded.scripts);   // only files actually on disk
-      setPrefabs(loaded.prefabs);
+      // Opening a different project folder is a fresh start, not an edit —
+      // fresh undo history, same as New Project / Load Demo Scene.
+      resetProjectHistoryState({
+        entities: loaded.entities, // 0 clips if empty project!
+        tracks: loaded.tracks,
+        scripts: loaded.scripts,   // only files actually on disk
+        prefabs: loaded.prefabs,
+      });
       setMediaAssets(loaded.mediaAssets);
       setSelectedEntityId(null);
       setSaveStatus('saved');
@@ -456,8 +562,8 @@ export function App() {
         alert(`Failed to open project folder: ${err.message}`);
       }
     }
-  }, []);
-
+  }, [resetProjectHistoryState]);
+ 
   // Save Project to Disk manually
   const handleSaveProjectToDisk = useCallback(async () => {
     if (!projectFolderHandle) {
@@ -474,11 +580,11 @@ export function App() {
       setSaveStatus('in-memory');
     }
   }, [projectFolderHandle, projectState]);
-
+ 
   // Auto-Save Debounce to Disk
   useEffect(() => {
     if (!projectFolderHandle) return;
-
+ 
     const timer = setTimeout(async () => {
       if (isAutoSavingRef.current) return;
       isAutoSavingRef.current = true;
@@ -492,24 +598,24 @@ export function App() {
         isAutoSavingRef.current = false;
       }
     }, 800);
-
+ 
     return () => clearTimeout(timer);
   }, [projectFolderHandle, projectState]);
-
+ 
   // Hot-Reload: Poll scripts/ directory for external edits in VS Code
   useEffect(() => {
     if (!projectFolderHandle) return;
-
+ 
     const poller = setInterval(async () => {
       const updatedScripts = await checkScriptsForChanges(projectFolderHandle, scripts);
       if (updatedScripts) {
         setScripts(updatedScripts);
       }
     }, 2000);
-
+ 
     return () => clearInterval(poller);
   }, [projectFolderHandle, scripts]);
-
+ 
   // Track management
   const handleAddTrack = () => {
     const nextNum = tracks.length + 1;
@@ -523,11 +629,13 @@ export function App() {
       volume: 1.0
     }]);
   };
-
+ 
+  // Coalesced for the same reason as handleUpdateEntity — track volume
+  // sliders etc. fire continuously while dragging.
   const handleUpdateTrack = (trackId, updates) => {
-    setTracks(prev => prev.map(t => t.id === trackId ? { ...t, ...updates } : t));
+    setTracks(prev => prev.map(t => t.id === trackId ? { ...t, ...updates } : t), { coalesce: true });
   };
-
+ 
   // Global Keyboard Shortcuts (Space, Split, Delete, Ctrl+S)
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -536,10 +644,16 @@ export function App() {
         handleSaveProjectToDisk();
         return;
       }
-
+ 
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
-
-      if (e.code === 'Space') {
+ 
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault();
+        undo();
+      } else if ((e.ctrlKey || e.metaKey) && ((e.shiftKey && (e.key === 'z' || e.key === 'Z')) || e.key === 'y' || e.key === 'Y')) {
+        e.preventDefault();
+        redo();
+      } else if (e.code === 'Space') {
         e.preventDefault();
         togglePlay();
       } else if (e.key === 'c' || e.key === 'C' || e.key === 's' || e.key === 'S') {
@@ -566,13 +680,13 @@ export function App() {
         setPixelsPerSecond(prev => Math.max(10, prev - 10));
       }
     };
-
+ 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [togglePlay, selectedEntityId, handleSplitEntity, handleDeleteEntity, seek, currentTime, handleSaveProjectToDisk]);
-
+  }, [togglePlay, selectedEntityId, handleSplitEntity, handleDeleteEntity, seek, currentTime, handleSaveProjectToDisk, undo, redo]);
+ 
   const selectedEntity = entities.find(e => e.id === selectedEntityId);
-
+ 
   return (
     <div className="app-container">
       {/* Top Navigation Bar */}
@@ -588,6 +702,8 @@ export function App() {
         hasSelectedEntity={!!selectedEntityId}
         projectFolderHandle={projectFolderHandle}
         saveStatus={saveStatus}
+        canUndo={canUndo}
+        canRedo={canRedo}
         onTogglePlay={togglePlay}
         onSeek={seek}
         onToggleLoop={() => setIsLooping(!isLooping)}
@@ -595,6 +711,8 @@ export function App() {
         onSetSnappingEnabled={setSnappingEnabled}
         onSplitSelected={() => selectedEntityId && handleSplitEntity(selectedEntityId)}
         onDeleteSelected={() => selectedEntityId && handleDeleteEntity(selectedEntityId)}
+        onUndo={undo}
+        onRedo={redo}
         onOpenProjectJson={() => setIsProjectJsonOpen(true)}
         onOpenExport={() => setIsExportOpen(true)}
         onNewProject={() => setIsNewProjectOpen(true)}
@@ -602,7 +720,7 @@ export function App() {
         onSaveProjectToDisk={handleSaveProjectToDisk}
         onLoadDemoScene={handleLoadDemoScene}
       />
-
+ 
       {/* Main 3-Column Stage */}
       <main className="editor-top-stage">
         {/* Left: Project Assets Panel */}
@@ -618,9 +736,9 @@ export function App() {
           onAddPrefabToTimeline={handleAddPrefabToTimeline}
           onAddMediaToTimeline={handleAddMediaToTimeline}
         />
-
+ 
         {/* Center: Normal Video Preview Player Window */}
-        <PreviewWindow
+        <EntityRenderer
           entities={entities}
           tracks={tracks}
           scripts={scripts}
@@ -634,7 +752,7 @@ export function App() {
           onSeek={seek}
           onToggleLoop={() => setIsLooping(!isLooping)}
         />
-
+ 
         {/* Right: Inspector */}
         <UnityInspector
           selectedEntity={selectedEntity}
@@ -646,7 +764,7 @@ export function App() {
           onSaveAsPrefab={handleSaveAsPrefab}
         />
       </main>
-
+ 
       {/* Bottom Unified Multi-Track Timeline */}
       <footer className="editor-bottom-timeline">
         <Timeline
@@ -662,10 +780,11 @@ export function App() {
           onUpdateClip={handleUpdateEntity}
           onUpdateTrack={handleUpdateTrack}
           onAddTrack={handleAddTrack}
+          onAddEmptyClip={handleAddEmptyClip}
           onDropItemOnTrack={handleDropItemOnTrack}
         />
       </footer>
-
+ 
       {/* Modals */}
       <NewProjectModal
         isOpen={isNewProjectOpen}
@@ -673,21 +792,21 @@ export function App() {
         defaultTracks={INITIAL_TRACKS}
         onProjectCreated={handleProjectCreated}
       />
-
+ 
       <ProjectJsonModal
         isOpen={isProjectJsonOpen}
         onClose={() => setIsProjectJsonOpen(false)}
         projectState={projectState}
         onApplyProjectJson={handleApplyProjectJson}
       />
-
+ 
       <ScriptEditorModal
         isOpen={isScriptEditorOpen}
         onClose={() => setIsScriptEditorOpen(false)}
         script={editingScript}
         onSaveScript={handleSaveScript}
       />
-
+ 
       <ExportModal
         isOpen={isExportOpen}
         onClose={() => setIsExportOpen(false)}
@@ -700,5 +819,6 @@ export function App() {
     </div>
   );
 }
-
+ 
 export default App;
+ 

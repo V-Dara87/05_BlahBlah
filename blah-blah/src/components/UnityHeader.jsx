@@ -17,10 +17,12 @@ import {
   Save,
   CheckCircle2,
   HardDrive,
-  Sparkles
+  Sparkles,
+  Undo2,
+  Redo2
 } from 'lucide-react';
 import { formatTimecode } from '../utils/timeFormat';
-
+ 
 export function UnityHeader({
   projectName,
   setProjectName,
@@ -33,6 +35,8 @@ export function UnityHeader({
   hasSelectedEntity,
   projectFolderHandle,
   saveStatus = 'saved', // 'saved' | 'saving' | 'in-memory'
+  canUndo = false,
+  canRedo = false,
   onTogglePlay,
   onSeek,
   onToggleLoop,
@@ -40,6 +44,8 @@ export function UnityHeader({
   onSetSnappingEnabled,
   onSplitSelected,
   onDeleteSelected,
+  onUndo,
+  onRedo,
   onOpenProjectJson,
   onOpenExport,
   onNewProject,
@@ -58,9 +64,9 @@ export function UnityHeader({
           <span className="unity-app-title">blahblah</span>
           <span className="unity-version-tag">2026.1</span>
         </div>
-
+ 
         <div className="unity-divider-v" />
-
+ 
         {/* Project File Actions: New & Open */}
         <button 
           className="unity-hdr-btn"
@@ -70,7 +76,7 @@ export function UnityHeader({
           <FilePlus size={13} className="text-emerald" />
           <span>New</span>
         </button>
-
+ 
         <button 
           className={`unity-hdr-btn ${projectFolderHandle ? 'active-folder' : ''}`}
           onClick={onOpenProjectFolder}
@@ -81,7 +87,7 @@ export function UnityHeader({
             {projectFolderHandle ? projectFolderHandle.name : 'Open'}
           </span>
         </button>
-
+ 
         {projectFolderHandle && (
           <button 
             className="unity-hdr-btn"
@@ -92,7 +98,7 @@ export function UnityHeader({
             <span>Save</span>
           </button>
         )}
-
+ 
         <button 
           className="unity-hdr-btn demo-btn"
           onClick={onLoadDemoScene}
@@ -101,9 +107,9 @@ export function UnityHeader({
           <Sparkles size={12} className="text-amber" />
           <span>Demo</span>
         </button>
-
+ 
         <div className="unity-divider-v" />
-
+ 
         {/* Save Status Badge */}
         {projectFolderHandle ? (
           <div className="save-status-box" title="Auto-saving enabled to local disk">
@@ -120,7 +126,7 @@ export function UnityHeader({
             <HardDrive size={11} /> In-Memory
           </span>
         )}
-
+ 
         <input
           type="text"
           className="unity-project-input"
@@ -129,7 +135,7 @@ export function UnityHeader({
           placeholder="Project Name"
         />
       </div>
-
+ 
       {/* Center: Unity Playback Transport & Timecode */}
       <div className="unity-header-center">
         <div className="unity-transport-toolbar">
@@ -140,7 +146,7 @@ export function UnityHeader({
           >
             <ChevronLeft size={14} />
           </button>
-
+ 
           <button
             className={`unity-transport-btn play-btn ${isPlaying ? 'active-play' : ''}`}
             title={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
@@ -148,7 +154,7 @@ export function UnityHeader({
           >
             {isPlaying ? <Pause size={15} /> : <Play size={15} className="ml-px" />}
           </button>
-
+ 
           <button
             className="unity-transport-btn"
             title="Step Forward 1 Frame (→)"
@@ -156,7 +162,7 @@ export function UnityHeader({
           >
             <ChevronRight size={14} />
           </button>
-
+ 
           <button
             className={`unity-transport-btn ${isLooping ? 'active-loop' : ''}`}
             title="Toggle Loop"
@@ -165,15 +171,35 @@ export function UnityHeader({
             <Repeat size={13} />
           </button>
         </div>
-
+ 
         <div className="unity-timecode-box">
           <span className="timecode-current">{formatTimecode(currentTime)}</span>
           <span className="timecode-sep">/</span>
           <span className="timecode-total">{formatTimecode(totalDuration)}</span>
         </div>
-
+ 
         {/* Quick Tools */}
         <div className="unity-quick-tools">
+          <button
+            className="unity-tool-btn"
+            title="Undo (Ctrl+Z)"
+            onClick={onUndo}
+            disabled={!canUndo}
+          >
+            <Undo2 size={13} />
+          </button>
+ 
+          <button
+            className="unity-tool-btn"
+            title="Redo (Ctrl+Shift+Z / Ctrl+Y)"
+            onClick={onRedo}
+            disabled={!canRedo}
+          >
+            <Redo2 size={13} />
+          </button>
+ 
+          <div className="unity-divider-v" />
+ 
           <button
             className="unity-tool-btn"
             title="Split Clip at Playhead (C or S)"
@@ -183,7 +209,7 @@ export function UnityHeader({
             <Scissors size={13} />
             <span>Split</span>
           </button>
-
+ 
           <button
             className="unity-tool-btn danger"
             title="Delete Selected Clip (Del)"
@@ -192,7 +218,7 @@ export function UnityHeader({
           >
             <Trash2 size={13} />
           </button>
-
+ 
           <button
             className={`unity-tool-btn ${snappingEnabled ? 'active-snap' : ''}`}
             title="Toggle Magnet Snapping (N)"
@@ -200,7 +226,7 @@ export function UnityHeader({
           >
             <Magnet size={13} />
           </button>
-
+ 
           <div className="unity-zoom-group">
             <button
               className="unity-tool-btn-sm"
@@ -220,7 +246,7 @@ export function UnityHeader({
           </div>
         </div>
       </div>
-
+ 
       {/* Right: AI Project Code & Export */}
       <div className="unity-header-right">
         <button
@@ -231,7 +257,7 @@ export function UnityHeader({
           <Code size={14} className="text-cyan" />
           <span>&lt;/&gt; Project Code</span>
         </button>
-
+ 
         <button
           className="unity-action-btn primary-btn"
           onClick={onOpenExport}
@@ -244,3 +270,4 @@ export function UnityHeader({
     </header>
   );
 }
+ 

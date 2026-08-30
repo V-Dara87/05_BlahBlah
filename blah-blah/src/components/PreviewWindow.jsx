@@ -11,12 +11,12 @@ import {
   Layers
 } from 'lucide-react';
 import { formatSimpleTime } from '../utils/timeFormat';
-import { executeCSharpMonoBehaviour } from '../engine/csharpRunner';
+import { executeScriptComponent, getCompiledReactComponent } from '../engine/scriptRunner';
 
 export function PreviewWindow({
   entities,
   tracks,
-  scripts,
+  scripts = [],
   currentTime,
   totalDuration,
   isPlaying,
@@ -43,7 +43,7 @@ export function PreviewWindow({
     return true;
   });
 
-  // Calculate animated transform for each active entity using attached C# MonoBehaviour scripts / BlahTween
+  // Calculate animated transform for each active entity using attached JS/TS motion scripts
   const computedEntities = activeEntities.map((entity) => {
     let currentTransform = entity.components.find((c) => c.type === 'Transform') || {
       x: 0,
@@ -54,17 +54,22 @@ export function PreviewWindow({
       opacity: 1,
     };
 
-    const scriptComp = entity.components.find((c) => c.type === 'MonoBehaviour' && c.enabled);
+    const scriptComp = entity.components.find(
+      (c) => (c.type === 'ScriptComponent' || c.type === 'MonoBehaviour') && c.enabled
+    );
+
     if (scriptComp) {
       const scriptDef = scripts.find((s) => s.id === scriptComp.scriptId);
       if (scriptDef && scriptDef.code) {
         const localTime = currentTime - entity.startTime;
-        currentTransform = executeCSharpMonoBehaviour({
+        currentTransform = executeScriptComponent({
           scriptCode: scriptDef.code,
           transform: currentTransform,
           localTime,
           clipDuration: entity.duration,
           publicValues: scriptComp.props || {},
+          frame: Math.round(localTime * 30),
+          fps: 30,
         });
       }
     }
@@ -75,7 +80,7 @@ export function PreviewWindow({
     };
   });
 
-  // Separate video clips and overlay graphics/text
+  // Separate video clips and overlay graphics/text/react
   const activeVideoItems = computedEntities.filter(
     ({ entity }) => entity.type === 'video' || entity.components.some((c) => c.type === 'VideoRenderer')
   );
@@ -230,11 +235,32 @@ export function PreviewWindow({
             );
           })}
 
-          {/* 2. Foreground Overlay GameObjects (Text, Shapes, Prefabs) */}
+          {/* 2. Foreground Overlay GameObjects (React Clips, Text, Shapes, Prefabs) */}
           {activeOverlayItems.map(({ entity, transform }) => {
             const isSelected = entity.id === selectedEntityId;
             const textComp = entity.components.find((c) => c.type === 'TextRenderer');
             const shapeComp = entity.components.find((c) => c.type === 'ShapeRenderer');
+            const reactComp = entity.components.find((c) => c.type === 'ReactRenderer');
+
+            // Dynamic React Component rendering
+            let ReactComponentNode = null;
+            if (reactComp) {
+              const scriptDef = scripts.find((s) => s.id === reactComp.scriptId);
+              if (scriptDef && scriptDef.code) {
+                const CompiledComponent = getCompiledReactComponent(scriptDef.code);
+                if (CompiledComponent) {
+                  const localTime = currentTime - entity.startTime;
+                  ReactComponentNode = (
+                    <CompiledComponent
+                      {...(reactComp.props || {})}
+                      frame={Math.round(localTime * 30)}
+                      time={localTime}
+                      duration={entity.duration}
+                    />
+                  );
+                }
+              }
+            }
 
             return (
               <div
@@ -251,6 +277,9 @@ export function PreviewWindow({
                   onSelectEntity(entity.id);
                 }}
               >
+                {/* React Component Renderer */}
+                {ReactComponentNode}
+
                 {/* Shape Component */}
                 {shapeComp && (
                   <div

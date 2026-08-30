@@ -149,7 +149,7 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
   try {
     const scriptsDirHandle = await dirHandle.getDirectoryHandle('scripts', { create: true });
     for await (const entry of scriptsDirHandle.values()) {
-      if (entry.kind === 'file' && (entry.name.endsWith('.cs') || entry.name.endsWith('.js'))) {
+      if (entry.kind === 'file' && (entry.name.endsWith('.js') || entry.name.endsWith('.jsx') || entry.name.endsWith('.ts') || entry.name.endsWith('.tsx') || entry.name.endsWith('.cs'))) {
         const file = await entry.getFile();
         const code = await file.text();
         loadedScripts.push({
@@ -268,9 +268,9 @@ export async function saveProjectToDirectory(dirHandle, projectState) {
   if (projectState.scripts && projectState.scripts.length > 0) {
     const scriptsDirHandle = await dirHandle.getDirectoryHandle('scripts', { create: true });
     for (const script of projectState.scripts) {
-      const fileName = script.name.endsWith('.cs') || script.name.endsWith('.js') 
+      const fileName = /\.(js|jsx|ts|tsx|cs)$/i.test(script.name)
         ? script.name 
-        : `${script.name}.cs`;
+        : `${script.name}.js`;
  
       const scriptFileHandle = await scriptsDirHandle.getFileHandle(fileName, { create: true });
       const scriptWritable = await scriptFileHandle.createWritable();
@@ -301,7 +301,7 @@ export async function writeScriptFile(dirHandle, scriptName, scriptCode) {
   if (!dirHandle) return;
   await verifyPermission(dirHandle, true);
   const scriptsDirHandle = await dirHandle.getDirectoryHandle('scripts', { create: true });
-  const fileName = scriptName.endsWith('.cs') || scriptName.endsWith('.js') ? scriptName : `${scriptName}.cs`;
+  const fileName = /\.(js|jsx|ts|tsx|cs)$/i.test(scriptName) ? scriptName : `${scriptName}.js`;
   const fileHandle = await scriptsDirHandle.getFileHandle(fileName, { create: true });
   const writable = await fileHandle.createWritable();
   await writable.write(scriptCode);
@@ -334,7 +334,7 @@ export async function checkScriptsForChanges(dirHandle, existingScripts) {
     const updatedScripts = [];
  
     for await (const entry of scriptsDirHandle.values()) {
-      if (entry.kind === 'file' && (entry.name.endsWith('.cs') || entry.name.endsWith('.js'))) {
+      if (entry.kind === 'file' && (entry.name.endsWith('.js') || entry.name.endsWith('.jsx') || entry.name.endsWith('.ts') || entry.name.endsWith('.tsx') || entry.name.endsWith('.cs'))) {
         const file = await entry.getFile();
         const code = await file.text();
         const existing = currentScriptsMap.get(entry.name);
@@ -361,4 +361,3 @@ export async function checkScriptsForChanges(dirHandle, existingScripts) {
  
   return null;
 }
- 

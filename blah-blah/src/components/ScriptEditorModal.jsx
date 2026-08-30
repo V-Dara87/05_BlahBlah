@@ -1,109 +1,161 @@
 import { useState } from 'react';
-import { X, Check, Save, FileCode } from 'lucide-react';
+import { X, Check, Save, FileCode, Sparkles } from 'lucide-react';
 
 const SNIPPET_TEMPLATES = {
   floatBounce: {
-    name: 'Float & Rock (BlahTween)',
-    code: `using UnityEngine;
-using BlahTween;
+    name: 'Float & Rock (MotionTween)',
+    code: `export default class FloatAndBounce {
+  static props = {
+    amplitude: { type: 'number', default: 35, min: 0, max: 200, step: 1 },
+    duration: { type: 'number', default: 1.2, min: 0.1, max: 10, step: 0.1 },
+    rotationAngle: { type: 'number', default: 12, min: -180, max: 180, step: 1 },
+  };
 
-public class FloatAndBounce : MonoBehaviour
-{
-    public float amplitude = 35f;
-    public float duration = 1.0f;
-    public float rotationAngle = 12f;
+  onStart({ transform, tween, props }) {
+    // Smooth Yoyo float on Y axis
+    tween.to(transform.position, { y: -props.amplitude }, {
+      duration: props.duration,
+      ease: 'inOutSine',
+      loop: 'yoyo'
+    });
 
-    void Start()
-    {
-        // Smooth continuous Yoyo float with OutSine easing
-        transform.DOMoveY(-amplitude, duration)
-            .SetEase(Ease.InOutSine)
-            .SetLoops(-1, LoopType.Yoyo);
-
-        // Gentle rocking rotation
-        transform.DORotate(rotationAngle, duration * 1.4f)
-            .SetEase(Ease.InOutSine)
-            .SetLoops(-1, LoopType.Yoyo);
-    }
-
-    void Update()
-    {
-        // Custom math update if needed
-    }
+    // Rocking rotation
+    tween.to(transform, { rotation: props.rotationAngle }, {
+      duration: props.duration * 1.4,
+      ease: 'inOutSine',
+      loop: 'yoyo'
+    });
+  }
 }`
   },
   bounceEnter: {
     name: 'Bounce Entrance (Ease.OutBounce)',
-    code: `using UnityEngine;
-using BlahTween;
+    code: `export default class BounceEnter {
+  static props = {
+    dropDistance: { type: 'number', default: 180, min: 0, max: 800, step: 10 },
+    bounceDuration: { type: 'number', default: 0.9, min: 0.2, max: 5, step: 0.1 },
+    targetScale: { type: 'number', default: 1.0, min: 0.1, max: 3, step: 0.05 },
+  };
 
-public class BounceEnter : MonoBehaviour
-{
-    public float dropDistance = 180f;
-    public float bounceDuration = 0.9f;
+  onStart({ transform, tween, props }) {
+    transform.position.y -= props.dropDistance;
+    transform.scale.x = 0.2;
+    transform.scale.y = 0.2;
 
-    void Start()
-    {
-        transform.position.y -= dropDistance;
-        transform.scale.x = 0.3f;
-        transform.scale.y = 0.3f;
-
-        transform.DOMoveY(0, bounceDuration).SetEase(Ease.OutBounce);
-        transform.DOScale(1.0f, bounceDuration).SetEase(Ease.OutBack);
-    }
+    tween.to(transform.position, { y: 0 }, { duration: props.bounceDuration, ease: 'outBounce' });
+    tween.to(transform.scale, { scale: props.targetScale }, { duration: props.bounceDuration, ease: 'outBack' });
+  }
 }`
   },
   pulseScale: {
     name: 'Breathing Pulse Scale',
-    code: `using UnityEngine;
-using BlahTween;
+    code: `export default class PulseScale {
+  static props = {
+    maxScale: { type: 'number', default: 1.25, min: 0.5, max: 3, step: 0.05 },
+    pulseSpeed: { type: 'number', default: 0.6, min: 0.1, max: 5, step: 0.1 },
+  };
 
-public class PulseScale : MonoBehaviour
-{
-    public float maxScale = 1.3f;
-    public float pulseSpeed = 0.5f;
-
-    void Start()
-    {
-        transform.DOScale(maxScale, pulseSpeed)
-            .SetEase(Ease.InOutQuad)
-            .SetLoops(-1, LoopType.Yoyo);
-    }
-}`
-  },
-  punchShake: {
-    name: 'Elastic Punch & Shake',
-    code: `using UnityEngine;
-using BlahTween;
-
-public class PunchShake : MonoBehaviour
-{
-    public float punchStrength = 40f;
-    public float duration = 0.8f;
-
-    void Start()
-    {
-        transform.DOPunchPosition(punchStrength, duration);
-    }
+  onStart({ transform, tween, props }) {
+    tween.to(transform.scale, { scale: props.maxScale }, {
+      duration: props.pulseSpeed,
+      ease: 'inOutQuad',
+      loop: 'yoyo'
+    });
+  }
 }`
   },
   mathWave: {
     name: 'Trig Wave (Motion Canvas style)',
-    code: `using UnityEngine;
+    code: `export default class MathWave {
+  static props = {
+    frequency: { type: 'number', default: 3.5, min: 0.1, max: 20, step: 0.1 },
+    amplitude: { type: 'number', default: 30.0, min: 0, max: 200, step: 1 },
+    spinSpeed: { type: 'number', default: 60.0, min: -360, max: 360, step: 5 },
+  };
 
-public class MathWave : MonoBehaviour
-{
-    public float frequency = 3.5f;
-    public float amplitude = 30.0f;
-    public float spinSpeed = 60.0f;
-
-    void Update()
-    {
-        transform.position.y += Mathf.Sin(Time.time * frequency) * amplitude;
-        transform.position.x += Mathf.Cos(Time.time * (frequency * 0.5f)) * (amplitude * 0.5f);
-        transform.rotation += Time.deltaTime * spinSpeed;
-    }
+  onUpdate({ transform, time, props }) {
+    transform.position.y += Math.sin(time * props.frequency) * props.amplitude;
+    transform.position.x += Math.cos(time * (props.frequency * 0.5)) * (props.amplitude * 0.5);
+    transform.rotation += (1 / 60) * props.spinSpeed;
+  }
 }`
+  },
+  glassCard: {
+    name: 'Glassmorphic Card (React JSX)',
+    code: `export default function GlassCard({
+  title = "BLAHBLAH STUDIO",
+  badge = "REACT COMPONENT",
+  accentColor = "#6366f1"
+}) {
+  return (
+    <div style={{
+      padding: '24px 36px',
+      background: 'rgba(15, 23, 42, 0.8)',
+      backdropFilter: 'blur(20px)',
+      border: '1px solid rgba(255, 255, 255, 0.15)',
+      borderRadius: '20px',
+      boxShadow: '0 12px 40px ' + accentColor + '44',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '16px',
+      fontFamily: 'Inter, sans-serif'
+    }}>
+      <span style={{
+        background: accentColor,
+        color: '#ffffff',
+        padding: '6px 14px',
+        borderRadius: '999px',
+        fontSize: '12px',
+        fontWeight: '800',
+        letterSpacing: '0.05em'
+      }}>
+        {badge}
+      </span>
+      <h2 style={{
+        margin: 0,
+        color: '#ffffff',
+        fontSize: '24px',
+        fontWeight: '800'
+      }}>
+        {title}
+      </h2>
+    </div>
+  );
+}
+
+GlassCard.props = {
+  title: { type: 'string', default: 'BLAHBLAH STUDIO' },
+  badge: { type: 'string', default: 'REACT COMPONENT' },
+  accentColor: { type: 'color', default: '#6366f1' },
+};`
+  },
+  neonTitle: {
+    name: 'Kinetic Neon Title (React JSX)',
+    code: `export default function NeonTitle({
+  text = "NEXT-GEN VIDEO",
+  glowColor = "#38bdf8",
+  fontSize = 44
+}) {
+  return (
+    <div style={{
+      fontSize: fontSize + 'px',
+      fontWeight: '900',
+      color: '#ffffff',
+      fontFamily: 'Inter, sans-serif',
+      textShadow: '0 0 25px ' + glowColor + ', 0 0 50px ' + glowColor,
+      letterSpacing: '0.04em',
+      textAlign: 'center'
+    }}>
+      {text}
+    </div>
+  );
+}
+
+NeonTitle.props = {
+  text: { type: 'string', default: 'NEXT-GEN VIDEO' },
+  glowColor: { type: 'color', default: '#38bdf8' },
+  fontSize: { type: 'number', default: 44, min: 12, max: 120, step: 2 }
+};`
   }
 };
 
@@ -130,7 +182,7 @@ function ScriptEditorModalContent({
   onSaveScript
 }) {
   const [code, setCode] = useState(() => script.code || '');
-  const [name, setName] = useState(() => script.name || 'NewScript.cs');
+  const [name, setName] = useState(() => script.name || 'NewScript.js');
   const [saved, setSaved] = useState(false);
 
   const handleSave = () => {
@@ -146,24 +198,33 @@ function ScriptEditorModalContent({
     const tmpl = SNIPPET_TEMPLATES[key];
     if (tmpl) {
       setCode(tmpl.code);
+      if (key === 'glassCard' && !name.endsWith('.jsx')) {
+        setName('GlassCard.jsx');
+      } else if (key === 'neonTitle' && !name.endsWith('.jsx')) {
+        setName('NeonTitle.jsx');
+      }
     }
   };
+
+  const isJsx = name.endsWith('.jsx') || code.includes('return') || code.includes('<div');
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-card script-modal-card" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div className="modal-title-group">
-            <FileCode size={18} className="text-emerald" />
+            {isJsx ? <Sparkles size={18} className="text-cyan" /> : <FileCode size={18} className="text-emerald" />}
             <div className="script-title-edit">
               <input
                 type="text"
                 className="script-name-input"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="ScriptName.cs"
+                placeholder="MyComponent.js"
               />
-              <span className="script-badge">C# MonoBehaviour</span>
+              <span className="script-badge">
+                {isJsx ? 'React JSX Component' : 'JavaScript Motion Script'}
+              </span>
             </div>
           </div>
           <button className="close-btn" onClick={onClose}>
@@ -174,7 +235,7 @@ function ScriptEditorModalContent({
         <div className="modal-body script-modal-body">
           <div className="script-toolbar">
             <span className="script-hint">
-              Define public fields (e.g. <code>public float speed = 2.5f;</code>) to auto-expose them in the Unity Inspector!
+              Define <code>static props = &#123; speed: 2.5 &#125;</code> to auto-expose interactive controls in the Inspector!
             </span>
             <div className="snippet-dropdown-group">
               <span className="snippet-label">Insert Snippet:</span>
@@ -187,11 +248,12 @@ function ScriptEditorModalContent({
                 defaultValue=""
               >
                 <option value="" disabled>Choose template...</option>
-                <option value="floatBounce">Float & Rock (BlahTween)</option>
+                <option value="floatBounce">Float & Rock (MotionTween)</option>
                 <option value="bounceEnter">Bounce Drop (OutBounce)</option>
                 <option value="pulseScale">Breathing Pulse</option>
-                <option value="punchShake">Elastic Punch & Shake</option>
                 <option value="mathWave">Trig Wave (Motion Canvas)</option>
+                <option value="glassCard">Glassmorphic Card (React JSX)</option>
+                <option value="neonTitle">Kinetic Neon Title (React JSX)</option>
               </select>
             </div>
           </div>
@@ -209,7 +271,7 @@ function ScriptEditorModalContent({
             </button>
             <button className="unity-btn unity-btn-primary" onClick={handleSave}>
               {saved ? <Check size={14} /> : <Save size={14} />}
-              <span>{saved ? 'Saved & Compiled!' : 'Save & Compile Script'}</span>
+              <span>{saved ? 'Saved & Compiled!' : 'Save & Compile Code'}</span>
             </button>
           </div>
         </div>

@@ -6,12 +6,14 @@ import {
   Unlock, 
   Eye, 
   EyeOff,
-  Layers
+  Layers,
+  Plus
 } from 'lucide-react';
 
 export const TrackHeader = memo(function TrackHeader({
   track,
-  onUpdateTrack
+  onUpdateTrack,
+  onAddEmptyClip,
 }) {
   return (
     <div className="track-header-row">
@@ -21,6 +23,14 @@ export const TrackHeader = memo(function TrackHeader({
       </div>
 
       <div className="track-header-btns">
+        <button
+          className="track-btn add-clip-track-btn"
+          title={`Add Clip to ${track.name} at Playhead`}
+          onClick={() => onAddEmptyClip && onAddEmptyClip(track.id)}
+        >
+          <Plus size={11} className="text-cyan" />
+        </button>
+
         <button
           className={`track-btn ${!track.visible ? 'active-off' : ''}`}
           title={track.visible ? 'Hide Track' : 'Show Track'}

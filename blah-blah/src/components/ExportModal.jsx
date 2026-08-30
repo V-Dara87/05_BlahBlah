@@ -14,7 +14,7 @@ import {
   Volume2
 } from 'lucide-react';
 import { formatTimecode } from '../utils/timeFormat';
-import { executeCSharpMonoBehaviour } from '../engine/csharpRunner';
+import { executeScriptComponent } from '../engine/scriptRunner';
 
 export function ExportModal({
   isOpen,
@@ -307,17 +307,19 @@ export function ExportModal({
             x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1
           };
 
-          // Execute C# MonoBehaviour script if attached
-          const scriptComp = entity.components?.find(c => c.type === 'MonoBehaviour' && c.enabled);
+          // Execute JS/TS Motion script if attached
+          const scriptComp = entity.components?.find(c => (c.type === 'ScriptComponent' || c.type === 'MonoBehaviour') && c.enabled);
           if (scriptComp) {
             const scriptDef = scripts.find(s => s.id === scriptComp.scriptId);
             if (scriptDef && scriptDef.code) {
-              transform = executeCSharpMonoBehaviour({
+              transform = executeScriptComponent({
                 scriptCode: scriptDef.code,
                 transform,
                 localTime,
                 clipDuration: entity.duration,
-                publicValues: scriptComp.props || {}
+                publicValues: scriptComp.props || {},
+                frame: Math.round(localTime * targetFps),
+                fps: targetFps
               });
             }
           }
@@ -387,7 +389,56 @@ export function ExportModal({
             }
           }
 
-          // Draw 3: Text
+          // Draw 3: React Clip Component
+          const reactComp = entity.components?.find(c => c.type === 'ReactRenderer');
+          if (reactComp) {
+            const posX = width / 2 + transform.x * scaleFactor;
+            const posY = height / 2 + transform.y * scaleFactor;
+            ctx.translate(posX, posY);
+            ctx.rotate(((transform.rotation || 0) * Math.PI) / 180);
+            ctx.scale(transform.scaleX ?? 1, transform.scaleY ?? 1);
+
+            const cardW = 340 * scaleFactor;
+            const cardH = 80 * scaleFactor;
+            const cardRad = 20 * scaleFactor;
+            const accent = reactComp.props?.accentColor || reactComp.props?.color || '#6366f1';
+
+            // Background glass box
+            ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+            ctx.beginPath();
+            ctx.roundRect(-cardW / 2, -cardH / 2, cardW, cardH, cardRad);
+            ctx.fill();
+
+            // Border
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.lineWidth = 1.5 * scaleFactor;
+            ctx.stroke();
+
+            // Badge
+            if (reactComp.props?.badge) {
+              ctx.fillStyle = accent;
+              ctx.beginPath();
+              ctx.roundRect(-cardW / 2 + 16 * scaleFactor, -14 * scaleFactor, 100 * scaleFactor, 28 * scaleFactor, 14 * scaleFactor);
+              ctx.fill();
+
+              ctx.font = `800 ${Math.round(11 * scaleFactor)}px Inter, sans-serif`;
+              ctx.fillStyle = '#ffffff';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(String(reactComp.props.badge), -cardW / 2 + 66 * scaleFactor, 0);
+            }
+
+            // Title
+            const titleText = reactComp.props?.title || reactComp.props?.text || entity.name;
+            ctx.font = `800 ${Math.round(20 * scaleFactor)}px Inter, sans-serif`;
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = reactComp.props?.badge ? 'left' : 'center';
+            ctx.textBaseline = 'middle';
+            const textX = reactComp.props?.badge ? (-cardW / 2 + 130 * scaleFactor) : 0;
+            ctx.fillText(String(titleText), textX, 0);
+          }
+
+          // Draw 4: Text
           const textComp = entity.components?.find(c => c.type === 'TextRenderer');
           if (textComp) {
             const posX = width / 2 + transform.x * scaleFactor;

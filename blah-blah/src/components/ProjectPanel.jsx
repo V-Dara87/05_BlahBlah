@@ -105,29 +105,65 @@ export const ProjectPanel = memo(function ProjectPanel({
     }
   };
 
-  const handleCreateNewScript = () => {
+  const handleCreateNewMotionScript = () => {
     const newScript = {
       id: `script-${Date.now()}`,
-      name: 'CustomMotion.cs',
-      description: 'Custom C# MonoBehaviour script',
-      code: `using UnityEngine;
-using BlahTween;
+      name: 'CustomMotion.js',
+      description: 'Custom JavaScript Motion script',
+      code: `export default class CustomMotion {
+  static props = {
+    speed: { type: 'number', default: 2.0, min: 0.1, max: 10, step: 0.1 },
+    amplitude: { type: 'number', default: 30.0, min: 0, max: 200, step: 1 },
+  };
 
-public class CustomMotion : MonoBehaviour
-{
-    public float speed = 2.0f;
-    public float amplitude = 30.0f;
+  onStart({ transform, tween, props }) {
+    tween.to(transform.position, { y: -props.amplitude }, {
+      duration: 1.0,
+      ease: 'outBounce',
+      loop: 'yoyo'
+    });
+  }
 
-    void Start()
-    {
-        transform.DOMoveY(-amplitude, 1.0f).SetEase(Ease.OutBounce).SetLoops(-1, LoopType.Yoyo);
-    }
-
-    void Update()
-    {
-        transform.rotation += Time.deltaTime * speed * 25.0f;
-    }
+  onUpdate({ transform, time, props }) {
+    transform.rotation += (1 / 60) * props.speed * 30.0;
+  }
 }`
+    };
+    onCreateScript(newScript);
+    onOpenScriptEditor(newScript);
+  };
+
+  const handleCreateNewReactClip = () => {
+    const newScript = {
+      id: `script-${Date.now()}`,
+      name: 'CustomClip.jsx',
+      description: 'Custom React JSX Clip Component',
+      code: `export default function CustomClip({
+  title = "MY REACT CLIP",
+  color = "#38bdf8"
+}) {
+  return (
+    <div style={{
+      padding: '20px 32px',
+      background: 'rgba(15, 23, 42, 0.85)',
+      borderRadius: '16px',
+      border: '1px solid ' + color,
+      boxShadow: '0 8px 32px ' + color + '33',
+      color: '#ffffff',
+      fontFamily: 'Inter, sans-serif',
+      fontSize: '22px',
+      fontWeight: 'bold',
+      textAlign: 'center'
+    }}>
+      {title}
+    </div>
+  );
+}
+
+CustomClip.props = {
+  title: { type: 'string', default: 'MY REACT CLIP' },
+  color: { type: 'color', default: '#38bdf8' }
+};`
     };
     onCreateScript(newScript);
     onOpenScriptEditor(newScript);
@@ -176,7 +212,7 @@ public class CustomMotion : MonoBehaviour
           onClick={() => setActiveTab('scripts')}
         >
           <FileCode size={13} />
-          <span>C# Scripts</span>
+          <span>Scripts / JSX</span>
         </button>
       </div>
 
@@ -211,13 +247,24 @@ public class CustomMotion : MonoBehaviour
         )}
 
         {activeTab === 'scripts' && (
-          <button
-            className="action-btn-sm full-width"
-            onClick={handleCreateNewScript}
-          >
-            <FileCode size={12} className="text-emerald" />
-            <span>+ New C# MonoBehaviour</span>
-          </button>
+          <div className="script-add-row" style={{ display: 'flex', gap: '6px', width: '100%' }}>
+            <button
+              className="action-btn-sm"
+              style={{ flex: 1 }}
+              onClick={handleCreateNewMotionScript}
+            >
+              <FileCode size={12} className="text-emerald" />
+              <span>+ Motion Script</span>
+            </button>
+            <button
+              className="action-btn-sm text-cyan"
+              style={{ flex: 1 }}
+              onClick={handleCreateNewReactClip}
+            >
+              <Sparkles size={12} />
+              <span>+ React Clip</span>
+            </button>
+          </div>
         )}
 
         {activeTab === 'prefabs' && (
@@ -319,26 +366,31 @@ public class CustomMotion : MonoBehaviour
           </>
         )}
 
-        {/* C# SCRIPTS TAB */}
+        {/* SCRIPTS TAB */}
         {activeTab === 'scripts' && (
           <>
             {scripts
               .filter((s) => s.name.toLowerCase().includes(searchQuery.toLowerCase()))
-              .map((script) => (
-                <div
-                  key={script.id}
-                  className="asset-card script-card"
-                  onClick={() => onOpenScriptEditor(script)}
-                >
-                  <div className="asset-icon-box text-emerald">
-                    <FileCode size={20} />
+              .map((script) => {
+                const isJsx = script.name.endsWith('.jsx') || script.code?.includes('return');
+                return (
+                  <div
+                    key={script.id}
+                    className="asset-card script-card"
+                    onClick={() => onOpenScriptEditor(script)}
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, 'script', script)}
+                  >
+                    <div className={`asset-icon-box ${isJsx ? 'text-cyan' : 'text-emerald'}`}>
+                      {isJsx ? <Sparkles size={20} /> : <FileCode size={20} />}
+                    </div>
+                    <div className="asset-info-box">
+                      <span className="asset-title-main">{script.name}</span>
+                      <span className="asset-subtitle">{isJsx ? 'React JSX Clip' : 'Motion Script'}</span>
+                    </div>
                   </div>
-                  <div className="asset-info-box">
-                    <span className="asset-title-main">{script.name}</span>
-                    <span className="asset-subtitle">Click to edit C#</span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
           </>
         )}
       </div>

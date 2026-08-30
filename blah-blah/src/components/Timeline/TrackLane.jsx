@@ -8,6 +8,7 @@ export const TrackLane = memo(function TrackLane({
   selectedClipId,
   onSelectClip,
   onUpdateClip,
+  onAddEmptyClip,
   onDropItemOnTrack,
   snappingPoints,
   snappingEnabled,
@@ -51,6 +52,16 @@ export const TrackLane = memo(function TrackLane({
     }
   };
 
+  const handleDoubleClick = (e) => {
+    if (e.target.closest('.clip-item-card')) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickTime = Math.max(0, clickX / pixelsPerSecond);
+    if (onAddEmptyClip) {
+      onAddEmptyClip(track.id, clickTime);
+    }
+  };
+
   return (
     <div
       data-track-id={track.id}
@@ -59,6 +70,8 @@ export const TrackLane = memo(function TrackLane({
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
+      onDoubleClick={handleDoubleClick}
+      title="Double-click empty track space to add a clip here"
     >
       <div className="track-grid-pattern" />
       {trackClips.map((clip) => (
