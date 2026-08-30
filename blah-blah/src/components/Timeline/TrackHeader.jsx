@@ -7,22 +7,40 @@ import {
   Eye, 
   EyeOff,
   Layers,
-  Plus
+  Plus,
+  Mic,
+  Square
 } from 'lucide-react';
-
+ 
 export const TrackHeader = memo(function TrackHeader({
   track,
   onUpdateTrack,
   onAddEmptyClip,
+  isRecordingTarget,
+  isAnyTrackRecording,
+  onToggleRecordTrack,
 }) {
+  const recording = !!isRecordingTarget;
+ 
   return (
-    <div className="track-header-row">
+    <div className={`track-header-row ${recording ? 'recording-active' : ''}`}>
       <div className="track-header-title-box">
         <Layers size={13} className="track-icon" />
         <span className="track-name">{track.name}</span>
       </div>
-
+ 
       <div className="track-header-btns">
+        {onToggleRecordTrack && (
+          <button
+            className={`track-btn record-track-btn ${recording ? 'active-record' : ''}`}
+            title={recording ? 'Stop Recording' : `Record Audio into ${track.name}`}
+            onClick={() => onToggleRecordTrack(track.id)}
+            disabled={!recording && isAnyTrackRecording}
+          >
+            {recording ? <Square size={11} /> : <Mic size={12} />}
+          </button>
+        )}
+ 
         <button
           className="track-btn add-clip-track-btn"
           title={`Add Clip to ${track.name} at Playhead`}
@@ -30,7 +48,7 @@ export const TrackHeader = memo(function TrackHeader({
         >
           <Plus size={11} className="text-cyan" />
         </button>
-
+ 
         <button
           className={`track-btn ${!track.visible ? 'active-off' : ''}`}
           title={track.visible ? 'Hide Track' : 'Show Track'}
@@ -38,7 +56,7 @@ export const TrackHeader = memo(function TrackHeader({
         >
           {track.visible ? <Eye size={12} /> : <EyeOff size={12} />}
         </button>
-
+ 
         <button
           className={`track-btn ${track.muted ? 'active-off' : ''}`}
           title={track.muted ? 'Unmute Track' : 'Mute Track'}
@@ -46,7 +64,7 @@ export const TrackHeader = memo(function TrackHeader({
         >
           {track.muted ? <VolumeX size={12} /> : <Volume2 size={12} />}
         </button>
-
+ 
         <button
           className={`track-btn ${track.locked ? 'active-lock' : ''}`}
           title={track.locked ? 'Unlock Track' : 'Lock Track'}
@@ -58,3 +76,4 @@ export const TrackHeader = memo(function TrackHeader({
     </div>
   );
 });
+ 

@@ -189,29 +189,42 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
     console.warn('Could not read prefabs directory:', err);
   }
  
-  // 4. Read media/ folder
+  // 4. Read media/ folder (one level deep, so subfolders like
+  // media/Recordings/ created by the voice-recording feature are also
+  // picked back up on load and tagged with their folder name).
   const loadedMedia = [];
+  const readMediaEntry = async (entry, folderName) => {
+    if (entry.kind !== 'file') return;
+    const file = await entry.getFile();
+    const ext = entry.name.toLowerCase();
+    const isVideo = ext.endsWith('.mp4') || ext.endsWith('.webm') || ext.endsWith('.mov');
+    const isAudio = ext.endsWith('.mp3') || ext.endsWith('.wav') || ext.endsWith('.ogg') || ext.endsWith('.aac');
+ 
+    if (isVideo || isAudio) {
+      const url = URL.createObjectURL(file);
+      loadedMedia.push({
+        id: `asset-${(folderName || '')}${entry.name.replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+        name: entry.name,
+        type: isVideo ? 'video' : 'audio',
+        url: url,
+        size: file.size,
+        duration: 10,
+        thumbnail: isVideo ? '🎬' : '🎵',
+        ...(folderName ? { folder: folderName } : {}),
+      });
+    }
+  };
+ 
   try {
     const mediaDirHandle = await dirHandle.getDirectoryHandle('media', { create: true });
     for await (const entry of mediaDirHandle.values()) {
-      if (entry.kind === 'file') {
-        const file = await entry.getFile();
-        const ext = entry.name.toLowerCase();
-        const isVideo = ext.endsWith('.mp4') || ext.endsWith('.webm') || ext.endsWith('.mov');
-        const isAudio = ext.endsWith('.mp3') || ext.endsWith('.wav') || ext.endsWith('.ogg') || ext.endsWith('.aac');
- 
-        if (isVideo || isAudio) {
-          const url = URL.createObjectURL(file);
-          loadedMedia.push({
-            id: `asset-${entry.name.replace(/[^a-zA-Z0-9_-]/g, '_')}`,
-            name: entry.name,
-            type: isVideo ? 'video' : 'audio',
-            url: url,
-            size: file.size,
-            duration: 10,
-            thumbnail: isVideo ? '🎬' : '🎵',
-          });
+      if (entry.kind === 'directory') {
+        const subDirHandle = await mediaDirHandle.getDirectoryHandle(entry.name, { create: false });
+        for await (const subEntry of subDirHandle.values()) {
+          await readMediaEntry(subEntry, entry.name);
         }
+      } else {
+        await readMediaEntry(entry, null);
       }
     }
   } catch (err) {
@@ -310,11 +323,17 @@ export async function writeScriptFile(dirHandle, scriptName, scriptCode) {
  
 /**
  * Save an uploaded media file directly into the media/ folder.
+ * Pass `subfolder` (e.g. "Recordings") to nest it inside media/<subfolder>/
+ * instead of directly in media/ — used for mic recordings so they land
+ * in their own folder on disk, matching the Media tab's folder grouping.
  */
-export async function saveMediaFileToFolder(dirHandle, file) {
+export async function saveMediaFileToFolder(dirHandle, file, subfolder = null) {
   if (!dirHandle) return;
   await verifyPermission(dirHandle, true);
-  const mediaDirHandle = await dirHandle.getDirectoryHandle('media', { create: true });
+  let mediaDirHandle = await dirHandle.getDirectoryHandle('media', { create: true });
+  if (subfolder) {
+    mediaDirHandle = await mediaDirHandle.getDirectoryHandle(subfolder, { create: true });
+  }
   const fileHandle = await mediaDirHandle.getFileHandle(file.name, { create: true });
   const writable = await fileHandle.createWritable();
   await writable.write(file);

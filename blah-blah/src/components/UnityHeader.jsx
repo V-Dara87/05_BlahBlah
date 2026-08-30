@@ -19,7 +19,8 @@ import {
   HardDrive,
   Sparkles,
   Undo2,
-  Redo2
+  Redo2,
+  Settings
 } from 'lucide-react';
 import { formatTimecode } from '../utils/timeFormat';
  
@@ -52,6 +53,7 @@ export function UnityHeader({
   onOpenProjectFolder,
   onSaveProjectToDisk,
   onLoadDemoScene,
+  onOpenSettings,
 }) {
   return (
     <header className="unity-header">
@@ -265,6 +267,14 @@ export function UnityHeader({
         >
           <Download size={14} />
           <span>Export Render</span>
+        </button>
+ 
+        <button
+          className="unity-tool-btn-sm settings-hdr-btn"
+          onClick={onOpenSettings}
+          title="Settings (Audio Input Device)"
+        >
+          <Settings size={15} />
         </button>
       </div>
     </header>

@@ -152,7 +152,7 @@ export const UnityInspector = memo(function UnityInspector({
     if (type === 'TextRenderer') {
       newComp = { type: 'TextRenderer', text: 'New Text', fontSize: 36, fontColor: '#ffffff', fontFamily: 'Inter' };
     } else if (type === 'ShapeRenderer') {
-      newComp = { type: 'ShapeRenderer', shapeType: 'rounded-rect', width: 140, height: 140, color: '#6366f1', strokeColor: '#38bdf8', strokeWidth: 2, borderRadius: 12 };
+      newComp = { type: 'ShapeRenderer', shapeType: 'rect', width: 140, height: 140, color: '#ffffff', strokeColor: '#38bdf8', strokeWidth: 0, borderRadius: 0 };
     } else if (type === 'ReactRenderer' && scriptId) {
       const scriptDef = scripts.find(s => s.id === scriptId);
       if (scriptDef) {
@@ -456,10 +456,24 @@ export const UnityInspector = memo(function UnityInspector({
                 <input
                   type="color"
                   className="inspector-color-input"
-                  value={shapeComp.color || '#4f46e5'}
+                  value={shapeComp.color || '#ffffff'}
                   onChange={(e) => updateComponent('ShapeRenderer', { color: e.target.value })}
                 />
               </div>
+ 
+              {shapeComp.shapeType !== 'circle' && (
+                <div className="inspector-row">
+                  <span className="row-label">Roundness</span>
+                  <DragNumber
+                    label="px"
+                    value={shapeComp.borderRadius ?? 0}
+                    step={1}
+                    min={0}
+                    max={Math.min(shapeComp.width ?? 140, shapeComp.height ?? 140) / 2}
+                    onChange={(v) => updateComponent('ShapeRenderer', { borderRadius: Math.round(v) })}
+                  />
+                </div>
+              )}
  
               <div className="inspector-row">
                 <span className="row-label">Stroke Color</span>

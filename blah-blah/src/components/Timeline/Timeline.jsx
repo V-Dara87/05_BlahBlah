@@ -4,7 +4,7 @@ import { TimeRuler } from './TimeRuler';
 import { TrackHeader } from './TrackHeader';
 import { TrackLane } from './TrackLane';
 import { Playhead } from './Playhead';
-
+ 
 export function Timeline({
   tracks,
   clips,
@@ -13,6 +13,7 @@ export function Timeline({
   pixelsPerSecond,
   selectedClipId,
   snappingEnabled,
+  recordingTrackId,
   onSeek,
   onSelectClip,
   onUpdateClip,
@@ -20,16 +21,17 @@ export function Timeline({
   onAddTrack,
   onAddEmptyClip,
   onDropItemOnTrack,
+  onToggleRecordTrack,
 }) {
   const lanesScrollRef = useRef(null);
   const rulerScrollRef = useRef(null);
-
+ 
   const handleLanesScroll = () => {
     if (lanesScrollRef.current && rulerScrollRef.current) {
       rulerScrollRef.current.scrollLeft = lanesScrollRef.current.scrollLeft;
     }
   };
-
+ 
   const snappingPoints = useMemo(() => {
     if (!snappingEnabled) return [];
     const points = new Set();
@@ -41,10 +43,10 @@ export function Timeline({
     });
     return Array.from(points);
   }, [clips, currentTime, snappingEnabled]);
-
+ 
   const totalWidth = Math.max(totalDuration * pixelsPerSecond + 400, 1600);
   const timelineLanesHeight = tracks.length * 64;
-
+ 
   return (
     <section className="timeline-editor-panel">
       {/* Top Header of Timeline */}
@@ -69,7 +71,7 @@ export function Timeline({
           </button>
         </div>
       </div>
-
+ 
       <div className="timeline-split-wrapper">
         {/* Left Track Headers */}
         <div className="timeline-headers-sidebar">
@@ -79,10 +81,13 @@ export function Timeline({
               track={track}
               onUpdateTrack={onUpdateTrack}
               onAddEmptyClip={onAddEmptyClip}
+              isRecordingTarget={recordingTrackId === track.id}
+              isAnyTrackRecording={!!recordingTrackId}
+              onToggleRecordTrack={onToggleRecordTrack}
             />
           ))}
         </div>
-
+ 
         {/* Right Scrollable Area */}
         <div className="timeline-scroll-area">
           <div className="ruler-wrapper" ref={rulerScrollRef}>
@@ -92,7 +97,7 @@ export function Timeline({
               onSeek={onSeek}
             />
           </div>
-
+ 
           <div
             className="lanes-wrapper"
             ref={lanesScrollRef}
@@ -110,7 +115,7 @@ export function Timeline({
                 onSeek={onSeek}
                 timelineHeight={timelineLanesHeight + 30}
               />
-
+ 
               {tracks.map((track) => (
                 <TrackLane
                   key={track.id}
@@ -134,3 +139,4 @@ export function Timeline({
     </section>
   );
 }
+ 

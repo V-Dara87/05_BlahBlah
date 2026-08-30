@@ -105,6 +105,7 @@ export function TimelineDockPanel() {
     selectedEntityId, setSelectedEntityId, snappingEnabled,
     seek, handleUpdateEntity, handleUpdateTrack,
     handleAddTrack, handleAddEmptyClip, handleDropItemOnTrack,
+    recordingTrackId, onToggleRecordTrack,
   } = useEditorContext();
  
   return (
@@ -116,6 +117,7 @@ export function TimelineDockPanel() {
       pixelsPerSecond={pixelsPerSecond}
       selectedClipId={selectedEntityId}
       snappingEnabled={snappingEnabled}
+      recordingTrackId={recordingTrackId}
       onSeek={seek}
       onSelectClip={setSelectedEntityId}
       onUpdateClip={handleUpdateEntity}
@@ -123,6 +125,7 @@ export function TimelineDockPanel() {
       onAddTrack={handleAddTrack}
       onAddEmptyClip={handleAddEmptyClip}
       onDropItemOnTrack={handleDropItemOnTrack}
+      onToggleRecordTrack={onToggleRecordTrack}
     />
   );
 }

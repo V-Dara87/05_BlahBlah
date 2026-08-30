@@ -8,7 +8,10 @@ import {
   Upload, 
   Trash2, 
   Sparkles,
-  Search
+  Search,
+  Folder,
+  ChevronDown,
+  ChevronRight
 } from 'lucide-react';
 import { formatTimecode } from '../utils/timeFormat';
 import { createSyntheticAudio, createSyntheticVideo } from '../utils/sampleMedia';
@@ -28,6 +31,7 @@ export const ProjectPanel = memo(function ProjectPanel({
   const [activeTab, setActiveTab] = useState('prefabs'); // 'prefabs' | 'media' | 'scripts'
   const [searchQuery, setSearchQuery] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [collapsedFolders, setCollapsedFolders] = useState({});
   const fileInputRef = useRef(null);
  
   const handleFileUpload = (files) => {
@@ -50,7 +54,7 @@ export const ProjectPanel = memo(function ProjectPanel({
             url,
             duration: video.duration || 8,
             size: file.size,
-          });
+          }, file);
         };
       } else {
         const audio = document.createElement('audio');
@@ -63,7 +67,7 @@ export const ProjectPanel = memo(function ProjectPanel({
             url,
             duration: audio.duration || 10,
             size: file.size,
-          });
+          }, file);
         };
       }
     });
@@ -177,6 +181,50 @@ CustomClip.props = {
     e.dataTransfer.setData('application/json', JSON.stringify({ itemType, itemData }));
     e.dataTransfer.effectAllowed = 'copy';
   };
+ 
+  const toggleFolder = (folderName) => {
+    setCollapsedFolders((prev) => ({ ...prev, [folderName]: !prev[folderName] }));
+  };
+ 
+  const filteredMedia = mediaAssets.filter((m) => m.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  // Group media assets by their `folder` field (e.g. "Recordings"); assets
+  // without one render at the top level, matching pre-folder behavior.
+  const rootMedia = filteredMedia.filter((m) => !m.folder);
+  const folderNames = Array.from(new Set(filteredMedia.filter((m) => m.folder).map((m) => m.folder)));
+ 
+  const renderMediaCard = (asset) => (
+    <div
+      key={asset.id}
+      className="asset-card media-card"
+      draggable
+      onDragStart={(e) => handleDragStart(e, 'media', asset)}
+    >
+      <div className={`asset-icon-box ${asset.type === 'video' ? 'text-indigo' : 'text-emerald'}`}>
+        {asset.type === 'video' ? <Film size={20} /> : <Music size={20} />}
+        <span className="duration-tag">{formatTimecode(asset.duration).slice(3)}</span>
+      </div>
+      <div className="asset-info-box">
+        <span className="asset-title-main">{asset.name}</span>
+        <span className="asset-subtitle">{asset.type.toUpperCase()}</span>
+      </div>
+      <div className="asset-card-btns">
+        <button
+          className="card-action-btn add-btn"
+          title="Add to timeline"
+          onClick={() => onAddMediaToTimeline(asset)}
+        >
+          <Plus size={14} />
+        </button>
+        <button
+          className="card-action-btn del-btn"
+          title="Delete asset"
+          onClick={() => onRemoveMediaAsset(asset.id)}
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
+    </div>
+  );
  
   return (
     <aside className="project-panel">
@@ -331,41 +379,31 @@ CustomClip.props = {
         {/* MEDIA TAB */}
         {activeTab === 'media' && (
           <>
-            {mediaAssets
-              .filter((m) => m.name.toLowerCase().includes(searchQuery.toLowerCase()))
-              .map((asset) => (
-                <div
-                  key={asset.id}
-                  className="asset-card media-card"
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, 'media', asset)}
-                >
-                  <div className={`asset-icon-box ${asset.type === 'video' ? 'text-indigo' : 'text-emerald'}`}>
-                    {asset.type === 'video' ? <Film size={20} /> : <Music size={20} />}
-                    <span className="duration-tag">{formatTimecode(asset.duration).slice(3)}</span>
-                  </div>
-                  <div className="asset-info-box">
-                    <span className="asset-title-main">{asset.name}</span>
-                    <span className="asset-subtitle">{asset.type.toUpperCase()}</span>
-                  </div>
-                  <div className="asset-card-btns">
-                    <button
-                      className="card-action-btn add-btn"
-                      title="Add to timeline"
-                      onClick={() => onAddMediaToTimeline(asset)}
-                    >
-                      <Plus size={14} />
-                    </button>
-                    <button
-                      className="card-action-btn del-btn"
-                      title="Delete asset"
-                      onClick={() => onRemoveMediaAsset(asset.id)}
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
+            {/* Folders (e.g. "Recordings") render first, each collapsible */}
+            {folderNames.map((folderName) => {
+              const isCollapsed = !!collapsedFolders[folderName];
+              const assetsInFolder = filteredMedia.filter((m) => m.folder === folderName);
+              return (
+                <div key={folderName} className="media-folder-group">
+                  <button
+                    className="media-folder-header"
+                    onClick={() => toggleFolder(folderName)}
+                  >
+                    {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                    <Folder size={13} className="text-amber" />
+                    <span className="media-folder-name">{folderName}</span>
+                    <span className="media-folder-count">{assetsInFolder.length}</span>
+                  </button>
+                  {!isCollapsed && (
+                    <div className="media-folder-contents">
+                      {assetsInFolder.map(renderMediaCard)}
+                    </div>
+                  )}
                 </div>
-              ))}
+              );
+            })}
+ 
+            {rootMedia.map(renderMediaCard)}
           </>
         )}
  

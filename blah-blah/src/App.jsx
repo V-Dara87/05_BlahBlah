@@ -5,11 +5,14 @@ import { ProjectJsonModal } from './components/ProjectJsonModal';
 import { ScriptEditorModal } from './components/ScriptEditorModal';
 import { ExportModal } from './components/ExportModal';
 import { NewProjectModal } from './components/NewProjectModal';
+import { SettingsModal } from './components/SettingsModal';
 import { DockLayout } from './dock/DockLayout';
 import { EditorContext } from './dock/EditorContext';
 import { useTimelinePlayback } from './hooks/useTimelinePlayback';
+import { useAudioRecorder } from './hooks/useAudioRecorder';
 import { INITIAL_TRACKS, DEFAULT_PIXELS_PER_SECOND } from './types';
 import { createSyntheticAudio, createSyntheticVideo } from './utils/sampleMedia';
+import { loadAudioSettings } from './services/audioSettings';
 import { DEFAULT_SCRIPTS, DEFAULT_PREFABS, createGameObject, createDefaultTransform } from './engine/ecs';
 import { 
   pickProjectDirectory, 
@@ -85,6 +88,14 @@ export function App() {
   const [isScriptEditorOpen, setIsScriptEditorOpen] = useState(false);
   const [editingScript, setEditingScript] = useState(null);
   const [isExportOpen, setIsExportOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+ 
+  // Voice Recording: which track (if any) is currently armed/recording,
+  // and the selected input device (persisted via Settings modal).
+  const [recordingTrackId, setRecordingTrackId] = useState(null);
+  const [audioInputDeviceId, setAudioInputDeviceId] = useState(() => loadAudioSettings().inputDeviceId);
+  const recordingStartTimeRef = useRef(0);
+  const { startRecording, stopRecording } = useAudioRecorder({ inputDeviceId: audioInputDeviceId });
  
   // Calculate timeline duration based on entity placements
   const calculatedDuration = useMemo(() => {
@@ -318,13 +329,13 @@ export function App() {
         createDefaultTransform({ x: 0, y: 0 }),
         {
           type: 'ShapeRenderer',
-          shapeType: 'rounded-rect',
+          shapeType: 'rect',
           width: 140,
           height: 140,
-          color: '#4f46e5',
+          color: '#ffffff',
           strokeColor: '#38bdf8',
-          strokeWidth: 2,
-          borderRadius: 12
+          strokeWidth: 0,
+          borderRadius: 0
         }
       ]
     });
@@ -447,9 +458,55 @@ export function App() {
   const handleAddMediaAsset = async (asset, originalFile = null) => {
     setMediaAssets(prev => [asset, ...prev]);
     if (projectFolderHandle && originalFile) {
-      await saveMediaFileToFolder(projectFolderHandle, originalFile).catch(() => {});
+      await saveMediaFileToFolder(projectFolderHandle, originalFile, asset.folder || null).catch(() => {});
     }
   };
+ 
+  // Voice Recording — toggled from the per-track record button in
+  // TrackHeader. Clicking record on a track arms that track (captures
+  // from the Settings-selected input device); clicking again (or the
+  // Square/stop icon) stops, saves the clip into Media > Recordings,
+  // and drops it onto that same track at the time recording started.
+  const handleToggleRecordTrack = useCallback(async (trackId) => {
+    if (recordingTrackId === trackId) {
+      // Stop & finalize this track's recording
+      const result = await stopRecording();
+      setRecordingTrackId(null);
+      if (!result || !result.blob || result.durationSec < 0.15) return;
+ 
+      const { blob, durationSec, mimeType } = result;
+      const ext = mimeType.includes('webm') ? 'webm' : 'wav';
+      const takeNumber = mediaAssets.filter(m => m.folder === 'Recordings').length + 1;
+      const fileName = `Recording_${String(takeNumber).padStart(3, '0')}.${ext}`;
+      const url = URL.createObjectURL(blob);
+      const file = new File([blob], fileName, { type: mimeType });
+ 
+      const asset = {
+        id: `asset-recording-${Date.now()}`,
+        name: fileName,
+        type: 'audio',
+        url,
+        duration: durationSec,
+        size: blob.size,
+        folder: 'Recordings',
+      };
+ 
+      await handleAddMediaAsset(asset, file);
+      handleAddMediaToTimeline(asset, trackId, recordingStartTimeRef.current);
+      return;
+    }
+ 
+    if (recordingTrackId) return; // another track is already recording
+ 
+    // Arm this track and start capturing at the current playhead position
+    recordingStartTimeRef.current = currentTime;
+    await startRecording();
+    setRecordingTrackId(trackId);
+  }, [recordingTrackId, currentTime, mediaAssets, startRecording, stopRecording]);
+ 
+  const handleAudioSettingsChanged = useCallback((settings) => {
+    setAudioInputDeviceId(settings.inputDeviceId);
+  }, []);
  
   const handleRemoveMediaAsset = (assetId) => {
     setMediaAssets(prev => prev.filter(a => a.id !== assetId));
@@ -715,6 +772,7 @@ export function App() {
         onOpenProjectFolder={handleOpenProjectFolder}
         onSaveProjectToDisk={handleSaveProjectToDisk}
         onLoadDemoScene={handleLoadDemoScene}
+        onOpenSettings={() => setIsSettingsOpen(true)}
       />
  
       {/* Unity-style dockable workspace: every panel below (Project,
@@ -735,6 +793,8 @@ export function App() {
           handleUpdateEntity, handleDeleteEntity, handleSaveAsPrefab,
           handleUpdateTrack, handleAddTrack, handleAddEmptyClip,
           handleDropItemOnTrack,
+          recordingTrackId,
+          onToggleRecordTrack: handleToggleRecordTrack,
           onAddMediaAsset: handleAddMediaAsset,
           onRemoveMediaAsset: handleRemoveMediaAsset,
           onRemovePrefab: handleRemovePrefab,
@@ -777,6 +837,12 @@ export function App() {
         tracks={tracks}
         scripts={scripts}
         totalDuration={calculatedDuration}
+      />
+ 
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        onSettingsChanged={handleAudioSettingsChanged}
       />
     </div>
   );

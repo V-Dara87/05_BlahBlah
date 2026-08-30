@@ -2331,3 +2331,217 @@
   color: #fff;
 }
  
+/* ========================================================
+   13. SHARED MODAL PRIMITIVES
+   (.modal-overlay / .modal-content / .modal-header / .modal-body /
+   .modal-footer / .modal-icon-badge / .modal-close-btn / .modal-subtitle
+   are referenced by NewProjectModal and SettingsModal but were missing
+   from the stylesheet — added here so both render correctly.)
+   ======================================================== */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+ 
+.modal-content {
+  width: 90%;
+  max-width: 480px;
+  background: var(--unity-panel);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 10px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
+  overflow: hidden;
+}
+ 
+.modal-icon-badge {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+ 
+.modal-subtitle {
+  font-size: 10px;
+  color: var(--unity-text-dim);
+  margin-top: 2px;
+}
+ 
+.modal-close-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--unity-text-dim);
+}
+ 
+.modal-close-btn:hover {
+  background: var(--unity-subtle);
+  color: #fff;
+}
+ 
+.modal-body {
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+ 
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+ 
+/* ========================================================
+   14. SETTINGS MODAL — audio input device + mic level meter
+   ======================================================== */
+.settings-modal {
+  max-width: 460px;
+}
+ 
+.settings-body {
+  gap: 18px;
+}
+ 
+.settings-select {
+  cursor: pointer;
+}
+ 
+.level-meter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+ 
+.level-meter-track {
+  flex: 1;
+  height: 10px;
+  background: var(--unity-darkest);
+  border: 1px solid var(--unity-border);
+  border-radius: 5px;
+  overflow: hidden;
+}
+ 
+.level-meter-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #10b981, #38bdf8);
+  transition: width 0.05s linear;
+}
+ 
+.level-meter-fill.hot {
+  background: linear-gradient(90deg, #f59e0b, #ef4444);
+}
+ 
+.level-meter-value {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--unity-text-dim);
+  min-width: 32px;
+  text-align: right;
+}
+ 
+/* ========================================================
+   15. PER-TRACK VOICE RECORDING (TrackHeader record button)
+   ======================================================== */
+.track-btn.record-track-btn {
+  color: #f87171;
+}
+ 
+.track-btn.record-track-btn:hover {
+  background: rgba(239, 68, 68, 0.18);
+  color: #ef4444;
+}
+ 
+.track-btn.record-track-btn.active-record {
+  background: #ef4444;
+  color: #fff;
+  animation: record-pulse 1.2s infinite;
+}
+ 
+.track-header-row.recording-active {
+  background: rgba(239, 68, 68, 0.08);
+  box-shadow: inset 2px 0 0 #ef4444;
+}
+ 
+@keyframes record-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.55); }
+  70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+ 
+.settings-hdr-btn {
+  color: var(--unity-text-muted);
+}
+ 
+.settings-hdr-btn:hover {
+  background: var(--unity-subtle);
+  color: #fff;
+}
+ 
+/* ========================================================
+   16. MEDIA TAB — FOLDER GROUPING (e.g. "Recordings")
+   ======================================================== */
+.media-folder-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+ 
+.media-folder-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--unity-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+ 
+.media-folder-header:hover {
+  color: #fff;
+}
+ 
+.media-folder-name {
+  flex: 1;
+  text-align: left;
+}
+ 
+.media-folder-count {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--unity-text-dim);
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border);
+  padding: 1px 5px;
+  border-radius: 8px;
+}
+ 
+.media-folder-contents {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 6px;
+  border-left: 1px solid var(--unity-border);
+  margin-left: 4px;
+}
+ 

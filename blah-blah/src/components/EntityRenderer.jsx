@@ -493,16 +493,21 @@ export function EntityRenderer({
                       style={{
                         width: `${shapeComp.width || 180}px`,
                         height: `${shapeComp.height || 180}px`,
-                        backgroundColor: shapeComp.color || '#4f46e5',
+                        backgroundColor: shapeComp.color || '#ffffff',
                         borderColor: shapeComp.strokeColor || '#38bdf8',
                         borderWidth: `${shapeComp.strokeWidth || 0}px`,
                         borderStyle: shapeComp.strokeWidth ? 'solid' : 'none',
+                        // Roundness — `?? 0` (not `||`) so an explicit 0 is
+                        // respected instead of silently falling back to a
+                        // default radius. Previously `shapeComp.borderRadius
+                        // ? ... : '12px'` meant a shape could never actually
+                        // render with sharp corners: 0 is falsy in JS, so it
+                        // always fell through to the 12px default regardless
+                        // of what the Inspector's Roundness field was set to.
                         borderRadius:
                           shapeComp.shapeType === 'circle'
                             ? '50%'
-                            : shapeComp.borderRadius
-                            ? `${shapeComp.borderRadius}px`
-                            : '12px',
+                            : `${shapeComp.borderRadius ?? 0}px`,
                       }}
                     />
                   )}
