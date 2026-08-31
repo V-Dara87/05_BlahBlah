@@ -1,21 +1,70 @@
 import { useState, useRef } from 'react';
-import { 
-  Download, 
-  X, 
-  Film, 
-  CheckCircle2, 
-  Sparkles, 
-  AlertCircle, 
-  Clock, 
-  Layers, 
-  Settings, 
-  HardDrive, 
+import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
+import {
+  Download,
+  X,
+  Film,
+  CheckCircle2,
+  Sparkles,
+  AlertCircle,
+  Clock,
+  Layers,
+  Settings,
+  HardDrive,
   Tv,
   Volume2
 } from 'lucide-react';
 import { formatTimecode } from '../utils/timeFormat';
-import { executeScriptComponent } from '../engine/scriptRunner';
-
+import {
+  drawExportFrame,
+  createCanvasContainerPool,
+  createVideoFrameProvider,
+  computeActiveEntitiesAtTime,
+} from '../engine/exportRunner';
+ 
+/**
+ * P1 #11 — MP4 export, Phase 1 (silent video only; audio is Phase 2, see
+ * the seam noted below).
+ *
+ * This is a deterministic frame-by-frame render, NOT a live real-time
+ * recording. Per the roadmap: export renders off `time`/`frame` values the
+ * same way Remotion does — a pure function of frame number, with no
+ * wall-clock playback and no real time elapsing between frames. The
+ * previous implementation here drove a live `requestAnimationFrame` loop
+ * into `MediaRecorder` + `canvas.captureStream()`, which is exactly the
+ * approach the roadmap flags as wrong for this: any dropped/late frame
+ * during rendering bakes irreversibly into the recording, and render time
+ * is locked to real video duration with no way to speed it up. This
+ * version iterates frame index `i` from 0 to the last frame explicitly,
+ * computes `time = i / fps` for each one, and forces the render tree to
+ * draw exactly that snapshot — a slow frame just makes export take longer,
+ * it never skips or duplicates a frame in the output.
+ *
+ * Frame drawing itself is delegated to engine/exportRunner.js, which reuses
+ * the same script-evaluation and CanvasRenderer mount/update functions
+ * EntityRenderer.jsx drives for live playback (see that file's header
+ * comment) — so any renderer type EntityRenderer already supports via
+ * those functions is automatically supported here too, with no
+ * export-specific branch needed for its motion/canvas-script behavior.
+ *
+ * Encoding uses the WebCodecs `VideoEncoder` + the already-installed
+ * `mp4-muxer` package (not ffmpeg.wasm) — frames are encoded and muxed as
+ * they're produced rather than held in memory as raw bitmaps, which keeps
+ * memory roughly flat regardless of export length (the roadmap's "don't
+ * make the known ffmpeg.wasm-class memory weak point needlessly worse"
+ * constraint, satisfied by not going through ffmpeg.wasm's own frame
+ * buffering at all).
+ */
+ 
+// Phase 2 seam: once OfflineAudioContext-based deterministic audio mixdown
+// exists (AudioSource/VideoRenderer volume tracks -> a single audio blob),
+// this is the one place a caller needs to plug in: pass the resulting
+// AudioData/AAC track into the Muxer's `audio` config and feed it to an
+// AudioEncoder alongside the video frame loop below. Everything else in
+// this component (the frame loop, the video seek/draw path, the progress
+// UI) stays the same.
+const PLUG_IN_AUDIO_HERE = null;
+ 
 export function ExportModal({
   isOpen,
   onClose,
@@ -24,40 +73,51 @@ export function ExportModal({
   tracks,
   scripts = [],
   totalDuration,
+  resolution,
 }) {
-  const [preset, setPreset] = useState('1080p'); // '720p' | '1080p' | '4k'
-  const [format, setFormat] = useState('mp4'); // 'mp4' | 'webm'
+  // Default to the project's own resolution whenever it has one — a
+  // portrait (or any non-1080p-landscape) project shouldn't silently open
+  // this modal pre-selected to 1080p landscape. Falls back to '1080p' only
+  // when the project genuinely has no resolution set yet.
+  const [preset, setPreset] = useState(
+    resolution?.width > 0 && resolution?.height > 0 ? 'project' : '1080p'
+  ); // '720p' | '1080p' | '4k' | 'project'
   const [fps, setFps] = useState('30');
   const [quality, setQuality] = useState('high');
-
+ 
   const [isExporting, setIsExporting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [currentSec, setCurrentSec] = useState(0);
   const [downloadUrl, setDownloadUrl] = useState(null);
   const [errorMessage, setErrorMessage] = useState(null);
-
-  const canvasRef = useRef(null);
+ 
+  const previewCanvasRef = useRef(null);
   const abortRef = useRef(false);
-
+ 
   if (!isOpen) return null;
-
+ 
+  const format = 'mp4'; // Phase 1 scope is MP4-only, per the export task.
   const targetFps = parseInt(fps) || 30;
-  const exportDuration = Math.max(1, Math.min(180, totalDuration));
-
-  const width = preset === '4k' ? 3840 : preset === '1080p' ? 1920 : 1280;
-  const height = preset === '4k' ? 2160 : preset === '1080p' ? 1080 : 720;
-  const scaleFactor = height / 720;
-
+  const exportDuration = Math.max(1 / targetFps, totalDuration || 0);
+  const totalFrames = Math.max(1, Math.ceil(exportDuration * targetFps));
+ 
+  const hasProjectRes = resolution?.width > 0 && resolution?.height > 0;
+  const width =
+    preset === '4k' ? 3840 : preset === '1080p' ? 1920 : preset === 'project' && hasProjectRes ? resolution.width : 1280;
+  const height =
+    preset === '4k' ? 2160 : preset === '1080p' ? 1080 : preset === 'project' && hasProjectRes ? resolution.height : 720;
+  // WebCodecs H.264 requires even dimensions.
+  const encodeWidth = width % 2 === 0 ? width : width - 1;
+  const encodeHeight = height % 2 === 0 ? height : height - 1;
+ 
   const bitrateMbps = quality === 'ultra' ? 16 : quality === 'high' ? 8 : 4;
-  const estSizeBytes = (bitrateMbps * 1000000 / 8) * exportDuration;
+  const estSizeBytes = (bitrateMbps * 1_000_000 / 8) * exportDuration;
   const estSizeMB = (estSizeBytes / (1024 * 1024)).toFixed(1);
-
+ 
   const handleCancelExport = () => {
     abortRef.current = true;
-    setIsExporting(false);
-    setProgress(0);
   };
-
+ 
   const handleStartExport = async () => {
     setIsExporting(true);
     setProgress(0);
@@ -65,423 +125,182 @@ export function ExportModal({
     setDownloadUrl(null);
     setErrorMessage(null);
     abortRef.current = false;
-
-    let audioContext = null;
-    const mediaElements = [];
-
+ 
+    const canvasContainers = createCanvasContainerPool();
+    const videoFrameProvider = createVideoFrameProvider();
+ 
+    // Offscreen render target — never attached to the page. The small
+    // <canvas> in the "rendering" UI state below is a separate, cheap
+    // live-progress preview, not the actual capture surface.
+    const renderCanvas = document.createElement('canvas');
+    renderCanvas.width = encodeWidth;
+    renderCanvas.height = encodeHeight;
+    const ctx = renderCanvas.getContext('2d', { alpha: false, willReadFrequently: false });
+ 
+    let videoEncoder = null;
+    let muxer = null;
+ 
     try {
-      // 1. Setup AudioContext and Stream Destination for audio mixing
-      audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      if (audioContext.state === 'suspended') {
-        await audioContext.resume();
+      if (typeof VideoEncoder === 'undefined') {
+        throw new Error('This browser does not support WebCodecs (VideoEncoder), which MP4 export requires.');
       }
-      const audioDestination = audioContext.createMediaStreamDestination();
-
-      // 2. Prepare Canvas
-      const canvas = canvasRef.current || document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d', { alpha: false });
-
-      // 3. Preload all Video and Audio clips
-      const videoClips = clips.filter(
-        c => c.type === 'video' || c.components?.some(comp => comp.type === 'VideoRenderer')
+ 
+      // 1. Preload every video source once, up front — not per-frame, so
+      // a slow-loading source doesn't stall in the middle of the frame
+      // loop and so the per-frame loop below can stay purely a seek+draw.
+      const videoEntities = clips.filter(
+        (c) => c.type === 'video' || c.components?.some((comp) => comp.type === 'VideoRenderer')
       );
-      const audioClips = clips.filter(
-        c => c.type === 'audio' || c.components?.some(comp => comp.type === 'AudioSource')
-      );
-
-      const loadedVideos = {};
-      const loadedAudios = {};
-
-      // Load Videos
       await Promise.all(
-        videoClips.map(c => {
-          return new Promise(resolve => {
-            const videoComp = c.components?.find(comp => comp.type === 'VideoRenderer');
-            const src = videoComp?.src || c.src;
-            if (!src) return resolve();
-
-            const v = document.createElement('video');
-            v.crossOrigin = 'anonymous';
-            v.src = src;
-            v.playsInline = true;
-            v.preload = 'auto';
-
-            const onReady = () => {
-              loadedVideos[c.id] = v;
-              mediaElements.push(v);
-              // Connect video audio to mixer if has audio
-              try {
-                const sourceNode = audioContext.createMediaElementSource(v);
-                const gainNode = audioContext.createGain();
-                gainNode.gain.value = videoComp?.volume ?? 1;
-                sourceNode.connect(gainNode);
-                gainNode.connect(audioDestination);
-              } catch {
-                // Video might be silent
-              }
-              resolve();
-            };
-
-            if (v.readyState >= 2) {
-              onReady();
-            } else {
-              v.onloadeddata = onReady;
-              v.onerror = () => resolve();
-              setTimeout(resolve, 2000);
-            }
-          });
+        videoEntities.map((c) => {
+          const videoComp = c.components?.find((comp) => comp.type === 'VideoRenderer');
+          const src = videoComp?.src || c.src;
+          return src ? videoFrameProvider.preload(c.id, src) : Promise.resolve();
         })
       );
-
-      // Load Audios & schedule Web Audio playback
-      await Promise.all(
-        audioClips.map(c => {
-          return new Promise(resolve => {
-            const audioComp = c.components?.find(comp => comp.type === 'AudioSource');
-            const src = audioComp?.src || c.src;
-            if (!src) return resolve();
-
-            const a = new Audio();
-            a.crossOrigin = 'anonymous';
-            a.src = src;
-            a.preload = 'auto';
-
-            const onReady = () => {
-              loadedAudios[c.id] = a;
-              mediaElements.push(a);
-              try {
-                const sourceNode = audioContext.createMediaElementSource(a);
-                const gainNode = audioContext.createGain();
-                gainNode.gain.value = audioComp?.volume ?? 1;
-                sourceNode.connect(gainNode);
-                gainNode.connect(audioDestination);
-              } catch {
-                // Audio connect fallback
-              }
-              resolve();
-            };
-
-            if (a.readyState >= 2) {
-              onReady();
-            } else {
-              a.onloadeddata = onReady;
-              a.onerror = () => resolve();
-              setTimeout(resolve, 2000);
-            }
-          });
-        })
-      );
-
-      // 4. Combine Video Canvas Stream + Mixed Audio Stream
-      const canvasStream = canvas.captureStream(targetFps);
-      const combinedTracks = [
-        ...canvasStream.getVideoTracks(),
-        ...audioDestination.stream.getAudioTracks()
-      ];
-      const combinedStream = new MediaStream(combinedTracks);
-
-      // 5. Select Best Supported Container Format (MP4 with AAC or WebM with Opus)
-      let selectedMimeType = 'video/webm; codecs=vp9,opus';
-      if (format === 'mp4') {
-        if (MediaRecorder.isTypeSupported('video/mp4; codecs=avc1,mp4a.40.2')) {
-          selectedMimeType = 'video/mp4; codecs=avc1,mp4a.40.2';
-        } else if (MediaRecorder.isTypeSupported('video/mp4')) {
-          selectedMimeType = 'video/mp4';
-        } else if (MediaRecorder.isTypeSupported('video/webm; codecs=vp9,opus')) {
-          selectedMimeType = 'video/webm; codecs=vp9,opus';
-        } else {
-          selectedMimeType = 'video/webm';
-        }
-      } else {
-        if (MediaRecorder.isTypeSupported('video/webm; codecs=vp9,opus')) {
-          selectedMimeType = 'video/webm; codecs=vp9,opus';
-        } else {
-          selectedMimeType = 'video/webm';
-        }
-      }
-
-      let mediaRecorder;
-      try {
-        mediaRecorder = new MediaRecorder(combinedStream, {
-          mimeType: selectedMimeType,
-          videoBitsPerSecond: bitrateMbps * 1_000_000,
-          audioBitsPerSecond: 192000
-        });
-      } catch {
-        mediaRecorder = new MediaRecorder(combinedStream);
-      }
-
-      const recordedChunks = [];
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) recordedChunks.push(e.data);
-      };
-
-      const recorderStopPromise = new Promise(resolve => {
-        mediaRecorder.onstop = () => {
-          const actualMime = selectedMimeType.includes('mp4') ? 'video/mp4' : 'video/webm';
-          const blob = new Blob(recordedChunks, { type: actualMime });
-          const url = URL.createObjectURL(blob);
-          resolve(url);
-        };
+ 
+      // 2. Set up the muxer + WebCodecs encoder.
+      muxer = new Muxer({
+        target: new ArrayBufferTarget(),
+        video: { codec: 'avc', width: encodeWidth, height: encodeHeight },
+        fastStart: 'in-memory',
+        // No `audio` config in Phase 1 — see PLUG_IN_AUDIO_HERE above for
+        // where that plugs in once the audio mixdown pipeline exists.
       });
-
-      mediaRecorder.start(100);
-
-      // 6. Synchronized Real-Time Composition Render Loop
-      const startTime = performance.now();
-
-      const renderTick = () => {
-        if (abortRef.current) {
-          mediaRecorder.stop();
-          mediaElements.forEach(el => el.pause());
-          if (audioContext) audioContext.close();
-          return;
-        }
-
-        const elapsedSec = (performance.now() - startTime) / 1000;
-        setCurrentSec(elapsedSec);
-        const currentProgress = Math.min(99, Math.round((elapsedSec / exportDuration) * 100));
-        setProgress(currentProgress);
-
-        if (elapsedSec >= exportDuration) {
-          // Finished rendering!
-          mediaElements.forEach(el => el.pause());
-          mediaRecorder.stop();
-          recorderStopPromise.then(url => {
-            setDownloadUrl(url);
-            setProgress(100);
-            setIsExporting(false);
-            if (audioContext) audioContext.close();
+ 
+      videoEncoder = new VideoEncoder({
+        output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+        error: (e) => {
+          throw e;
+        },
+      });
+      videoEncoder.configure({
+        codec: 'avc1.640028',
+        width: encodeWidth,
+        height: encodeHeight,
+        bitrate: bitrateMbps * 1_000_000,
+        framerate: targetFps,
+      });
+ 
+      // 3. The actual deterministic frame loop — a pure function of frame
+      // index, per the roadmap's Remotion-style contract. Cancellation is
+      // checked once per frame (frame-by-frame processing makes this a
+      // natural, cheap check rather than something bolted on afterward).
+      for (let i = 0; i < totalFrames; i++) {
+        if (abortRef.current) break;
+ 
+        const time = i / targetFps;
+ 
+        // Seek every active video entity to this exact frame's local time
+        // and await the browser actually landing the seek, before drawing
+        // anything — this is what makes the frame deterministic instead of
+        // "whatever happened to be decoded" at the moment we got to it.
+        const activeAtFrame = computeActiveEntitiesAtTime({
+          entities: clips,
+          tracks,
+          scripts,
+          time,
+          fps: targetFps,
+        });
+        await Promise.all(
+          activeAtFrame.map(({ entity }) => {
+            const isVideo = entity.type === 'video' || entity.components.some((c) => c.type === 'VideoRenderer');
+            if (!isVideo) return Promise.resolve();
+            const videoComp = entity.components.find((c) => c.type === 'VideoRenderer') || { src: entity.src };
+            const src = videoComp.src || entity.src;
+            if (!src) return Promise.resolve();
+            const localTime = time - entity.startTime;
+            return videoFrameProvider.seekTo(entity.id, src, videoComp, localTime);
+          })
+        );
+ 
+        if (abortRef.current) break;
+ 
+        drawExportFrame({
+          ctx,
+          width: encodeWidth,
+          height: encodeHeight,
+          time,
+          entities: clips,
+          tracks,
+          scripts,
+          fps: targetFps,
+          canvasContainers,
+          videoFrameProvider,
+        });
+ 
+        const frameTimestampUs = Math.round((i / targetFps) * 1_000_000);
+        const frameDurationUs = Math.round(1_000_000 / targetFps);
+        const videoFrame = new VideoFrame(renderCanvas, {
+          timestamp: frameTimestampUs,
+          duration: frameDurationUs,
+        });
+        // Keyframe roughly every 2 seconds — arbitrary-render-speed
+        // friendly (not tied to any real-time cadence) while keeping seek
+        // performance reasonable in the output file.
+        videoEncoder.encode(videoFrame, { keyFrame: i % (targetFps * 2) === 0 });
+        videoFrame.close();
+ 
+        // Let the encoder breathe rather than queuing every frame
+        // instantly — avoids unbounded internal encoder queue growth on
+        // long exports without slowing the loop down to real-time.
+        if (videoEncoder.encodeQueueSize > 4) {
+          await new Promise((resolve) => {
+            const check = () => {
+              if (videoEncoder.encodeQueueSize <= 2) resolve();
+              else requestAnimationFrame(check);
+            };
+            check();
           });
-          return;
         }
-
-        const currentTime = elapsedSec;
-
-        // Clear canvas
-        ctx.fillStyle = '#090a0f';
-        ctx.fillRect(0, 0, width, height);
-
-        // Filter active clips
-        const activeClips = clips.filter(c => {
-          if (c.active === false) return false;
-          if (currentTime < c.startTime || currentTime >= c.startTime + c.duration) return false;
-          const track = tracks.find(t => t.id === c.trackId);
-          if (track && (!track.visible || track.locked)) return false;
-          return true;
-        });
-
-        // Sync Audio elements playback
-        audioClips.forEach(c => {
-          const a = loadedAudios[c.id];
-          if (!a) return;
-          const isActive = currentTime >= c.startTime && currentTime < c.startTime + c.duration;
-          if (isActive) {
-            const audioComp = c.components?.find(comp => comp.type === 'AudioSource');
-            const speed = audioComp?.speed || 1;
-            const offset = audioComp?.mediaOffset || 0;
-            const localTime = (currentTime - c.startTime) * speed + offset;
-
-            if (Math.abs(a.currentTime - localTime) > 0.15) {
-              a.currentTime = Math.max(0, localTime);
-            }
-            if (a.paused) a.play().catch(() => {});
-          } else {
-            if (!a.paused) a.pause();
+ 
+        setCurrentSec(time);
+        setProgress(Math.min(99, Math.round(((i + 1) / totalFrames) * 100)));
+ 
+        // Cheap live-progress preview — draws the same canvas already
+        // rendered above, not a second render pass.
+        const previewCanvas = previewCanvasRef.current;
+        if (previewCanvas) {
+          const pctx = previewCanvas.getContext('2d');
+          if (pctx) {
+            previewCanvas.width = renderCanvas.width;
+            previewCanvas.height = renderCanvas.height;
+            pctx.drawImage(renderCanvas, 0, 0);
           }
-        });
-
-        // Sort back tracks first (Track 4 to Track 1)
-        const sortedClips = [...activeClips].sort((a, b) => {
-          const trackA = tracks.findIndex(t => t.id === a.trackId);
-          const trackB = tracks.findIndex(t => t.id === b.trackId);
-          return trackB - trackA;
-        });
-
-        // Render each active clip onto the canvas
-        for (const entity of sortedClips) {
-          const localTime = currentTime - entity.startTime;
-          let transform = entity.components?.find(c => c.type === 'Transform') || {
-            x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1
-          };
-
-          // Execute JS/TS Motion script if attached
-          const scriptComp = entity.components?.find(c => (c.type === 'ScriptComponent' || c.type === 'MonoBehaviour') && c.enabled);
-          if (scriptComp) {
-            const scriptDef = scripts.find(s => s.id === scriptComp.scriptId);
-            if (scriptDef && scriptDef.code) {
-              transform = executeScriptComponent({
-                scriptCode: scriptDef.code,
-                transform,
-                localTime,
-                clipDuration: entity.duration,
-                publicValues: scriptComp.props || {},
-                frame: Math.round(localTime * targetFps),
-                fps: targetFps
-              });
-            }
-          }
-
-          ctx.save();
-          ctx.globalAlpha = Math.max(0, Math.min(1, transform.opacity ?? 1));
-
-          // Draw 1: Video
-          const isVideo = entity.type === 'video' || entity.components?.some(c => c.type === 'VideoRenderer');
-          if (isVideo && loadedVideos[entity.id]) {
-            const v = loadedVideos[entity.id];
-            const videoComp = entity.components?.find(c => c.type === 'VideoRenderer');
-            const speed = videoComp?.speed || 1;
-            const offset = videoComp?.mediaOffset || 0;
-            const vidLocalTime = localTime * speed + offset;
-
-            if (Math.abs(v.currentTime - vidLocalTime) > 0.15) {
-              v.currentTime = Math.max(0, vidLocalTime);
-            }
-            if (v.paused) v.play().catch(() => {});
-
-            try {
-              const posX = width / 2 + transform.x * scaleFactor;
-              const posY = height / 2 + transform.y * scaleFactor;
-              ctx.translate(posX, posY);
-              ctx.rotate(((transform.rotation || 0) * Math.PI) / 180);
-              ctx.scale(transform.scaleX ?? 1, transform.scaleY ?? 1);
-
-              ctx.drawImage(v, -width / 2, -height / 2, width, height);
-            } catch {
-              const grad = ctx.createLinearGradient(0, 0, width, height);
-              grad.addColorStop(0, '#1e1b4b');
-              grad.addColorStop(1, '#0f172a');
-              ctx.fillStyle = grad;
-              ctx.fillRect(0, 0, width, height);
-            }
-          }
-
-          // Draw 2: Shape
-          const shapeComp = entity.components?.find(c => c.type === 'ShapeRenderer');
-          if (shapeComp) {
-            const posX = width / 2 + transform.x * scaleFactor;
-            const posY = height / 2 + transform.y * scaleFactor;
-            ctx.translate(posX, posY);
-            ctx.rotate(((transform.rotation || 0) * Math.PI) / 180);
-            ctx.scale(transform.scaleX ?? 1, transform.scaleY ?? 1);
-
-            const sw = (shapeComp.width || 180) * scaleFactor;
-            const sh = (shapeComp.height || 180) * scaleFactor;
-            ctx.fillStyle = shapeComp.color || '#4f46e5';
-
-            if (shapeComp.shapeType === 'circle') {
-              ctx.beginPath();
-              ctx.arc(0, 0, sw / 2, 0, Math.PI * 2);
-              ctx.fill();
-            } else {
-              const rad = (shapeComp.borderRadius || 12) * scaleFactor;
-              ctx.beginPath();
-              ctx.roundRect(-sw / 2, -sh / 2, sw, sh, rad);
-              ctx.fill();
-            }
-
-            if (shapeComp.strokeWidth) {
-              ctx.strokeStyle = shapeComp.strokeColor || '#38bdf8';
-              ctx.lineWidth = (shapeComp.strokeWidth || 2) * scaleFactor;
-              ctx.stroke();
-            }
-          }
-
-          // Draw 3: React Clip Component
-          const reactComp = entity.components?.find(c => c.type === 'ReactRenderer');
-          if (reactComp) {
-            const posX = width / 2 + transform.x * scaleFactor;
-            const posY = height / 2 + transform.y * scaleFactor;
-            ctx.translate(posX, posY);
-            ctx.rotate(((transform.rotation || 0) * Math.PI) / 180);
-            ctx.scale(transform.scaleX ?? 1, transform.scaleY ?? 1);
-
-            const cardW = 340 * scaleFactor;
-            const cardH = 80 * scaleFactor;
-            const cardRad = 20 * scaleFactor;
-            const accent = reactComp.props?.accentColor || reactComp.props?.color || '#6366f1';
-
-            // Background glass box
-            ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-            ctx.beginPath();
-            ctx.roundRect(-cardW / 2, -cardH / 2, cardW, cardH, cardRad);
-            ctx.fill();
-
-            // Border
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-            ctx.lineWidth = 1.5 * scaleFactor;
-            ctx.stroke();
-
-            // Badge
-            if (reactComp.props?.badge) {
-              ctx.fillStyle = accent;
-              ctx.beginPath();
-              ctx.roundRect(-cardW / 2 + 16 * scaleFactor, -14 * scaleFactor, 100 * scaleFactor, 28 * scaleFactor, 14 * scaleFactor);
-              ctx.fill();
-
-              ctx.font = `800 ${Math.round(11 * scaleFactor)}px Inter, sans-serif`;
-              ctx.fillStyle = '#ffffff';
-              ctx.textAlign = 'center';
-              ctx.textBaseline = 'middle';
-              ctx.fillText(String(reactComp.props.badge), -cardW / 2 + 66 * scaleFactor, 0);
-            }
-
-            // Title
-            const titleText = reactComp.props?.title || reactComp.props?.text || entity.name;
-            ctx.font = `800 ${Math.round(20 * scaleFactor)}px Inter, sans-serif`;
-            ctx.fillStyle = '#ffffff';
-            ctx.textAlign = reactComp.props?.badge ? 'left' : 'center';
-            ctx.textBaseline = 'middle';
-            const textX = reactComp.props?.badge ? (-cardW / 2 + 130 * scaleFactor) : 0;
-            ctx.fillText(String(titleText), textX, 0);
-          }
-
-          // Draw 4: Text
-          const textComp = entity.components?.find(c => c.type === 'TextRenderer');
-          if (textComp) {
-            const posX = width / 2 + transform.x * scaleFactor;
-            const posY = height / 2 + transform.y * scaleFactor;
-            ctx.translate(posX, posY);
-            ctx.rotate(((transform.rotation || 0) * Math.PI) / 180);
-            ctx.scale(transform.scaleX ?? 1, transform.scaleY ?? 1);
-
-            const fontSize = Math.round((textComp.fontSize || 38) * scaleFactor);
-            ctx.font = `800 ${fontSize}px ${textComp.fontFamily || 'Inter, sans-serif'}`;
-            ctx.fillStyle = textComp.fontColor || '#ffffff';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-
-            if (textComp.shadowColor) {
-              ctx.shadowColor = textComp.shadowColor;
-              ctx.shadowBlur = (textComp.shadowBlur || 14) * scaleFactor;
-            } else {
-              ctx.shadowColor = 'rgba(0,0,0,0.9)';
-              ctx.shadowBlur = 12 * scaleFactor;
-            }
-
-            ctx.fillText(textComp.text || entity.name, 0, 0);
-            ctx.shadowBlur = 0;
-          }
-
-          ctx.restore();
         }
-
-        // Schedule next frame
-        requestAnimationFrame(renderTick);
-      };
-
-      requestAnimationFrame(renderTick);
+      }
+ 
+      if (abortRef.current) {
+        videoEncoder.close();
+        return;
+      }
+ 
+      await videoEncoder.flush();
+      videoEncoder.close();
+      muxer.finalize();
+ 
+      const { buffer } = muxer.target;
+      const blob = new Blob([buffer], { type: 'video/mp4' });
+      const url = URL.createObjectURL(blob);
+ 
+      setDownloadUrl(url);
+      setProgress(100);
     } catch (err) {
       console.error('Export error:', err);
       setErrorMessage(`Export failed: ${err.message || err}`);
+      try {
+        videoEncoder?.close();
+      } catch {
+        // already closed
+      }
+    } finally {
+      videoFrameProvider.disposeAll();
+      canvasContainers.disposeAll();
       setIsExporting(false);
-      mediaElements.forEach(el => el.pause());
-      if (audioContext) audioContext.close();
+      void PLUG_IN_AUDIO_HERE;
     }
   };
-
+ 
   return (
     <div className="modal-backdrop" onClick={isExporting ? null : onClose}>
       <div className="modal-card export-hub-modal" onClick={(e) => e.stopPropagation()}>
@@ -492,8 +311,8 @@ export function ExportModal({
               <Film size={16} />
             </div>
             <div>
-              <h3>Render Video with Audio</h3>
-              <span className="export-header-sub">Multi-Track Video & Audio Compositor • {projectName}</span>
+              <h3>Render Video</h3>
+              <span className="export-header-sub">Deterministic Frame-by-Frame MP4 Export • {projectName}</span>
             </div>
           </div>
           {!isExporting && (
@@ -502,7 +321,7 @@ export function ExportModal({
             </button>
           )}
         </div>
-
+ 
         <div className="modal-body export-body">
           {errorMessage && (
             <div className="json-error-banner">
@@ -510,7 +329,7 @@ export function ExportModal({
               <span>{errorMessage}</span>
             </div>
           )}
-
+ 
           {/* STATE 1: COMPLETED */}
           {downloadUrl ? (
             <div className="export-completed-card">
@@ -519,16 +338,16 @@ export function ExportModal({
               </div>
               <h3>Render Complete!</h3>
               <p className="completed-desc">
-                Your edited composition with all video, audio, and motion layers was exported into a single file at <strong>{width}×{height} ({preset.toUpperCase()})</strong>.
+                Your composition's video, shapes, typography, and motion-script layers were rendered frame-by-frame into a single file at <strong>{encodeWidth}×{encodeHeight} ({preset === 'project' ? 'Project Res' : preset.toUpperCase()})</strong>.
               </p>
-
+ 
               <div className="rendered-summary-tags">
                 <span className="tag-pill"><Clock size={12} /> {formatTimecode(totalDuration)}</span>
-                <span className="tag-pill"><Volume2 size={12} /> Synced Audio</span>
+                <span className="tag-pill"><Volume2 size={12} /> Silent (Phase 1)</span>
                 <span className="tag-pill"><HardDrive size={12} /> ~{estSizeMB} MB</span>
                 <span className="tag-pill"><Tv size={12} /> {format.toUpperCase()}</span>
               </div>
-
+ 
               <div className="completed-actions">
                 <a
                   href={downloadUrl}
@@ -538,8 +357,8 @@ export function ExportModal({
                   <Download size={18} />
                   <span>Download Video ({format.toUpperCase()})</span>
                 </a>
-
-                <button 
+ 
+                <button
                   className="unity-btn unity-btn-secondary"
                   onClick={() => {
                     setDownloadUrl(null);
@@ -551,31 +370,31 @@ export function ExportModal({
               </div>
             </div>
           ) : isExporting ? (
-            /* STATE 2: LIVE RENDERING MONITOR */
+            /* STATE 2: FRAME-BY-FRAME RENDERING MONITOR */
             <div className="export-rendering-card">
-              {/* Mini live rendering monitor canvas */}
               <div className="export-live-monitor-frame">
-                <canvas ref={canvasRef} className="export-live-canvas" />
+                <canvas ref={previewCanvasRef} className="export-live-canvas" />
               </div>
-
+ 
               <div className="render-meta-row">
                 <span className="render-status-sub">
-                  Rendering: {formatTimecode(currentSec)} / {formatTimecode(exportDuration)} ({progress}%)
+                  Rendering frame {Math.min(totalFrames, Math.round(currentSec * targetFps) + 1)} / {totalFrames}
+                  {' '}({formatTimecode(currentSec)} / {formatTimecode(exportDuration)}) — {progress}%
                 </span>
               </div>
-
+ 
               <div className="render-bar-track">
-                <div 
+                <div
                   className="render-bar-progress"
                   style={{ width: `${progress}%` }}
                 />
               </div>
-
+ 
               <p className="render-caption">
-                Compositing video frames, mixing multi-track audio, and rendering BlahTween animations into a single file...
+                Rendering each frame as a deterministic snapshot (not live playback) and encoding it into MP4 as it goes — render speed isn't tied to video duration.
               </p>
-
-              <button 
+ 
+              <button
                 className="unity-btn unity-btn-danger-text"
                 onClick={handleCancelExport}
               >
@@ -591,7 +410,18 @@ export function ExportModal({
                 <div className="export-section">
                   <label className="section-label">Resolution Preset</label>
                   <div className="preset-cards-row">
-                    <div 
+                    {hasProjectRes && (
+                      <div
+                        className={`preset-card ${preset === 'project' ? 'active' : ''}`}
+                        onClick={() => setPreset('project')}
+                      >
+                        <div className="preset-tag popular">Project</div>
+                        <span className="preset-name">Project Resolution</span>
+                        <span className="preset-res">{resolution.width} × {resolution.height}</span>
+                      </div>
+                    )}
+ 
+                    <div
                       className={`preset-card ${preset === '720p' ? 'active' : ''}`}
                       onClick={() => setPreset('720p')}
                     >
@@ -599,8 +429,8 @@ export function ExportModal({
                       <span className="preset-name">720p HD</span>
                       <span className="preset-res">1280 × 720</span>
                     </div>
-
-                    <div 
+ 
+                    <div
                       className={`preset-card ${preset === '1080p' ? 'active' : ''}`}
                       onClick={() => setPreset('1080p')}
                     >
@@ -608,8 +438,8 @@ export function ExportModal({
                       <span className="preset-name">1080p Full HD</span>
                       <span className="preset-res">1920 × 1080</span>
                     </div>
-
-                    <div 
+ 
+                    <div
                       className={`preset-card ${preset === '4k' ? 'active' : ''}`}
                       onClick={() => setPreset('4k')}
                     >
@@ -619,21 +449,16 @@ export function ExportModal({
                     </div>
                   </div>
                 </div>
-
-                {/* Container & Framerate */}
+ 
+                {/* Framerate & Quality */}
                 <div className="export-params-row">
                   <div className="param-field">
                     <label className="param-label">Format</label>
-                    <select
-                      className="unity-select"
-                      value={format}
-                      onChange={(e) => setFormat(e.target.value)}
-                    >
-                      <option value="mp4">MP4 Video</option>
-                      <option value="webm">WebM Video</option>
+                    <select className="unity-select" value={format} disabled>
+                      <option value="mp4">MP4 Video (H.264)</option>
                     </select>
                   </div>
-
+ 
                   <div className="param-field">
                     <label className="param-label">Framerate</label>
                     <select
@@ -646,7 +471,7 @@ export function ExportModal({
                       <option value="60">60 FPS (Smooth 60fps)</option>
                     </select>
                   </div>
-
+ 
                   <div className="param-field">
                     <label className="param-label">Quality</label>
                     <select
@@ -660,45 +485,48 @@ export function ExportModal({
                     </select>
                   </div>
                 </div>
-
+ 
                 <button
                   className="unity-btn unity-btn-primary render-submit-btn"
                   onClick={handleStartExport}
                 >
                   <Sparkles size={16} />
-                  <span>Start Export ({width}×{height})</span>
+                  <span>Start Export ({encodeWidth}×{encodeHeight})</span>
                 </button>
               </div>
-
+ 
               {/* Right Column: Video Specs & Summary */}
               <div className="export-summary-col">
                 <span className="summary-title">Composition Overview</span>
-
+ 
                 <div className="summary-stat-grid">
                   <div className="stat-tile">
                     <span className="stat-tile-label"><Clock size={11} /> Duration</span>
-                    <span className="stat-tile-val">{formatTimecode(totalDuration)}</span>
+                    <span className="stat-tile-val">{formatTimecode(totalDuration)} ({totalFrames} frames)</span>
                   </div>
-
+ 
                   <div className="stat-tile">
-                    <span className="stat-tile-label"><Volume2 size={11} /> Audio Tracks</span>
-                    <span className="stat-tile-val">Mixed & Synced</span>
+                    <span className="stat-tile-label"><Volume2 size={11} /> Audio</span>
+                    <span className="stat-tile-val">Silent (Phase 1)</span>
                   </div>
-
+ 
                   <div className="stat-tile">
                     <span className="stat-tile-label"><Layers size={11} /> Layers</span>
                     <span className="stat-tile-val">{tracks.length} Tracks / {clips.length} Clips</span>
                   </div>
-
+ 
                   <div className="stat-tile">
                     <span className="stat-tile-label"><HardDrive size={11} /> Est. Size</span>
                     <span className="stat-tile-val">~{estSizeMB} MB</span>
                   </div>
                 </div>
-
+ 
                 <div className="summary-info-banner">
                   <Settings size={13} className="text-cyan" />
-                  <span>Exports all video tracks, background audio, voiceover, shapes, typography, and C# BlahTween motion animations into one single playable video file.</span>
+                  <span>
+                    Renders every frame as a deterministic snapshot of the exact composition — video, shapes, typography,
+                    and BlahTween/CanvasRenderer motion — then encodes it to H.264 MP4. Audio muxing lands in Phase 2.
+                  </span>
                 </div>
               </div>
             </div>
@@ -708,3 +536,4 @@ export function ExportModal({
     </div>
   );
 }
+ 

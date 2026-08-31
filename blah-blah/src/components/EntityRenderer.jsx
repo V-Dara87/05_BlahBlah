@@ -1,4 +1,4 @@
-import { useRef, useEffect, useLayoutEffect, useMemo } from 'react';
+import { useRef, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import {
   Play,
   Pause,
@@ -65,6 +65,48 @@ export function EntityRenderer({
   const canvasContainerRefs = useRef({});
   const wasPlayingRef = useRef(isPlaying);
   const gizmoDragRef = useRef(null);
+ 
+  // Coordinate-system fix -- entity x/y/width/height/fontSize/etc. are
+  // authored (and stored) as literal project-resolution pixels (e.g. `x:
+  // 700` means 700px out of a 1080px-wide canvas), the same units export's
+  // `exportRunner.js` draws onto its full-resolution canvas with. But
+  // `.preview-canvas-frame` itself renders at whatever on-screen size fits
+  // the viewport (CSS `max-width`/`max-height` + `aspect-ratio` -- see
+  // App.css), which for a portrait/large-resolution project is almost
+  // always *smaller* than the real resolution. Previously every entity's
+  // transform was applied as raw CSS px directly inside that shrunk frame,
+  // so the same `width: 700` shape that's correctly ~65% of a 1080px-wide
+  // export canvas ended up looking enormous relative to, say, a 380px-wide
+  // on-screen frame -- a live-preview-vs-export size mismatch that grew
+  // with how much smaller the frame rendered than the true resolution.
+  //
+  // Fix: track how much smaller the frame currently renders vs the real
+  // resolution (`frameScale`), and apply that as a single CSS
+  // `transform: scale(frameScale)` on a wrapper sized to the *real*
+  // resolution in px -- every entity's own x/y/width/etc. stay untouched,
+  // literal project-pixel math (identical to what export does), and this
+  // one wrapper scale is what makes it visually fit the smaller on-screen
+  // frame. At `frameScale === 1` (frame rendered at its true resolution
+  // size) this is a no-op, which is exactly export's situation.
+  const [frameScale, setFrameScale] = useState(1);
+ 
+  useEffect(() => {
+    const frameEl = canvasFrameRef.current;
+    if (!frameEl) return;
+ 
+    const updateScale = () => {
+      const resWidth = resolution?.width > 0 ? resolution.width : FALLBACK_RESOLUTION.width;
+      if (frameEl.clientWidth > 0 && resWidth > 0) {
+        setFrameScale(frameEl.clientWidth / resWidth);
+      }
+    };
+ 
+    updateScale();
+ 
+    const observer = new ResizeObserver(updateScale);
+    observer.observe(frameEl);
+    return () => observer.disconnect();
+  }, [resolution?.width, resolution?.height]);
  
   // P0 perf fix -- computedEntities used to be rebuilt as a brand-new array
   // literal on every single render (regardless of whether entities, tracks,
@@ -151,6 +193,22 @@ export function EntityRenderer({
       };
     });
   }, [entities, tracks, scripts, currentTime]);
+ 
+  // Track-order -> stacking order. Previously every overlay entity got the
+  // same flat zIndex (15, or 30 if selected) regardless of which track it
+  // was on, and every video entity got a flat 5 -- so moving a clip to a
+  // higher or lower track had literally no effect on what rendered in
+  // front. Tracks are only ever appended (`setTracks(prev => [...prev,
+  // ...])` in App.jsx -- there's no reorder feature yet), so a track's
+  // array index is also its creation order and its number (Track 1, Track
+  // 2, ...). Convention: a HIGHER track number/index renders IN FRONT of
+  // lower ones (Track 3 sits on top of Track 2 and Track 1). Entities on a
+  // track not found in `tracks` (shouldn't normally happen) fall back to
+  // the back-most layer rather than crashing or defaulting to front.
+  const trackZIndexOf = (trackId) => {
+    const idx = tracks.findIndex((t) => t.id === trackId);
+    return idx === -1 ? 0 : idx + 1;
+  };
  
   // Separate video clips (background layer) from overlay graphics/text/react/canvas.
   // Derived from computedEntities (already memoized above), so these only
@@ -333,12 +391,15 @@ export function EntityRenderer({
     e.preventDefault();
     onSelectEntity(entity.id);
  
-    const frameEl = canvasFrameRef.current;
-    const frameRect = frameEl ? frameEl.getBoundingClientRect() : null;
-    // Screen px -> logical px ratio: the frame's rendered width vs the
-    // logical coordinate space (its own clientWidth, since x/y positions
-    // are defined relative to this element regardless of CSS scaling).
-    const scale = frameRect && frameEl.clientWidth ? frameRect.width / frameEl.clientWidth : 1;
+    // Screen px -> project px: entities now render in true project-pixel
+    // space (see preview-entities-layer's scale(frameScale) wrapper above),
+    // so a screen-space drag delta must be divided by that same
+    // frameScale to land as the correct project-pixel delta. Previously
+    // this computed frameRect.width / frameEl.clientWidth, which measures
+    // the same element two ways and is always ~1 regardless of how much
+    // smaller the frame renders than the real resolution -- that never
+    // actually captured the project-vs-screen scale difference.
+    const scale = frameScale || 1;
  
     gizmoDragRef.current = {
       mode: 'move',
@@ -377,8 +438,9 @@ export function EntityRenderer({
     const frameRect = frameEl.getBoundingClientRect();
     // Rotation pivot is the entity's own center on screen: frame origin
     // (top-left) + frame center + the entity's current logical x/y scaled
-    // to screen px (mirrors the translate(-50%, -50%) + x/y used to render it).
-    const scale = frameEl.clientWidth ? frameRect.width / frameEl.clientWidth : 1;
+    // to screen px via frameScale (mirrors the preview-entities-layer
+    // scale(frameScale) wrapper used to render it).
+    const scale = frameScale || 1;
     const pivotX = frameRect.left + frameRect.width / 2 + transform.x * scale;
     const pivotY = frameRect.top + frameRect.height / 2 + transform.y * scale;
  
@@ -452,6 +514,25 @@ export function EntityRenderer({
             {safeResWidth}×{safeResHeight}
           </div>
  
+          {/* Resolution-space entity layer -- fixed to the project's real
+              pixel dimensions so every entity's x/y/width/height/etc. below
+              are literal project pixels (identical meaning to what
+              exportRunner.js draws onto its full-resolution canvas). The
+              single `scale(frameScale)` here is the only place screen-size
+              adaptation happens; nothing below needs to know the frame is
+              rendering smaller than the real resolution. */}
+          <div
+            className="preview-entities-layer"
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: `${safeResWidth}px`,
+              height: `${safeResHeight}px`,
+              transform: `scale(${frameScale})`,
+              transformOrigin: 'top left',
+            }}
+          >
           {/* 1. Background Video Layer */}
           {activeVideoItems.map(({ entity, transform }) => {
             const isSelected = entity.id === selectedEntityId;
@@ -465,7 +546,14 @@ export function EntityRenderer({
                 style={{
                   transform: `translate(${transform.x}px, ${transform.y}px) rotate(${transform.rotation}deg) scale(${transform.scaleX}, ${transform.scaleY})`,
                   opacity: transform.opacity,
-                  zIndex: 5,
+                  // Unified with the overlay layer below: both use the same
+                  // 100 + trackZIndexOf(...) base so a video and a shape/
+                  // text/canvas entity stack correctly relative to each
+                  // other by track order too, not just within their own
+                  // type. Selected entity gets a large boost so it's always
+                  // visible on top while you're actively editing it,
+                  // regardless of its track.
+                  zIndex: (isSelected ? 1000 : 0) + 100 + trackZIndexOf(entity.trackId),
                 }}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -538,7 +626,7 @@ export function EntityRenderer({
                 style={{
                   transform: `translate(calc(-50% + ${transform.x}px), calc(-50% + ${transform.y}px)) rotate(${transform.rotation}deg) scale(${transform.scaleX}, ${transform.scaleY})`,
                   opacity: transform.opacity,
-                  zIndex: isSelected ? 30 : 15,
+                  zIndex: (isSelected ? 1000 : 0) + 100 + trackZIndexOf(entity.trackId),
                   willChange: 'transform, opacity',
                 }}
                 onClick={(e) => {
@@ -637,6 +725,7 @@ export function EntityRenderer({
               </div>
             );
           })}
+          </div>
  
           {computedEntities.length === 0 && (
             <div className="preview-empty-screen">

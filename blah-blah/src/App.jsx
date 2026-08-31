@@ -928,6 +928,7 @@ export function App() {
         tracks={tracks}
         scripts={scripts}
         totalDuration={calculatedDuration}
+        resolution={resolution}
       />
  
       <SettingsModal
