@@ -6,11 +6,12 @@ import { ScriptEditorModal } from './components/ScriptEditorModal';
 import { ExportModal } from './components/ExportModal';
 import { NewProjectModal } from './components/NewProjectModal';
 import { SettingsModal } from './components/SettingsModal';
+import { HubScreen } from './components/HubScreen';
 import { DockLayout } from './dock/DockLayout';
 import { EditorContext } from './dock/EditorContext';
 import { useTimelinePlayback } from './hooks/useTimelinePlayback';
 import { useAudioRecorder } from './hooks/useAudioRecorder';
-import { INITIAL_TRACKS, DEFAULT_PIXELS_PER_SECOND } from './types';
+import { INITIAL_TRACKS, DEFAULT_PIXELS_PER_SECOND, DEFAULT_RESOLUTION } from './types';
 import { createSyntheticAudio, createSyntheticVideo } from './utils/sampleMedia';
 import { loadAudioSettings } from './services/audioSettings';
 import { DEFAULT_SCRIPTS, DEFAULT_PREFABS, createGameObject, createDefaultTransform } from './engine/ecs';
@@ -20,12 +21,25 @@ import {
   saveProjectToDirectory, 
   saveMediaFileToFolder, 
   checkScriptsForChanges,
-  writeScriptFile
+  writeScriptFile,
+  verifyPermission
 } from './services/projectFileSystem';
+import { recordProjectCreated, recordProjectOpened } from './services/recentProjects';
 import './App.css';
  
 export function App() {
+  // Which top-level screen is showing. 'hub' is the landing screen (recent
+  // projects + New/Open), shown on every app load before the editor mounts
+  // — a separate screen from NewProjectModal, not a replacement for it.
+  // Any successful create/open/demo-load flips this to 'editor'.
+  const [screen, setScreen] = useState('hub');
   const [projectName, setProjectName] = useState('new-project');
+  // Actual pixel dimensions the project renders/exports at (see
+  // NewProjectModal's resolution picker + types.js RESOLUTION_PRESETS).
+  // EntityRenderer's preview frame derives its aspect-ratio from this
+  // instead of a hardcoded 16:9, so the Game preview always matches
+  // whatever the project was created at.
+  const [resolution, setResolution] = useState(DEFAULT_RESOLUTION);
  
   // Undo/Redo: entities, tracks, scripts & prefabs live together in one
   // history stack so a single Ctrl+Z reverts the last logical edit across
@@ -257,6 +271,7 @@ export function App() {
       });
       setMediaAssets(demoMedia);
       setSelectedEntityId(demoGOs[0].id);
+      setScreen('editor');
     } catch (err) {
       console.warn('Could not load demo scene:', err);
     }
@@ -557,6 +572,20 @@ export function App() {
   const handleApplyProjectJson = (projectJson) => {
     if (projectJson.name) setProjectName(projectJson.name);
     if (projectJson.mediaAssets) setMediaAssets(projectJson.mediaAssets);
+    // Resolution is part of the pasted/edited JSON now too -- only apply it
+    // if both dimensions are actually valid positive numbers, so a partial
+    // or malformed edit doesn't collapse the preview to a 0x0/NaN aspect
+    // ratio.
+    if (
+      projectJson.resolution &&
+      Number(projectJson.resolution.width) > 0 &&
+      Number(projectJson.resolution.height) > 0
+    ) {
+      setResolution({
+        width: Math.round(Number(projectJson.resolution.width)),
+        height: Math.round(Number(projectJson.resolution.height)),
+      });
+    }
  
     const touchesHistoryState = projectJson.tracks || projectJson.scripts || projectJson.prefabs || projectJson.entities;
     if (touchesHistoryState) {
@@ -573,51 +602,90 @@ export function App() {
   const projectState = useMemo(() => ({
     projectName,
     fps: 30,
-    width: 1920,
-    height: 1080,
+    resolution,
+    width: resolution.width,
+    height: resolution.height,
     tracks,
     scripts,
     prefabs,
     mediaAssets,
     entities
-  }), [projectName, tracks, scripts, prefabs, mediaAssets, entities]);
+  }), [projectName, resolution, tracks, scripts, prefabs, mediaAssets, entities]);
  
   // Handle Project Creation from New Project Modal — a brand new project
   // folder, so it gets a brand new (empty) undo history too.
   const handleProjectCreated = (result) => {
     setProjectFolderHandle(result.dirHandle);
     setProjectName(result.projectName);
+    setResolution(result.resolution || DEFAULT_RESOLUTION);
     resetProjectHistoryState({ entities: [], tracks: result.tracks, scripts: [], prefabs: [] });
     setMediaAssets([]);
     setSelectedEntityId(null);
     setSaveStatus('saved');
+    setScreen('editor');
+    // Record it in the Hub's recent/known-folders list. The folder's
+    // parent isn't tracked here, so pass null — NewProjectModal already
+    // confirmed the folder itself is fresh, so a name collision with an
+    // unrelated same-named folder elsewhere on disk is an acceptable
+    // rare edge case for de-duping recent entries.
+    recordProjectCreated(result.dirHandle, result.projectName, null).catch((err) => {
+      console.warn('Could not record project in recent list:', err);
+    });
   };
  
-  // Open & Load an existing Project Folder from Disk
-  const handleOpenProjectFolder = useCallback(async () => {
-    try {
-      const dirHandle = await pickProjectDirectory();
-      const loaded = await loadProjectFromDirectory(dirHandle, INITIAL_TRACKS);
+  // Shared by "Open Folder" (hub + in-editor header) — loads a directory
+  // handle into the editor and records it as a known/recent project.
+  const openProjectFromHandle = useCallback(async (dirHandle) => {
+    const loaded = await loadProjectFromDirectory(dirHandle, INITIAL_TRACKS);
  
-      setProjectFolderHandle(dirHandle);
-      setProjectName(loaded.projectName);
-      // Opening a different project folder is a fresh start, not an edit —
-      // fresh undo history, same as New Project / Load Demo Scene.
-      resetProjectHistoryState({
-        entities: loaded.entities, // 0 clips if empty project!
-        tracks: loaded.tracks,
-        scripts: loaded.scripts,   // only files actually on disk
-        prefabs: loaded.prefabs,
-      });
-      setMediaAssets(loaded.mediaAssets);
-      setSelectedEntityId(null);
-      setSaveStatus('saved');
+    setProjectFolderHandle(dirHandle);
+    setProjectName(loaded.projectName);
+    setResolution(loaded.resolution || DEFAULT_RESOLUTION);
+    // Opening a different project folder is a fresh start, not an edit —
+    // fresh undo history, same as New Project / Load Demo Scene.
+    resetProjectHistoryState({
+      entities: loaded.entities, // 0 clips if empty project!
+      tracks: loaded.tracks,
+      scripts: loaded.scripts,   // only files actually on disk
+      prefabs: loaded.prefabs,
+    });
+    setMediaAssets(loaded.mediaAssets);
+    setSelectedEntityId(null);
+    setSaveStatus('saved');
+    setScreen('editor');
+ 
+    recordProjectOpened(dirHandle, loaded.projectName, null).catch((err) => {
+      console.warn('Could not record project in recent list:', err);
+    });
+  }, [resetProjectHistoryState]);
+ 
+  // Open & Load an existing Project Folder from Disk via the native picker
+  // (used by the in-editor "Open" button, and by the Hub's "Open Folder"
+  // action once it has a handle from its own picker call).
+  const handleOpenProjectFolder = useCallback(async (dirHandleFromCaller) => {
+    try {
+      const dirHandle = dirHandleFromCaller || (await pickProjectDirectory());
+      await openProjectFromHandle(dirHandle);
     } catch (err) {
       if (err.name !== 'AbortError') {
         alert(`Failed to open project folder: ${err.message}`);
       }
     }
-  }, [resetProjectHistoryState]);
+  }, [openProjectFromHandle]);
+ 
+  // Reopen a project directly from a Hub "recent" entry — it already has a
+  // stored dirHandle, so this just needs to re-confirm permission (browsers
+  // don't persist FS Access permission grants across app restarts even
+  // though they persist the handle itself) before loading it the same way
+  // as any other Open Folder flow. Left to throw on failure — the Hub
+  // screen surfaces the error inline instead of via alert().
+  const handleOpenRecentProject = useCallback(async (entry) => {
+    const hasPermission = await verifyPermission(entry.dirHandle, true);
+    if (!hasPermission) {
+      throw new Error(`Permission to access "${entry.name}" was not granted.`);
+    }
+    await openProjectFromHandle(entry.dirHandle);
+  }, [openProjectFromHandle]);
  
   // Save Project to Disk manually
   const handleSaveProjectToDisk = useCallback(async () => {
@@ -740,6 +808,28 @@ export function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [togglePlay, selectedEntityId, handleSplitEntity, handleDeleteEntity, seek, currentTime, handleSaveProjectToDisk, undo, redo]);
  
+  if (screen === 'hub') {
+    return (
+      <>
+        <HubScreen
+          onNewProject={() => setIsNewProjectOpen(true)}
+          onOpenProjectFolder={handleOpenProjectFolder}
+          onOpenRecentProject={handleOpenRecentProject}
+        />
+        {/* New Project modal is reachable from the Hub too — kept mounted
+            here (rather than duplicated inside HubScreen) so project
+            creation always goes through the same handleProjectCreated
+            path regardless of which screen launched it. */}
+        <NewProjectModal
+          isOpen={isNewProjectOpen}
+          onClose={() => setIsNewProjectOpen(false)}
+          defaultTracks={INITIAL_TRACKS}
+          onProjectCreated={handleProjectCreated}
+        />
+      </>
+    );
+  }
+ 
   return (
     <div className="app-container">
       {/* Top Navigation Bar */}
@@ -773,6 +863,7 @@ export function App() {
         onSaveProjectToDisk={handleSaveProjectToDisk}
         onLoadDemoScene={handleLoadDemoScene}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        onGoToHub={() => setScreen('hub')}
       />
  
       {/* Unity-style dockable workspace: every panel below (Project,
@@ -785,7 +876,7 @@ export function App() {
           // data
           entities, tracks, scripts, prefabs, mediaAssets,
           currentTime, calculatedDuration, isPlaying, isLooping,
-          selectedEntityId, pixelsPerSecond, snappingEnabled,
+          selectedEntityId, pixelsPerSecond, snappingEnabled, resolution,
           // setters
           setSelectedEntityId, setIsLooping,
           // handlers

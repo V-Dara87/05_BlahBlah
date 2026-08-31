@@ -54,18 +54,23 @@ export function UnityHeader({
   onSaveProjectToDisk,
   onLoadDemoScene,
   onOpenSettings,
+  onGoToHub,
 }) {
   return (
     <header className="unity-header">
       {/* Left: Unity Brand & Project Actions */}
       <div className="unity-header-left">
-        <div className="unity-logo-group">
+        <button
+          className="unity-logo-group unity-logo-hub-btn"
+          onClick={onGoToHub}
+          title="Back to Project Hub"
+        >
           <div className="unity-icon-box">
             <Layers size={16} />
           </div>
           <span className="unity-app-title">blahblah</span>
           <span className="unity-version-tag">2026.1</span>
-        </div>
+        </button>
  
         <div className="unity-divider-v" />
  

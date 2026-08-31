@@ -162,11 +162,35 @@ export function updateCanvasComponent({
  
     const libs = attachLoader(createLibsProxy());
  
-    mounted = { instance, scriptCode, container, libs };
+    mounted = { instance, scriptCode, container, libs, lastLocalTime: null };
     mountedInstances.set(entityId, mounted);
  
     safeCall(instance, 'onMount', { container, props, libs });
   }
+ 
+  // Scrub/seek detection. onMount only fires once per (scriptCode,
+  // container) pair (see mount/remount logic above), which is correct for
+  // "container/scriptCode changed" but leaves no natural reset point for a
+  // script that accumulates state across onUpdate calls (particle trails,
+  // counters, anything that isn't a pure function of `time`) when the user
+  // drags the playhead backward, or jumps it forward past where a normal
+  // playback tick would land. A normal forward-playback tick advances
+  // roughly one frame at a time; anything bigger than ~2 frames' worth, in
+  // either direction, is treated as a scrub rather than playback. When
+  // that happens we call an optional `onSeek({ container, time, frame,
+  // fps, props })` hook *before* onUpdate, so a script can reset its own
+  // internal state if it wants to. This is additive: scripts that don't
+  // define onSeek behave exactly as before.
+  const frameDuration = 1 / (fps || 30);
+  const scrubThreshold = frameDuration * 2;
+  const isScrub =
+    mounted.lastLocalTime !== null && Math.abs(localTime - mounted.lastLocalTime) > scrubThreshold;
+ 
+  if (isScrub) {
+    safeCall(mounted.instance, 'onSeek', { container, time: localTime, frame, fps, props });
+  }
+ 
+  mounted.lastLocalTime = localTime;
  
   safeCall(mounted.instance, 'onUpdate', {
     container,

@@ -4,6 +4,24 @@
  * auto-saving, and hot-reloading from external code editors (VS Code, Cursor, etc.).
  */
  
+import { DEFAULT_RESOLUTION } from '../types';
+ 
+/**
+ * Basic shape validation for a `resolution` object read back from disk --
+ * project.json is hand-editable (that's the whole "VS Code ready" point of
+ * this app), so a stray typo or an older project saved before resolution
+ * existed shouldn't crash the load; it should just fall back to the
+ * default and let the project open normally.
+ */
+function sanitizeResolution(candidate) {
+  const width = Number(candidate?.width);
+  const height = Number(candidate?.height);
+  if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+    return { width: Math.round(width), height: Math.round(height) };
+  }
+  return { ...DEFAULT_RESOLUTION };
+}
+ 
 export function isFileSystemSupported() {
   return typeof window !== 'undefined' && 'showDirectoryPicker' in window;
 }
@@ -62,7 +80,7 @@ export async function pickProjectDirectory() {
  * Create a new dedicated project subfolder inside a chosen parent directory.
  * Sets up project.json (0 clips), scripts/ (empty), prefabs/ (empty), media/ (empty).
  */
-export async function createNewProjectFolder(parentDirHandle, projectName, defaultTracks = []) {
+export async function createNewProjectFolder(parentDirHandle, projectName, defaultTracks = [], resolution = DEFAULT_RESOLUTION) {
   if (!parentDirHandle) {
     throw new Error('Parent directory is required');
   }
@@ -84,11 +102,14 @@ export async function createNewProjectFolder(parentDirHandle, projectName, defau
   await projectDirHandle.getDirectoryHandle('prefabs', { create: true });
   await projectDirHandle.getDirectoryHandle('media', { create: true });
  
+  const projectResolution = sanitizeResolution(resolution);
+ 
   const initialProjectJson = {
     name: safeName,
     version: '1.0',
     createdAt: Date.now(),
     lastModified: Date.now(),
+    resolution: projectResolution,
     tracks: defaultTracks.length > 0 ? defaultTracks : [
       { id: 'track-1', name: 'Track 1', type: 'layer', muted: false, locked: false, visible: true, volume: 1.0 },
       { id: 'track-2', name: 'Track 2', type: 'layer', muted: false, locked: false, visible: true, volume: 1.0 },
@@ -96,6 +117,13 @@ export async function createNewProjectFolder(parentDirHandle, projectName, defau
       { id: 'track-4', name: 'Track 4', type: 'layer', muted: false, locked: false, visible: true, volume: 1.0 },
     ],
     entities: [],
+    // See saveProjectToDirectory / loadProjectFromDirectory below: maps each
+    // scripts/ filename back to the script id that ScriptComponent /
+    // ReactRenderer / CanvasRenderer components reference in their
+    // `scriptId` field, so ids survive a save + reload instead of being
+    // re-derived from the filename (which loses any id that wasn't already
+    // filename-shaped, e.g. ids created as `script-${Date.now()}`).
+    scriptIndex: [],
   };
  
   const projectFileHandle = await projectDirHandle.getFileHandle('project.json', { create: true });
@@ -106,6 +134,7 @@ export async function createNewProjectFolder(parentDirHandle, projectName, defau
   return {
     dirHandle: projectDirHandle,
     projectName: safeName,
+    resolution: projectResolution,
     tracks: initialProjectJson.tracks,
     entities: [],
     scripts: [],
@@ -127,7 +156,16 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
     name: dirHandle.name || 'my-project',
     tracks: fallbackTracks,
     entities: [],
+    resolution: { ...DEFAULT_RESOLUTION },
   };
+ 
+  // scriptIndex maps a scripts/ filename -> the script id it was saved
+  // with, so ids created in-app (e.g. `script-${Date.now()}`) survive a
+  // save + reload instead of being replaced by a filename-derived id that
+  // nothing on the timeline actually references. Keyed by filename since
+  // that's the only thing that reliably ties a project.json record back to
+  // a file that may have been renamed/edited/added outside the app.
+  let scriptIndex = new Map();
  
   // 1. Read project.json if present
   try {
@@ -139,7 +177,18 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
       name: parsed.name || dirHandle.name,
       tracks: parsed.tracks && parsed.tracks.length > 0 ? parsed.tracks : fallbackTracks,
       entities: Array.isArray(parsed.entities) ? parsed.entities : [],
+      // Older projects saved before resolution existed (or a hand-edited
+      // project.json missing/mangling it) fall back to the default rather
+      // than failing to load.
+      resolution: sanitizeResolution(parsed.resolution),
     };
+    if (Array.isArray(parsed.scriptIndex)) {
+      scriptIndex = new Map(
+        parsed.scriptIndex
+          .filter((entry) => entry && entry.name && entry.id)
+          .map((entry) => [entry.name, entry])
+      );
+    }
   } catch {
     // project.json doesn't exist yet; will create on save
   }
@@ -152,9 +201,16 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
       if (entry.kind === 'file' && (entry.name.endsWith('.js') || entry.name.endsWith('.jsx') || entry.name.endsWith('.ts') || entry.name.endsWith('.tsx') || entry.name.endsWith('.cs'))) {
         const file = await entry.getFile();
         const code = await file.text();
+        // Prefer the id recorded in project.json's scriptIndex for this
+        // filename (keeps ScriptComponent.scriptId references intact across
+        // save/reload); only fall back to a filename-derived id for scripts
+        // that have no index entry yet (e.g. a file dropped into scripts/
+        // by hand, or a project saved before scriptIndex existed).
+        const indexed = scriptIndex.get(entry.name);
         loadedScripts.push({
-          id: `script-${entry.name.replace(/\.[^.]+$/, '')}`,
+          id: indexed ? indexed.id : `script-${entry.name.replace(/\.[^.]+$/, '')}`,
           name: entry.name,
+          description: indexed ? indexed.description : undefined,
           code: code,
           lastModified: file.lastModified,
         });
@@ -235,6 +291,7 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
     projectName: projectMeta.name,
     tracks: projectMeta.tracks,
     entities: projectMeta.entities,
+    resolution: projectMeta.resolution,
     scripts: loadedScripts,
     prefabs: loadedPrefabs,
     mediaAssets: loadedMedia,
@@ -258,6 +315,7 @@ export async function saveProjectToDirectory(dirHandle, projectState) {
     name: projectState.projectName,
     version: '1.0',
     lastModified: Date.now(),
+    resolution: sanitizeResolution(projectState.resolution),
     tracks: projectState.tracks,
     entities: (projectState.entities || []).map(e => ({
       id: e.id,
@@ -269,6 +327,18 @@ export async function saveProjectToDirectory(dirHandle, projectState) {
       src: e.src,
       active: e.active !== false,
       components: e.components,
+    })),
+    // Filename -> id (+ description) map so loadProjectFromDirectory can
+    // restore each script's ORIGINAL id instead of re-deriving one from the
+    // filename. Without this, any script whose id wasn't already
+    // filename-shaped (e.g. `script-${Date.now()}`, created via "+ Motion
+    // Script" / "+ React Clip") gets a new id on reload that no
+    // ScriptComponent/ReactRenderer/CanvasRenderer's `scriptId` matches
+    // anymore, so the attached script silently stops resolving.
+    scriptIndex: (projectState.scripts || []).map(s => ({
+      name: /\.(js|jsx|ts|tsx|cs)$/i.test(s.name) ? s.name : `${s.name}.js`,
+      id: s.id,
+      description: s.description,
     })),
   };
  
@@ -363,6 +433,11 @@ export async function checkScriptsForChanges(dirHandle, existingScripts) {
         }
  
         updatedScripts.push({
+          // Unchanged: hot-reload polling already keeps the in-memory id
+          // (via `existing`) for any file it already knew about, and only
+          // derives a fresh id for genuinely new files — this path was
+          // never the source of the save/reload bug, only the initial
+          // directory load in loadProjectFromDirectory was.
           id: existing ? existing.id : `script-${entry.name.replace(/\.[^.]+$/, '')}`,
           name: entry.name,
           code: code,

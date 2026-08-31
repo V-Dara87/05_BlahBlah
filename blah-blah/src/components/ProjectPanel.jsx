@@ -1,21 +1,39 @@
 import { useState, useRef, memo } from 'react';
-import { 
-  Package, 
-  Film, 
-  Music, 
-  FileCode, 
-  Plus, 
-  Upload, 
-  Trash2, 
+import {
+  Package,
+  Film,
+  Music,
+  FileCode,
+  Plus,
+  Upload,
+  Trash2,
   Sparkles,
   Search,
   Folder,
+  FolderOpen,
   ChevronDown,
   ChevronRight
 } from 'lucide-react';
 import { formatTimecode } from '../utils/timeFormat';
 import { createSyntheticAudio, createSyntheticVideo } from '../utils/sampleMedia';
  
+/**
+ * Project tab redesign — was three separate tabs (Prefabs / Media /
+ * Scripts) each showing its own flat (or, for Media, one-level-folder)
+ * list, switched between with a pill tab bar. Replaced with a single
+ * folder tree matching the actual on-disk project layout
+ * (`prefabs/`, `media/` incl. its subfolders, `scripts/`), all visible
+ * and independently collapsible at once instead of hidden behind tabs.
+ * `media/`'s existing subfolder grouping (e.g. "Recordings") is preserved
+ * as a nested level under `media/` rather than its own top-level folder.
+ *
+ * Every action that existed before (import media, quick-synth buttons,
+ * new script buttons, add-to-timeline, delete, drag-to-timeline, search,
+ * click-to-edit-script) still works exactly the same — each top-level
+ * folder just carries its own "+" popover for the actions that used to
+ * live in the tab-specific action row, so they're reachable without a
+ * persistent tab context.
+ */
 export const ProjectPanel = memo(function ProjectPanel({
   mediaAssets,
   prefabs,
@@ -28,11 +46,25 @@ export const ProjectPanel = memo(function ProjectPanel({
   onAddPrefabToTimeline,
   onAddMediaToTimeline,
 }) {
-  const [activeTab, setActiveTab] = useState('prefabs'); // 'prefabs' | 'media' | 'scripts'
   const [searchQuery, setSearchQuery] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [collapsedFolders, setCollapsedFolders] = useState({});
+  const [openFolders, setOpenFolders] = useState({
+    prefabs: true,
+    media: true,
+    scripts: true,
+  });
+  const [openMediaSubfolders, setOpenMediaSubfolders] = useState({});
+  const [mediaMenuOpen, setMediaMenuOpen] = useState(false);
+  const [scriptsMenuOpen, setScriptsMenuOpen] = useState(false);
   const fileInputRef = useRef(null);
+ 
+  const toggleFolder = (name) => {
+    setOpenFolders((prev) => ({ ...prev, [name]: !prev[name] }));
+  };
+ 
+  const toggleMediaSubfolder = (name) => {
+    setOpenMediaSubfolders((prev) => ({ ...prev, [name]: !prev[name] }));
+  };
  
   const handleFileUpload = (files) => {
     Array.from(files).forEach((file) => {
@@ -74,6 +106,7 @@ export const ProjectPanel = memo(function ProjectPanel({
   };
  
   const handleQuickSynthAudio = () => {
+    setMediaMenuOpen(false);
     setIsGenerating(true);
     setTimeout(() => {
       try {
@@ -93,6 +126,7 @@ export const ProjectPanel = memo(function ProjectPanel({
   };
  
   const handleQuickMotionVideo = async () => {
+    setMediaMenuOpen(false);
     setIsGenerating(true);
     try {
       const url = await createSyntheticVideo(6, 640, 360);
@@ -110,6 +144,7 @@ export const ProjectPanel = memo(function ProjectPanel({
   };
  
   const handleCreateNewMotionScript = () => {
+    setScriptsMenuOpen(false);
     const newScript = {
       id: `script-${Date.now()}`,
       name: 'CustomMotion.js',
@@ -138,6 +173,7 @@ export const ProjectPanel = memo(function ProjectPanel({
   };
  
   const handleCreateNewReactClip = () => {
+    setScriptsMenuOpen(false);
     const newScript = {
       id: `script-${Date.now()}`,
       name: 'CustomClip.jsx',
@@ -176,21 +212,19 @@ CustomClip.props = {
     onOpenScriptEditor(newScript);
   };
  
-  // Drag-and-drop support
+  // Drag-and-drop support (unchanged)
   const handleDragStart = (e, itemType, itemData) => {
     e.dataTransfer.setData('application/json', JSON.stringify({ itemType, itemData }));
     e.dataTransfer.effectAllowed = 'copy';
   };
  
-  const toggleFolder = (folderName) => {
-    setCollapsedFolders((prev) => ({ ...prev, [folderName]: !prev[folderName] }));
-  };
+  const query = searchQuery.toLowerCase();
+  const filteredPrefabs = prefabs.filter((p) => p.name.toLowerCase().includes(query));
+  const filteredMedia = mediaAssets.filter((m) => m.name.toLowerCase().includes(query));
+  const filteredScripts = scripts.filter((s) => s.name.toLowerCase().includes(query));
  
-  const filteredMedia = mediaAssets.filter((m) => m.name.toLowerCase().includes(searchQuery.toLowerCase()));
-  // Group media assets by their `folder` field (e.g. "Recordings"); assets
-  // without one render at the top level, matching pre-folder behavior.
   const rootMedia = filteredMedia.filter((m) => !m.folder);
-  const folderNames = Array.from(new Set(filteredMedia.filter((m) => m.folder).map((m) => m.folder)));
+  const mediaSubfolderNames = Array.from(new Set(filteredMedia.filter((m) => m.folder).map((m) => m.folder)));
  
   const renderMediaCard = (asset) => (
     <div
@@ -230,7 +264,7 @@ CustomClip.props = {
     <aside className="project-panel">
       {/* Panel Header */}
       <div className="panel-top-header">
-        <h3 className="panel-title-text">Project Assets</h3>
+        <h3 className="panel-title-text">Project</h3>
         <div className="search-bar-sm">
           <Search size={11} className="search-icon" />
           <input
@@ -242,106 +276,33 @@ CustomClip.props = {
         </div>
       </div>
  
-      {/* Tabs */}
-      <div className="project-tab-bar">
-        <button
-          className={`tab-btn-pill ${activeTab === 'prefabs' ? 'active' : ''}`}
-          onClick={() => setActiveTab('prefabs')}
-        >
-          <Package size={13} />
-          <span>Prefabs</span>
-        </button>
-        <button
-          className={`tab-btn-pill ${activeTab === 'media' ? 'active' : ''}`}
-          onClick={() => setActiveTab('media')}
-        >
-          <Film size={13} />
-          <span>Media</span>
-        </button>
-        <button
-          className={`tab-btn-pill ${activeTab === 'scripts' ? 'active' : ''}`}
-          onClick={() => setActiveTab('scripts')}
-        >
-          <FileCode size={13} />
-          <span>Scripts / JSX</span>
-        </button>
-      </div>
+      <input
+        type="file"
+        ref={fileInputRef}
+        style={{ display: 'none' }}
+        multiple
+        accept="video/*,audio/*"
+        onChange={(e) => handleFileUpload(e.target.files)}
+      />
  
-      {/* Tab Actions */}
-      <div className="project-actions-row">
-        {activeTab === 'media' && (
-          <>
-            <button
-              className="action-btn-sm"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Upload size={12} />
-              <span>Import Media</span>
-            </button>
-            <button
-              className="action-btn-sm text-cyan"
-              onClick={handleQuickSynthAudio}
-              disabled={isGenerating}
-            >
-              <Sparkles size={11} />
-              <span>+ Synth</span>
-            </button>
-            <button
-              className="action-btn-sm text-cyan"
-              onClick={handleQuickMotionVideo}
-              disabled={isGenerating}
-            >
-              <Sparkles size={11} />
-              <span>+ Video</span>
-            </button>
-          </>
-        )}
+      {/* Folder Tree */}
+      <div className="project-tree">
  
-        {activeTab === 'scripts' && (
-          <div className="script-add-row" style={{ display: 'flex', gap: '6px', width: '100%' }}>
-            <button
-              className="action-btn-sm"
-              style={{ flex: 1 }}
-              onClick={handleCreateNewMotionScript}
-            >
-              <FileCode size={12} className="text-emerald" />
-              <span>+ Motion Script</span>
-            </button>
-            <button
-              className="action-btn-sm text-cyan"
-              style={{ flex: 1 }}
-              onClick={handleCreateNewReactClip}
-            >
-              <Sparkles size={12} />
-              <span>+ React Clip</span>
-            </button>
+        {/* ========== prefabs/ ========== */}
+        <div className="tree-folder-group">
+          <div className="tree-folder-header" onClick={() => toggleFolder('prefabs')}>
+            {openFolders.prefabs ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            {openFolders.prefabs ? <FolderOpen size={13} className="text-cyan" /> : <Folder size={13} className="text-cyan" />}
+            <span className="tree-folder-name">prefabs</span>
+            <span className="tree-folder-count">{filteredPrefabs.length}</span>
           </div>
-        )}
  
-        {activeTab === 'prefabs' && (
-          <p className="tab-helper-text">
-            Drag a Prefab or click <strong>+</strong> to place onto the timeline:
-          </p>
-        )}
- 
-        <input
-          type="file"
-          ref={fileInputRef}
-          style={{ display: 'none' }}
-          multiple
-          accept="video/*,audio/*"
-          onChange={(e) => handleFileUpload(e.target.files)}
-        />
-      </div>
- 
-      {/* Asset List Content */}
-      <div className="project-asset-list">
-        {/* PREFABS TAB */}
-        {activeTab === 'prefabs' && (
-          <>
-            {prefabs
-              .filter((p) => p.name.toLowerCase().includes(searchQuery.toLowerCase()))
-              .map((prefab) => (
+          {openFolders.prefabs && (
+            <div className="tree-folder-contents">
+              {filteredPrefabs.length === 0 && (
+                <p className="tree-empty-hint">No prefabs yet. Save a GameObject as a Prefab from the Inspector.</p>
+              )}
+              {filteredPrefabs.map((prefab) => (
                 <div
                   key={prefab.id}
                   className="asset-card prefab-card"
@@ -373,46 +334,112 @@ CustomClip.props = {
                   </div>
                 </div>
               ))}
-          </>
-        )}
+            </div>
+          )}
+        </div>
  
-        {/* MEDIA TAB */}
-        {activeTab === 'media' && (
-          <>
-            {/* Folders (e.g. "Recordings") render first, each collapsible */}
-            {folderNames.map((folderName) => {
-              const isCollapsed = !!collapsedFolders[folderName];
-              const assetsInFolder = filteredMedia.filter((m) => m.folder === folderName);
-              return (
-                <div key={folderName} className="media-folder-group">
-                  <button
-                    className="media-folder-header"
-                    onClick={() => toggleFolder(folderName)}
-                  >
-                    {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-                    <Folder size={13} className="text-amber" />
-                    <span className="media-folder-name">{folderName}</span>
-                    <span className="media-folder-count">{assetsInFolder.length}</span>
+        {/* ========== media/ ========== */}
+        <div className="tree-folder-group">
+          <div className="tree-folder-header" onClick={() => toggleFolder('media')}>
+            {openFolders.media ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            {openFolders.media ? <FolderOpen size={13} className="text-indigo" /> : <Folder size={13} className="text-indigo" />}
+            <span className="tree-folder-name">media</span>
+            <span className="tree-folder-count">{filteredMedia.length}</span>
+            <div className="tree-folder-add-wrapper">
+              <button
+                className="tree-folder-add-btn"
+                title="Add media"
+                onClick={(e) => { e.stopPropagation(); setMediaMenuOpen((v) => !v); }}
+              >
+                <Plus size={12} />
+              </button>
+              {mediaMenuOpen && (
+                <div className="tree-add-popover" onClick={(e) => e.stopPropagation()}>
+                  <button className="popover-item" onClick={() => { setMediaMenuOpen(false); fileInputRef.current?.click(); }}>
+                    <Upload size={12} />
+                    <span>Import Media</span>
                   </button>
-                  {!isCollapsed && (
-                    <div className="media-folder-contents">
-                      {assetsInFolder.map(renderMediaCard)}
-                    </div>
-                  )}
+                  <button className="popover-item" onClick={handleQuickSynthAudio} disabled={isGenerating}>
+                    <Sparkles size={12} className="text-cyan" />
+                    <span>+ Synth Audio</span>
+                  </button>
+                  <button className="popover-item" onClick={handleQuickMotionVideo} disabled={isGenerating}>
+                    <Sparkles size={12} className="text-cyan" />
+                    <span>+ Synth Video</span>
+                  </button>
                 </div>
-              );
-            })}
+              )}
+            </div>
+          </div>
  
-            {rootMedia.map(renderMediaCard)}
-          </>
-        )}
+          {openFolders.media && (
+            <div className="tree-folder-contents">
+              {filteredMedia.length === 0 && (
+                <p className="tree-empty-hint">No media yet. Use + to import or generate a clip.</p>
+              )}
  
-        {/* SCRIPTS TAB */}
-        {activeTab === 'scripts' && (
-          <>
-            {scripts
-              .filter((s) => s.name.toLowerCase().includes(searchQuery.toLowerCase()))
-              .map((script) => {
+              {/* Subfolders (e.g. "Recordings") nested one level under media/ */}
+              {mediaSubfolderNames.map((folderName) => {
+                const isOpen = !!openMediaSubfolders[folderName];
+                const assetsInFolder = filteredMedia.filter((m) => m.folder === folderName);
+                return (
+                  <div key={folderName} className="tree-folder-group nested">
+                    <div className="tree-folder-header" onClick={() => toggleMediaSubfolder(folderName)}>
+                      {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                      {isOpen ? <FolderOpen size={13} className="text-amber" /> : <Folder size={13} className="text-amber" />}
+                      <span className="tree-folder-name">{folderName}</span>
+                      <span className="tree-folder-count">{assetsInFolder.length}</span>
+                    </div>
+                    {isOpen && (
+                      <div className="tree-folder-contents">
+                        {assetsInFolder.map(renderMediaCard)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+ 
+              {rootMedia.map(renderMediaCard)}
+            </div>
+          )}
+        </div>
+ 
+        {/* ========== scripts/ ========== */}
+        <div className="tree-folder-group">
+          <div className="tree-folder-header" onClick={() => toggleFolder('scripts')}>
+            {openFolders.scripts ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            {openFolders.scripts ? <FolderOpen size={13} className="text-emerald" /> : <Folder size={13} className="text-emerald" />}
+            <span className="tree-folder-name">scripts</span>
+            <span className="tree-folder-count">{filteredScripts.length}</span>
+            <div className="tree-folder-add-wrapper">
+              <button
+                className="tree-folder-add-btn"
+                title="New script"
+                onClick={(e) => { e.stopPropagation(); setScriptsMenuOpen((v) => !v); }}
+              >
+                <Plus size={12} />
+              </button>
+              {scriptsMenuOpen && (
+                <div className="tree-add-popover" onClick={(e) => e.stopPropagation()}>
+                  <button className="popover-item" onClick={handleCreateNewMotionScript}>
+                    <FileCode size={12} className="text-emerald" />
+                    <span>+ Motion Script</span>
+                  </button>
+                  <button className="popover-item" onClick={handleCreateNewReactClip}>
+                    <Sparkles size={12} className="text-cyan" />
+                    <span>+ React Clip</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+ 
+          {openFolders.scripts && (
+            <div className="tree-folder-contents">
+              {filteredScripts.length === 0 && (
+                <p className="tree-empty-hint">No scripts yet. Use + to create a Motion Script or React Clip.</p>
+              )}
+              {filteredScripts.map((script) => {
                 const isJsx = script.name.endsWith('.jsx') || script.code?.includes('return');
                 return (
                   <div
@@ -432,8 +459,9 @@ CustomClip.props = {
                   </div>
                 );
               })}
-          </>
-        )}
+            </div>
+          )}
+        </div>
       </div>
     </aside>
   );

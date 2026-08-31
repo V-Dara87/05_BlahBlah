@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useLayoutEffect, useMemo } from 'react';
 import {
   Play,
   Pause,
@@ -36,6 +36,12 @@ import { EntityErrorBoundary } from './EntityErrorBoundary';
  * renderer type is a registration in ecs.js, not a new branch here (P0 #2
  * CanvasRenderer is the first consumer of that indirection).
  */
+// Fallback used only if a caller doesn't pass `resolution` at all (e.g. an
+// older integration/test harness) -- normal app usage always has a real
+// project resolution by the time this renders, since App.jsx seeds
+// `resolution` state with DEFAULT_RESOLUTION before any project loads.
+const FALLBACK_RESOLUTION = { width: 1920, height: 1080 };
+ 
 export function EntityRenderer({
   entities,
   tracks,
@@ -50,6 +56,7 @@ export function EntityRenderer({
   onTogglePlay,
   onSeek,
   onToggleLoop,
+  resolution = FALLBACK_RESOLUTION,
 }) {
   const containerRef = useRef(null);
   const canvasFrameRef = useRef(null);
@@ -59,69 +66,113 @@ export function EntityRenderer({
   const wasPlayingRef = useRef(isPlaying);
   const gizmoDragRef = useRef(null);
  
-  // Filter visible and active entities at currentTime
-  const activeEntities = entities.filter((entity) => {
-    if (!entity.active) return false;
-    if (currentTime < entity.startTime || currentTime >= entity.startTime + entity.duration) {
-      return false;
-    }
-    const track = tracks.find((t) => t.id === entity.trackId);
-    if (track && (!track.visible || track.locked)) return false;
-    return true;
-  });
- 
-  // Calculate animated transform for each active entity using attached JS/TS motion scripts.
-  // localTime is always (currentTime - entity.startTime): absolute timeline
-  // time, not wall-clock/rAF accumulation, so scrubbing stays deterministic.
-  const computedEntities = activeEntities.map((entity) => {
-    let currentTransform = entity.components.find((c) => c.type === 'Transform') || {
-      x: 0,
-      y: 0,
-      rotation: 0,
-      scaleX: 1,
-      scaleY: 1,
-      opacity: 1,
-    };
- 
-    const scriptComp = entity.components.find(
-      (c) => (c.type === 'ScriptComponent' || c.type === 'MonoBehaviour') && c.enabled
-    );
- 
-    const localTime = currentTime - entity.startTime;
- 
-    if (scriptComp) {
-      const scriptDef = scripts.find((s) => s.id === scriptComp.scriptId);
-      if (scriptDef && scriptDef.code) {
-        currentTransform = executeScriptComponent({
-          scriptCode: scriptDef.code,
-          transform: currentTransform,
-          localTime,
-          clipDuration: entity.duration,
-          publicValues: scriptComp.props || {},
-          frame: Math.round(localTime * 30),
-          fps: 30,
-        });
+  // P0 perf fix -- computedEntities used to be rebuilt as a brand-new array
+  // literal on every single render (regardless of whether entities, tracks,
+  // scripts, or currentTime had actually changed), and that array sat in
+  // the dependency list of the video/audio-sync effects below plus the
+  // CanvasRenderer-driving useLayoutEffect further down. A new reference
+  // every render meant React's dependency-array bail-out never actually
+  // fired: dragging a gizmo, selecting a different entity, editing an
+  // unrelated script, or any other EditorContext-driven re-render forced a
+  // full script re-execution + canvas redraw + audio/video sync pass, even
+  // when playback wasn't running and nothing relevant had changed. Wrapping
+  // this in useMemo, keyed on the actual inputs that matter (entities,
+  // tracks, scripts, currentTime -- not prop identity/selection state),
+  // lets those effects skip their work when only unrelated UI state changes.
+  const computedEntities = useMemo(() => {
+    // Filter visible and active entities at currentTime.
+    //
+    // NOTE -- clip-duration vs. tween-duration boundary: a non-looping
+    // tween (via executeScriptComponent -> MotionTweenContext.evaluate)
+    // correctly clamps its own progress to 1 and settles at its final value
+    // once localTime passes the tween's own duration -- that math is sound.
+    // But this active-entity check only knows about the *clip's* own
+    // duration (entity.startTime + entity.duration), not the tween's. If a
+    // script's declared tween duration outlasts the clip (e.g. after
+    // trimming the clip shorter with Split), the entity simply stops being
+    // "active" and disappears from the preview before the tween ever gets
+    // to settle -- it vanishes mid-animation instead of landing on its
+    // final frame. This isn't a bug in the tween math or in this filter
+    // individually; it's an authoring trap at the boundary between the
+    // two. Extending the active window to cover the tween's duration isn't
+    // correct either (a clip's duration is supposed to be an authoritative
+    // boundary), so this is intentionally left as documented behavior
+    // rather than "fixed" -- the right long-term fix is an authoring-time
+    // warning in the Script Editor / Inspector when a script's tween
+    // duration exceeds the clip's own duration, not a change here.
+    const activeEntities = entities.filter((entity) => {
+      if (!entity.active) return false;
+      if (currentTime < entity.startTime || currentTime >= entity.startTime + entity.duration) {
+        return false;
       }
-    }
+      const track = tracks.find((t) => t.id === entity.trackId);
+      if (track && (!track.visible || track.locked)) return false;
+      return true;
+    });
  
-    return {
-      entity,
-      transform: currentTransform,
-      localTime,
-    };
-  });
+    // Calculate animated transform for each active entity using attached JS/TS motion scripts.
+    // localTime is always (currentTime - entity.startTime): absolute timeline
+    // time, not wall-clock/rAF accumulation, so scrubbing stays deterministic.
+    return activeEntities.map((entity) => {
+      let currentTransform = entity.components.find((c) => c.type === 'Transform') || {
+        x: 0,
+        y: 0,
+        rotation: 0,
+        scaleX: 1,
+        scaleY: 1,
+        opacity: 1,
+      };
+ 
+      const scriptComp = entity.components.find(
+        (c) => (c.type === 'ScriptComponent' || c.type === 'MonoBehaviour') && c.enabled
+      );
+ 
+      const localTime = currentTime - entity.startTime;
+ 
+      if (scriptComp) {
+        const scriptDef = scripts.find((s) => s.id === scriptComp.scriptId);
+        if (scriptDef && scriptDef.code) {
+          currentTransform = executeScriptComponent({
+            scriptCode: scriptDef.code,
+            transform: currentTransform,
+            localTime,
+            clipDuration: entity.duration,
+            publicValues: scriptComp.props || {},
+            frame: Math.round(localTime * 30),
+            fps: 30,
+          });
+        }
+      }
+ 
+      return {
+        entity,
+        transform: currentTransform,
+        localTime,
+      };
+    });
+  }, [entities, tracks, scripts, currentTime]);
  
   // Separate video clips (background layer) from overlay graphics/text/react/canvas.
-  const activeVideoItems = computedEntities.filter(
-    ({ entity }) => entity.type === 'video' || entity.components.some((c) => c.type === 'VideoRenderer')
+  // Derived from computedEntities (already memoized above), so these only
+  // recompute when computedEntities itself actually changes.
+  const activeVideoItems = useMemo(
+    () =>
+      computedEntities.filter(
+        ({ entity }) => entity.type === 'video' || entity.components.some((c) => c.type === 'VideoRenderer')
+      ),
+    [computedEntities]
   );
  
-  const activeOverlayItems = computedEntities.filter(
-    ({ entity }) =>
-      entity.type !== 'video' &&
-      !entity.components.some((c) => c.type === 'VideoRenderer') &&
-      entity.type !== 'audio' &&
-      !entity.components.some((c) => c.type === 'AudioSource')
+  const activeOverlayItems = useMemo(
+    () =>
+      computedEntities.filter(
+        ({ entity }) =>
+          entity.type !== 'video' &&
+          !entity.components.some((c) => c.type === 'VideoRenderer') &&
+          entity.type !== 'audio' &&
+          !entity.components.some((c) => c.type === 'AudioSource')
+      ),
+    [computedEntities]
   );
  
   // Synchronize active Video playback & seeking smoothly
@@ -208,7 +259,26 @@ export function EntityRenderer({
   // P0 #2 — Drive CanvasRenderer components every frame: mount on first
   // appearance, onUpdate with absolute-timeline localTime every tick,
   // unmount+prune when an entity leaves the active window.
-  useEffect(() => {
+  //
+  // FLICKER FIX: this was a plain `useEffect`. Passive effects run
+  // asynchronously *after* the browser has already painted the current
+  // commit, so during playback (a rAF-driven `currentTime` state update
+  // every frame) there's a real window where the browser can paint before
+  // this effect's ctx.clearRect()/redraw calls run for the new time — i.e.
+  // it briefly shows the *previous* frame's canvas pixels before this
+  // effect catches up. That reads as flicker/glitching, and gets worse the
+  // higher a CanvasRenderer script's `speed`-style prop is (more visual
+  // change per frame makes the stale frame more noticeable). This is not a
+  // bug in individual CanvasRenderer scripts (RandomBoxes/CanvasOrbit are
+  // both pure functions of absolute `time`, exactly per the P0 #2
+  // contract) — it's the renderer's effect timing.
+  //
+  // `useLayoutEffect` runs synchronously right after DOM mutations but
+  // *before* the browser paints, so the canvas is fully redrawn for the
+  // current `currentTime` before anything hits the screen — this is the
+  // fix React's own docs recommend for any imperative canvas/DOM paint
+  // that's driven by props/state (see https://react.dev/reference/react/useLayoutEffect).
+  useLayoutEffect(() => {
     computedEntities.forEach(({ entity, localTime }) => {
       const canvasComp = entity.components.find((c) => c.type === 'CanvasRenderer');
       if (!canvasComp) return;
@@ -351,6 +421,12 @@ export function EntityRenderer({
     }
   };
  
+  // Guard against a malformed/zero resolution (e.g. a hand-edited
+  // project.json with resolution.width: 0) producing an invalid CSS
+  // `aspect-ratio` value, which would collapse the whole frame to nothing.
+  const safeResWidth = resolution?.width > 0 ? resolution.width : FALLBACK_RESOLUTION.width;
+  const safeResHeight = resolution?.height > 0 ? resolution.height : FALLBACK_RESOLUTION.height;
+ 
   return (
     <section className="preview-panel" ref={containerRef}>
       {/* Viewport Screen Frame */}
@@ -360,7 +436,22 @@ export function EntityRenderer({
           if (e.target === e.currentTarget) onSelectEntity(null);
         }}
       >
-        <div className="preview-canvas-frame" ref={canvasFrameRef}>
+        {/* aspectRatio is set inline (not via a CSS class/variable) because
+            it's per-project data, not a design-time constant -- the CSS
+            fallback in App.css (.preview-canvas-frame { aspect-ratio: 16/9 })
+            only applies before this first renders with a real resolution. */}
+        <div
+          className="preview-canvas-frame"
+          ref={canvasFrameRef}
+          style={{ aspectRatio: `${safeResWidth} / ${safeResHeight}` }}
+        >
+          {/* Resolution badge -- confirms at a glance that the preview is
+              actually locked to the project's resolution, not just a fixed
+              16:9 default. */}
+          <div className="preview-resolution-badge">
+            {safeResWidth}×{safeResHeight}
+          </div>
+ 
           {/* 1. Background Video Layer */}
           {activeVideoItems.map(({ entity, transform }) => {
             const isSelected = entity.id === selectedEntityId;

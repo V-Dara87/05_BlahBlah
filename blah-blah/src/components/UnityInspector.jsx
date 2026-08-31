@@ -13,7 +13,8 @@ import {
   Volume2,
   AlertCircle,
   Sparkles,
-  Boxes
+  Boxes,
+  GripVertical
 } from 'lucide-react';
 import { extractScriptProps, getScriptError, detectScriptKind } from '../engine/scriptRunner';
 import { DragNumber } from './DragNumber';
@@ -43,7 +44,69 @@ import { InspectorFieldList, TRANSFORM_FIELD_GROUPS } from './inspector/Inspecto
  * script only appears where it will actually work. Scripts whose kind is
  * still 'unknown' (e.g. a brand new empty script) are shown in every
  * section so they aren't hidden while being written.
+ *
+ * Bugfix (this pass) — two issues reported together:
+ *  1. Only the Transform card could collapse/expand; every other card
+ *     (React/Canvas/Script/Text/Shape/Media) had a header with no chevron
+ *     and no click handler, so its body was always force-rendered. A tall
+ *     always-open card (esp. Canvas/Script bodies with script errors +
+ *     several fields) could visually run into the next card before the
+ *     scroll area kicked in, reading as "overlapping". Fix: every card
+ *     now goes through the same `<InspectorCardHeader>` with its own
+ *     foldout key in `openFoldouts`, mirroring Transform's existing
+ *     behavior instead of being a Transform-only special case.
+ *  2. There was no way to reorder components at all — no drag handle, no
+ *     drop logic anywhere in this file. Fix: a drag handle on every card
+ *     header plus minimal native HTML5 drag-and-drop that reorders
+ *     `selectedEntity.components` directly (Transform is excluded from
+ *     drag/drop — it always stays pinned first, matching how Transform is
+ *     already treated as the one non-removable, always-present component).
  */
+function InspectorCardHeader({
+  icon,
+  title,
+  isOpen,
+  onToggle,
+  actions,
+  draggable = false,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
+  isDragOver = false
+}) {
+  return (
+    <div
+      className={`inspector-card-header${isDragOver ? ' drag-over' : ''}`}
+      onClick={onToggle}
+      onDragOver={draggable ? onDragOver : undefined}
+      onDrop={draggable ? onDrop : undefined}
+    >
+      <div className="card-title-group">
+        {draggable && (
+          <span
+            className="card-drag-handle"
+            draggable
+            onClick={(e) => e.stopPropagation()}
+            onDragStart={onDragStart}
+            onDragEnd={onDragEnd}
+          >
+            <GripVertical size={12} />
+          </span>
+        )}
+        {isOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        {icon}
+        <span className="card-title-text">{title}</span>
+      </div>
+      {actions && (
+        <div className="card-actions-group" onClick={(e) => e.stopPropagation()}>
+          {actions}
+        </div>
+      )}
+    </div>
+  );
+}
+ 
 export const UnityInspector = memo(function UnityInspector({
   selectedEntity,
   tracks = [],
@@ -56,10 +119,17 @@ export const UnityInspector = memo(function UnityInspector({
   const [openFoldouts, setOpenFoldouts] = useState({
     Transform: true,
     Renderer: true,
-    Scripts: true
+    Scripts: true,
+    React: true,
+    Canvas: true,
+    Text: true,
+    Shape: true,
+    Media: true
   });
   const [showAddComponent, setShowAddComponent] = useState(false);
   const [savedPrefab, setSavedPrefab] = useState(false);
+  const [dragCompType, setDragCompType] = useState(null); // component `type` (or scriptId for scripts) currently being dragged
+  const [dragOverCompType, setDragOverCompType] = useState(null);
  
   if (!selectedEntity) {
     return (
@@ -133,6 +203,45 @@ export const UnityInspector = memo(function UnityInspector({
       return c;
     });
     onUpdateEntity(selectedEntity.id, { components: updatedComponents });
+  };
+ 
+  // Components after the pinned Transform can be freely reordered. Each
+  // draggable card is keyed by its component `type`, except ScriptComponent
+  // (there can be several) which is keyed by `script:<scriptId>` instead so
+  // multiple motion scripts on the same entity can be reordered relative to
+  // each other, not just as a block.
+  const dragKeyFor = (c) =>
+    (c.type === 'ScriptComponent' || c.type === 'MonoBehaviour') ? `script:${c.scriptId}` : c.type;
+ 
+  const reorderComponents = (draggedKey, targetKey) => {
+    if (!draggedKey || !targetKey || draggedKey === targetKey) return;
+    const comps = [...selectedEntity.components];
+    const fromIdx = comps.findIndex(c => dragKeyFor(c) === draggedKey);
+    const toIdx = comps.findIndex(c => dragKeyFor(c) === targetKey);
+    if (fromIdx === -1 || toIdx === -1) return;
+    const [moved] = comps.splice(fromIdx, 1);
+    comps.splice(toIdx, 0, moved);
+    onUpdateEntity(selectedEntity.id, { components: comps });
+  };
+ 
+  const handleCardDragStart = (key) => (e) => {
+    setDragCompType(key);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+  const handleCardDragOver = (key) => (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverCompType !== key) setDragOverCompType(key);
+  };
+  const handleCardDrop = (key) => (e) => {
+    e.preventDefault();
+    reorderComponents(dragCompType, key);
+    setDragCompType(null);
+    setDragOverCompType(null);
+  };
+  const handleCardDragEnd = () => {
+    setDragCompType(null);
+    setDragOverCompType(null);
   };
  
   const removeComponent = (compType, scriptId = null) => {
@@ -240,13 +349,15 @@ export const UnityInspector = memo(function UnityInspector({
       <div className="inspector-scroll-area">
  
         {/* ========== TRANSFORM ========== */}
+        {/* Transform is pinned first and not draggable/reorderable -- it's
+            always present (synthesized above if missing), so reordering it
+            relative to other components isn't meaningful. */}
         <div className="inspector-card">
-          <div className="inspector-card-header" onClick={() => toggleFoldout('Transform')}>
-            <div className="card-title-group">
-              {openFoldouts.Transform ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-              <span className="card-title-text">Transform</span>
-            </div>
-          </div>
+          <InspectorCardHeader
+            title="Transform"
+            isOpen={openFoldouts.Transform}
+            onToggle={() => toggleFoldout('Transform')}
+          />
  
           {openFoldouts.Transform && (
             <div className="inspector-card-body">
@@ -283,36 +394,46 @@ export const UnityInspector = memo(function UnityInspector({
  
           return (
             <div className="inspector-card react-highlight">
-              <div className="inspector-card-header">
-                <div className="card-title-group">
-                  <Sparkles size={13} className="text-cyan" />
-                  <span className="card-title-text">{reactComp.scriptName || 'React Component'}</span>
-                </div>
-                <div className="card-actions-group">
-                  <button className="edit-cs-btn" onClick={() => scriptDef && onOpenScriptEditor(scriptDef)}>
-                    Edit JSX
-                  </button>
-                  <button className="del-btn-sm" onClick={() => removeComponent('ReactRenderer')}>
-                    <Trash2 size={11} />
-                  </button>
-                </div>
-              </div>
+              <InspectorCardHeader
+                icon={<Sparkles size={13} className="text-cyan" />}
+                title={reactComp.scriptName || 'React Component'}
+                isOpen={openFoldouts.React}
+                onToggle={() => toggleFoldout('React')}
+                draggable
+                isDragOver={dragOverCompType === 'ReactRenderer'}
+                onDragStart={handleCardDragStart('ReactRenderer')}
+                onDragOver={handleCardDragOver('ReactRenderer')}
+                onDrop={handleCardDrop('ReactRenderer')}
+                onDragEnd={handleCardDragEnd}
+                actions={
+                  <>
+                    <button className="edit-cs-btn" onClick={() => scriptDef && onOpenScriptEditor(scriptDef)}>
+                      Edit JSX
+                    </button>
+                    <button className="del-btn-sm" onClick={() => removeComponent('ReactRenderer')}>
+                      <Trash2 size={11} />
+                    </button>
+                  </>
+                }
+              />
  
-              <div className="inspector-card-body">
-                {scriptError && (
-                  <div className="script-error-badge">
-                    <AlertCircle size={12} />
-                    <span>{scriptError}</span>
-                  </div>
-                )}
+              {openFoldouts.React && (
+                <div className="inspector-card-body">
+                  {scriptError && (
+                    <div className="script-error-badge">
+                      <AlertCircle size={12} />
+                      <span>{scriptError}</span>
+                    </div>
+                  )}
  
-                <InspectorFieldList
-                  fields={fields}
-                  values={reactComp.props}
-                  onFieldChange={updateReactProps}
-                  emptyHint={<>Expose props with <code>Component.props = &#123; ... &#125;</code></>}
-                />
-              </div>
+                  <InspectorFieldList
+                    fields={fields}
+                    values={reactComp.props}
+                    onFieldChange={updateReactProps}
+                    emptyHint={<>Expose props with <code>Component.props = &#123; ... &#125;</code></>}
+                  />
+                </div>
+              )}
             </div>
           );
         })()}
@@ -325,36 +446,46 @@ export const UnityInspector = memo(function UnityInspector({
  
           return (
             <div className="inspector-card canvas-highlight">
-              <div className="inspector-card-header">
-                <div className="card-title-group">
-                  <Boxes size={13} className="text-violet" />
-                  <span className="card-title-text">{canvasComp.scriptName || 'Canvas Component'}</span>
-                </div>
-                <div className="card-actions-group">
-                  <button className="edit-cs-btn" onClick={() => scriptDef && onOpenScriptEditor(scriptDef)}>
-                    Edit JS
-                  </button>
-                  <button className="del-btn-sm" onClick={() => removeComponent('CanvasRenderer')}>
-                    <Trash2 size={11} />
-                  </button>
-                </div>
-              </div>
+              <InspectorCardHeader
+                icon={<Boxes size={13} className="text-violet" />}
+                title={canvasComp.scriptName || 'Canvas Component'}
+                isOpen={openFoldouts.Canvas}
+                onToggle={() => toggleFoldout('Canvas')}
+                draggable
+                isDragOver={dragOverCompType === 'CanvasRenderer'}
+                onDragStart={handleCardDragStart('CanvasRenderer')}
+                onDragOver={handleCardDragOver('CanvasRenderer')}
+                onDrop={handleCardDrop('CanvasRenderer')}
+                onDragEnd={handleCardDragEnd}
+                actions={
+                  <>
+                    <button className="edit-cs-btn" onClick={() => scriptDef && onOpenScriptEditor(scriptDef)}>
+                      Edit JS
+                    </button>
+                    <button className="del-btn-sm" onClick={() => removeComponent('CanvasRenderer')}>
+                      <Trash2 size={11} />
+                    </button>
+                  </>
+                }
+              />
  
-              <div className="inspector-card-body">
-                {scriptError && (
-                  <div className="script-error-badge">
-                    <AlertCircle size={12} />
-                    <span>{scriptError}</span>
-                  </div>
-                )}
+              {openFoldouts.Canvas && (
+                <div className="inspector-card-body">
+                  {scriptError && (
+                    <div className="script-error-badge">
+                      <AlertCircle size={12} />
+                      <span>{scriptError}</span>
+                    </div>
+                  )}
  
-                <InspectorFieldList
-                  fields={fields}
-                  values={canvasComp.props}
-                  onFieldChange={updateCanvasProps}
-                  emptyHint={<>Expose props with <code>static props = &#123; ... &#125;</code></>}
-                />
-              </div>
+                  <InspectorFieldList
+                    fields={fields}
+                    values={canvasComp.props}
+                    onFieldChange={updateCanvasProps}
+                    emptyHint={<>Expose props with <code>static props = &#123; ... &#125;</code></>}
+                  />
+                </div>
+              )}
             </div>
           );
         })()}
@@ -362,168 +493,196 @@ export const UnityInspector = memo(function UnityInspector({
         {/* ========== TEXT RENDERER ========== */}
         {textComp && (
           <div className="inspector-card">
-            <div className="inspector-card-header">
-              <div className="card-title-group">
-                <Type size={13} className="text-amber" />
-                <span className="card-title-text">Text Component</span>
-              </div>
-              <button className="del-btn-sm" onClick={() => removeComponent('TextRenderer')}>
-                <Trash2 size={11} />
-              </button>
-            </div>
+            <InspectorCardHeader
+              icon={<Type size={13} className="text-amber" />}
+              title="Text Component"
+              isOpen={openFoldouts.Text}
+              onToggle={() => toggleFoldout('Text')}
+              draggable
+              isDragOver={dragOverCompType === 'TextRenderer'}
+              onDragStart={handleCardDragStart('TextRenderer')}
+              onDragOver={handleCardDragOver('TextRenderer')}
+              onDrop={handleCardDrop('TextRenderer')}
+              onDragEnd={handleCardDragEnd}
+              actions={
+                <button className="del-btn-sm" onClick={() => removeComponent('TextRenderer')}>
+                  <Trash2 size={11} />
+                </button>
+              }
+            />
  
-            <div className="inspector-card-body">
-              <textarea
-                className="inspector-textarea"
-                rows={2}
-                value={textComp.text || ''}
-                onChange={(e) => updateComponent('TextRenderer', { text: e.target.value })}
-              />
- 
-              <div className="inspector-row">
-                <span className="row-label">Font Size</span>
-                <DragNumber
-                  label="px"
-                  value={textComp.fontSize ?? 32}
-                  step={1}
-                  min={4}
-                  onChange={(v) => updateComponent('TextRenderer', { fontSize: Math.round(v) })}
+            {openFoldouts.Text && (
+              <div className="inspector-card-body">
+                <textarea
+                  className="inspector-textarea"
+                  rows={2}
+                  value={textComp.text || ''}
+                  onChange={(e) => updateComponent('TextRenderer', { text: e.target.value })}
                 />
-              </div>
  
-              <div className="inspector-row">
-                <span className="row-label">Color</span>
-                <input
-                  type="color"
-                  className="inspector-color-input"
-                  value={textComp.fontColor || '#ffffff'}
-                  onChange={(e) => updateComponent('TextRenderer', { fontColor: e.target.value })}
-                />
+                <div className="inspector-row">
+                  <span className="row-label">Font Size</span>
+                  <DragNumber
+                    label="px"
+                    value={textComp.fontSize ?? 32}
+                    step={1}
+                    min={4}
+                    onChange={(v) => updateComponent('TextRenderer', { fontSize: Math.round(v) })}
+                  />
+                </div>
+ 
+                <div className="inspector-row">
+                  <span className="row-label">Color</span>
+                  <input
+                    type="color"
+                    className="inspector-color-input"
+                    value={textComp.fontColor || '#ffffff'}
+                    onChange={(e) => updateComponent('TextRenderer', { fontColor: e.target.value })}
+                  />
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
  
         {/* ========== SHAPE RENDERER ========== */}
         {shapeComp && (
           <div className="inspector-card">
-            <div className="inspector-card-header">
-              <div className="card-title-group">
-                <Square size={13} className="text-cyan" />
-                <span className="card-title-text">Shape Component</span>
-              </div>
-              <button className="del-btn-sm" onClick={() => removeComponent('ShapeRenderer')}>
-                <Trash2 size={11} />
-              </button>
-            </div>
+            <InspectorCardHeader
+              icon={<Square size={13} className="text-cyan" />}
+              title="Shape Component"
+              isOpen={openFoldouts.Shape}
+              onToggle={() => toggleFoldout('Shape')}
+              draggable
+              isDragOver={dragOverCompType === 'ShapeRenderer'}
+              onDragStart={handleCardDragStart('ShapeRenderer')}
+              onDragOver={handleCardDragOver('ShapeRenderer')}
+              onDrop={handleCardDrop('ShapeRenderer')}
+              onDragEnd={handleCardDragEnd}
+              actions={
+                <button className="del-btn-sm" onClick={() => removeComponent('ShapeRenderer')}>
+                  <Trash2 size={11} />
+                </button>
+              }
+            />
  
-            <div className="inspector-card-body">
-              <div className="inspector-row">
-                <span className="row-label">Type</span>
-                <select
-                  className="inspector-select"
-                  value={shapeComp.shapeType || 'rect'}
-                  onChange={(e) => updateComponent('ShapeRenderer', { shapeType: e.target.value })}
-                >
-                  <option value="rounded-rect">Rounded Rect</option>
-                  <option value="circle">Circle</option>
-                  <option value="rect">Rectangle</option>
-                </select>
-              </div>
+            {openFoldouts.Shape && (
+              <div className="inspector-card-body">
+                <div className="inspector-row">
+                  <span className="row-label">Type</span>
+                  <select
+                    className="inspector-select"
+                    value={shapeComp.shapeType || 'rect'}
+                    onChange={(e) => updateComponent('ShapeRenderer', { shapeType: e.target.value })}
+                  >
+                    <option value="rounded-rect">Rounded Rect</option>
+                    <option value="circle">Circle</option>
+                    <option value="rect">Rectangle</option>
+                  </select>
+                </div>
  
-              <div className="inspector-row">
-                <span className="row-label">Size</span>
-                <div className="drag-number-group">
-                  <DragNumber
-                    label="W"
-                    value={shapeComp.width ?? 140}
-                    step={1}
-                    min={1}
-                    onChange={(v) => updateComponent('ShapeRenderer', { width: Math.round(v) })}
-                  />
-                  <DragNumber
-                    label="H"
-                    value={shapeComp.height ?? 140}
-                    step={1}
-                    min={1}
-                    onChange={(v) => updateComponent('ShapeRenderer', { height: Math.round(v) })}
+                <div className="inspector-row">
+                  <span className="row-label">Size</span>
+                  <div className="drag-number-group">
+                    <DragNumber
+                      label="W"
+                      value={shapeComp.width ?? 140}
+                      step={1}
+                      min={1}
+                      onChange={(v) => updateComponent('ShapeRenderer', { width: Math.round(v) })}
+                    />
+                    <DragNumber
+                      label="H"
+                      value={shapeComp.height ?? 140}
+                      step={1}
+                      min={1}
+                      onChange={(v) => updateComponent('ShapeRenderer', { height: Math.round(v) })}
+                    />
+                  </div>
+                </div>
+ 
+                <div className="inspector-row">
+                  <span className="row-label">Fill Color</span>
+                  <input
+                    type="color"
+                    className="inspector-color-input"
+                    value={shapeComp.color || '#ffffff'}
+                    onChange={(e) => updateComponent('ShapeRenderer', { color: e.target.value })}
                   />
                 </div>
-              </div>
  
-              <div className="inspector-row">
-                <span className="row-label">Fill Color</span>
-                <input
-                  type="color"
-                  className="inspector-color-input"
-                  value={shapeComp.color || '#ffffff'}
-                  onChange={(e) => updateComponent('ShapeRenderer', { color: e.target.value })}
-                />
-              </div>
+                {shapeComp.shapeType !== 'circle' && (
+                  <div className="inspector-row">
+                    <span className="row-label">Roundness</span>
+                    <DragNumber
+                      label="px"
+                      value={shapeComp.borderRadius ?? 0}
+                      step={1}
+                      min={0}
+                      max={Math.min(shapeComp.width ?? 140, shapeComp.height ?? 140) / 2}
+                      onChange={(v) => updateComponent('ShapeRenderer', { borderRadius: Math.round(v) })}
+                    />
+                  </div>
+                )}
  
-              {shapeComp.shapeType !== 'circle' && (
                 <div className="inspector-row">
-                  <span className="row-label">Roundness</span>
+                  <span className="row-label">Stroke Color</span>
+                  <input
+                    type="color"
+                    className="inspector-color-input"
+                    value={shapeComp.strokeColor || '#38bdf8'}
+                    onChange={(e) => updateComponent('ShapeRenderer', { strokeColor: e.target.value })}
+                  />
+                </div>
+ 
+                <div className="inspector-row">
+                  <span className="row-label">Stroke W</span>
                   <DragNumber
                     label="px"
-                    value={shapeComp.borderRadius ?? 0}
-                    step={1}
+                    value={shapeComp.strokeWidth ?? 0}
+                    step={0.5}
                     min={0}
-                    max={Math.min(shapeComp.width ?? 140, shapeComp.height ?? 140) / 2}
-                    onChange={(v) => updateComponent('ShapeRenderer', { borderRadius: Math.round(v) })}
+                    onChange={(v) => updateComponent('ShapeRenderer', { strokeWidth: v })}
                   />
                 </div>
-              )}
- 
-              <div className="inspector-row">
-                <span className="row-label">Stroke Color</span>
-                <input
-                  type="color"
-                  className="inspector-color-input"
-                  value={shapeComp.strokeColor || '#38bdf8'}
-                  onChange={(e) => updateComponent('ShapeRenderer', { strokeColor: e.target.value })}
-                />
               </div>
- 
-              <div className="inspector-row">
-                <span className="row-label">Stroke W</span>
-                <DragNumber
-                  label="px"
-                  value={shapeComp.strokeWidth ?? 0}
-                  step={0.5}
-                  min={0}
-                  onChange={(v) => updateComponent('ShapeRenderer', { strokeWidth: v })}
-                />
-              </div>
-            </div>
+            )}
           </div>
         )}
  
         {/* ========== MEDIA SETTINGS ========== */}
         {(videoComp || audioComp) && (
           <div className="inspector-card">
-            <div className="inspector-card-header">
-              <div className="card-title-group">
-                <Volume2 size={13} className="text-emerald" />
-                <span className="card-title-text">Media Settings</span>
+            <InspectorCardHeader
+              icon={<Volume2 size={13} className="text-emerald" />}
+              title="Media Settings"
+              isOpen={openFoldouts.Media}
+              onToggle={() => toggleFoldout('Media')}
+              draggable
+              isDragOver={dragOverCompType === (videoComp ? 'VideoRenderer' : 'AudioSource')}
+              onDragStart={handleCardDragStart(videoComp ? 'VideoRenderer' : 'AudioSource')}
+              onDragOver={handleCardDragOver(videoComp ? 'VideoRenderer' : 'AudioSource')}
+              onDrop={handleCardDrop(videoComp ? 'VideoRenderer' : 'AudioSource')}
+              onDragEnd={handleCardDragEnd}
+            />
+            {openFoldouts.Media && (
+              <div className="inspector-card-body">
+                <div className="inspector-row">
+                  <span className="row-label">Volume</span>
+                  <DragNumber
+                    label="vol"
+                    value={parseFloat(((videoComp || audioComp)?.volume ?? 1).toFixed(2))}
+                    step={0.01}
+                    min={0}
+                    max={2}
+                    onChange={(v) => {
+                      const compType = videoComp ? 'VideoRenderer' : 'AudioSource';
+                      updateComponent(compType, { volume: v });
+                    }}
+                  />
+                </div>
               </div>
-            </div>
-            <div className="inspector-card-body">
-              <div className="inspector-row">
-                <span className="row-label">Volume</span>
-                <DragNumber
-                  label="vol"
-                  value={parseFloat(((videoComp || audioComp)?.volume ?? 1).toFixed(2))}
-                  step={0.01}
-                  min={0}
-                  max={2}
-                  onChange={(v) => {
-                    const compType = videoComp ? 'VideoRenderer' : 'AudioSource';
-                    updateComponent(compType, { volume: v });
-                  }}
-                />
-              </div>
-            </div>
+            )}
           </div>
         )}
  
@@ -532,39 +691,54 @@ export const UnityInspector = memo(function UnityInspector({
           const scriptDef = scripts.find(s => s.id === scriptComp.scriptId);
           const fields = scriptDef ? extractScriptProps(scriptDef.code) : [];
           const scriptError = scriptDef ? getScriptError(scriptDef.code) : null;
+          const foldoutKey = `Script:${scriptComp.scriptId}`;
+          const dragKey = `script:${scriptComp.scriptId}`;
+          // Per-script foldout state defaults to open until the user
+          // collapses it, same as every other card.
+          const isOpen = openFoldouts[foldoutKey] !== false;
  
           return (
             <div key={scriptComp.scriptId} className="inspector-card script-highlight">
-              <div className="inspector-card-header">
-                <div className="card-title-group">
-                  <FileCode size={13} className="text-emerald" />
-                  <span className="card-title-text">{scriptComp.scriptName || 'Motion Script'}</span>
-                </div>
-                <div className="card-actions-group">
-                  <button className="edit-cs-btn" onClick={() => scriptDef && onOpenScriptEditor(scriptDef)}>
-                    Edit JS
-                  </button>
-                  <button className="del-btn-sm" onClick={() => removeComponent('ScriptComponent', scriptComp.scriptId)}>
-                    <Trash2 size={11} />
-                  </button>
-                </div>
-              </div>
+              <InspectorCardHeader
+                icon={<FileCode size={13} className="text-emerald" />}
+                title={scriptComp.scriptName || 'Motion Script'}
+                isOpen={isOpen}
+                onToggle={() => toggleFoldout(foldoutKey)}
+                draggable
+                isDragOver={dragOverCompType === dragKey}
+                onDragStart={handleCardDragStart(dragKey)}
+                onDragOver={handleCardDragOver(dragKey)}
+                onDrop={handleCardDrop(dragKey)}
+                onDragEnd={handleCardDragEnd}
+                actions={
+                  <>
+                    <button className="edit-cs-btn" onClick={() => scriptDef && onOpenScriptEditor(scriptDef)}>
+                      Edit JS
+                    </button>
+                    <button className="del-btn-sm" onClick={() => removeComponent('ScriptComponent', scriptComp.scriptId)}>
+                      <Trash2 size={11} />
+                    </button>
+                  </>
+                }
+              />
  
-              <div className="inspector-card-body">
-                {scriptError && (
-                  <div className="script-error-badge">
-                    <AlertCircle size={12} />
-                    <span>{scriptError}</span>
-                  </div>
-                )}
+              {isOpen && (
+                <div className="inspector-card-body">
+                  {scriptError && (
+                    <div className="script-error-badge">
+                      <AlertCircle size={12} />
+                      <span>{scriptError}</span>
+                    </div>
+                  )}
  
-                <InspectorFieldList
-                  fields={fields}
-                  values={scriptComp.props}
-                  onFieldChange={(name, v) => updateScriptProps(scriptComp.scriptId, name, v)}
-                  emptyHint={<>Expose props with <code>static props = &#123; ... &#125;</code></>}
-                />
-              </div>
+                  <InspectorFieldList
+                    fields={fields}
+                    values={scriptComp.props}
+                    onFieldChange={(name, v) => updateScriptProps(scriptComp.scriptId, name, v)}
+                    emptyHint={<>Expose props with <code>static props = &#123; ... &#125;</code></>}
+                  />
+                </div>
+              )}
             </div>
           );
         })}

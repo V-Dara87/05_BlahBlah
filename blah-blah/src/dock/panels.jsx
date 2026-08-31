@@ -55,7 +55,7 @@ export function PreviewDockPanel() {
   const {
     entities, tracks, scripts, currentTime, calculatedDuration,
     isPlaying, isLooping, selectedEntityId, setSelectedEntityId,
-    handleUpdateEntity, togglePlay, seek, setIsLooping,
+    handleUpdateEntity, togglePlay, seek, setIsLooping, resolution,
   } = useEditorContext();
  
   return (
@@ -73,6 +73,7 @@ export function PreviewDockPanel() {
       onTogglePlay={togglePlay}
       onSeek={seek}
       onToggleLoop={() => setIsLooping((v) => !v)}
+      resolution={resolution}
     />
   );
 }
