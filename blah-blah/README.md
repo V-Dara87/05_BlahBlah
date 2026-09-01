@@ -1,16 +1,27 @@
-# React + Vite
+# blah-blah
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Browser-based tutorial overlay editor — timeline + Inspector + code-driven motion (Remotion-style) on video.
 
-Currently, two official plugins are available:
+## Docs (repo root)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **[ARCHITECTURE.md](../ARCHITECTURE.md)** — strategy, strengths/weaknesses, phases, Tauri, external IDE, render pipeline
+- **[roadmap.md](../roadmap.md)** — feature checklist and known flaws
 
-## React Compiler
+## Develop
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```bash
+npm install
+npm run dev
+```
 
-## Expanding the Oxlint configuration
+Requires a Chromium browser with File System Access API (Chrome, Edge, Brave) for on-disk projects.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+## Project layout (on disk)
+
+```
+my-project/
+  project.json
+  scripts/       # edit here or in VS Code / Cursor
+  prefabs/
+  media/
+```

@@ -1,5 +1,7 @@
 # blah-blah — Feature Roadmap & Flaws
- 
+
+See also **[ARCHITECTURE.md](./ARCHITECTURE.md)** for strategic direction (evolve vs rebuild, Tauri, render pipeline, external IDE, phases).
+
 Core goal: unify Remotion-style code-driven motion with normal editor operations (timeline placement, GUI editing), Unity-style component model. Four pillars: ECS, Timeline, Inspector, support for all web tech.
  
 **Scope note (added):** not trying to be a general-purpose editor / DaVinci Resolve competitor. The actual target use case: dropping simple annotated shapes (circles, boxes, arrows) with cool web-tech-driven motion onto tutorial-style footage, easier than Resolve/Fusion, with the option to let AI author the motion logic and (later) drive it straight from narration text. Scope everything below against that, not against "as good as Resolve."
