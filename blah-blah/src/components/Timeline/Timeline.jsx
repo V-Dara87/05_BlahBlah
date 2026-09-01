@@ -1,14 +1,14 @@
-import { useRef, useMemo } from 'react';
+import { useRef, useMemo, memo } from 'react';
 import { Plus } from 'lucide-react';
 import { TimeRuler } from './TimeRuler';
 import { TrackHeader } from './TrackHeader';
 import { TrackLane } from './TrackLane';
 import { Playhead } from './Playhead';
- 
-export function Timeline({
+import { usePlaybackStore } from '../../hooks/PlaybackContext';
+
+export const Timeline = memo(function Timeline({
   tracks,
   clips,
-  currentTime,
   totalDuration,
   pixelsPerSecond,
   selectedClipId,
@@ -23,6 +23,7 @@ export function Timeline({
   onDropItemOnTrack,
   onToggleRecordTrack,
 }) {
+  const playbackStore = usePlaybackStore();
   const lanesScrollRef = useRef(null);
   const rulerScrollRef = useRef(null);
  
@@ -32,17 +33,19 @@ export function Timeline({
     }
   };
  
+  // Read playhead position from the playback store at drag-time only — never
+  // as a React prop — so this component stays stable during playback.
   const snappingPoints = useMemo(() => {
     if (!snappingEnabled) return [];
     const points = new Set();
     points.add(0);
-    points.add(currentTime);
+    points.add(playbackStore.getCurrentTime());
     clips.forEach((clip) => {
       points.add(clip.startTime);
       points.add(clip.startTime + clip.duration);
     });
     return Array.from(points);
-  }, [clips, currentTime, snappingEnabled]);
+  }, [clips, snappingEnabled, playbackStore]);
  
   const totalWidth = Math.max(totalDuration * pixelsPerSecond + 400, 1600);
   const timelineLanesHeight = tracks.length * 64;
@@ -55,7 +58,7 @@ export function Timeline({
         <div className="timeline-actions-group" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <button 
             className="add-clip-action-btn" 
-            onClick={() => onAddEmptyClip && onAddEmptyClip(tracks[0]?.id || 'track-1', currentTime)}
+            onClick={() => onAddEmptyClip && onAddEmptyClip(tracks[0]?.id || 'track-1', playbackStore.getCurrentTime())}
             title="Create New Clip at Playhead"
           >
             <Plus size={12} className="text-cyan" />
@@ -110,7 +113,6 @@ export function Timeline({
           >
             <div className="lanes-surface" style={{ width: `${totalWidth}px` }}>
               <Playhead
-                currentTime={currentTime}
                 pixelsPerSecond={pixelsPerSecond}
                 onSeek={onSeek}
                 timelineHeight={timelineLanesHeight + 30}
@@ -138,5 +140,5 @@ export function Timeline({
       </div>
     </section>
   );
-}
+});
  

@@ -927,19 +927,9 @@
   background-color: var(--unity-panel);
   display: flex;
   flex-direction: column;
+  flex: 1;
+  width: 100%;
   height: 100%;
-  /* min-height: 0 is required here, not just on .inspector-scroll-area.
-     By default a flex item's min-height is `auto`, which resolves to its
-     content's intrinsic height -- so without this, .inspector-sidebar
-     itself refuses to shrink below the combined height of the header +
-     every inspector card, even though it's `flex: 1` inside dockview's
-     panel content wrapper. When the dockview panel got resized smaller
-     than that content height, the sidebar (and everything inside it)
-     just overflowed the panel bounds instead of the intended
-     .inspector-scroll-area (flex: 1; overflow-y: auto;) actually kicking
-     in -- reading as cards overlapping/getting clipped with no scrollbar,
-     since the scroll container itself never got small enough to need
-     one. */
   min-height: 0;
   overflow: hidden;
   transition: box-shadow 0.1s, background-color 0.1s;
@@ -971,6 +961,7 @@
 }
  
 .inspector-header-box {
+  flex-shrink: 0;
   padding: 8px 10px;
   border-bottom: 1px solid var(--unity-border);
   display: flex;
@@ -1007,18 +998,36 @@
  
 .inspector-scroll-area {
   flex: 1;
-  /* Same flex min-height: 0 reasoning as .inspector-sidebar above -- this
-     is the actual intended scroll boundary (overflow-y: auto already set
-     below), so it needs to be the element that shrinks first. */
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 6px;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.inspector-scroll-area::-webkit-scrollbar {
+  width: 8px;
+}
+
+.inspector-scroll-area::-webkit-scrollbar-track {
+  background: var(--unity-dark);
+}
+
+.inspector-scroll-area::-webkit-scrollbar-thumb {
+  background: var(--unity-border-light);
+  border-radius: 4px;
+}
+
+.inspector-scroll-area::-webkit-scrollbar-thumb:hover {
+  background: var(--unity-text-dim);
 }
  
 .inspector-card {
+  flex-shrink: 0;
   background: var(--unity-subtle);
   border: 1px solid var(--unity-border);
   border-radius: 4px;
@@ -1249,6 +1258,7 @@
 }
  
 .inspector-footer {
+  flex-shrink: 0;
   padding: 8px;
   border-top: 1px solid var(--unity-border);
   display: flex;

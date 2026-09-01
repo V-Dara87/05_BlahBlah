@@ -9,7 +9,10 @@ import { SettingsModal } from './components/SettingsModal';
 import { HubScreen } from './components/HubScreen';
 import { DockLayout } from './dock/DockLayout';
 import { EditorContext } from './dock/EditorContext';
-import { useTimelinePlayback } from './hooks/useTimelinePlayback';
+import { PlaybackProvider } from './hooks/PlaybackContext';
+import { EditorHeader } from './components/EditorHeader';
+import { EditorPlaybackShortcuts } from './components/EditorPlaybackShortcuts';
+import { PlaybackStoreBridge } from './components/PlaybackStoreBridge';
 import { useAudioRecorder } from './hooks/useAudioRecorder';
 import { INITIAL_TRACKS, DEFAULT_PIXELS_PER_SECOND, DEFAULT_RESOLUTION } from './types';
 import { createSyntheticAudio, createSyntheticVideo } from './utils/sampleMedia';
@@ -109,23 +112,27 @@ export function App() {
   const [recordingTrackId, setRecordingTrackId] = useState(null);
   const [audioInputDeviceId, setAudioInputDeviceId] = useState(() => loadAudioSettings().inputDeviceId);
   const recordingStartTimeRef = useRef(0);
+  const playbackStoreRef = useRef(null);
   const { startRecording, stopRecording } = useAudioRecorder({ inputDeviceId: audioInputDeviceId });
+
+  const getPlaybackTime = useCallback(() => playbackStoreRef.current?.getCurrentTime() ?? 0, []);
  
   // Calculate timeline duration based on entity placements
+  // BUG FIX -- this used to return a fabricated `30` when there were no
+  // clips at all, which useTimelinePlayback then treated as a completely
+  // real project end: pressing Play on an empty timeline would run for
+  // 30s and then either stop dead or (with Loop on) silently snap the
+  // playhead back to 0 and keep going, forever, on a timeline with nothing
+  // on it. An empty project doesn't have a meaningful duration to play or
+  // loop against, so this now returns 0 -- useTimelinePlayback below is
+  // updated to treat totalDuration <= 0 as "nothing to play" and refuse to
+  // start/continue the playback tick loop in that case.
   const calculatedDuration = useMemo(() => {
-    if (entities.length === 0) return 30;
+    if (entities.length === 0) return 0;
     const maxEnd = Math.max(...entities.map((e) => e.startTime + e.duration));
     return Math.max(30, Math.ceil(maxEnd + 5));
   }, [entities]);
  
-  const {
-    isPlaying,
-    currentTime,
-    isLooping,
-    togglePlay,
-    seek,
-    setIsLooping,
-  } = useTimelinePlayback(calculatedDuration);
  
   // Helper to load sample demo scene with animated clips & scripts
   const handleLoadDemoScene = useCallback(async () => {
@@ -296,7 +303,7 @@ export function App() {
     const target = entities.find(e => e.id === (entityId || selectedEntityId));
     if (!target) return;
  
-    const splitPoint = currentTime;
+    const splitPoint = getPlaybackTime();
     const start = target.startTime;
     const end = target.startTime + target.duration;
  
@@ -330,14 +337,15 @@ export function App() {
  
     setEntities(prev => prev.map(e => e.id === target.id ? part1 : e).concat(part2));
     setSelectedEntityId(part2.id);
-  }, [entities, selectedEntityId, currentTime]);
+  }, [entities, selectedEntityId, getPlaybackTime]);
  
   // Create an Empty Clip with Transform & Shape / Renderer
-  const handleAddEmptyClip = useCallback((targetTrackId = 'track-1', startTime = currentTime) => {
+  const handleAddEmptyClip = useCallback((targetTrackId = 'track-1', startTime) => {
+    const playheadTime = getPlaybackTime();
     const newGO = createGameObject({
       name: 'New Clip',
       trackId: targetTrackId || 'track-1',
-      startTime: startTime !== undefined ? startTime : currentTime,
+      startTime: startTime !== undefined ? startTime : playheadTime,
       duration: 5,
       type: 'shape',
       components: [
@@ -357,10 +365,10 @@ export function App() {
  
     setEntities(prev => [...prev, newGO]);
     setSelectedEntityId(newGO.id);
-  }, [currentTime]);
+  }, [getPlaybackTime]);
  
   // Add Prefab to Timeline
-  const handleAddPrefabToTimeline = (prefab, targetTrackId = 'track-1', startTime = currentTime) => {
+  const handleAddPrefabToTimeline = (prefab, targetTrackId = 'track-1', startTime = getPlaybackTime()) => {
     const newGO = createGameObject({
       name: prefab.name.replace(/\.prefab(\.json)?$/i, ''),
       trackId: targetTrackId,
@@ -375,7 +383,7 @@ export function App() {
   };
  
   // Add Media to Timeline
-  const handleAddMediaToTimeline = (asset, targetTrackId = 'track-3', startTime = currentTime) => {
+  const handleAddMediaToTimeline = (asset, targetTrackId = 'track-3', startTime = getPlaybackTime()) => {
     const isAudio = asset.type === 'audio';
  
     const newGO = createGameObject({
@@ -514,10 +522,10 @@ export function App() {
     if (recordingTrackId) return; // another track is already recording
  
     // Arm this track and start capturing at the current playhead position
-    recordingStartTimeRef.current = currentTime;
+    recordingStartTimeRef.current = getPlaybackTime();
     await startRecording();
     setRecordingTrackId(trackId);
-  }, [recordingTrackId, currentTime, mediaAssets, startRecording, stopRecording]);
+  }, [recordingTrackId, getPlaybackTime, mediaAssets, startRecording, stopRecording]);
  
   const handleAudioSettingsChanged = useCallback((settings) => {
     setAudioInputDeviceId(settings.inputDeviceId);
@@ -726,18 +734,47 @@ export function App() {
   }, [projectFolderHandle, projectState]);
  
   // Hot-Reload: Poll scripts/ directory for external edits in VS Code
+  //
+  // PERF/FREEZE FIX -- this previously listed `scripts` in its dependency
+  // array. Every time a poll found a real change and called setScripts, this
+  // effect re-ran (new `scripts` identity), tearing down and recreating the
+  // interval. Worse, there was no "poll in progress" guard (unlike the
+  // autosave effect above, which has `isAutoSavingRef`): checkScriptsForChanges
+  // does real File System Access API I/O (getDirectoryHandle -> iterate ->
+  // getFile -> file.text() per script file), and on a slow disk or with many
+  // script files that can take longer than the 2000ms interval. When that
+  // happens, overlapping polls pile up awaiting file reads on the main
+  // thread -- which reads as a freeze that (a) doesn't require anything on
+  // the timeline, since it only needs `projectFolderHandle` to be set, and
+  // (b) gets worse with more objects/scripts, since each poll iterates every
+  // script file. `scriptsRef` lets the interval read the latest scripts
+  // without restarting on every change, and `isPollingRef` skips a tick
+  // entirely if the previous one hasn't finished yet, matching the guard
+  // pattern the autosave effect already uses.
+  const scriptsRef = useRef(scripts);
+  useEffect(() => {
+    scriptsRef.current = scripts;
+  }, [scripts]);
+ 
+  const isPollingScriptsRef = useRef(false);
   useEffect(() => {
     if (!projectFolderHandle) return;
  
     const poller = setInterval(async () => {
-      const updatedScripts = await checkScriptsForChanges(projectFolderHandle, scripts);
-      if (updatedScripts) {
-        setScripts(updatedScripts);
+      if (isPollingScriptsRef.current) return;
+      isPollingScriptsRef.current = true;
+      try {
+        const updatedScripts = await checkScriptsForChanges(projectFolderHandle, scriptsRef.current);
+        if (updatedScripts) {
+          setScripts(updatedScripts);
+        }
+      } finally {
+        isPollingScriptsRef.current = false;
       }
     }, 2000);
  
     return () => clearInterval(poller);
-  }, [projectFolderHandle, scripts]);
+  }, [projectFolderHandle]);
  
   // Track management
   const handleAddTrack = () => {
@@ -759,55 +796,9 @@ export function App() {
     setTracks(prev => prev.map(t => t.id === trackId ? { ...t, ...updates } : t), { coalesce: true });
   };
  
-  // Global Keyboard Shortcuts (Space, Split, Delete, Ctrl+S)
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
-        e.preventDefault();
-        handleSaveProjectToDisk();
-        return;
-      }
- 
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
- 
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
-        e.preventDefault();
-        undo();
-      } else if ((e.ctrlKey || e.metaKey) && ((e.shiftKey && (e.key === 'z' || e.key === 'Z')) || e.key === 'y' || e.key === 'Y')) {
-        e.preventDefault();
-        redo();
-      } else if (e.code === 'Space') {
-        e.preventDefault();
-        togglePlay();
-      } else if (e.key === 'c' || e.key === 'C' || e.key === 's' || e.key === 'S') {
-        if (selectedEntityId) {
-          e.preventDefault();
-          handleSplitEntity(selectedEntityId);
-        }
-      } else if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selectedEntityId) {
-          e.preventDefault();
-          handleDeleteEntity(selectedEntityId);
-        }
-      } else if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        seek(currentTime - (e.shiftKey ? 1 : 1 / 30));
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        seek(currentTime + (e.shiftKey ? 1 : 1 / 30));
-      } else if (e.key === 'n' || e.key === 'N') {
-        setSnappingEnabled(prev => !prev);
-      } else if (e.key === '=' || e.key === '+') {
-        setPixelsPerSecond(prev => Math.min(160, prev + 10));
-      } else if (e.key === '-' || e.key === '_') {
-        setPixelsPerSecond(prev => Math.max(10, prev - 10));
-      }
-    };
- 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [togglePlay, selectedEntityId, handleSplitEntity, handleDeleteEntity, seek, currentTime, handleSaveProjectToDisk, undo, redo]);
- 
+  // Global keyboard shortcuts live in EditorPlaybackShortcuts (inside
+  // PlaybackProvider) so App never re-renders on every playback frame.
+
   if (screen === 'hub') {
     return (
       <>
@@ -831,15 +822,25 @@ export function App() {
   }
  
   return (
-    <div className="app-container">
+    <PlaybackProvider totalDuration={calculatedDuration}>
+      <PlaybackStoreBridge storeRef={playbackStoreRef} />
+      <EditorPlaybackShortcuts
+        selectedEntityId={selectedEntityId}
+        onSplitSelected={() => selectedEntityId && handleSplitEntity(selectedEntityId)}
+        onDeleteSelected={() => selectedEntityId && handleDeleteEntity(selectedEntityId)}
+        onSaveProject={handleSaveProjectToDisk}
+        onUndo={undo}
+        onRedo={redo}
+        onToggleSnapping={() => setSnappingEnabled((prev) => !prev)}
+        onZoomIn={() => setPixelsPerSecond((prev) => Math.min(160, prev + 10))}
+        onZoomOut={() => setPixelsPerSecond((prev) => Math.max(10, prev - 10))}
+      />
+      <div className="app-container">
       {/* Top Navigation Bar */}
-      <UnityHeader
+      <EditorHeader
         projectName={projectName}
         setProjectName={setProjectName}
-        currentTime={currentTime}
         totalDuration={calculatedDuration}
-        isPlaying={isPlaying}
-        isLooping={isLooping}
         pixelsPerSecond={pixelsPerSecond}
         snappingEnabled={snappingEnabled}
         hasSelectedEntity={!!selectedEntityId}
@@ -847,9 +848,6 @@ export function App() {
         saveStatus={saveStatus}
         canUndo={canUndo}
         canRedo={canRedo}
-        onTogglePlay={togglePlay}
-        onSeek={seek}
-        onToggleLoop={() => setIsLooping(!isLooping)}
         onSetPixelsPerSecond={setPixelsPerSecond}
         onSetSnappingEnabled={setSnappingEnabled}
         onSplitSelected={() => selectedEntityId && handleSplitEntity(selectedEntityId)}
@@ -875,12 +873,11 @@ export function App() {
         value={{
           // data
           entities, tracks, scripts, prefabs, mediaAssets,
-          currentTime, calculatedDuration, isPlaying, isLooping,
+          calculatedDuration,
           selectedEntityId, pixelsPerSecond, snappingEnabled, resolution,
           // setters
-          setSelectedEntityId, setIsLooping,
+          setSelectedEntityId,
           // handlers
-          togglePlay, seek,
           handleUpdateEntity, handleDeleteEntity, handleSaveAsPrefab,
           handleUpdateTrack, handleAddTrack, handleAddEmptyClip,
           handleDropItemOnTrack,
@@ -937,6 +934,7 @@ export function App() {
         onSettingsChanged={handleAudioSettingsChanged}
       />
     </div>
+    </PlaybackProvider>
   );
 }
  

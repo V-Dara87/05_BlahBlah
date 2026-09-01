@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, memo } from 'react';
 import { DockviewReact } from 'dockview-react';
 import { RotateCcw } from 'lucide-react';
 import {
@@ -10,12 +10,9 @@ import {
 } from './panels';
 import 'dockview-react/dist/styles/dockview.css';
 import './dockview-unity-theme.css';
- 
+
 const LAYOUT_STORAGE_KEY = 'blahblah-dock-layout-v1';
- 
-// Registered panel components, keyed by the string dockview stores in the
-// saved layout JSON. Keep these keys stable — renaming one orphans any
-// layout a user already saved to localStorage.
+
 const DOCK_COMPONENTS = {
   project: ProjectDockPanel,
   clips: ClipsDockPanel,
@@ -23,16 +20,14 @@ const DOCK_COMPONENTS = {
   inspector: InspectorDockPanel,
   timeline: TimelineDockPanel,
 };
- 
+
 function buildDefaultLayout(api) {
-  // Mirrors the original fixed 3-column + bottom-timeline layout, but every
-  // panel is now a real dockview panel: draggable, splittable, tabbable.
   const previewPanel = api.addPanel({
     id: 'preview',
     component: 'preview',
     title: 'Game',
   });
- 
+
   const projectPanel = api.addPanel({
     id: 'project',
     component: 'project',
@@ -40,17 +35,14 @@ function buildDefaultLayout(api) {
     position: { direction: 'left', referencePanel: previewPanel },
     initialWidth: 280,
   });
- 
-  // Clips tab lives in the same dockview group as Project, as its own tab
-  // (not nested inside ProjectPanel's internal tab bar) so it can be
-  // dragged out / resized independently like any other dock panel.
+
   api.addPanel({
     id: 'clips',
     component: 'clips',
     title: 'Clips',
     position: { direction: 'within', referencePanel: projectPanel },
   });
- 
+
   api.addPanel({
     id: 'inspector',
     component: 'inspector',
@@ -58,7 +50,7 @@ function buildDefaultLayout(api) {
     position: { direction: 'right', referencePanel: previewPanel },
     initialWidth: 310,
   });
- 
+
   api.addPanel({
     id: 'timeline',
     component: 'timeline',
@@ -67,25 +59,24 @@ function buildDefaultLayout(api) {
     initialHeight: 280,
   });
 }
- 
-export function DockLayout() {
+
+export const DockLayout = memo(function DockLayout() {
   const apiRef = useRef(null);
- 
+
   const persistLayout = useCallback(() => {
     if (!apiRef.current) return;
     try {
       const layout = apiRef.current.toJSON();
       localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layout));
     } catch {
-      // Ignore storage failures (private browsing, quota, etc.) - layout
-      // just won't persist across reloads, which is a harmless degrade.
+      // Ignore storage failures
     }
   }, []);
- 
+
   const handleReady = useCallback((event) => {
     const api = event.api;
     apiRef.current = api;
- 
+
     let restored = false;
     try {
       const saved = localStorage.getItem(LAYOUT_STORAGE_KEY);
@@ -94,26 +85,23 @@ export function DockLayout() {
         restored = true;
       }
     } catch {
-      // Corrupt/incompatible saved layout - fall through to default.
+      // Corrupt/incompatible saved layout
     }
- 
+
     if (!restored) {
       buildDefaultLayout(api);
     }
- 
-    // Save on every layout change: panel moved, resized, split, tab
-    // reordered, panel closed, etc. This is how "you can move things around
-    // like Unity, and it remembers" actually works.
+
     api.onDidLayoutChange(() => persistLayout());
   }, [persistLayout]);
- 
+
   const handleResetLayout = useCallback(() => {
     if (!apiRef.current) return;
     localStorage.removeItem(LAYOUT_STORAGE_KEY);
     apiRef.current.clear();
     buildDefaultLayout(apiRef.current);
   }, []);
- 
+
   return (
     <div className="dock-root">
       <button
@@ -131,5 +119,4 @@ export function DockLayout() {
       />
     </div>
   );
-}
- 
+});

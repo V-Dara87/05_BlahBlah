@@ -1,26 +1,51 @@
-import { useRef } from 'react';
+import { useRef, useEffect, memo } from 'react';
+import { usePlaybackStore } from '../../hooks/PlaybackContext';
 
-export function Playhead({
-  currentTime,
+export const Playhead = memo(function Playhead({
   pixelsPerSecond,
   onSeek,
   timelineHeight = 300,
 }) {
-  const isDraggingRef = useRef(false);
+  const store = usePlaybackStore();
+  const playheadRef = useRef(null);
+  const pixelsPerSecondRef = useRef(pixelsPerSecond);
+  pixelsPerSecondRef.current = pixelsPerSecond;
 
-  const leftPosition = currentTime * pixelsPerSecond;
+  const isDraggingRef = useRef(false);
+  const dragStartRef = useRef({ x: 0, time: 0 });
+
+  // Imperative position updates — runs in the same rAF tick as the playback
+  // clock, without waiting for React to re-render the whole timeline tree.
+  useEffect(() => {
+    const updatePosition = (time) => {
+      if (!playheadRef.current || isDraggingRef.current) return;
+      playheadRef.current.style.transform = `translateX(${time * pixelsPerSecondRef.current}px)`;
+    };
+
+    updatePosition(store.getCurrentTime());
+    return store.registerFrameCallback(updatePosition);
+  }, [store]);
+
+  useEffect(() => {
+    if (playheadRef.current) {
+      playheadRef.current.style.transform = `translateX(${store.getCurrentTime() * pixelsPerSecond}px)`;
+    }
+  }, [pixelsPerSecond, store]);
 
   const handlePointerDown = (e) => {
     e.stopPropagation();
     isDraggingRef.current = true;
-    const startX = e.clientX;
-    const startTime = currentTime;
+    dragStartRef.current = { x: e.clientX, time: store.getCurrentTime() };
 
     const handlePointerMove = (moveEvent) => {
       if (!isDraggingRef.current) return;
-      const deltaPx = moveEvent.clientX - startX;
-      const newTime = Math.max(0, startTime + deltaPx / pixelsPerSecond);
+      const { x, time } = dragStartRef.current;
+      const deltaPx = moveEvent.clientX - x;
+      const newTime = Math.max(0, time + deltaPx / pixelsPerSecondRef.current);
       onSeek(newTime);
+      if (playheadRef.current) {
+        playheadRef.current.style.transform = `translateX(${newTime * pixelsPerSecondRef.current}px)`;
+      }
     };
 
     const handlePointerUp = () => {
@@ -35,10 +60,12 @@ export function Playhead({
 
   return (
     <div
+      ref={playheadRef}
       className="timeline-playhead"
       style={{
-        transform: `translateX(${leftPosition}px)`,
+        transform: `translateX(${store.getCurrentTime() * pixelsPerSecond}px)`,
         height: `${timelineHeight}px`,
+        willChange: 'transform',
       }}
       onPointerDown={handlePointerDown}
     >
@@ -48,4 +75,4 @@ export function Playhead({
       <div className="playhead-line" />
     </div>
   );
-}
+});
