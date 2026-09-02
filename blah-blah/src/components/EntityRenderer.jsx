@@ -1,3 +1,4 @@
+ 
 import { useRef, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import {
   Play,
@@ -14,6 +15,7 @@ import { formatSimpleTime } from '../utils/timeFormat';
 import { executeScriptComponent, getCompiledReactComponent } from '../engine/scriptRunner';
 import { updateCanvasComponent, unmountCanvasComponent, pruneCanvasComponents } from '../engine/canvasRunner';
 import { RENDERER_REGISTRY } from '../engine/ecs';
+import { resolveKeyframedComponents } from '../engine/keyframes';
 import { EntityErrorBoundary } from './EntityErrorBoundary';
  
 /**
@@ -156,7 +158,26 @@ export function EntityRenderer({
     // localTime is always (currentTime - entity.startTime): absolute timeline
     // time, not wall-clock/rAF accumulation, so scrubbing stays deterministic.
     return activeEntities.map((entity) => {
-      let currentTransform = entity.components.find((c) => c.type === 'Transform') || {
+      const localTime = currentTime - entity.startTime;
+ 
+      // GUI keyframing (roadmap P1 #6) -- resolve any Dopesheet keyframes
+      // for this entity at the current local time BEFORE anything else
+      // reads entity.components, and fold them into a per-tick resolved
+      // copy. resolveKeyframedComponents is a pure function of localTime
+      // (same determinism contract as CanvasRenderer's onUpdate and the
+      // motion-script tween below), so scrubbing/export stay deterministic.
+      // Everything downstream -- Transform, ReactRenderer/CanvasRenderer
+      // props, motion-script publicValues -- reads from this resolved
+      // entity instead of the raw one. Keyframes apply first, then a motion
+      // script (if any) runs on top of the keyframed Transform, so a
+      // keyframed field and a script-driven field can coexist without
+      // fighting each other -- the script effectively layers over a
+      // GUI-keyframed base pose.
+      const keyframedComponents = resolveKeyframedComponents(entity, localTime);
+      const resolvedEntity =
+        keyframedComponents === entity.components ? entity : { ...entity, components: keyframedComponents };
+ 
+      let currentTransform = resolvedEntity.components.find((c) => c.type === 'Transform') || {
         x: 0,
         y: 0,
         rotation: 0,
@@ -165,11 +186,9 @@ export function EntityRenderer({
         opacity: 1,
       };
  
-      const scriptComp = entity.components.find(
+      const scriptComp = resolvedEntity.components.find(
         (c) => (c.type === 'ScriptComponent' || c.type === 'MonoBehaviour') && c.enabled
       );
- 
-      const localTime = currentTime - entity.startTime;
  
       if (scriptComp) {
         const scriptDef = scripts.find((s) => s.id === scriptComp.scriptId);
@@ -187,7 +206,7 @@ export function EntityRenderer({
       }
  
       return {
-        entity,
+        entity: resolvedEntity,
         transform: currentTransform,
         localTime,
       };
@@ -790,3 +809,4 @@ export function EntityRenderer({
 // still hand-rendered above (P0 #3 unifies their Inspector fields, not
 // their preview markup, which stays type-specific by design here).
 void RENDERER_REGISTRY;
+ 

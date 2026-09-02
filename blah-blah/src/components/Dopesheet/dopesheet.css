@@ -1,0 +1,406 @@
+/**
+ * Dopesheet — Spine 2D–style keyframe editor (roadmap P1 #6).
+ *
+ * Visual reference: Spine's Dopesheet panel — teal/steel group-header rows,
+ * dark keyframe lanes, diamond keyframe markers, a cyan scrub playhead, and
+ * a top toolbar with Shift/Offset/Adjust + Current/Loop Start/End fields.
+ * Built entirely from the existing --unity-* tokens (index.css) plus a
+ * small teal accent for the Spine-specific group-header look, so it slots
+ * into the current dockview theme instead of introducing a new palette.
+ */
+ 
+.dopesheet-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--unity-dark);
+  overflow: hidden;
+}
+ 
+/* ---------- Toolbar ---------- */
+ 
+.dopesheet-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--unity-panel);
+  border-bottom: 1px solid var(--unity-border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+ 
+.dopesheet-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border);
+  border-radius: 4px;
+  padding: 2px;
+}
+ 
+.dopesheet-tool-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 3px;
+  color: var(--unity-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+ 
+.dopesheet-tool-btn:hover {
+  background: var(--unity-subtle);
+  color: var(--unity-text);
+}
+ 
+.dopesheet-tool-btn.active {
+  background: var(--dopesheet-teal-dim);
+  color: var(--dopesheet-teal-bright);
+}
+ 
+.dopesheet-tool-btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 3px;
+  color: var(--unity-text-muted);
+}
+ 
+.dopesheet-tool-btn-icon:hover {
+  background: var(--unity-subtle);
+  color: var(--unity-text);
+}
+ 
+.dopesheet-toolbar-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--unity-border-light);
+  margin: 0 2px;
+}
+ 
+.dopesheet-toolbar-spacer {
+  flex: 1;
+}
+ 
+.dopesheet-field-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--unity-darkest);
+  border: 1px solid var(--unity-border);
+  border-radius: 4px;
+  padding: 3px 8px;
+}
+ 
+.dopesheet-field-box label {
+  font-size: 10px;
+  color: var(--unity-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+ 
+.dopesheet-field-box input {
+  width: 44px;
+  background: transparent;
+  border: none;
+  color: var(--unity-text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: right;
+}
+ 
+.dopesheet-field-box.current input {
+  color: var(--dopesheet-teal-bright);
+  font-weight: 600;
+}
+ 
+/* ---------- Body split: row labels | scrollable lanes ---------- */
+ 
+.dopesheet-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+ 
+.dopesheet-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex: 1;
+  color: var(--unity-text-dim);
+  padding: 24px;
+  text-align: center;
+}
+ 
+.dopesheet-empty .empty-icon {
+  opacity: 0.5;
+}
+ 
+.dopesheet-empty h4 {
+  color: var(--unity-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+ 
+.dopesheet-empty p {
+  font-size: 11px;
+  max-width: 260px;
+  line-height: 1.5;
+}
+ 
+.dopesheet-labels {
+  flex-shrink: 0;
+  width: 190px;
+  border-right: 1px solid var(--unity-border);
+  background: var(--unity-panel);
+  overflow-y: hidden;
+  display: flex;
+  flex-direction: column;
+}
+ 
+.dopesheet-labels-spacer {
+  height: 24px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--unity-border);
+  background: var(--unity-darkest);
+}
+ 
+.dopesheet-lanes-scroll {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+}
+ 
+.dopesheet-lanes-inner {
+  position: relative;
+}
+ 
+/* ---------- Group (component) header row ---------- */
+ 
+.dopesheet-group-row {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  background: var(--dopesheet-teal-header);
+  border-bottom: 1px solid var(--unity-border);
+  cursor: pointer;
+  gap: 5px;
+  padding: 0 6px;
+}
+ 
+.dopesheet-group-row:hover {
+  background: var(--dopesheet-teal-header-hover);
+}
+ 
+.dopesheet-group-row .group-chevron {
+  display: flex;
+  color: rgba(255, 255, 255, 0.7);
+  flex-shrink: 0;
+}
+ 
+.dopesheet-group-row .group-icon {
+  display: flex;
+  color: rgba(255, 255, 255, 0.85);
+  flex-shrink: 0;
+}
+ 
+.dopesheet-group-row .group-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: #eef6f6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+ 
+.dopesheet-group-lane {
+  height: 24px;
+  background: var(--dopesheet-teal-header);
+  border-bottom: 1px solid var(--unity-border);
+  position: relative;
+}
+ 
+/* ---------- Field (parameter) row ---------- */
+ 
+.dopesheet-field-row {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  padding-left: 22px;
+  gap: 6px;
+  border-bottom: 1px solid var(--unity-border);
+}
+ 
+.dopesheet-field-row .field-key-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border-radius: 2px;
+  color: var(--unity-text-dim);
+}
+ 
+.dopesheet-field-row .field-key-dot:hover {
+  color: var(--dopesheet-teal-bright);
+  background: var(--unity-subtle);
+}
+ 
+.dopesheet-field-row .field-key-dot.has-keys {
+  color: var(--dopesheet-teal-bright);
+}
+ 
+.dopesheet-field-row .field-name {
+  font-size: 10.5px;
+  color: var(--unity-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+ 
+.dopesheet-field-lane {
+  height: 22px;
+  border-bottom: 1px solid var(--unity-border);
+  position: relative;
+}
+ 
+.dopesheet-field-lane:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+ 
+/* ---------- Lanes surface (right side, scrolls with ruler) ---------- */
+ 
+.dopesheet-ruler {
+  height: 24px;
+  flex-shrink: 0;
+  position: relative;
+  background: var(--unity-darkest);
+  border-bottom: 1px solid var(--unity-border);
+  cursor: pointer;
+}
+ 
+.dopesheet-ruler-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--unity-border-light);
+}
+ 
+.dopesheet-ruler-tick .tick-label {
+  position: absolute;
+  top: 3px;
+  left: 4px;
+  font-size: 9px;
+  color: var(--unity-text-dim);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+ 
+.dopesheet-lane-bg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--unity-border);
+  opacity: 0.6;
+}
+ 
+/* ---------- Keyframe diamonds ---------- */
+ 
+.dopesheet-keyframe {
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  transform: translate(-50%, -50%) rotate(45deg);
+  background: var(--dopesheet-teal-bright);
+  border: 1px solid var(--unity-darkest);
+  cursor: grab;
+  z-index: 2;
+}
+ 
+.dopesheet-keyframe:hover {
+  background: #fff;
+}
+ 
+.dopesheet-keyframe.selected {
+  background: var(--unity-accent-amber);
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.35);
+}
+ 
+.dopesheet-keyframe:active {
+  cursor: grabbing;
+}
+ 
+/* Summary diamond on the component group lane (union of all child fields) */
+.dopesheet-keyframe.group-summary {
+  width: 8px;
+  height: 8px;
+  opacity: 0.85;
+}
+ 
+/* Connecting line between consecutive keyframes on a field lane */
+.dopesheet-keyframe-segment {
+  position: absolute;
+  top: 50%;
+  height: 1px;
+  background: var(--dopesheet-teal-dim-line);
+  transform: translateY(-50%);
+  z-index: 1;
+}
+ 
+/* ---------- Playhead (scrub line), shared visually across ruler+lanes ---------- */
+ 
+.dopesheet-playhead-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--dopesheet-playhead);
+  z-index: 5;
+  pointer-events: none;
+}
+ 
+.dopesheet-playhead-handle {
+  position: absolute;
+  top: 0;
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 7px solid var(--dopesheet-playhead);
+  transform: translateX(-5px);
+  z-index: 6;
+  cursor: ew-resize;
+}
+ 
+/* Loop start / end markers, matching Spine's orange diamonds on the ruler */
+.dopesheet-loop-marker {
+  position: absolute;
+  top: 2px;
+  width: 8px;
+  height: 8px;
+  transform: translateX(-4px) rotate(45deg);
+  background: var(--unity-accent-amber);
+  border: 1px solid var(--unity-darkest);
+  z-index: 4;
+}
+ 
+/* ---------- Theme tokens local to the Dopesheet (Spine teal identity) ---------- */
+ 
+.dopesheet-panel {
+  --dopesheet-teal-header: #4f7f82;
+  --dopesheet-teal-header-hover: #5a8d90;
+  --dopesheet-teal-bright: #8fe3e0;
+  --dopesheet-teal-dim: rgba(143, 227, 224, 0.16);
+  --dopesheet-teal-dim-line: rgba(143, 227, 224, 0.35);
+  --dopesheet-playhead: #35c9ff;
+}
+ 

@@ -1,12 +1,14 @@
+ 
 import { memo } from 'react';
 import { ProjectPanel } from '../components/ProjectPanel';
 import { ClipListPanel } from '../components/ClipListPanel';
 import { EntityRenderer } from '../components/EntityRenderer';
 import { UnityInspector } from '../components/UnityInspector';
 import { Timeline } from '../components/Timeline/Timeline';
+import { Dopesheet } from '../components/Dopesheet/Dopesheet';
 import { useEditorContext } from './EditorContext';
 import { useCurrentTime, useIsPlaying, useIsLooping, usePlaybackStore } from '../hooks/PlaybackContext';
-
+ 
 export const ProjectDockPanel = memo(function ProjectDockPanel() {
   const {
     mediaAssets, prefabs, scripts,
@@ -14,7 +16,7 @@ export const ProjectDockPanel = memo(function ProjectDockPanel() {
     onCreateScript, onOpenScriptEditor,
     onAddPrefabToTimeline, onAddMediaToTimeline,
   } = useEditorContext();
-
+ 
   return (
     <ProjectPanel
       mediaAssets={mediaAssets}
@@ -30,12 +32,12 @@ export const ProjectDockPanel = memo(function ProjectDockPanel() {
     />
   );
 });
-
+ 
 export const ClipsDockPanel = memo(function ClipsDockPanel() {
   const {
     entities, tracks, selectedEntityId, setSelectedEntityId, handleDeleteEntity,
   } = useEditorContext();
-
+ 
   return (
     <ClipListPanel
       entities={entities}
@@ -46,19 +48,19 @@ export const ClipsDockPanel = memo(function ClipsDockPanel() {
     />
   );
 });
-
+ 
 export const PreviewDockPanel = memo(function PreviewDockPanel() {
   const {
     entities, tracks, scripts, calculatedDuration,
     selectedEntityId, setSelectedEntityId,
     handleUpdateEntity, resolution,
   } = useEditorContext();
-
+ 
   const currentTime = useCurrentTime();
   const isPlaying = useIsPlaying();
   const isLooping = useIsLooping();
   const store = usePlaybackStore();
-
+ 
   return (
     <EntityRenderer
       entities={entities}
@@ -78,16 +80,16 @@ export const PreviewDockPanel = memo(function PreviewDockPanel() {
     />
   );
 });
-
+ 
 export const InspectorDockPanel = memo(function InspectorDockPanel() {
   const {
     entities, selectedEntityId, tracks, scripts,
     handleUpdateEntity, handleDeleteEntity,
     onOpenScriptEditor, handleSaveAsPrefab,
   } = useEditorContext();
-
+ 
   const selectedEntity = entities.find((e) => e.id === selectedEntityId);
-
+ 
   return (
     <div className="dock-panel-root">
       <UnityInspector
@@ -102,7 +104,7 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
     </div>
   );
 });
-
+ 
 export const TimelineDockPanel = memo(function TimelineDockPanel() {
   const {
     tracks, entities, calculatedDuration, pixelsPerSecond,
@@ -111,9 +113,9 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
     handleAddTrack, handleAddEmptyClip, handleDropItemOnTrack,
     recordingTrackId, onToggleRecordTrack,
   } = useEditorContext();
-
+ 
   const store = usePlaybackStore();
-
+ 
   return (
     <Timeline
       tracks={tracks}
@@ -134,3 +136,26 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
     />
   );
 });
+ 
+export const DopesheetDockPanel = memo(function DopesheetDockPanel() {
+  const {
+    entities, selectedEntityId, scripts, calculatedDuration,
+    handleUpdateEntity,
+  } = useEditorContext();
+ 
+  const currentTime = useCurrentTime();
+  const store = usePlaybackStore();
+  const selectedEntity = entities.find((e) => e.id === selectedEntityId);
+ 
+  return (
+    <Dopesheet
+      selectedEntity={selectedEntity}
+      scripts={scripts}
+      currentTime={currentTime}
+      totalDuration={calculatedDuration}
+      onSeek={(t) => store.seek(t)}
+      onUpdateEntity={handleUpdateEntity}
+    />
+  );
+});
+ 
