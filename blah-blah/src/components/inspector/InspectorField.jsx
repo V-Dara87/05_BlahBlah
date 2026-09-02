@@ -1,5 +1,6 @@
 import { DragNumber } from '../DragNumber';
- 
+import { trackKeyFor, getFieldKeyframes, setKeyframe, removeKeyframe } from '../../engine/keyframes';
+
 /**
  * P0 #3 — Unified Inspector field rendering.
  *
@@ -18,70 +19,118 @@ import { DragNumber } from '../DragNumber';
  * Inspector block for the first time — previously its props were only
  * settable via a prefab's default `props` object.
  */
-export function InspectorField({ field, value, onChange }) {
+export function InspectorField({ field, value, onChange, trackKey, fieldName, selectedEntity, currentTime, onUpdateEntity }) {
   const currentVal = value !== undefined ? value : field.defaultVal;
- 
-  switch (field.type) {
-    case 'number':
-      return (
-        <DragNumber
-          label={field.dragLabel || '#'}
-          labelColor={field.labelColor}
-          value={typeof currentVal === 'number' ? currentVal : parseFloat(currentVal) || 0}
-          step={field.step || 0.1}
-          min={field.min ?? -Infinity}
-          max={field.max ?? Infinity}
-          onChange={(v) => onChange(field.step === 1 ? Math.round(v) : v)}
+
+  // Keyframe handling
+  const handleKeyframeToggle = () => {
+    if (!selectedEntity || !trackKey || !fieldName) return;
+    
+    const localTime = Math.max(0, currentTime - selectedEntity.startTime);
+    const snapToFrame = (t) => Math.round(t * 30) / 30;
+    const snappedTime = snapToFrame(localTime);
+    
+    const kfs = getFieldKeyframes(selectedEntity, trackKey, fieldName);
+    const existing = kfs.find((k) => Math.abs(k.time - snappedTime) < 1 / 60);
+    
+    if (existing) {
+      const keyframes = removeKeyframe(selectedEntity, trackKey, fieldName, existing.id);
+      onUpdateEntity(selectedEntity.id, { keyframes });
+    } else {
+      const val = currentVal !== undefined ? currentVal : field.defaultVal;
+      const keyframes = setKeyframe(selectedEntity, trackKey, fieldName, snappedTime, val);
+      onUpdateEntity(selectedEntity.id, { keyframes });
+    }
+  };
+
+  const hasKeyframes = selectedEntity && trackKey && fieldName 
+    ? getFieldKeyframes(selectedEntity, trackKey, fieldName).length > 0 
+    : false;
+  const hasKeyframeAtCurrentTime = selectedEntity && trackKey && fieldName
+    ? getFieldKeyframes(selectedEntity, trackKey, fieldName).some(
+        (k) => Math.abs(k.time - Math.max(0, currentTime - selectedEntity.startTime)) < 1 / 60
+      )
+    : false;
+
+  const fieldInput = (() => {
+    switch (field.type) {
+      case 'number':
+        return (
+          <DragNumber
+            label={field.dragLabel || '#'}
+            labelColor={field.labelColor}
+            value={typeof currentVal === 'number' ? currentVal : parseFloat(currentVal) || 0}
+            step={field.step || 0.1}
+            min={field.min ?? -Infinity}
+            max={field.max ?? Infinity}
+            onChange={(v) => onChange(field.step === 1 ? Math.round(v) : v)}
+          />
+        );
+      case 'color':
+        return (
+          <input
+            type="color"
+            className="inspector-color-input"
+            value={currentVal || '#ffffff'}
+            onChange={(e) => onChange(e.target.value)}
+          />
+        );
+      case 'boolean':
+        return (
+          <input
+            type="checkbox"
+            checked={!!currentVal}
+            onChange={(e) => onChange(e.target.checked)}
+          />
+        );
+      case 'select':
+        return Array.isArray(field.options) ? (
+          <select
+            className="inspector-select"
+            value={currentVal}
+            onChange={(e) => onChange(e.target.value)}
+          >
+            {field.options.map((opt) => (
+              <option key={opt} value={opt}>{opt}</option>
+            ))}
+          </select>
+        ) : null;
+      case 'textarea':
+        return (
+          <textarea
+            className="inspector-textarea"
+            rows={field.rows || 2}
+            value={currentVal || ''}
+            onChange={(e) => onChange(e.target.value)}
+          />
+        );
+      default:
+        return (
+          <input
+            type="text"
+            className="inspector-num-input"
+            value={currentVal || ''}
+            onChange={(e) => onChange(e.target.value)}
+          />
+        );
+    }
+  })();
+
+  // Only show keyframe button if keyframing props are provided
+  if (selectedEntity && trackKey && fieldName) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+        {fieldInput}
+        <button
+          className={`keyframe-btn ${hasKeyframes ? 'has-keys' : ''} ${hasKeyframeAtCurrentTime ? 'at-current-time' : ''}`}
+          onClick={handleKeyframeToggle}
+          title={hasKeyframeAtCurrentTime ? 'Remove keyframe at current time' : 'Add keyframe at current time'}
         />
-      );
-    case 'color':
-      return (
-        <input
-          type="color"
-          className="inspector-color-input"
-          value={currentVal || '#ffffff'}
-          onChange={(e) => onChange(e.target.value)}
-        />
-      );
-    case 'boolean':
-      return (
-        <input
-          type="checkbox"
-          checked={!!currentVal}
-          onChange={(e) => onChange(e.target.checked)}
-        />
-      );
-    case 'select':
-      return Array.isArray(field.options) ? (
-        <select
-          className="inspector-select"
-          value={currentVal}
-          onChange={(e) => onChange(e.target.value)}
-        >
-          {field.options.map((opt) => (
-            <option key={opt} value={opt}>{opt}</option>
-          ))}
-        </select>
-      ) : null;
-    case 'textarea':
-      return (
-        <textarea
-          className="inspector-textarea"
-          rows={field.rows || 2}
-          value={currentVal || ''}
-          onChange={(e) => onChange(e.target.value)}
-        />
-      );
-    default:
-      return (
-        <input
-          type="text"
-          className="inspector-num-input"
-          value={currentVal || ''}
-          onChange={(e) => onChange(e.target.value)}
-        />
-      );
+      </div>
+    );
   }
+
+  return fieldInput;
 }
  
 /**
@@ -101,11 +150,11 @@ export function InspectorField({ field, value, onChange }) {
  * track to fill inside the outer .inspector-row it was accidentally
  * nested in.
  */
-export function InspectorFieldList({ fields, values, onFieldChange, emptyHint, bare = false }) {
+export function InspectorFieldList({ fields, values, onFieldChange, emptyHint, bare = false, trackKey, selectedEntity, currentTime, onUpdateEntity }) {
   if (!fields || fields.length === 0) {
     return emptyHint ? <p className="hint-text-sm">{emptyHint}</p> : null;
   }
- 
+
   if (bare) {
     return fields.map((field) => (
       <InspectorField
@@ -113,10 +162,15 @@ export function InspectorFieldList({ fields, values, onFieldChange, emptyHint, b
         field={field}
         value={values?.[field.name]}
         onChange={(v) => onFieldChange(field.name, v)}
+        trackKey={trackKey}
+        fieldName={field.name}
+        selectedEntity={selectedEntity}
+        currentTime={currentTime}
+        onUpdateEntity={onUpdateEntity}
       />
     ));
   }
- 
+
   return fields.map((field) => (
     <div key={field.name} className="inspector-row">
       <span className="row-label">{field.label || field.name}</span>
@@ -124,11 +178,16 @@ export function InspectorFieldList({ fields, values, onFieldChange, emptyHint, b
         field={field}
         value={values?.[field.name]}
         onChange={(v) => onFieldChange(field.name, v)}
+        trackKey={trackKey}
+        fieldName={field.name}
+        selectedEntity={selectedEntity}
+        currentTime={currentTime}
+        onUpdateEntity={onUpdateEntity}
       />
     </div>
   ));
 }
- 
+
 /**
  * Static field schema for the Transform component — the one component
  * type whose fields aren't script-derived. Expressed in the same shape as

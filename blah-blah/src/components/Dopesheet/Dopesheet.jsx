@@ -1,8 +1,10 @@
-import { useRef, useState, useMemo, useCallback, memo } from 'react';
+ 
+import { useRef, useState, useMemo, useCallback, useEffect, memo } from 'react';
 import './dopesheet.css';
 import {
   ChevronDown, ChevronRight, Sliders, Type, Square, FileCode, Sparkles, Boxes,
-  ArrowRightToLine, Move, SlidersHorizontal, Repeat
+  ArrowRightToLine, Move, SlidersHorizontal, Repeat, Filter, Key,
+  ChevronsLeft, ChevronsRight, SkipBack, SkipForward, ZoomIn, ZoomOut
 } from 'lucide-react';
 import { TRANSFORM_FIELD_GROUPS } from '../inspector/InspectorField';
 import { extractScriptProps, detectScriptKind } from '../../engine/scriptRunner';
@@ -78,6 +80,8 @@ export const Dopesheet = memo(function Dopesheet({
   loopEnd,
   onSeek,
   onUpdateEntity,
+  autoKeyEnabled = false,
+  setAutoKeyEnabled,
 }) {
   const lanesScrollRef = useRef(null);
   const rulerRef = useRef(null);
@@ -85,9 +89,24 @@ export const Dopesheet = memo(function Dopesheet({
   const [collapsedGroups, setCollapsedGroups] = useState({});
   const [selectedKeyId, setSelectedKeyId] = useState(null);
   const [shiftMode, setShiftMode] = useState(false);
+  const [showOnlyKeyframed, setShowOnlyKeyframed] = useState(false);
+  const [snapToKeyframe, setSnapToKeyframe] = useState(false);
  
   const localTime = selectedEntity ? Math.max(0, currentTime - selectedEntity.startTime) : 0;
   const clipDuration = selectedEntity?.duration ?? totalDuration;
+ 
+  // handleDragKey / handleRulerScrub start a pointermove loop that runs for
+  // many ticks against the SAME `selectedEntity` object captured when the
+  // gesture began (closure). Each tick reads `entity.keyframes[...]` off
+  // that snapshot before calling onUpdateEntity — but onUpdateEntity's
+  // reducer already applied the *previous* tick's patch to the real store,
+  // so re-deriving from the stale snapshot silently drops or overwrites
+  // whatever changed in between. This ref always holds the latest prop, so
+  // in-flight drag loops can read live data instead of a first-tick freeze.
+  const selectedEntityRef = useRef(selectedEntity);
+  useEffect(() => {
+    selectedEntityRef.current = selectedEntity;
+  }, [selectedEntity]);
  
   // Rows are derived fresh from the entity's live components every render —
   // this is what makes "every parameter exposed in the Inspector" true
@@ -99,11 +118,20 @@ export const Dopesheet = memo(function Dopesheet({
       .filter((c) => c.type !== 'AudioSource' && c.type !== 'VideoRenderer')
       .map((component) => {
         const trackKey = trackKeyFor(component);
-        const fields = fieldSchemaForComponent(component, scripts);
+        let fields = fieldSchemaForComponent(component, scripts);
+        
+        // Filter to show only keyframed fields if the option is enabled
+        if (showOnlyKeyframed) {
+          fields = fields.filter((field) => {
+            const kfs = getFieldKeyframes(selectedEntity, trackKey, field.name);
+            return kfs.length > 0;
+          });
+        }
+        
         return { trackKey, component, label: groupLabel(component, scripts), fields };
       })
       .filter((g) => g.fields.length > 0);
-  }, [selectedEntity, scripts]);
+  }, [selectedEntity, scripts, showOnlyKeyframed]);
  
   const toggleGroup = (trackKey) => {
     setCollapsedGroups((prev) => ({ ...prev, [trackKey]: !prev[trackKey] }));
@@ -113,19 +141,58 @@ export const Dopesheet = memo(function Dopesheet({
   const xToTime = useCallback((x) => Math.max(0, x / pixelsPerSecond), [pixelsPerSecond]);
   const snapToFrame = (t) => Math.round(t * 30) / 30; // 30fps snap, matches project default fps elsewhere in the engine
  
+  // Get all keyframe times across all tracks for snapping
+  const allKeyframeTimes = useMemo(() => {
+    if (!selectedEntity) return [];
+    const times = new Set();
+    groups.forEach((group) => {
+      group.fields.forEach((field) => {
+        getFieldKeyframes(selectedEntity, group.trackKey, field.name).forEach((k) => {
+          times.add(k.time);
+        });
+      });
+    });
+    return [...times].sort((a, b) => a - b);
+  }, [selectedEntity, groups]);
+ 
+  // Snap to nearest keyframe if enabled
+  const snapToNearestKeyframe = (t) => {
+    if (!snapToKeyframe || allKeyframeTimes.length === 0) return t;
+    const nearest = allKeyframeTimes.reduce((prev, curr) => {
+      return Math.abs(curr - t) < Math.abs(prev - t) ? curr : prev;
+    });
+    // Only snap if within reasonable distance (0.1 seconds)
+    return Math.abs(nearest - t) < 0.1 ? nearest : t;
+  };
+ 
+  // Calculate tick interval based on zoom level for more detailed time indicators
+  const tickInterval = useMemo(() => {
+    if (pixelsPerSecond >= 200) return 0.1; // Show 0.1s intervals when very zoomed in
+    if (pixelsPerSecond >= 120) return 0.25; // Show 0.25s intervals when zoomed in
+    if (pixelsPerSecond >= 60) return 0.5; // Show 0.5s intervals
+    if (pixelsPerSecond >= 30) return 1; // Show 1s intervals
+    return 2; // Show 2s intervals when zoomed out
+  }, [pixelsPerSecond]);
+ 
   const laneWidth = Math.max(clipDuration * pixelsPerSecond + 200, 600);
+  const numTicks = Math.ceil(clipDuration / tickInterval) + 1;
  
   const handleRulerScrub = useCallback((e) => {
     if (!rulerRef.current || !selectedEntity) return;
     const rect = rulerRef.current.getBoundingClientRect();
     const scrollLeft = lanesScrollRef.current?.scrollLeft || 0;
     const localX = e.clientX - rect.left + scrollLeft;
-    const t = snapToFrame(xToTime(localX));
+    let t = snapToFrame(xToTime(localX));
+    t = snapToNearestKeyframe(t);
     onSeek(selectedEntity.startTime + t);
  
     const onMove = (moveEvent) => {
+      const entity = selectedEntityRef.current;
+      if (!entity) return;
       const mx = moveEvent.clientX - rect.left + (lanesScrollRef.current?.scrollLeft || 0);
-      onSeek(selectedEntity.startTime + snapToFrame(xToTime(mx)));
+      let mt = snapToFrame(xToTime(mx));
+      mt = snapToNearestKeyframe(mt);
+      onSeek(entity.startTime + mt);
     };
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
@@ -133,7 +200,7 @@ export const Dopesheet = memo(function Dopesheet({
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
-  }, [selectedEntity, xToTime, onSeek]);
+  }, [selectedEntity, xToTime, onSeek, snapToNearestKeyframe]);
  
   const handleAddKeyAtPlayhead = (trackKey, fieldName, defaultVal) => {
     if (!selectedEntity) return;
@@ -158,9 +225,11 @@ export const Dopesheet = memo(function Dopesheet({
     const scrollLeft = lanesScrollRef.current.scrollLeft;
  
     const onMove = (moveEvent) => {
+      const entity = selectedEntityRef.current;
+      if (!entity) return;
       const t = Math.max(0, snapToFrame(xToTime(moveEvent.clientX - rect.left + scrollLeft)));
-      const keyframes = moveKeyframe(selectedEntity, trackKey, fieldName, keyId, t);
-      onUpdateEntity(selectedEntity.id, { keyframes });
+      const keyframes = moveKeyframe(entity, trackKey, fieldName, keyId, t);
+      onUpdateEntity(entity.id, { keyframes });
     };
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
@@ -168,6 +237,35 @@ export const Dopesheet = memo(function Dopesheet({
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+  };
+ 
+  // Keyframe navigation functions
+  const goToFirstKeyframe = () => {
+    if (allKeyframeTimes.length === 0) return;
+    const firstTime = allKeyframeTimes[0];
+    onSeek(selectedEntity.startTime + firstTime);
+  };
+ 
+  const goToLastKeyframe = () => {
+    if (allKeyframeTimes.length === 0) return;
+    const lastTime = allKeyframeTimes[allKeyframeTimes.length - 1];
+    onSeek(selectedEntity.startTime + lastTime);
+  };
+ 
+  const goToPreviousKeyframe = () => {
+    if (allKeyframeTimes.length === 0) return;
+    const prevKey = allKeyframeTimes.filter((t) => t < localTime).pop();
+    if (prevKey !== undefined) {
+      onSeek(selectedEntity.startTime + prevKey);
+    }
+  };
+ 
+  const goToNextKeyframe = () => {
+    if (allKeyframeTimes.length === 0) return;
+    const nextKey = allKeyframeTimes.find((t) => t > localTime);
+    if (nextKey !== undefined) {
+      onSeek(selectedEntity.startTime + nextKey);
+    }
   };
  
   if (!selectedEntity) {
@@ -181,8 +279,6 @@ export const Dopesheet = memo(function Dopesheet({
       </div>
     );
   }
- 
-  const numTicks = Math.ceil(laneWidth / pixelsPerSecond) + 1;
  
   return (
     <div className="dopesheet-panel">
@@ -205,24 +301,68 @@ export const Dopesheet = memo(function Dopesheet({
             <SlidersHorizontal size={12} />
             <span>Adjust</span>
           </button>
+          <button
+            className={`dopesheet-tool-btn ${showOnlyKeyframed ? 'active' : ''}`}
+            title="Show only keyframed parameters"
+            onClick={() => setShowOnlyKeyframed((v) => !v)}
+          >
+            <Filter size={12} />
+            <span>Keyframed Only</span>
+          </button>
+          <button
+            className={`dopesheet-tool-btn ${snapToKeyframe ? 'active' : ''}`}
+            title="Snap to keyframe when scrubbing timeline"
+            onClick={() => setSnapToKeyframe((v) => !v)}
+          >
+            <SlidersHorizontal size={12} />
+            <span>Snap</span>
+          </button>
+          <button
+            className={`dopesheet-tool-btn ${autoKeyEnabled ? 'active' : ''}`}
+            title={autoKeyEnabled ? 'Auto Key: ON - Changes create keyframes automatically' : 'Auto Key: OFF - Click to enable automatic keyframing'}
+            onClick={() => setAutoKeyEnabled && setAutoKeyEnabled(!autoKeyEnabled)}
+          >
+            <Key size={12} />
+            <span>Auto Key</span>
+          </button>
         </div>
  
         <div className="dopesheet-toolbar-divider" />
  
         <div className="dopesheet-field-box current">
           <label>Current</label>
-          <input readOnly value={Math.round(localTime * 30)} />
-        </div>
-        <div className="dopesheet-field-box">
-          <label>Loop Start</label>
-          <input readOnly value={loopStart != null ? Math.round(loopStart * 30) : ''} placeholder="—" />
+          <input readOnly value={localTime.toFixed(2)} />
         </div>
         <div className="dopesheet-field-box">
           <label>End</label>
-          <input readOnly value={loopEnd != null ? Math.round(loopEnd * 30) : Math.round(clipDuration * 30)} />
+          <input readOnly value={clipDuration.toFixed(2)} />
         </div>
  
         <div className="dopesheet-toolbar-spacer" />
+ 
+        <div className="dopesheet-toolbar-group">
+          <button className="dopesheet-tool-btn-icon" title="Zoom out" onClick={() => setPixelsPerSecond(Math.max(MIN_PPS, pixelsPerSecond - 15))}>
+            <ZoomOut size={13} />
+          </button>
+          <button className="dopesheet-tool-btn-icon" title="Zoom in" onClick={() => setPixelsPerSecond(Math.min(MAX_PPS, pixelsPerSecond + 15))}>
+            <ZoomIn size={13} />
+          </button>
+        </div>
+ 
+        <div className="dopesheet-toolbar-group">
+          <button className="dopesheet-tool-btn-icon" title="Go to first keyframe" onClick={goToFirstKeyframe}>
+            <SkipBack size={13} />
+          </button>
+          <button className="dopesheet-tool-btn-icon" title="Go to previous keyframe" onClick={goToPreviousKeyframe}>
+            <ChevronsLeft size={13} />
+          </button>
+          <button className="dopesheet-tool-btn-icon" title="Go to next keyframe" onClick={goToNextKeyframe}>
+            <ChevronsRight size={13} />
+          </button>
+          <button className="dopesheet-tool-btn-icon" title="Go to last keyframe" onClick={goToLastKeyframe}>
+            <SkipForward size={13} />
+          </button>
+        </div>
  
         <button className="dopesheet-tool-btn-icon" title="Toggle loop playback">
           <Repeat size={13} />
@@ -288,11 +428,14 @@ export const Dopesheet = memo(function Dopesheet({
             onPointerDown={handleRulerScrub}
           >
             <div style={{ position: 'relative', width: `${laneWidth}px`, marginLeft: -(lanesScrollRef.current?.scrollLeft || 0) }}>
-              {Array.from({ length: numTicks }).map((_, i) => (
-                <div key={i} className="dopesheet-ruler-tick" style={{ left: `${i * pixelsPerSecond}px` }}>
-                  <span className="tick-label">{formatTimecode(i).slice(3)}</span>
-                </div>
-              ))}
+              {Array.from({ length: numTicks }).map((_, i) => {
+                const time = i * tickInterval;
+                return (
+                  <div key={i} className="dopesheet-ruler-tick" style={{ left: `${time * pixelsPerSecond}px` }}>
+                    <span className="tick-label">{time.toFixed(tickInterval < 1 ? 1 : 0)}s</span>
+                  </div>
+                );
+              }).filter((_, i) => (i * tickInterval) <= clipDuration)}
               <PlayheadLine x={timeToX(localTime)} height={24} handle />
             </div>
           </div>

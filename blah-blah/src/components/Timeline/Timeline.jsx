@@ -1,5 +1,5 @@
 import { useRef, useMemo, memo } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, ZoomIn, ZoomOut } from 'lucide-react';
 import { TimeRuler } from './TimeRuler';
 import { TrackHeader } from './TrackHeader';
 import { TrackLane } from './TrackLane';
@@ -22,6 +22,8 @@ export const Timeline = memo(function Timeline({
   onAddEmptyClip,
   onDropItemOnTrack,
   onToggleRecordTrack,
+  onZoomIn,
+  onZoomOut,
 }) {
   const playbackStore = usePlaybackStore();
   const lanesScrollRef = useRef(null);
@@ -56,6 +58,20 @@ export const Timeline = memo(function Timeline({
       <div className="timeline-top-bar">
         <span className="timeline-title-label">TIMELINE</span>
         <div className="timeline-actions-group" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <button 
+            className="timeline-zoom-btn" 
+            onClick={onZoomOut}
+            title="Zoom Out"
+          >
+            <ZoomOut size={12} />
+          </button>
+          <button 
+            className="timeline-zoom-btn" 
+            onClick={onZoomIn}
+            title="Zoom In"
+          >
+            <ZoomIn size={12} />
+          </button>
           <button 
             className="add-clip-action-btn" 
             onClick={() => onAddEmptyClip && onAddEmptyClip(tracks[0]?.id || 'track-1', playbackStore.getCurrentTime())}

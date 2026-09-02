@@ -86,10 +86,12 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
     entities, selectedEntityId, tracks, scripts,
     handleUpdateEntity, handleDeleteEntity,
     onOpenScriptEditor, handleSaveAsPrefab,
+    autoKeyEnabled,
   } = useEditorContext();
- 
+
+  const currentTime = useCurrentTime();
   const selectedEntity = entities.find((e) => e.id === selectedEntityId);
- 
+
   return (
     <div className="dock-panel-root">
       <UnityInspector
@@ -100,6 +102,8 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
         onDeleteEntity={handleDeleteEntity}
         onOpenScriptEditor={onOpenScriptEditor}
         onSaveAsPrefab={handleSaveAsPrefab}
+        currentTime={currentTime}
+        autoKeyEnabled={autoKeyEnabled}
       />
     </div>
   );
@@ -112,10 +116,11 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
     handleUpdateEntity, handleUpdateTrack,
     handleAddTrack, handleAddEmptyClip, handleDropItemOnTrack,
     recordingTrackId, onToggleRecordTrack,
+    onZoomIn, onZoomOut,
   } = useEditorContext();
- 
+
   const store = usePlaybackStore();
- 
+
   return (
     <Timeline
       tracks={tracks}
@@ -133,6 +138,8 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
       onAddEmptyClip={handleAddEmptyClip}
       onDropItemOnTrack={handleDropItemOnTrack}
       onToggleRecordTrack={onToggleRecordTrack}
+      onZoomIn={onZoomIn}
+      onZoomOut={onZoomOut}
     />
   );
 });
@@ -141,12 +148,13 @@ export const DopesheetDockPanel = memo(function DopesheetDockPanel() {
   const {
     entities, selectedEntityId, scripts, calculatedDuration,
     handleUpdateEntity,
+    autoKeyEnabled, setAutoKeyEnabled,
   } = useEditorContext();
- 
+
   const currentTime = useCurrentTime();
   const store = usePlaybackStore();
   const selectedEntity = entities.find((e) => e.id === selectedEntityId);
- 
+
   return (
     <Dopesheet
       selectedEntity={selectedEntity}
@@ -155,6 +163,8 @@ export const DopesheetDockPanel = memo(function DopesheetDockPanel() {
       totalDuration={calculatedDuration}
       onSeek={(t) => store.seek(t)}
       onUpdateEntity={handleUpdateEntity}
+      autoKeyEnabled={autoKeyEnabled}
+      setAutoKeyEnabled={setAutoKeyEnabled}
     />
   );
 });

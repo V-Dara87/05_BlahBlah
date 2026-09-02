@@ -14,11 +14,13 @@ import {
   AlertCircle,
   Sparkles,
   Boxes,
-  GripVertical
+  GripVertical,
+  Key
 } from 'lucide-react';
 import { extractScriptProps, getScriptError, detectScriptKind } from '../engine/scriptRunner';
 import { DragNumber } from './DragNumber';
 import { InspectorFieldList, TRANSFORM_FIELD_GROUPS } from './inspector/InspectorField';
+import { trackKeyFor, getFieldKeyframes, setKeyframe, evaluateField } from '../engine/keyframes';
  
 /**
  * P0 #3 — Unified Inspector field rendering.
@@ -114,7 +116,9 @@ export const UnityInspector = memo(function UnityInspector({
   onUpdateEntity,
   onDeleteEntity,
   onOpenScriptEditor,
-  onSaveAsPrefab
+  onSaveAsPrefab,
+  currentTime = 0,
+  autoKeyEnabled = false
 }) {
   const [openFoldouts, setOpenFoldouts] = useState({
     Transform: true,
@@ -146,7 +150,44 @@ export const UnityInspector = memo(function UnityInspector({
   const toggleFoldout = (name) => {
     setOpenFoldouts(prev => ({ ...prev, [name]: !prev[name] }));
   };
- 
+
+  // Local time within this entity's clip (seconds from clip start).
+  const localTime = Math.max(0, currentTime - selectedEntity.startTime);
+  const snappedLocalTime = Math.round(localTime * 30) / 30;
+
+  /**
+   * For a component's values object, replace any field that has keyframes
+   * with the keyframe-evaluated value at the current local time.
+   * This makes Inspector fields show the live interpolated value while
+   * scrubbing, not the stale static stored value.
+   */
+  const resolveComponentValues = (trackKey, rawValues) => {
+    if (!rawValues || !selectedEntity?.keyframes?.[trackKey]) return rawValues;
+    const resolved = { ...rawValues };
+    Object.keys(resolved).forEach((key) => {
+      const val = evaluateField(selectedEntity, trackKey, key, localTime);
+      if (val !== undefined) resolved[key] = val;
+    });
+    return resolved;
+  };
+
+  /**
+   * Write a single field value. If the field already has keyframes (it is
+   * animated), update/create a keyframe at the current time — writing to the
+   * static prop would be silently overridden by the keyframe evaluator every
+   * frame, so we must write to the keyframe store instead.
+   * If autoKey is on (and the field has no keyframes yet), same: write a
+   * keyframe. Returns the new keyframes object if a keyframe was written, or
+   * null if the caller should fall back to writing the static prop.
+   */
+  const tryWriteKeyframe = (entitySnapshot, trackKey, fieldName, value) => {
+    const kfs = getFieldKeyframes(entitySnapshot, trackKey, fieldName);
+    if (kfs.length > 0 || autoKeyEnabled) {
+      return setKeyframe(entitySnapshot, trackKey, fieldName, snappedLocalTime, value);
+    }
+    return null;
+  };
+
   const transformComp = selectedEntity.components.find(c => c.type === 'Transform') || {
     x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1
   };
@@ -159,13 +200,39 @@ export const UnityInspector = memo(function UnityInspector({
   const scriptComps = selectedEntity.components.filter(c => c.type === 'ScriptComponent' || c.type === 'MonoBehaviour');
  
   const updateTransform = (updates) => {
-    const updatedComponents = selectedEntity.components.map(c =>
-      c.type === 'Transform' ? { ...c, ...updates } : c
-    );
-    if (!selectedEntity.components.some(c => c.type === 'Transform')) {
-      updatedComponents.unshift({ type: 'Transform', ...updates });
+    // For each updated field: if it already has keyframes (or autoKey is on)
+    // write a keyframe at the current time — the static prop is overridden by
+    // the keyframe evaluator every frame anyway, so writing there is a no-op.
+    // Fields with no keyframes and autoKey off get the normal static-prop write.
+    let kfsSnapshot = selectedEntity.keyframes || {};
+    let kfsChanged = false;
+    const staticUpdates = {};
+
+    Object.keys(updates).forEach((fieldName) => {
+      const tempEntity = { ...selectedEntity, keyframes: kfsSnapshot };
+      const result = tryWriteKeyframe(tempEntity, 'Transform', fieldName, updates[fieldName]);
+      if (result) {
+        kfsSnapshot = result;
+        kfsChanged = true;
+      } else {
+        staticUpdates[fieldName] = updates[fieldName];
+      }
+    });
+
+    const batchUpdate = {};
+    if (kfsChanged) batchUpdate.keyframes = kfsSnapshot;
+    if (Object.keys(staticUpdates).length > 0) {
+      const updatedComponents = selectedEntity.components.map((c) =>
+        c.type === 'Transform' ? { ...c, ...staticUpdates } : c
+      );
+      if (!selectedEntity.components.some((c) => c.type === 'Transform')) {
+        updatedComponents.unshift({ type: 'Transform', ...staticUpdates });
+      }
+      batchUpdate.components = updatedComponents;
     }
-    onUpdateEntity(selectedEntity.id, { components: updatedComponents });
+    if (Object.keys(batchUpdate).length > 0) {
+      onUpdateEntity(selectedEntity.id, batchUpdate);
+    }
   };
  
   const updateComponent = (compType, updates) => {
@@ -176,33 +243,52 @@ export const UnityInspector = memo(function UnityInspector({
   };
  
   const updateScriptProps = (scriptId, propKey, propVal) => {
-    const updatedComponents = selectedEntity.components.map(c => {
-      if ((c.type === 'ScriptComponent' || c.type === 'MonoBehaviour') && c.scriptId === scriptId) {
-        return { ...c, props: { ...(c.props || {}), [propKey]: propVal } };
-      }
-      return c;
-    });
-    onUpdateEntity(selectedEntity.id, { components: updatedComponents });
+    const trackKey = `script:${scriptId}`;
+    const newKfs = tryWriteKeyframe(selectedEntity, trackKey, propKey, propVal);
+    if (newKfs) {
+      // Animated field or autoKey: write keyframe only — the renderer will
+      // evaluate it and pass the correct value to the script at render time.
+      onUpdateEntity(selectedEntity.id, { keyframes: newKfs });
+    } else {
+      // Non-animated field: write to static prop as before.
+      const updatedComponents = selectedEntity.components.map((c) => {
+        if ((c.type === 'ScriptComponent' || c.type === 'MonoBehaviour') && c.scriptId === scriptId) {
+          return { ...c, props: { ...(c.props || {}), [propKey]: propVal } };
+        }
+        return c;
+      });
+      onUpdateEntity(selectedEntity.id, { components: updatedComponents });
+    }
   };
- 
+
   const updateReactProps = (propKey, propVal) => {
-    const updatedComponents = selectedEntity.components.map(c => {
-      if (c.type === 'ReactRenderer') {
-        return { ...c, props: { ...(c.props || {}), [propKey]: propVal } };
-      }
-      return c;
-    });
-    onUpdateEntity(selectedEntity.id, { components: updatedComponents });
+    const newKfs = tryWriteKeyframe(selectedEntity, 'ReactRenderer', propKey, propVal);
+    if (newKfs) {
+      onUpdateEntity(selectedEntity.id, { keyframes: newKfs });
+    } else {
+      const updatedComponents = selectedEntity.components.map((c) => {
+        if (c.type === 'ReactRenderer') {
+          return { ...c, props: { ...(c.props || {}), [propKey]: propVal } };
+        }
+        return c;
+      });
+      onUpdateEntity(selectedEntity.id, { components: updatedComponents });
+    }
   };
- 
+
   const updateCanvasProps = (propKey, propVal) => {
-    const updatedComponents = selectedEntity.components.map(c => {
-      if (c.type === 'CanvasRenderer') {
-        return { ...c, props: { ...(c.props || {}), [propKey]: propVal } };
-      }
-      return c;
-    });
-    onUpdateEntity(selectedEntity.id, { components: updatedComponents });
+    const newKfs = tryWriteKeyframe(selectedEntity, 'CanvasRenderer', propKey, propVal);
+    if (newKfs) {
+      onUpdateEntity(selectedEntity.id, { keyframes: newKfs });
+    } else {
+      const updatedComponents = selectedEntity.components.map((c) => {
+        if (c.type === 'CanvasRenderer') {
+          return { ...c, props: { ...(c.props || {}), [propKey]: propVal } };
+        }
+        return c;
+      });
+      onUpdateEntity(selectedEntity.id, { components: updatedComponents });
+    }
   };
  
   // Components after the pinned Transform can be freely reordered. Each
@@ -330,7 +416,7 @@ export const UnityInspector = memo(function UnityInspector({
             onChange={(e) => onUpdateEntity(selectedEntity.id, { name: e.target.value })}
           />
         </div>
- 
+
         <div className="inspector-header-field">
           <label className="field-label-sm">Timeline Track (Layer)</label>
           <select
@@ -368,16 +454,24 @@ export const UnityInspector = memo(function UnityInspector({
                     <div className="drag-number-group">
                       <InspectorFieldList
                         fields={group.fields}
-                        values={transformComp}
+                        values={resolveComponentValues('Transform', transformComp)}
                         onFieldChange={(name, v) => updateTransform({ [name]: v })}
                         bare
+                        trackKey="Transform"
+                        selectedEntity={selectedEntity}
+                        currentTime={currentTime}
+                        onUpdateEntity={onUpdateEntity}
                       />
                     </div>
                   ) : (
                     <InspectorFieldList
                       fields={group.fields}
-                      values={transformComp}
+                      values={resolveComponentValues('Transform', transformComp)}
                       onFieldChange={(name, v) => updateTransform({ [name]: v })}
+                      trackKey="Transform"
+                      selectedEntity={selectedEntity}
+                      currentTime={currentTime}
+                      onUpdateEntity={onUpdateEntity}
                     />
                   )}
                 </div>
@@ -428,9 +522,13 @@ export const UnityInspector = memo(function UnityInspector({
  
                   <InspectorFieldList
                     fields={fields}
-                    values={reactComp.props}
+                    values={resolveComponentValues('ReactRenderer', reactComp.props)}
                     onFieldChange={updateReactProps}
                     emptyHint={<>Expose props with <code>Component.props = &#123; ... &#125;</code></>}
+                    trackKey="ReactRenderer"
+                    selectedEntity={selectedEntity}
+                    currentTime={currentTime}
+                    onUpdateEntity={onUpdateEntity}
                   />
                 </div>
               )}
@@ -480,9 +578,13 @@ export const UnityInspector = memo(function UnityInspector({
  
                   <InspectorFieldList
                     fields={fields}
-                    values={canvasComp.props}
+                    values={resolveComponentValues('CanvasRenderer', canvasComp.props)}
                     onFieldChange={updateCanvasProps}
                     emptyHint={<>Expose props with <code>static props = &#123; ... &#125;</code></>}
+                    trackKey="CanvasRenderer"
+                    selectedEntity={selectedEntity}
+                    currentTime={currentTime}
+                    onUpdateEntity={onUpdateEntity}
                   />
                 </div>
               )}
@@ -733,9 +835,13 @@ export const UnityInspector = memo(function UnityInspector({
  
                   <InspectorFieldList
                     fields={fields}
-                    values={scriptComp.props}
+                    values={resolveComponentValues(`script:${scriptComp.scriptId}`, scriptComp.props)}
                     onFieldChange={(name, v) => updateScriptProps(scriptComp.scriptId, name, v)}
                     emptyHint={<>Expose props with <code>static props = &#123; ... &#125;</code></>}
+                    trackKey={`script:${scriptComp.scriptId}`}
+                    selectedEntity={selectedEntity}
+                    currentTime={currentTime}
+                    onUpdateEntity={onUpdateEntity}
                   />
                 </div>
               )}

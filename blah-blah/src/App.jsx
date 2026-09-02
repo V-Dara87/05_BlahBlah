@@ -93,6 +93,15 @@ export function App() {
   const [selectedEntityId, setSelectedEntityId] = useState(null);
   const [pixelsPerSecond, setPixelsPerSecond] = useState(DEFAULT_PIXELS_PER_SECOND);
   const [snappingEnabled, setSnappingEnabled] = useState(true);
+  const [autoKeyEnabled, setAutoKeyEnabled] = useState(false);
+
+  const handleZoomIn = () => {
+    setPixelsPerSecond(prev => Math.min(prev + 15, 240));
+  };
+
+  const handleZoomOut = () => {
+    setPixelsPerSecond(prev => Math.max(prev - 15, 15));
+  };
  
   // Project Folder Handle & Disk Save State
   const [projectFolderHandle, setProjectFolderHandle] = useState(null);
@@ -875,8 +884,11 @@ export function App() {
           entities, tracks, scripts, prefabs, mediaAssets,
           calculatedDuration,
           selectedEntityId, pixelsPerSecond, snappingEnabled, resolution,
+          autoKeyEnabled,
           // setters
           setSelectedEntityId,
+          setAutoKeyEnabled,
+          setPixelsPerSecond,
           // handlers
           handleUpdateEntity, handleDeleteEntity, handleSaveAsPrefab,
           handleUpdateTrack, handleAddTrack, handleAddEmptyClip,
@@ -890,6 +902,8 @@ export function App() {
           onOpenScriptEditor: handleOpenScriptEditor,
           onAddPrefabToTimeline: handleAddPrefabToTimeline,
           onAddMediaToTimeline: handleAddMediaToTimeline,
+          onZoomIn: handleZoomIn,
+          onZoomOut: handleZoomOut,
         }}
       >
         <DockLayout />

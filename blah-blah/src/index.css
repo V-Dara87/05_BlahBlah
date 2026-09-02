@@ -88,3 +88,93 @@ input, select, textarea {
   outline: none;
   user-select: text;
 }
+
+/* Keyframe button in inspector - Spine 2D style diamond */
+.keyframe-btn {
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--unity-text-dim);
+  font-size: 14px;
+  padding: 0;
+  transition: all 0.15s ease;
+  cursor: pointer;
+  position: relative;
+}
+
+.keyframe-btn::before {
+  content: '';
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: var(--unity-text-dim);
+  transform: rotate(45deg);
+  transition: all 0.15s ease;
+}
+
+.keyframe-btn:hover::before {
+  background: var(--unity-text);
+}
+
+.keyframe-btn.has-keys::before {
+  background: var(--unity-accent-blue);
+  box-shadow: 0 0 4px rgba(56, 189, 248, 0.5);
+}
+
+.keyframe-btn.at-current-time::before {
+  background: var(--unity-accent-blue);
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.8);
+}
+
+.keyframe-btn.at-current-time:hover {
+  background: #0ea5e9;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 1);
+}
+
+/* Auto Key toggle button in inspector */
+.inspector-auto-key-bar {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--unity-border);
+  background: var(--unity-panel);
+  display: flex;
+  align-items: center;
+}
+
+.auto-key-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 4px;
+  color: var(--unity-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.15s ease;
+  cursor: pointer;
+  width: 100%;
+  justify-content: center;
+}
+
+.auto-key-toggle-btn:hover {
+  background: var(--unity-hover);
+  color: var(--unity-text);
+  border-color: var(--unity-text-dim);
+}
+
+.auto-key-toggle-btn.active {
+  background: var(--unity-accent-blue);
+  color: white;
+  border-color: var(--unity-accent-blue);
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+}
+
+.auto-key-toggle-btn.active:hover {
+  background: #0ea5e9;
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.7);
+}
