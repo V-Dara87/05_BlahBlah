@@ -1,20 +1,20 @@
 import { useState } from 'react';
-import { Clapperboard, Film, Music, Type, Square, Sparkles, Boxes, Search, Trash2 } from 'lucide-react';
+import { Clapperboard, Film, Music, Type, Square, FileCode, Search, Trash2 } from 'lucide-react';
 import { formatTimecode } from '../utils/timeFormat';
+import { isScriptComponent } from '../engine/ecs';
  
 // Maps an entity's `type` / component set to an icon + short label, purely
 // for display in this list. Mirrors the icon choices already used elsewhere
-// (ProjectPanel's Film/Music icons, UnityInspector's script-type colors) so
-// a clip looks the same whether you're seeing it here, on the timeline, or
-// in the Inspector.
+// (ProjectPanel's Film/Music icons, UnityInspector's script colors) so a
+// clip looks the same whether you're seeing it here, on the timeline, or
+// in the Inspector. Script-driven clips are all one component type
+// (ScriptComponent), so they get one label here regardless of kind.
 function describeEntity(entity) {
-  const hasReact = entity.components?.some((c) => c.type === 'ReactRenderer');
-  const hasCanvas = entity.components?.some((c) => c.type === 'CanvasRenderer');
+  const hasScript = entity.components?.some((c) => isScriptComponent(c));
   const hasText = entity.components?.some((c) => c.type === 'TextRenderer');
   const hasShape = entity.components?.some((c) => c.type === 'ShapeRenderer');
  
-  if (hasCanvas) return { icon: Boxes, label: 'Canvas Component', color: 'text-cyan' };
-  if (hasReact) return { icon: Sparkles, label: 'React Clip', color: 'text-cyan' };
+  if (hasScript) return { icon: FileCode, label: 'Script', color: 'text-cyan' };
   if (hasText) return { icon: Type, label: 'Text', color: 'text-violet' };
   if (hasShape) return { icon: Square, label: 'Shape', color: 'text-indigo' };
   if (entity.type === 'audio') return { icon: Music, label: 'Audio', color: 'text-emerald' };

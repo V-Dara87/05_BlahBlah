@@ -1,9 +1,10 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
-import { getCompiledReactComponent } from './scriptRunner.js';
+import { getCompiledReactComponent, detectScriptKind } from './scriptRunner.js';
 import { updateCanvasComponent, unmountCanvasComponent } from './canvasRunner.js';
 import { computeActiveEntitiesAtTime } from './renderPipeline.js';
+import { isScriptComponent } from './ecs.js';
  
 /**
  * P1 #11 — export-time equivalent of EntityRenderer.jsx's live preview.
@@ -26,17 +27,18 @@ import { computeActiveEntitiesAtTime } from './renderPipeline.js';
 export { computeActiveEntitiesAtTime } from './renderPipeline.js';
  
 // ---------------------------------------------------------------------------
-// Offscreen <div> pool for CanvasRenderer entities
+// Offscreen <div> pool for script-driven (canvas-kind + react-kind) entities
 // ---------------------------------------------------------------------------
  
 /**
- * CanvasRenderer scripts mount into a real DOM container (see canvasRunner.js
- * onMount({ container })), same as live playback. For export we need those
+ * Canvas-kind scripts mount into a real DOM container (see canvasRunner.js
+ * onMount({ container })), same as live playback, and react-kind scripts
+ * mount into one for flushSync rendering. For export we need those
  * containers to exist, but never attached to the visible page — an offscreen
- * parent, positioned far off-canvas, holds one <div> per entity actively
- * using CanvasRenderer during this export run.
+ * parent, positioned far off-canvas, holds one <div> per entity+script
+ * actively rendering during this export run.
  */
-// React roots mounted into pooled containers (ReactRenderer export).
+// React roots mounted into pooled containers (react-kind export).
 const reactRoots = new Map(); // container -> Root
 
 export function createCanvasContainerPool() {
@@ -47,36 +49,43 @@ export function createCanvasContainerPool() {
   root.style.pointerEvents = 'none';
   document.body.appendChild(root);
  
-  const containers = new Map(); // entityId -> HTMLDivElement
+  // Keyed by `entityId::scriptId` so multiple script components on one
+  // entity each get their own container (mirrors canvasRunner's mount
+  // keys).
+  const containers = new Map(); // mountKey -> HTMLDivElement
+  const mountKeyFor = (entityId, scriptId = '') => `${entityId}::${scriptId || ''}`;
  
   return {
     /**
-     * Get (creating if needed) the offscreen container for this entity.
-     * Deliberately given NO explicit width/height: the live DOM's
-     * `.canvas-render-container` has none either (see App.css) — it's a
-     * plain, unsized <div> that shrinks to fit whatever the script's
-     * onMount actually appends (e.g. CanvasOrbit.js's fixed 300x300
-     * <canvas>). Forcing it to the full project resolution here (an
-     * earlier version of this file did) made every CanvasRenderer render
-     * at the wrong size/position, since the entity's Transform positions
-     * this box by its own natural content size, not the frame size.
+     * Get (creating if needed) the offscreen container for this
+     * entity+script. Deliberately given NO explicit width/height: the live
+     * DOM's `.canvas-render-container` has none either (see App.css) —
+     * it's a plain, unsized <div> that shrinks to fit whatever the
+     * script's onMount actually appends (e.g. CanvasOrbit.jsx's fixed
+     * 300x300 <canvas>). Forcing it to the full project resolution here
+     * (an earlier version of this file did) made every canvas-kind render
+     * come out at the wrong size/position, since the entity's Transform
+     * positions this box by its own natural content size, not the frame
+     * size.
      */
-    getContainer(entityId) {
-      let el = containers.get(entityId);
+    getContainer(entityId, scriptId = '') {
+      const mountKey = mountKeyFor(entityId, scriptId);
+      let el = containers.get(mountKey);
       if (!el) {
         el = document.createElement('div');
         el.style.position = 'relative';
         el.style.display = 'inline-block';
         root.appendChild(el);
-        containers.set(entityId, el);
+        containers.set(mountKey, el);
       }
       return el;
     },
-    /** Unmount + drop the container for an entity that's no longer active. */
-    releaseContainer(entityId) {
-      const el = containers.get(entityId);
+    /** Unmount + drop the container for an entity+script no longer active. */
+    releaseContainer(entityId, scriptId = '') {
+      const mountKey = mountKeyFor(entityId, scriptId);
+      const el = containers.get(mountKey);
       if (el) {
-        unmountCanvasComponent(entityId);
+        unmountCanvasComponent(entityId, scriptId);
         const rootEl = reactRoots.get(el);
         if (rootEl) {
           try {
@@ -87,21 +96,23 @@ export function createCanvasContainerPool() {
           reactRoots.delete(el);
         }
         el.remove();
-        containers.delete(entityId);
+        containers.delete(mountKey);
       }
     },
-    /** Release every container not in the given still-active id set. */
-    pruneExcept(activeEntityIds) {
-      const activeSet = new Set(activeEntityIds);
-      for (const entityId of containers.keys()) {
-        if (!activeSet.has(entityId)) {
-          this.releaseContainer(entityId);
+    /** Release every container not in the given still-active mount-key set. */
+    pruneExcept(activeMountKeys) {
+      const activeSet = new Set(activeMountKeys);
+      for (const mountKey of containers.keys()) {
+        if (!activeSet.has(mountKey)) {
+          const [entityId, scriptId = ''] = mountKey.split('::');
+          this.releaseContainer(entityId, scriptId);
         }
       }
     },
     disposeAll() {
-      for (const entityId of Array.from(containers.keys())) {
-        this.releaseContainer(entityId);
+      for (const mountKey of Array.from(containers.keys())) {
+        const [entityId, scriptId = ''] = mountKey.split('::');
+        this.releaseContainer(entityId, scriptId);
       }
       root.remove();
     },
@@ -257,43 +268,46 @@ export function drawExportFrame({
         continue;
       }
  
-      const canvasComp = entity.components.find((c) => c.type === 'CanvasRenderer');
-      const reactComp = entity.components.find((c) => c.type === 'ReactRenderer');
       const shapeComp = entity.components.find((c) => c.type === 'ShapeRenderer');
       const textComp = entity.components.find((c) => c.type === 'TextRenderer');
  
-      if (canvasComp) {
-        const scriptDef = scripts.find((s) => s.id === canvasComp.scriptId);
-        if (scriptDef && scriptDef.code) {
-          const container = canvasContainers.getContainer(entity.id);
+      // Script-driven visuals — ONE component type (ScriptComponent),
+      // dispatched per script kind: 'canvas' mounts the compiled class into
+      // a pooled offscreen container (updateCanvasComponent, same lifecycle
+      // as live preview) and rasterizes its <canvas> subtree; 'react'
+      // mounts the compiled component via the same pooled container with
+      // flushSync (see drawReactComponentContents for the exact scope:
+      // canvas-rooted components; arbitrary DOM-only output is skipped
+      // rather than guessed at). Multiple script components on one entity
+      // each draw into their own container.
+      for (const comp of entity.components) {
+        if (!isScriptComponent(comp) || comp.enabled === false) continue;
+        const scriptDef = scripts.find((s) => s.id === comp.scriptId);
+        if (!scriptDef || !scriptDef.code) continue;
+        const kind = detectScriptKind(scriptDef.code);
+ 
+        if (kind === 'canvas') {
+          const container = canvasContainers.getContainer(entity.id, comp.scriptId);
           updateCanvasComponent({
             entityId: entity.id,
+            scriptId: comp.scriptId,
             scriptCode: scriptDef.code,
             container,
             localTime,
             frame: Math.round(localTime * fps),
             fps,
-            props: canvasComp.props || {},
+            props: comp.props || {},
           });
           drawCanvasContainerContents(ctx, container, transform, width, height);
-        }
-      } else if (reactComp) {
-        // ReactRenderer export — mount the same compiled component the live
-        // preview uses (via getCompiledReactComponent) into a pooled
-        // offscreen container, flush it synchronously, and rasterize its
-        // <canvas> subtree (see drawReactComponentContents for the exact
-        // scope: canvas-rooted components; arbitrary DOM-only output is
-        // skipped rather than guessed at).
-        const scriptDef = scripts.find((s) => s.id === reactComp.scriptId);
-        if (scriptDef && scriptDef.code) {
+        } else if (kind === 'react') {
           const CompiledComponent = getCompiledReactComponent(scriptDef.code);
           if (typeof CompiledComponent === 'function') {
-            const container = canvasContainers.getContainer(entity.id);
+            const container = canvasContainers.getContainer(entity.id, comp.scriptId);
             drawReactComponentContents({
               ctx,
               container,
               Component: CompiledComponent,
-              props: reactComp.props || {},
+              props: comp.props || {},
               localTime,
               duration: entity.duration,
               fps,
@@ -303,7 +317,9 @@ export function drawExportFrame({
             });
           }
         }
-      } else if (shapeComp) {
+      }
+ 
+      if (shapeComp) {
         drawShape(ctx, shapeComp, transform, width, height);
       } else if (textComp) {
         drawText(ctx, textComp, entity, transform, width, height);
@@ -313,7 +329,17 @@ export function drawExportFrame({
     }
   }
  
-  canvasContainers.pruneExcept(computed.map(({ entity }) => entity.id));
+  // Active mount keys for prune: every (entity, script) pair with an
+  // enabled script component (whether or not its kind produced drawable
+  // output this frame), so containers are released exactly when a script
+  // component or entity leaves the active window.
+  canvasContainers.pruneExcept(
+    computed.flatMap(({ entity }) =>
+      (entity.components || [])
+        .filter((c) => isScriptComponent(c) && c.enabled !== false && c.scriptId)
+        .map((c) => `${entity.id}::${c.scriptId}`)
+    )
+  );
 }
  
 // ---------------------------------------------------------------------------

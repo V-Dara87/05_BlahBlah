@@ -21,32 +21,40 @@ import {
 import { extractScriptProps, getScriptError, detectScriptKind, isScriptBundlePending } from '../engine/scriptRunner';
 import { DragNumber } from './DragNumber';
 import { InspectorFieldList, TRANSFORM_FIELD_GROUPS } from './inspector/InspectorField';
-import { trackKeyFor, getFieldKeyframes, setKeyframe, evaluateField } from '../engine/keyframes';
+import { getFieldKeyframes, setKeyframe, evaluateField } from '../engine/keyframes';
+import { isScriptComponent } from '../engine/ecs';
+
+// Per-kind display metadata for script cards (icon + color + label). The
+// kind comes from detectScriptKind at runtime — there is ONE component type
+// (ScriptComponent) and the script's own code decides how it executes.
+const SCRIPT_KIND_META = {
+  react: { icon: Sparkles, className: 'text-cyan', label: 'React Component' },
+  canvas: { icon: Boxes, className: 'text-violet', label: 'Canvas Component' },
+  motion: { icon: FileCode, className: 'text-emerald', label: 'Motion Script' },
+};
+const scriptKindMeta = (kind) => SCRIPT_KIND_META[kind] || SCRIPT_KIND_META.motion;
  
 /**
  * P0 #3 — Unified Inspector field rendering.
  *
- * Transform, ReactRenderer, ScriptComponent, and CanvasRenderer all render
- * their fields through the shared `InspectorFieldList` /
- * `TRANSFORM_FIELD_GROUPS` in `./inspector/InspectorField.jsx`, instead of
- * each having its own hand-written field switch. TextRenderer and
- * ShapeRenderer keep bespoke bodies for now — their fields (a shape-type
- * select, paired W/H drag-numbers, etc.) don't map cleanly onto the
- * single-field-per-row schema, and folding them in isn't required to
- * unblock CanvasRenderer or close the roadmap item.
+ * Transform and the script-driven components all render their fields
+ * through the shared `InspectorFieldList` / `TRANSFORM_FIELD_GROUPS` in
+ * `./inspector/InspectorField.jsx`, instead of each having its own
+ * hand-written field switch. There is ONE script component type —
+ * `ScriptComponent` — covering motion scripts, React components, and
+ * Canvas components; each card shows the script's detected kind (see
+ * detectScriptKind) as its icon and routes its props through the same
+ * `script:<scriptId>` keyframe track. TextRenderer and ShapeRenderer keep
+ * bespoke bodies for now — their fields (a shape-type select, paired W/H
+ * drag-numbers, etc.) don't map cleanly onto the single-field-per-row
+ * schema, and folding them in isn't required to close the roadmap item.
  *
- * Add Component script-kind filtering (bugfix) — previously every section
- * (React Clips / Canvas Components / Motion Scripts) listed the *entire*
- * `scripts` array unconditionally, so a single file could show up in all
- * three lists regardless of which runtime contract it actually implements
- * (a script written as a React component would still appear as a pickable
- * "Motion Script", and attaching it there produced a component that just
- * didn't do anything at render time). Each section is now filtered through
- * `detectScriptKind`, which sniffs the script body once (onMount → canvas,
- * onStart/onUpdate(transform) → motion, returns JSX → react) so a given
- * script only appears where it will actually work. Scripts whose kind is
- * still 'unknown' (e.g. a brand new empty script) are shown in every
- * section so they aren't hidden while being written.
+ * Add Component lists every script once (tagged with its kind) — the
+ * runtime dispatches each attached script by its detected contract, so a
+ * script written as a React component, a Canvas component, or a motion
+ * script always runs correctly no matter which list it was added from,
+ * and a half-written script ('unknown') is never hidden while being
+ * written.
  *
  * Bugfix (this pass) — two issues reported together:
  *  1. Only the Transform card could collapse/expand; every other card
@@ -124,10 +132,7 @@ export const UnityInspector = memo(function UnityInspector({
 }) {
   const [openFoldouts, setOpenFoldouts] = useState({
     Transform: true,
-    Renderer: true,
     Scripts: true,
-    React: true,
-    Canvas: true,
     Text: true,
     Shape: true,
     Media: true
@@ -197,9 +202,7 @@ export const UnityInspector = memo(function UnityInspector({
   const shapeComp = selectedEntity.components.find(c => c.type === 'ShapeRenderer');
   const videoComp = selectedEntity.components.find(c => c.type === 'VideoRenderer');
   const audioComp = selectedEntity.components.find(c => c.type === 'AudioSource');
-  const reactComp = selectedEntity.components.find(c => c.type === 'ReactRenderer');
-  const canvasComp = selectedEntity.components.find(c => c.type === 'CanvasRenderer');
-  const scriptComps = selectedEntity.components.filter(c => c.type === 'ScriptComponent' || c.type === 'MonoBehaviour');
+  const scriptComps = selectedEntity.components.filter(isScriptComponent);
  
   const updateTransform = (updates) => {
     // For each updated field: if it already has keyframes (or autoKey is on)
@@ -254,7 +257,7 @@ export const UnityInspector = memo(function UnityInspector({
     } else {
       // Non-animated field: write to static prop as before.
       const updatedComponents = selectedEntity.components.map((c) => {
-        if ((c.type === 'ScriptComponent' || c.type === 'MonoBehaviour') && c.scriptId === scriptId) {
+        if (isScriptComponent(c) && c.scriptId === scriptId) {
           return { ...c, props: { ...(c.props || {}), [propKey]: propVal } };
         }
         return c;
@@ -263,34 +266,11 @@ export const UnityInspector = memo(function UnityInspector({
     }
   };
 
-  const updateReactProps = (propKey, propVal) => {
-    const newKfs = tryWriteKeyframe(selectedEntity, 'ReactRenderer', propKey, propVal);
-    if (newKfs) {
-      onUpdateEntity(selectedEntity.id, { keyframes: newKfs });
-    } else {
-      const updatedComponents = selectedEntity.components.map((c) => {
-        if (c.type === 'ReactRenderer') {
-          return { ...c, props: { ...(c.props || {}), [propKey]: propVal } };
-        }
-        return c;
-      });
-      onUpdateEntity(selectedEntity.id, { components: updatedComponents });
-    }
-  };
-
-  const updateCanvasProps = (propKey, propVal) => {
-    const newKfs = tryWriteKeyframe(selectedEntity, 'CanvasRenderer', propKey, propVal);
-    if (newKfs) {
-      onUpdateEntity(selectedEntity.id, { keyframes: newKfs });
-    } else {
-      const updatedComponents = selectedEntity.components.map((c) => {
-        if (c.type === 'CanvasRenderer') {
-          return { ...c, props: { ...(c.props || {}), [propKey]: propVal } };
-        }
-        return c;
-      });
-      onUpdateEntity(selectedEntity.id, { components: updatedComponents });
-    }
+  const updateScriptComp = (scriptId, updates) => {
+    const updatedComponents = selectedEntity.components.map((c) =>
+      isScriptComponent(c) && c.scriptId === scriptId ? { ...c, ...updates } : c
+    );
+    onUpdateEntity(selectedEntity.id, { components: updatedComponents });
   };
  
   // Components after the pinned Transform can be freely reordered. Each
@@ -298,8 +278,7 @@ export const UnityInspector = memo(function UnityInspector({
   // (there can be several) which is keyed by `script:<scriptId>` instead so
   // multiple motion scripts on the same entity can be reordered relative to
   // each other, not just as a block.
-  const dragKeyFor = (c) =>
-    (c.type === 'ScriptComponent' || c.type === 'MonoBehaviour') ? `script:${c.scriptId}` : c.type;
+  const dragKeyFor = (c) => (isScriptComponent(c) ? `script:${c.scriptId}` : c.type);
  
   const reorderComponents = (draggedKey, targetKey) => {
     if (!draggedKey || !targetKey || draggedKey === targetKey) return;
@@ -335,7 +314,7 @@ export const UnityInspector = memo(function UnityInspector({
   const removeComponent = (compType, scriptId = null) => {
     const updatedComponents = selectedEntity.components.filter(c => {
       if ((compType === 'ScriptComponent' || compType === 'MonoBehaviour') && scriptId) {
-        return !( (c.type === 'ScriptComponent' || c.type === 'MonoBehaviour') && c.scriptId === scriptId );
+        return !(isScriptComponent(c) && c.scriptId === scriptId);
       }
       return c.type !== compType;
     });
@@ -350,29 +329,15 @@ export const UnityInspector = memo(function UnityInspector({
       newComp = { type: 'TextRenderer', text: 'New Text', fontSize: 36, fontColor: '#ffffff', fontFamily: 'Inter' };
     } else if (type === 'ShapeRenderer') {
       newComp = { type: 'ShapeRenderer', shapeType: 'rect', width: 140, height: 140, color: '#ffffff', strokeColor: '#38bdf8', strokeWidth: 0, borderRadius: 0 };
-    } else if (type === 'ReactRenderer' && scriptId) {
-      const scriptDef = scripts.find(s => s.id === scriptId);
-      if (scriptDef) {
-        const fields = extractScriptProps(scriptDef.code);
-        const initialProps = {};
-        fields.forEach(f => { initialProps[f.name] = f.defaultVal; });
-        newComp = { type: 'ReactRenderer', scriptId: scriptDef.id, scriptName: scriptDef.name, props: initialProps };
-      }
     } else if (type === 'ScriptComponent' && scriptId) {
+      // ONE script component type — the runtime dispatches per the
+      // script's detected kind (motion / react / canvas).
       const scriptDef = scripts.find(s => s.id === scriptId);
       if (scriptDef) {
         const fields = extractScriptProps(scriptDef.code);
         const initialProps = {};
         fields.forEach(f => { initialProps[f.name] = f.defaultVal; });
         newComp = { type: 'ScriptComponent', scriptId: scriptDef.id, scriptName: scriptDef.name, enabled: true, props: initialProps };
-      }
-    } else if (type === 'CanvasRenderer' && scriptId) {
-      const scriptDef = scripts.find(s => s.id === scriptId);
-      if (scriptDef) {
-        const fields = extractScriptProps(scriptDef.code);
-        const initialProps = {};
-        fields.forEach(f => { initialProps[f.name] = f.defaultVal; });
-        newComp = { type: 'CanvasRenderer', scriptId: scriptDef.id, scriptName: scriptDef.name, props: initialProps };
       }
     }
  
@@ -387,23 +352,11 @@ export const UnityInspector = memo(function UnityInspector({
     setTimeout(() => setSavedPrefab(false), 2000);
   };
  
-  // Script-kind filtering (bugfix): each Add Component section now only
-  // lists scripts whose body actually matches that section's runtime
-  // contract, instead of every script appearing in every section. A script
-  // whose kind can't be determined yet ('unknown' — e.g. brand new/empty)
-  // is still shown everywhere so it isn't hidden while being written.
-  const reactScripts = scripts.filter(s => {
-    const kind = detectScriptKind(s.code);
-    return kind === 'react' || kind === 'unknown';
-  });
-  const canvasScripts = scripts.filter(s => {
-    const kind = detectScriptKind(s.code);
-    return kind === 'canvas' || kind === 'unknown';
-  });
-  const motionScripts = scripts.filter(s => {
-    const kind = detectScriptKind(s.code);
-    return kind === 'motion' || kind === 'unknown';
-  });
+  // Add Component list — every script, tagged with its detected kind.
+  // There is no per-kind filtering anymore: any script attaches as a
+  // ScriptComponent and the runtime dispatches by kind, so a half-written
+  // script ('unknown') is never hidden while being written.
+  const allScripts = scripts.map(s => ({ ...s, kind: detectScriptKind(s.code) }));
  
   return (
     <aside className="inspector-sidebar">
@@ -494,132 +447,6 @@ export const UnityInspector = memo(function UnityInspector({
             </div>
           )}
         </div>
- 
-        {/* ========== REACT COMPONENT RENDERER ========== */}
-        {reactComp && (() => {
-          const scriptDef = scripts.find(s => s.id === reactComp.scriptId);
-          const fields = scriptDef ? extractScriptProps(scriptDef.code) : [];
-          const scriptError = scriptDef ? getScriptError(scriptDef.code) : null;
-          const bundlePending = scriptDef ? isScriptBundlePending(scriptDef.code) : false;
- 
-          return (
-            <div className="inspector-card react-highlight">
-              <InspectorCardHeader
-                icon={<Sparkles size={13} className="text-cyan" />}
-                title={reactComp.scriptName || 'React Component'}
-                isOpen={openFoldouts.React}
-                onToggle={() => toggleFoldout('React')}
-                draggable
-                isDragOver={dragOverCompType === 'ReactRenderer'}
-                onDragStart={handleCardDragStart('ReactRenderer')}
-                onDragOver={handleCardDragOver('ReactRenderer')}
-                onDrop={handleCardDrop('ReactRenderer')}
-                onDragEnd={handleCardDragEnd}
-                actions={
-                  <>
-                    <button className="edit-cs-btn" onClick={() => scriptDef && onOpenScriptEditor(scriptDef)}>
-                      Edit JSX
-                    </button>
-                    <button className="del-btn-sm" onClick={() => removeComponent('ReactRenderer')}>
-                      <Trash2 size={11} />
-                    </button>
-                  </>
-                }
-              />
- 
-              {openFoldouts.React && (
-                <div className="inspector-card-body">
-                  {scriptError && (
-                    <div className="script-error-badge">
-                      <AlertCircle size={12} />
-                      <span>{scriptError}</span>
-                    </div>
-                  )}
-                  {!scriptError && bundlePending && (
-                    <div className="script-pending-badge">
-                      <Clock size={12} />
-                      <span>Resolving imports…</span>
-                    </div>
-                  )}
- 
-                  <InspectorFieldList
-                    fields={fields}
-                    values={resolveComponentValues('ReactRenderer', reactComp.props)}
-                    onFieldChange={updateReactProps}
-                    emptyHint={<>Expose props with <code>Component.props = &#123; ... &#125;</code></>}
-                    trackKey="ReactRenderer"
-                    selectedEntity={selectedEntity}
-                    currentTime={currentTime}
-                    onUpdateEntity={onUpdateEntity}
-                  />
-                </div>
-              )}
-            </div>
-          );
-        })()}
- 
-        {/* ========== CANVAS RENDERER (P0 #2 / #3) ========== */}
-        {canvasComp && (() => {
-          const scriptDef = scripts.find(s => s.id === canvasComp.scriptId);
-          const fields = scriptDef ? extractScriptProps(scriptDef.code) : [];
-          const scriptError = scriptDef ? getScriptError(scriptDef.code) : null;
-          const bundlePending = scriptDef ? isScriptBundlePending(scriptDef.code) : false;
- 
-          return (
-            <div className="inspector-card canvas-highlight">
-              <InspectorCardHeader
-                icon={<Boxes size={13} className="text-violet" />}
-                title={canvasComp.scriptName || 'Canvas Component'}
-                isOpen={openFoldouts.Canvas}
-                onToggle={() => toggleFoldout('Canvas')}
-                draggable
-                isDragOver={dragOverCompType === 'CanvasRenderer'}
-                onDragStart={handleCardDragStart('CanvasRenderer')}
-                onDragOver={handleCardDragOver('CanvasRenderer')}
-                onDrop={handleCardDrop('CanvasRenderer')}
-                onDragEnd={handleCardDragEnd}
-                actions={
-                  <>
-                    <button className="edit-cs-btn" onClick={() => scriptDef && onOpenScriptEditor(scriptDef)}>
-                      Edit JS
-                    </button>
-                    <button className="del-btn-sm" onClick={() => removeComponent('CanvasRenderer')}>
-                      <Trash2 size={11} />
-                    </button>
-                  </>
-                }
-              />
- 
-              {openFoldouts.Canvas && (
-                <div className="inspector-card-body">
-                  {scriptError && (
-                    <div className="script-error-badge">
-                      <AlertCircle size={12} />
-                      <span>{scriptError}</span>
-                    </div>
-                  )}
-                  {!scriptError && bundlePending && (
-                    <div className="script-pending-badge">
-                      <Clock size={12} />
-                      <span>Resolving imports…</span>
-                    </div>
-                  )}
- 
-                  <InspectorFieldList
-                    fields={fields}
-                    values={resolveComponentValues('CanvasRenderer', canvasComp.props)}
-                    onFieldChange={updateCanvasProps}
-                    emptyHint={<>Expose props with <code>static props = &#123; ... &#125;</code></>}
-                    trackKey="CanvasRenderer"
-                    selectedEntity={selectedEntity}
-                    currentTime={currentTime}
-                    onUpdateEntity={onUpdateEntity}
-                  />
-                </div>
-              )}
-            </div>
-          );
-        })()}
  
         {/* ========== TEXT RENDERER ========== */}
         {textComp && (
@@ -817,9 +644,11 @@ export const UnityInspector = memo(function UnityInspector({
           </div>
         )}
  
-        {/* ========== JS/TS MOTION SCRIPTS ========== */}
+        {/* ========== SCRIPTS (motion / React / Canvas — one component type) ========== */}
         {scriptComps.map((scriptComp) => {
           const scriptDef = scripts.find(s => s.id === scriptComp.scriptId);
+          const kind = scriptDef ? detectScriptKind(scriptDef.code) : 'unknown';
+          const Meta = scriptKindMeta(kind);
           const fields = scriptDef ? extractScriptProps(scriptDef.code) : [];
           const scriptError = scriptDef ? getScriptError(scriptDef.code) : null;
           const bundlePending = scriptDef ? isScriptBundlePending(scriptDef.code) : false;
@@ -832,8 +661,8 @@ export const UnityInspector = memo(function UnityInspector({
           return (
             <div key={scriptComp.scriptId} className="inspector-card script-highlight">
               <InspectorCardHeader
-                icon={<FileCode size={13} className="text-emerald" />}
-                title={scriptComp.scriptName || 'Motion Script'}
+                icon={<Meta.icon size={13} className={Meta.className} />}
+                title={scriptComp.scriptName || Meta.label}
                 isOpen={isOpen}
                 onToggle={() => toggleFoldout(foldoutKey)}
                 draggable
@@ -868,7 +697,16 @@ export const UnityInspector = memo(function UnityInspector({
                       <span>Resolving imports…</span>
                     </div>
                   )}
- 
+
+                  <div className="inspector-row">
+                    <span className="row-label">Enabled</span>
+                    <input
+                      type="checkbox"
+                      checked={scriptComp.enabled !== false}
+                      onChange={(e) => updateScriptComp(scriptComp.scriptId, { enabled: e.target.checked })}
+                    />
+                  </div>
+
                   <InspectorFieldList
                     fields={fields}
                     values={resolveComponentValues(`script:${scriptComp.scriptId}`, scriptComp.props)}
@@ -913,41 +751,19 @@ export const UnityInspector = memo(function UnityInspector({
                 </button>
               )}
  
-              <div className="popover-heading">React Clips (.jsx)</div>
-              {reactScripts.map(s => (
-                <button key={s.id} className="popover-item" onClick={() => handleAddComponent('ReactRenderer', s.id)}>
-                  <Sparkles size={12} className="text-cyan" />
-                  <span>{s.name}</span>
-                </button>
-              ))}
-              {reactScripts.length === 0 && (
-                <div className="popover-empty-hint">No scripts matching React Clip contract yet.</div>
-              )}
- 
-              {!canvasComp && (
-                <>
-                  <div className="popover-heading">Canvas Components (Three.js/WebGL)</div>
-                  {canvasScripts.map(s => (
-                    <button key={s.id} className="popover-item" onClick={() => handleAddComponent('CanvasRenderer', s.id)}>
-                      <Boxes size={12} className="text-violet" />
-                      <span>{s.name}</span>
-                    </button>
-                  ))}
-                  {canvasScripts.length === 0 && (
-                    <div className="popover-empty-hint">No scripts matching Canvas Component contract yet.</div>
-                  )}
-                </>
-              )}
- 
-              <div className="popover-heading">Motion Scripts (.js)</div>
-              {motionScripts.map(s => (
-                <button key={s.id} className="popover-item" onClick={() => handleAddComponent('ScriptComponent', s.id)}>
-                  <FileCode size={12} className="text-emerald" />
-                  <span>{s.name}</span>
-                </button>
-              ))}
-              {motionScripts.length === 0 && (
-                <div className="popover-empty-hint">No scripts matching Motion Script contract yet.</div>
+              <div className="popover-heading">Scripts</div>
+              {allScripts.map(s => {
+                const Meta = scriptKindMeta(s.kind);
+                return (
+                  <button key={s.id} className="popover-item" onClick={() => handleAddComponent('ScriptComponent', s.id)}>
+                    <Meta.icon size={12} className={Meta.className} />
+                    <span>{s.name}</span>
+                    <span className="popover-kind-tag">{Meta.label}</span>
+                  </button>
+                );
+              })}
+              {allScripts.length === 0 && (
+                <div className="popover-empty-hint">No scripts yet. Create one from the Project panel.</div>
               )}
             </div>
           )}

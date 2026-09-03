@@ -2,10 +2,12 @@ import { compileScriptModule, getScriptError } from './scriptRunner';
 import { CANVAS_LIB_SOURCES } from './ecs';
  
 /**
- * P0 #2 — CanvasRenderer lifecycle runner.
+ * P0 #2 — canvas-kind script lifecycle runner.
  *
- * Contract (see engine/ecs.js RENDERER_REGISTRY.CanvasRenderer for the
- * canonical doc comment):
+ * Canvas-kind scripts (detected via detectScriptKind in scriptRunner.js —
+ * the runtime sees ONE component type, ScriptComponent, and dispatches
+ * here when the script implements the canvas contract) follow this
+ * contract:
  *
  *   export default class MyThing {
  *     static props = { speed: { type: 'number', default: 1, min: 0, max: 10 } };
@@ -16,13 +18,13 @@ import { CANVAS_LIB_SOURCES } from './ecs';
  *
  * `container` is a plain <div> owned by EntityRenderer for this entity.
  * `time`/`frame` are ABSOLUTE-TIMELINE-derived (localTime = currentTime -
- * entity.startTime), never wall-clock/rAF-accumulated, so scrubbing and a
- * future deterministic export pass both "just work" the same way #2's
- * onUpdate does for the render pipeline.
+ * entity.startTime), never wall-clock/rAF-accumulated, so scrubbing and
+ * export both "just work" the same way the motion-script onUpdate does
+ * for the render pipeline.
  *
  * Reuses compileScriptModule/extractScriptProps from scriptRunner.js
- * unchanged, per the roadmap note that CanvasRenderer shouldn't need its
- * own compile/props pipeline.
+ * unchanged — canvas-kind scripts don't need their own compile/props
+ * pipeline.
  */
  
 // Cache of loaded lib globals, keyed by lib name, so multiple CanvasRenderer
@@ -112,21 +114,24 @@ function createLibsProxy() {
 function attachLoader(libs) {
   libs.load = (name) => loadLib(name);
   return libs;
-}
- 
-// Per-entity mounted-instance state, keyed by entity id, so we know when to
-// call onMount vs onUpdate vs onUnmount as entities enter/leave the active
-// window or their script changes.
+}// Per-entity+script mounted-instance state, keyed by a mount key of
+// `entityId::scriptId` (not just entity id), so we know when to call
+// onMount vs onUpdate vs onUnmount as entities enter/leave the active
+// window or their script changes — and so multiple canvas-kind scripts on
+// one entity each get their own independent lifecycle.
 const mountedInstances = new Map();
- 
+
+const mountKeyFor = (entityId, scriptId = '') => `${entityId}::${scriptId || ''}`;
+
 /**
  * Mounts (if needed) and updates a CanvasRenderer component for one frame.
- * Call this every render tick for every active CanvasRenderer entity;
- * call `unmountCanvasComponent(entityId)` when the entity becomes inactive
- * or is removed.
+ * Call this every render tick for every active canvas-kind script;
+ * call `unmountCanvasComponent(entityId, scriptId)` when the entity becomes
+ * inactive or is removed.
  */
 export function updateCanvasComponent({
   entityId,
+  scriptId = '',
   scriptCode,
   container,
   localTime = 0,
@@ -135,19 +140,20 @@ export function updateCanvasComponent({
   props = {},
 }) {
   if (!scriptCode || !container) return;
- 
-  let mounted = mountedInstances.get(entityId);
- 
+
+  const mountKey = mountKeyFor(entityId, scriptId);
+  let mounted = mountedInstances.get(mountKey);
+
   const compiled = compileScriptModule(scriptCode);
   if (!compiled) return; // compile error already recorded in scriptRunner's lastErrorCache
- 
+
   const needsRemount = !mounted || mounted.scriptCode !== scriptCode || mounted.container !== container;
- 
+
   if (needsRemount) {
     if (mounted) {
       safeCall(mounted.instance, 'onUnmount', { container: mounted.container });
     }
- 
+
     let instance = null;
     try {
       if (typeof compiled === 'function' && compiled.prototype) {
@@ -159,12 +165,12 @@ export function updateCanvasComponent({
       console.warn('CanvasRenderer instantiation error:', err);
       return;
     }
- 
+
     const libs = attachLoader(createLibsProxy());
- 
+
     mounted = { instance, scriptCode, container, libs, lastLocalTime: null };
-    mountedInstances.set(entityId, mounted);
- 
+    mountedInstances.set(mountKey, mounted);
+
     safeCall(instance, 'onMount', { container, props, libs });
   }
  
@@ -200,20 +206,26 @@ export function updateCanvasComponent({
     props,
   });
 }
- 
-export function unmountCanvasComponent(entityId) {
-  const mounted = mountedInstances.get(entityId);
+
+export function unmountCanvasComponent(entityId, scriptId = '') {
+  const mountKey = mountKeyFor(entityId, scriptId);
+  const mounted = mountedInstances.get(mountKey);
   if (!mounted) return;
   safeCall(mounted.instance, 'onUnmount', { container: mounted.container });
-  mountedInstances.delete(entityId);
+  mountedInstances.delete(mountKey);
 }
- 
-/** Unmount every tracked instance not present in the given set of still-active entity ids. */
-export function pruneCanvasComponents(activeEntityIds) {
-  const activeSet = new Set(activeEntityIds);
-  for (const entityId of mountedInstances.keys()) {
-    if (!activeSet.has(entityId)) {
-      unmountCanvasComponent(entityId);
+
+/**
+ * Unmount every tracked instance whose mount key is not in the given set
+ * of still-active keys (`entityId::scriptId` strings — pass the exact keys
+ * the active instances were updated with).
+ */
+export function pruneCanvasComponents(activeMountKeys) {
+  const activeSet = new Set(activeMountKeys);
+  for (const mountKey of mountedInstances.keys()) {
+    if (!activeSet.has(mountKey)) {
+      const [entityId, scriptId = ''] = mountKey.split('::');
+      unmountCanvasComponent(entityId, scriptId);
     }
   }
 }

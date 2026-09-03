@@ -390,6 +390,92 @@ await test('precompileAllProjectScripts no-ops on import-free scripts', async ()
   assert.equal(getScriptError(plainScript), null);
 });
 
+// ─── 10. Old-project migration (ReactRenderer/CanvasRenderer/MonoBehaviour → ScriptComponent) ──
+
+const { migrateEntities } = await import('../src/engine/ecs.js');
+
+// An old-format project entity mixing every pre-merge component type,
+// with keyframes stored under the old per-type track keys ('ReactRenderer',
+// 'CanvasRenderer') plus a motion script's 'script:<id>' track and the
+// Transform's own track — exactly what a project saved before the type
+// merge looks like on disk.
+const OLD_ENTITY = {
+  id: 'go-1',
+  name: 'Old Clip',
+  components: [
+    { type: 'Transform', x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1 },
+    { type: 'ReactRenderer', scriptId: 'script-glass-card', scriptName: 'GlassCard.jsx', props: { title: 'A' } },
+    { type: 'CanvasRenderer', scriptId: 'script-canvas-orbit', scriptName: 'CanvasOrbit.jsx', props: { radius: 80 } },
+    { type: 'MonoBehaviour', scriptId: 'script-pulse-scale', scriptName: 'PulseScale.jsx', enabled: false, props: {} },
+  ],
+  keyframes: {
+    Transform: { x: [{ id: 'k1', time: 0, value: 10, easing: 'linear' }] },
+    ReactRenderer: { title: [{ id: 'k2', time: 0, value: 'B', easing: 'linear' }] },
+    CanvasRenderer: { radius: [{ id: 'k3', time: 1, value: 120, easing: 'linear' }] },
+    'script:script-pulse-scale': { maxScale: [{ id: 'k4', time: 0, value: 1.2, easing: 'linear' }] },
+  },
+};
+
+await test('migrateEntities: all old component types become ScriptComponent', () => {
+  const [entity] = migrateEntities([OLD_ENTITY]);
+  const types = entity.components.map((c) => c.type);
+  assert.deepEqual(types, ['Transform', 'ScriptComponent', 'ScriptComponent', 'ScriptComponent']);
+});
+
+await test('migrateEntities: adds enabled:true to React/Canvas, preserves MonoBehaviour enabled', () => {
+  const [entity] = migrateEntities([OLD_ENTITY]);
+  const [react, canvas, mono] = entity.components.slice(1);
+  assert.equal(react.enabled, true);
+  assert.equal(canvas.enabled, true);
+  assert.equal(mono.enabled, false); // explicitly disabled must stay disabled
+});
+
+await test('migrateEntities: keyframes re-keyed from old type tracks to script:<id>', () => {
+  const [entity] = migrateEntities([OLD_ENTITY]);
+  const keys = Object.keys(entity.keyframes).sort();
+  assert.deepEqual(keys, [
+    'Transform',
+    'script:script-canvas-orbit',
+    'script:script-glass-card',
+    'script:script-pulse-scale',
+  ]);
+  // The keyframe data itself is preserved verbatim, just moved.
+  assert.equal(entity.keyframes['script:script-glass-card'].title[0].value, 'B');
+  assert.equal(entity.keyframes['script:script-canvas-orbit'].radius[0].value, 120);
+  assert.equal(entity.keyframes['script:script-pulse-scale'].maxScale[0].value, 1.2);
+  assert.equal(entity.keyframes.Transform.x[0].value, 10);
+});
+
+await test('migrateEntities: props survive untouched', () => {
+  const [entity] = migrateEntities([OLD_ENTITY]);
+  const [react] = entity.components.slice(1);
+  assert.deepEqual(react.props, { title: 'A' });
+});
+
+await test('migrateEntities: already-migrated entities pass through unchanged (idempotent)', () => {
+  const once = migrateEntities([OLD_ENTITY]);
+  const twice = migrateEntities(once);
+  assert.deepEqual(twice, once);
+});
+
+await test('migrateEntities: prefab-style component lists migrate the same way', () => {
+  const prefab = {
+    name: 'OldPrefab',
+    components: [
+      { type: 'Transform', x: 0, y: 0 },
+      { type: 'ReactRenderer', scriptId: 'script-glass-card', props: {} },
+    ],
+  };
+  const migrated = migrateEntities([prefab])[0];
+  assert.equal(migrated.components[1].type, 'ScriptComponent');
+  assert.equal(migrated.components[1].enabled, true);
+});
+
+await test('migrateEntities: null/non-array input is safe', () => {
+  assert.deepEqual(migrateEntities(null), []);
+  assert.deepEqual(migrateEntities(undefined), []);
+});
+
 // ─── Summary ─────────────────────────────────────────────────────────────────
 
 console.log(`\n${passed} passed, ${failed} failed`);

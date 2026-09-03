@@ -1,5 +1,14 @@
 import { useState } from 'react';
-import { X, Check, Save, FileCode, Sparkles } from 'lucide-react';
+import { X, Check, Save, FileCode } from 'lucide-react';
+import { detectScriptKind } from '../engine/scriptRunner';
+
+// Per-kind display metadata for the editor header badge (see detectScriptKind).
+const SCRIPT_KIND_META = {
+  react: { label: 'React Component' },
+  canvas: { label: 'Canvas Component' },
+  motion: { label: 'JavaScript Motion Script' },
+};
+const scriptKindLabel = (kind) => SCRIPT_KIND_META[kind]?.label || 'Script';
  
 const SNIPPET_TEMPLATES = {
   floatBounce: {
@@ -186,7 +195,7 @@ function ScriptEditorModalContent({
   onSaveScript
 }) {
   const [code, setCode] = useState(() => script.code || '');
-  const [name, setName] = useState(() => script.name || 'NewScript.js');
+  const [name, setName] = useState(() => script.name || 'NewScript.jsx');
   const [saved, setSaved] = useState(false);
  
   const handleSave = () => {
@@ -202,33 +211,26 @@ function ScriptEditorModalContent({
     const tmpl = SNIPPET_TEMPLATES[key];
     if (tmpl) {
       setCode(tmpl.code);
-      if (key === 'glassCard' && !name.endsWith('.jsx')) {
-        setName('GlassCard.jsx');
-      } else if (key === 'neonTitle' && !name.endsWith('.jsx')) {
-        setName('NeonTitle.jsx');
-      }
     }
   };
- 
-  const isJsx = name.endsWith('.jsx') || code.includes('return') || code.includes('<div');
+
+  const kindLabel = scriptKindLabel(detectScriptKind(code));
  
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-card script-modal-card" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div className="modal-title-group">
-            {isJsx ? <Sparkles size={18} className="text-cyan" /> : <FileCode size={18} className="text-emerald" />}
+            <FileCode size={18} className="text-emerald" />
             <div className="script-title-edit">
               <input
                 type="text"
                 className="script-name-input"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="MyComponent.js"
+                placeholder="MyComponent.jsx"
               />
-              <span className="script-badge">
-                {isJsx ? 'React Component (no JSX)' : 'JavaScript Motion Script'}
-              </span>
+              <span className="script-badge">{kindLabel}</span>
             </div>
           </div>
           <button className="close-btn" onClick={onClose}>
@@ -239,7 +241,7 @@ function ScriptEditorModalContent({
         <div className="modal-body script-modal-body">
           <div className="script-toolbar">
             <span className="script-hint">
-              Define <code>static props = &#123; speed: 2.5 &#125;</code> to auto-expose interactive controls in the Inspector! For visual components, use <code>h(tag, props, children)</code> instead of JSX (no build step here, so angle-bracket tags aren't supported).
+              Define <code>static props = &#123; speed: 2.5 &#125;</code> to auto-expose interactive controls in the Inspector! Motion scripts use <code>onStart/onUpdate</code> with a <code>transform</code>; React components export a function returning JSX; canvas components export a class with <code>onMount/onUpdate</code>. JSX, TypeScript, and real <code>import</code> statements are all supported.
             </span>
             <div className="snippet-dropdown-group">
               <span className="snippet-label">Insert Snippet:</span>

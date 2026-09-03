@@ -8,18 +8,18 @@ import { Easing } from '../../engine/motionTween';
  *
  * One schema-driven render function for a single field, used by every
  * component type that exposes editable props: Transform (static schema
- * below), ReactRenderer, ScriptComponent, and CanvasRenderer (all three
- * driven by `extractScriptProps`'s field schema from scriptRunner.js).
+ * below) and script components (one type — ScriptComponent — driven by
+ * `extractScriptProps`'s field schema from scriptRunner.js, regardless of
+ * the script's motion/React/canvas kind).
  *
  * Field shape (matches extractScriptProps' output exactly):
  *   { name, type, defaultVal, label, min, max, step, options }
  * `type` is one of: 'number' | 'color' | 'boolean' | 'select' | 'string'.
  *
- * This replaces the two near-identical hand-written field-switch blocks
- * that used to live inline in UnityInspector.jsx for ReactRenderer and
- * ScriptComponent (same switch, duplicated), and gives CanvasRenderer an
- * Inspector block for the first time — previously its props were only
- * settable via a prefab's default `props` object.
+ * This replaces the near-identical hand-written field-switch blocks that
+ * used to live inline in UnityInspector.jsx, one per script component
+ * type (ReactRenderer / ScriptComponent / CanvasRenderer — all now the
+ * single ScriptComponent type).
  */
 export function InspectorField({ field, value, onChange, trackKey, fieldName, selectedEntity, currentTime, onUpdateEntity }) {
   const currentVal = value !== undefined ? value : field.defaultVal;
@@ -179,8 +179,8 @@ export function InspectorField({ field, value, onChange, trackKey, fieldName, se
 /**
  * Renders a full list of schema fields as `.inspector-row`s, with the
  * standard "no exposed props" hint when the schema is empty. Used for the
- * script-driven component types (ReactRenderer / ScriptComponent /
- * CanvasRenderer) whose fields come from `extractScriptProps`.
+ * script-driven components (one type — ScriptComponent) whose fields come
+ * from `extractScriptProps`.
  *
  * `bare: true` skips the per-field `.inspector-row` wrapper and just
  * renders each field's `InspectorField` directly. Needed for grouped

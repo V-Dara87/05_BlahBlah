@@ -109,7 +109,7 @@ export function UnityHeader({
         <button 
           className="unity-hdr-btn demo-btn"
           onClick={onLoadDemoScene}
-          title="Load sample demo scene with animated clips & C# scripts"
+          title="Load sample demo scene with animated clips & scripts"
         >
           <Sparkles size={12} className="text-amber" />
           <span>Demo</span>

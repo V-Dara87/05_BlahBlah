@@ -11,22 +11,24 @@
  * `trackKey` identifies which component instance owns the field, using the
  * exact same keying convention UnityInspector.jsx already uses for
  * drag-reorder (`dragKeyFor` there): the component `type` for singleton
- * components ('Transform', 'ReactRenderer', 'CanvasRenderer', ...), or
- * `script:<scriptId>` for ScriptComponent/MonoBehaviour so multiple motion
- * scripts on one entity keep independent keyframe tracks. Reusing that key
- * means the Dopesheet can address the same "row" the Inspector already
- * knows how to render (via InspectorFieldList / TRANSFORM_FIELD_GROUPS /
- * extractScriptProps), so every exposed Inspector parameter automatically
- * gets a Dopesheet row with no per-component hand-listing.
+ * components ('Transform', 'TextRenderer', ...), or `script:<scriptId>` for
+ * script components (the ONE type — ScriptComponent, covering motion /
+ * React / Canvas kinds) so multiple scripts on one entity keep
+ * independent keyframe tracks. Reusing that key means the Dopesheet can
+ * address the same "row" the Inspector already knows how to render (via
+ * InspectorFieldList / TRANSFORM_FIELD_GROUPS / extractScriptProps), so
+ * every exposed Inspector parameter automatically gets a Dopesheet row
+ * with no per-component hand-listing.
  *
  * Evaluation is a pure function of local time — no wall-clock, no mutation
- * of the entity — consistent with the CanvasRenderer/#2 contract and the
- * export pipeline's determinism requirement (see roadmap #11).
+ * of the entity — consistent with the script-driven render contract and
+ * the export pipeline's determinism requirement (see roadmap #11).
  */
 import { Easing } from './motionTween';
+import { isScriptComponent } from './ecs';
  
 export const trackKeyFor = (component) =>
-  (component.type === 'ScriptComponent' || component.type === 'MonoBehaviour')
+  isScriptComponent(component)
     ? `script:${component.scriptId}`
     : component.type;
  

@@ -1562,6 +1562,18 @@
   background: #2563eb;
   color: #fff;
 }
+
+.popover-kind-tag {
+  margin-left: auto;
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+}
+
+.popover-item:hover .popover-kind-tag {
+  opacity: 0.9;
+}
  
 /* ========================================================
    4. BOTTOM UNIFIED TIMELINE WITH TIME RULER & PLAYHEAD

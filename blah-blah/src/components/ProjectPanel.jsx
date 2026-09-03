@@ -16,6 +16,15 @@ import {
 } from 'lucide-react';
 import { formatTimecode } from '../utils/timeFormat';
 import { createSyntheticAudio, createSyntheticVideo } from '../utils/sampleMedia';
+import { detectScriptKind } from '../engine/scriptRunner';
+
+// Per-kind display metadata for script cards (see detectScriptKind).
+const SCRIPT_KIND_META = {
+  react: { icon: Sparkles, className: 'text-cyan', label: 'React Component' },
+  canvas: { icon: Sparkles, className: 'text-violet', label: 'Canvas Component' },
+  motion: { icon: FileCode, className: 'text-emerald', label: 'Motion Script' },
+};
+const scriptKindMeta = (kind) => SCRIPT_KIND_META[kind] || SCRIPT_KIND_META.motion;
  
 /**
  * Project tab redesign — was three separate tabs (Prefabs / Media /
@@ -143,11 +152,11 @@ export const ProjectPanel = memo(function ProjectPanel({
     }
   };
  
-  const handleCreateNewMotionScript = () => {
+  const handleCreateNewScript = () => {
     setScriptsMenuOpen(false);
     const newScript = {
       id: `script-${Date.now()}`,
-      name: 'CustomMotion.js',
+      name: 'NewScript.jsx',
       description: 'Custom JavaScript Motion script',
       code: `export default class CustomMotion {
   static props = {
@@ -167,46 +176,6 @@ export const ProjectPanel = memo(function ProjectPanel({
     transform.rotation += (1 / 60) * props.speed * 30.0;
   }
 }`
-    };
-    onCreateScript(newScript);
-    onOpenScriptEditor(newScript);
-  };
- 
-  const handleCreateNewReactClip = () => {
-    setScriptsMenuOpen(false);
-    const newScript = {
-      id: `script-${Date.now()}`,
-      name: 'CustomClip.jsx',
-      description: 'Custom React Clip Component',
-      code: `// Plain JavaScript, no JSX: use h(tag, props, children) which is a
-// shorthand for React.createElement(tag, props, children). This runs
-// directly in the browser with no build step, so JSX angle-bracket
-// syntax (<div>...</div>) is not supported here - h(...) is the
-// JSX-free equivalent.
-export default function CustomClip({
-  title = "MY REACT CLIP",
-  color = "#38bdf8"
-}) {
-  return h('div', {
-    style: {
-      padding: '20px 32px',
-      background: 'rgba(15, 23, 42, 0.85)',
-      borderRadius: '16px',
-      border: '1px solid ' + color,
-      boxShadow: '0 8px 32px ' + color + '33',
-      color: '#ffffff',
-      fontFamily: 'Inter, sans-serif',
-      fontSize: '22px',
-      fontWeight: 'bold',
-      textAlign: 'center'
-    }
-  }, title);
-}
- 
-CustomClip.props = {
-  title: { type: 'string', default: 'MY REACT CLIP' },
-  color: { type: 'color', default: '#38bdf8' }
-};`
     };
     onCreateScript(newScript);
     onOpenScriptEditor(newScript);
@@ -421,13 +390,9 @@ CustomClip.props = {
               </button>
               {scriptsMenuOpen && (
                 <div className="tree-add-popover" onClick={(e) => e.stopPropagation()}>
-                  <button className="popover-item" onClick={handleCreateNewMotionScript}>
+                  <button className="popover-item" onClick={handleCreateNewScript}>
                     <FileCode size={12} className="text-emerald" />
-                    <span>+ Motion Script</span>
-                  </button>
-                  <button className="popover-item" onClick={handleCreateNewReactClip}>
-                    <Sparkles size={12} className="text-cyan" />
-                    <span>+ React Clip</span>
+                    <span>+ New Script</span>
                   </button>
                 </div>
               )}
@@ -437,10 +402,10 @@ CustomClip.props = {
           {openFolders.scripts && (
             <div className="tree-folder-contents">
               {filteredScripts.length === 0 && (
-                <p className="tree-empty-hint">No scripts yet. Use + to create a Motion Script or React Clip.</p>
+                <p className="tree-empty-hint">No scripts yet. Use + to create a new script.</p>
               )}
               {filteredScripts.map((script) => {
-                const isJsx = script.name.endsWith('.jsx') || script.code?.includes('return');
+                const Meta = scriptKindMeta(detectScriptKind(script.code || ''));
                 return (
                   <div
                     key={script.id}
@@ -449,12 +414,12 @@ CustomClip.props = {
                     draggable
                     onDragStart={(e) => handleDragStart(e, 'script', script)}
                   >
-                    <div className={`asset-icon-box ${isJsx ? 'text-cyan' : 'text-emerald'}`}>
-                      {isJsx ? <Sparkles size={20} /> : <FileCode size={20} />}
+                    <div className={`asset-icon-box ${Meta.className}`}>
+                      <Meta.icon size={20} />
                     </div>
                     <div className="asset-info-box">
                       <span className="asset-title-main">{script.name}</span>
-                      <span className="asset-subtitle">{isJsx ? 'React JSX Clip' : 'Motion Script'}</span>
+                      <span className="asset-subtitle">{Meta.label}</span>
                     </div>
                   </div>
                 );

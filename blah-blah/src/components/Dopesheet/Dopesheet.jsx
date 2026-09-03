@@ -2,7 +2,7 @@
 import { useRef, useState, useMemo, useCallback, useEffect, memo } from 'react';
 import './dopesheet.css';
 import {
-  ChevronDown, ChevronRight, Sliders, Type, Square, FileCode, Sparkles, Boxes,
+  ChevronDown, ChevronRight, Sliders, Type, Square, FileCode,
   ArrowRightToLine, Move, SlidersHorizontal, Repeat, Filter,
   ChevronsLeft, ChevronsRight, SkipBack, SkipForward, ZoomIn, ZoomOut, Spline
 } from 'lucide-react';
@@ -13,6 +13,7 @@ import {
 } from '../../engine/keyframes';
 import { formatTimecode } from '../../utils/timeFormat';
 import { useEditorContext } from '../../dock/EditorContext';
+import { isScriptComponent } from '../../engine/ecs';
  
 /**
  * Dopesheet — GUI keyframing panel (roadmap P1 #6).
@@ -34,8 +35,6 @@ import { useEditorContext } from '../../dock/EditorContext';
  
 const GROUP_ICONS = {
   Transform: Move,
-  ReactRenderer: Sparkles,
-  CanvasRenderer: Boxes,
   ScriptComponent: FileCode,
   MonoBehaviour: FileCode,
   TextRenderer: Type,
@@ -50,12 +49,7 @@ function fieldSchemaForComponent(component, scripts) {
   if (component.type === 'Transform') {
     return TRANSFORM_FIELD_GROUPS.flatMap((g) => g.fields);
   }
-  if (
-    component.type === 'ReactRenderer' ||
-    component.type === 'CanvasRenderer' ||
-    component.type === 'ScriptComponent' ||
-    component.type === 'MonoBehaviour'
-  ) {
+  if (isScriptComponent(component)) {
     const scriptDef = scripts.find((s) => s.id === component.scriptId);
     if (!scriptDef) return [];
     return extractScriptProps(scriptDef.code);

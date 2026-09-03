@@ -15,9 +15,16 @@
  * Everything here is a pure function of an explicit `time` argument —
  * never wall-clock/rAF — so scrubbing and export stay deterministic
  * (roadmap P1 #11, Remotion-style).
+ *
+ * Script dispatch: there is ONE script component type (`ScriptComponent`),
+ * and each attached script runs according to its detected kind (see
+ * detectScriptKind in scriptRunner.js) — 'motion' scripts mutate the
+ * Transform here (this module), while 'react'/'canvas' scripts are visual
+ * outputs rendered by the caller (EntityRenderer.jsx / exportRunner.js).
  */
-import { executeScriptComponent } from './scriptRunner.js';
+import { executeScriptComponent, detectScriptKind } from './scriptRunner.js';
 import { resolveKeyframedComponents } from './keyframes.js';
+import { isScriptComponent } from './ecs.js';
 
 /**
  * Same filtering + transform logic as EntityRenderer.jsx's former
@@ -63,29 +70,35 @@ export function computeActiveEntitiesAtTime({ entities, tracks, scripts = [], ti
       opacity: 1,
     };
 
-    const scriptComp = resolvedEntity.components.find(
-      (c) => (c.type === 'ScriptComponent' || c.type === 'MonoBehaviour') && c.enabled
+    // Every attached script component runs per its detected kind. Only
+    // 'motion' scripts affect the Transform here; multiple motion scripts
+    // chain sequentially (each starts from the previous one's result),
+    // matching how multiple ScriptComponents have always been authorable
+    // on one entity. React/Canvas scripts are visual outputs — the caller
+    // renders those from the same script components via detectScriptKind.
+    const scriptComps = resolvedEntity.components.filter(
+      (c) => isScriptComponent(c) && c.enabled !== false
     );
 
-    if (scriptComp) {
+    for (const scriptComp of scriptComps) {
       const scriptDef = scripts.find((s) => s.id === scriptComp.scriptId);
-      if (scriptDef && scriptDef.code) {
-        try {
-          currentTransform = executeScriptComponent({
-            scriptCode: scriptDef.code,
-            transform: currentTransform,
-            localTime,
-            clipDuration: entity.duration,
-            publicValues: scriptComp.props || {},
-            frame: Math.round(localTime * fps),
-            fps,
-          });
-        } catch (err) {
-          // A broken motion script must not abort the whole preview or
-          // export — fall back to the untransformed transform for this
-          // frame, same containment principle as EntityErrorBoundary.
-          console.warn(`Render: motion script error on "${entity.name}":`, err);
-        }
+      if (!scriptDef || !scriptDef.code) continue;
+      if (detectScriptKind(scriptDef.code) !== 'motion') continue;
+      try {
+        currentTransform = executeScriptComponent({
+          scriptCode: scriptDef.code,
+          transform: currentTransform,
+          localTime,
+          clipDuration: entity.duration,
+          publicValues: scriptComp.props || {},
+          frame: Math.round(localTime * fps),
+          fps,
+        });
+      } catch (err) {
+        // A broken motion script must not abort the whole preview or
+        // export — fall back to the untransformed transform for this
+        // frame, same containment principle as EntityErrorBoundary.
+        console.warn(`Render: motion script error on "${entity.name}":`, err);
       }
     }
 

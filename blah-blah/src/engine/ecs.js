@@ -12,16 +12,14 @@
  * a small descriptor created here, which EntityRenderer looks up by
  * `component.type`.
  *
- * Two kinds of renderer descriptors:
- *  - `dom`   — built-in DOM-based renderers (Text/Shape/Video/Audio/React).
- *              These already work today via inline JSX in EntityRenderer,
- *              so their descriptor is mostly a marker + metadata.
- *  - `canvas`— the new CanvasRenderer contract (P0 #2): arbitrary web tech
- *              (Three.js, raw Canvas/WebGL, GSAP, etc.) mounted into a
- *              plain <div> container, driven by absolute timeline time.
- *
- * This keeps "add a new renderer type" a one-place registration instead of
- * a hand-written branch duplicated across viewport components.
+ * Renderer descriptors are `dom`-kind markers + metadata for the built-in
+ * DOM-based renderers (Text/Shape/Video/Audio). Script-driven visuals
+ * (React components, Canvas components, motion scripts) are ALL one
+ * component type — `ScriptComponent` — whose runtime behavior is
+ * dispatched by the script's detected kind (see detectScriptKind in
+ * engine/scriptRunner.js), not by separate component types. This keeps
+ * "add a new renderer type" a one-place registration instead of a
+ * hand-written branch duplicated across viewport components.
  */
 export function createRendererComponent(type, config = {}) {
   return {
@@ -30,29 +28,66 @@ export function createRendererComponent(type, config = {}) {
     ...config,
   };
 }
- 
+
 export const RENDERER_REGISTRY = {
   TextRenderer: createRendererComponent('TextRenderer', { kind: 'dom', label: 'Text Component' }),
   ShapeRenderer: createRendererComponent('ShapeRenderer', { kind: 'dom', label: 'Shape Component' }),
   VideoRenderer: createRendererComponent('VideoRenderer', { kind: 'dom', label: 'Video Component' }),
   AudioSource: createRendererComponent('AudioSource', { kind: 'dom', label: 'Audio Component' }),
-  ReactRenderer: createRendererComponent('ReactRenderer', { kind: 'dom', label: 'React Component' }),
-  // P0 #2 — new component type for arbitrary web tech (Three.js, raw
-  // Canvas/WebGL, etc). Contract:
-  //   export default class MyThing {
-  //     static props = { speed: { type: 'number', default: 1, min: 0, max: 10 } };
-  //     onMount({ container, props, libs }) {}
-  //     onUpdate({ container, time, frame, props }) {}
-  //     onUnmount() {}
-  //   }
-  // `container` is a plain <div>. `libs` are injected globals (libs.THREE,
-  // libs.gsap, ...) — the pragmatic first step for "support all web tech"
-  // via CDN globals; swap for esbuild-wasm + ESM later if literal `import`
-  // syntax is wanted (the component contract doesn't change either way).
-  // `onUpdate` is driven by absolute timeline time (currentTime - startTime),
-  // NOT wall-clock/rAF accumulation, so scrubbing and export stay deterministic.
-  CanvasRenderer: createRendererComponent('CanvasRenderer', { kind: 'canvas', label: 'Canvas Component' }),
 };
+
+/**
+ * True for any component that drives a script: motion scripts
+ * (onStart/onUpdate against a transform), React components (a function
+ * returning JSX), and Canvas components (onMount/onUpdate against a
+ * container <div>) are all ONE component type, `ScriptComponent`.
+ * `MonoBehaviour` is accepted here for backward compatibility with older
+ * saved projects; project loading migrates those to `ScriptComponent`.
+ * The script's contract is derived from its code at runtime via
+ * detectScriptKind, never from the component type.
+ */
+export const isScriptComponent = (c) =>
+  c?.type === 'ScriptComponent' || c?.type === 'MonoBehaviour';
+
+/**
+ * Migrate a saved project's entities (and prefab component lists) to the
+ * unified model: ReactRenderer/CanvasRenderer/MonoBehaviour components
+ * become ScriptComponent, and keyframes keyed under the old component
+ * types move to `script:<scriptId>` tracks. Idempotent — already-migrated
+ * data passes through unchanged.
+ *
+ * Pure function (no Vite/`?raw` or browser dependencies), so it lives
+ * here — ecs.js is Node-importable and unit-tested — and is called by
+ * projectFileSystem.js on every project load.
+ */
+export function migrateEntities(entities) {
+  if (!Array.isArray(entities)) return entities || [];
+  return entities.map((entity) => {
+    const comps = Array.isArray(entity?.components) ? entity.components : [];
+    const trackKeyMap = {};
+    let componentsChanged = false;
+    const components = comps.map((c) => {
+      if (c?.type === 'ReactRenderer' || c?.type === 'CanvasRenderer' || c?.type === 'MonoBehaviour') {
+        trackKeyMap[c.type] = `script:${c.scriptId}`;
+        componentsChanged = true;
+        return { ...c, type: 'ScriptComponent', enabled: c.enabled !== undefined ? c.enabled : true };
+      }
+      return c;
+    });
+
+    if (!componentsChanged) return entity;
+
+    let keyframes = entity.keyframes;
+    if (keyframes && Object.keys(trackKeyMap).length > 0) {
+      const next = {};
+      for (const [key, byField] of Object.entries(keyframes)) {
+        next[trackKeyMap[key] || key] = byField;
+      }
+      keyframes = next;
+    }
+    return { ...entity, components, keyframes };
+  });
+}
  
 /**
  * Libraries injected into CanvasRenderer scripts as `libs.<Name>`.
@@ -72,7 +107,7 @@ export const CANVAS_LIB_SOURCES = {
 export const DEFAULT_SCRIPTS = [
   {
     id: 'script-float-bounce',
-    name: 'FloatAndBounce.js',
+    name: 'FloatAndBounce.jsx',
     description: 'Smooth floating Y motion with subtle rotation using MotionTween',
     code: `export default class FloatAndBounce {
   static props = {
@@ -100,7 +135,7 @@ export const DEFAULT_SCRIPTS = [
   },
   {
     id: 'script-bounce-enter',
-    name: 'BounceEnter.js',
+    name: 'BounceEnter.jsx',
     description: 'Dramatic bounce drop-in entrance animation',
     code: `export default class BounceEnter {
   static props = {
@@ -126,7 +161,7 @@ export const DEFAULT_SCRIPTS = [
   },
   {
     id: 'script-pulse-scale',
-    name: 'PulseScale.js',
+    name: 'PulseScale.jsx',
     description: 'Continuous rhythmic breathing pulse scale',
     code: `export default class PulseScale {
   static props = {
@@ -145,7 +180,7 @@ export const DEFAULT_SCRIPTS = [
   },
   {
     id: 'script-math-wave',
-    name: 'MathWave.js',
+    name: 'MathWave.jsx',
     description: 'Motion Canvas style trigonometric waveform motion in onUpdate()',
     code: `export default class MathWave {
   static props = {
@@ -220,7 +255,7 @@ GlassCard.props = {
   },
   {
     id: 'script-canvas-orbit',
-    name: 'CanvasOrbit.js',
+    name: 'CanvasOrbit.jsx',
     description: 'CanvasRenderer sample: raw <canvas> 2D orbiting dot, driven by absolute timeline time',
     code: `export default class CanvasOrbit {
   static props = {
@@ -269,9 +304,6 @@ GlassCard.props = {
   }
 ];
  
-// Alias for backward compatibility
-export const DEFAULT_CSHARP_SCRIPTS = DEFAULT_SCRIPTS;
- 
 export const DEFAULT_PREFABS = [
   {
     id: 'prefab-neon-title',
@@ -299,7 +331,7 @@ export const DEFAULT_PREFABS = [
       {
         type: 'ScriptComponent',
         scriptId: 'script-float-bounce',
-        scriptName: 'FloatAndBounce.js',
+        scriptName: 'FloatAndBounce.jsx',
         enabled: true,
         props: {
           amplitude: 30,
@@ -343,7 +375,7 @@ export const DEFAULT_PREFABS = [
       {
         type: 'ScriptComponent',
         scriptId: 'script-pulse-scale',
-        scriptName: 'PulseScale.js',
+        scriptName: 'PulseScale.jsx',
         enabled: true,
         props: {
           maxScale: 1.15,
@@ -367,9 +399,10 @@ export const DEFAULT_PREFABS = [
         opacity: 1
       },
       {
-        type: 'ReactRenderer',
+        type: 'ScriptComponent',
         scriptId: 'script-glass-card',
         scriptName: 'GlassCard.jsx',
+        enabled: true,
         props: {
           title: 'BLAHBLAH STUDIO',
           badge: 'REACT COMPONENT',
@@ -379,7 +412,7 @@ export const DEFAULT_PREFABS = [
       {
         type: 'ScriptComponent',
         scriptId: 'script-bounce-enter',
-        scriptName: 'BounceEnter.js',
+        scriptName: 'BounceEnter.jsx',
         enabled: true,
         props: {
           dropDistance: 160,
@@ -404,9 +437,10 @@ export const DEFAULT_PREFABS = [
         opacity: 1
       },
       {
-        type: 'CanvasRenderer',
+        type: 'ScriptComponent',
         scriptId: 'script-canvas-orbit',
-        scriptName: 'CanvasOrbit.js',
+        scriptName: 'CanvasOrbit.jsx',
+        enabled: true,
         props: {
           radius: 80,
           speed: 1,

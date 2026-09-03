@@ -187,7 +187,7 @@ export function NewProjectModal({
             <div className="scaffold-tree">
               <div>📁 {projectName || 'my-project'}/</div>
               <div className="tree-sub">├── 📄 project.json <span className="tree-dim">({resolution.width}×{resolution.height}, 0 timeline clips, tracks)</span></div>
-              <div className="tree-sub">├── 📁 scripts/ <span className="tree-dim">(C# MonoBehaviour scripts)</span></div>
+              <div className="tree-sub">├── 📁 scripts/ <span className="tree-dim">(JS/TS motion, React &amp; canvas scripts)</span></div>
               <div className="tree-sub">├── 📁 prefabs/ <span className="tree-dim">(Reusable GameObjects)</span></div>
               <div className="tree-sub">└── 📁 media/ <span className="tree-dim">(Audio & Video assets)</span></div>
             </div>

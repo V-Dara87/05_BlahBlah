@@ -1,6 +1,7 @@
 import { useRef, useMemo, memo } from 'react';
 import { Film, Music, Type, Square, FileCode } from 'lucide-react';
 import { WaveformCanvas } from '../WaveformCanvas';
+import { isScriptComponent } from '../../engine/ecs';
 
 export const ClipItem = memo(function ClipItem({
   clip,
@@ -21,7 +22,7 @@ export const ClipItem = memo(function ClipItem({
   const widthPx = Math.max(16, clip.duration * pixelsPerSecond);
 
   // Detect components
-  const hasScript = clip.components?.some((c) => c.type === 'MonoBehaviour' && c.enabled);
+  const hasScript = clip.components?.some((c) => isScriptComponent(c) && c.enabled !== false);
   const hasText = clip.components?.some((c) => c.type === 'TextRenderer');
   const hasShape = clip.components?.some((c) => c.type === 'ShapeRenderer');
   const hasVideo = clip.components?.some((c) => c.type === 'VideoRenderer') || clip.type === 'video';
@@ -353,8 +354,8 @@ export const ClipItem = memo(function ClipItem({
           <span className="clip-title-text">{clip.name}</span>
           
           {hasScript && (
-            <span className="script-tag" title="Attached C# Script">
-              <FileCode size={9} /> C#
+            <span className="script-tag" title="Attached script">
+              <FileCode size={9} /> Script
             </span>
           )}
         </div>

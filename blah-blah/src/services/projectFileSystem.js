@@ -5,6 +5,10 @@
  */
  
 import { DEFAULT_RESOLUTION } from '../types';
+// Old ReactRenderer/CanvasRenderer/MonoBehaviour component migration — a
+// pure function in ecs.js (Node-importable + unit-tested), not here,
+// because this module's `?raw` SDK import below breaks plain-Node tests.
+import { migrateEntities } from '../engine/ecs';
 // Raw text of the SDK's type declarations, bundled at build time via
 // Vite's `?raw` import so the copy written into new projects (see
 // `createNewProjectFolder` below) always matches whatever is actually
@@ -27,6 +31,26 @@ function sanitizeResolution(candidate) {
   }
   return { ...DEFAULT_RESOLUTION };
 }
+
+// ─── Script type + file-extension unification ────────────────────────────────
+//
+// There is ONE script component type now — 'ScriptComponent' — covering
+// motion scripts, React components, and Canvas components (the runtime
+// dispatches per script kind, see detectScriptKind). Older projects saved
+// ReactRenderer / CanvasRenderer / MonoBehaviour components and keyframed
+// their props under 'ReactRenderer' / 'CanvasRenderer' track keys; both are
+// migrated on load. Script FILES are canonicalized to `.jsx` on write
+// (the extension never meant anything to the engine — everything compiles
+// through the same JSX/TS loader); reads stay permissive so old files and
+// relative imports like './helpers.js' keep working.
+
+const SCRIPT_EXT_RE = /\.(js|jsx|ts|tsx)$/i;
+const isScriptFile = (name) => SCRIPT_EXT_RE.test(name || '');
+
+/** Canonical .jsx filename for a script (any supported extension accepted). */
+const toScriptFileName = (name) => `${(name || '').replace(/\.(js|jsx|ts|tsx|cs)$/i, '')}.jsx`;
+
+
  
 export function isFileSystemSupported() {
   return typeof window !== 'undefined' && 'showDirectoryPicker' in window;
@@ -173,11 +197,11 @@ export async function createNewProjectFolder(parentDirHandle, projectName, defau
     ],
     entities: [],
     // See saveProjectToDirectory / loadProjectFromDirectory below: maps each
-    // scripts/ filename back to the script id that ScriptComponent /
-    // ReactRenderer / CanvasRenderer components reference in their
-    // `scriptId` field, so ids survive a save + reload instead of being
-    // re-derived from the filename (which loses any id that wasn't already
-    // filename-shaped, e.g. ids created as `script-${Date.now()}`).
+    // scripts/ filename back to the script id that ScriptComponent
+    // components reference in their `scriptId` field, so ids survive a save
+    // + reload instead of being re-derived from the filename (which loses
+    // any id that wasn't already filename-shaped, e.g. ids created as
+    // `script-${Date.now()}`).
     scriptIndex: [],
   };
  
@@ -212,14 +236,13 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
     tracks: fallbackTracks,
     entities: [],
     resolution: { ...DEFAULT_RESOLUTION },
-  };
- 
-  // scriptIndex maps a scripts/ filename -> the script id it was saved
-  // with, so ids created in-app (e.g. `script-${Date.now()}`) survive a
-  // save + reload instead of being replaced by a filename-derived id that
-  // nothing on the timeline actually references. Keyed by filename since
-  // that's the only thing that reliably ties a project.json record back to
-  // a file that may have been renamed/edited/added outside the app.
+  };    // scriptIndex maps a scripts/ filename -> the script id it was saved
+    // with, so ids created in-app (e.g. `script-${Date.now()}`) survive a
+    // save + reload instead of being replaced by a filename-derived id that
+    // nothing on the timeline actually references. Keyed by filename since
+    // that's the only thing that reliably ties a project.json record back to
+    // a file that may have been renamed/edited/added outside the app.
+    // (ScriptComponent.scriptId is the only place those ids are referenced.)
   let scriptIndex = new Map();
  
   // 1. Read project.json if present
@@ -231,7 +254,7 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
     projectMeta = {
       name: parsed.name || dirHandle.name,
       tracks: parsed.tracks && parsed.tracks.length > 0 ? parsed.tracks : fallbackTracks,
-      entities: Array.isArray(parsed.entities) ? parsed.entities : [],
+      entities: migrateEntities(Array.isArray(parsed.entities) ? parsed.entities : []),
       // Older projects saved before resolution existed (or a hand-edited
       // project.json missing/mangling it) fall back to the default rather
       // than failing to load.
@@ -253,7 +276,7 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
   try {
     const scriptsDirHandle = await dirHandle.getDirectoryHandle('scripts', { create: true });
     for await (const entry of scriptsDirHandle.values()) {
-      if (entry.kind === 'file' && (entry.name.endsWith('.js') || entry.name.endsWith('.jsx') || entry.name.endsWith('.ts') || entry.name.endsWith('.tsx') || entry.name.endsWith('.cs'))) {
+      if (entry.kind === 'file' && isScriptFile(entry.name)) {
         const file = await entry.getFile();
         const code = await file.text();
         // Prefer the id recorded in project.json's scriptIndex for this
@@ -289,7 +312,9 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
             id: `prefab-${entry.name.replace(/\.[^.]+$/, '')}`,
             name: prefabObj.name || entry.name,
             type: prefabObj.type || 'prefab',
-            components: prefabObj.components || [],
+            // Same ReactRenderer/CanvasRenderer/MonoBehaviour migration as
+            // entities, applied to the prefab's component list.
+            components: migrateEntities([{ components: prefabObj.components || [] }])[0].components,
           });
         } catch {
           // Skip invalid JSON
@@ -387,12 +412,11 @@ export async function saveProjectToDirectory(dirHandle, projectState) {
     // Filename -> id (+ description) map so loadProjectFromDirectory can
     // restore each script's ORIGINAL id instead of re-deriving one from the
     // filename. Without this, any script whose id wasn't already
-    // filename-shaped (e.g. `script-${Date.now()}`, created via "+ Motion
-    // Script" / "+ React Clip") gets a new id on reload that no
-    // ScriptComponent/ReactRenderer/CanvasRenderer's `scriptId` matches
-    // anymore, so the attached script silently stops resolving.
+    // filename-shaped (e.g. `script-${Date.now()}`) gets a new id on
+    // reload that no ScriptComponent's `scriptId` matches anymore, so the
+    // attached script silently stops resolving.
     scriptIndex: (projectState.scripts || []).map(s => ({
-      name: /\.(js|jsx|ts|tsx|cs)$/i.test(s.name) ? s.name : `${s.name}.js`,
+      name: toScriptFileName(s.name),
       id: s.id,
       description: s.description,
     })),
@@ -404,13 +428,10 @@ export async function saveProjectToDirectory(dirHandle, projectState) {
   await projectWritable.close();
  
   // 2. Sync scripts to scripts/ folder
-  if (projectState.scripts && projectState.scripts.length > 0) {
-    const scriptsDirHandle = await dirHandle.getDirectoryHandle('scripts', { create: true });
+  if (projectState.scripts && projectState.scripts.length > 0) {    const scriptsDirHandle = await dirHandle.getDirectoryHandle('scripts', { create: true });
     for (const script of projectState.scripts) {
-      const fileName = /\.(js|jsx|ts|tsx|cs)$/i.test(script.name)
-        ? script.name 
-        : `${script.name}.js`;
- 
+      const fileName = toScriptFileName(script.name);
+
       const scriptFileHandle = await scriptsDirHandle.getFileHandle(fileName, { create: true });
       const scriptWritable = await scriptFileHandle.createWritable();
       await scriptWritable.write(script.code || '');
@@ -440,7 +461,10 @@ export async function writeScriptFile(dirHandle, scriptName, scriptCode) {
   if (!dirHandle) return;
   await verifyPermission(dirHandle, true);
   const scriptsDirHandle = await dirHandle.getDirectoryHandle('scripts', { create: true });
-  const fileName = /\.(js|jsx|ts|tsx|cs)$/i.test(scriptName) ? scriptName : `${scriptName}.js`;
+  // Canonical .jsx on write — the extension never meant anything to the
+  // engine (everything compiles through the same JSX/TS loader), so a
+  // single canonical extension removes the .js-vs-.jsx confusion.
+  const fileName = toScriptFileName(scriptName);
   const fileHandle = await scriptsDirHandle.getFileHandle(fileName, { create: true });
   const writable = await fileHandle.createWritable();
   await writable.write(scriptCode);
@@ -479,7 +503,7 @@ export async function checkScriptsForChanges(dirHandle, existingScripts) {
     const updatedScripts = [];
  
     for await (const entry of scriptsDirHandle.values()) {
-      if (entry.kind === 'file' && (entry.name.endsWith('.js') || entry.name.endsWith('.jsx') || entry.name.endsWith('.ts') || entry.name.endsWith('.tsx') || entry.name.endsWith('.cs'))) {
+      if (entry.kind === 'file' && isScriptFile(entry.name)) {
         const file = await entry.getFile();
         const code = await file.text();
         const existing = currentScriptsMap.get(entry.name);

@@ -12,9 +12,9 @@ import {
   Layers
 } from 'lucide-react';
 import { formatSimpleTime } from '../utils/timeFormat';
-import { getCompiledReactComponent } from '../engine/scriptRunner';
+import { getCompiledReactComponent, detectScriptKind } from '../engine/scriptRunner';
 import { updateCanvasComponent, unmountCanvasComponent, pruneCanvasComponents } from '../engine/canvasRunner';
-import { RENDERER_REGISTRY } from '../engine/ecs';
+import { isScriptComponent } from '../engine/ecs';
 import { computeActiveEntitiesAtTime } from '../engine/renderPipeline';
 import { EntityErrorBoundary } from './EntityErrorBoundary';
  
@@ -28,15 +28,12 @@ import { EntityErrorBoundary } from './EntityErrorBoundary';
  * script evaluation, and video/audio sync logic across two components, all
  * of that now lives here once.
  *
- * `ReactRenderer` intentionally stays on its own dedicated-root style
- * inline JSX path rather than being folded into the CanvasRenderer
- * contract — see engine/ecs.js RENDERER_REGISTRY comment. Merging it later
- * (matching how Remotion itself keeps one big React tree instead of
- * separate roots) is a valid P2 cleanup, not required for core.
- *
- * Renderer type dispatch goes through RENDERER_REGISTRY so adding a new
- * renderer type is a registration in ecs.js, not a new branch here (P0 #2
- * CanvasRenderer is the first consumer of that indirection).
+ * Script-driven visuals are ONE component type (`ScriptComponent`); each
+ * attached script renders according to its detected kind (see
+ * detectScriptKind in engine/scriptRunner.js): 'react' → an inline React
+ * element, 'canvas' → a container <div> driven imperatively by
+ * engine/canvasRunner.js, 'motion' → handled by renderPipeline.js's
+ * computeActiveEntitiesAtTime (transform math only, no DOM).
  */
 // Fallback used only if a caller doesn't pass `resolution` at all (e.g. an
 // older integration/test harness) -- normal app usage always has a real
@@ -278,9 +275,9 @@ export function EntityRenderer({
     });
   }, [currentTime, isPlaying, computedEntities]);
  
-  // P0 #2 — Drive CanvasRenderer components every frame: mount on first
-  // appearance, onUpdate with absolute-timeline localTime every tick,
-  // unmount+prune when an entity leaves the active window.
+  // P0 #2 — Drive canvas-kind script components every frame: mount on
+  // first appearance, onUpdate with absolute-timeline localTime every
+  // tick, unmount+prune when an entity or script leaves the active window.
   //
   // FLICKER FIX: this was a plain `useEffect`. Passive effects run
   // asynchronously *after* the browser has already painted the current
@@ -289,11 +286,11 @@ export function EntityRenderer({
   // this effect's ctx.clearRect()/redraw calls run for the new time — i.e.
   // it briefly shows the *previous* frame's canvas pixels before this
   // effect catches up. That reads as flicker/glitching, and gets worse the
-  // higher a CanvasRenderer script's `speed`-style prop is (more visual
-  // change per frame makes the stale frame more noticeable). This is not a
-  // bug in individual CanvasRenderer scripts (RandomBoxes/CanvasOrbit are
-  // both pure functions of absolute `time`, exactly per the P0 #2
-  // contract) — it's the renderer's effect timing.
+  // higher a script's `speed`-style prop is (more visual change per frame
+  // makes the stale frame more noticeable). This is not a bug in
+  // individual canvas scripts (RandomBoxes/CanvasOrbit are both pure
+  // functions of absolute `time`, exactly per the P0 #2 contract) — it's
+  // the renderer's effect timing.
   //
   // `useLayoutEffect` runs synchronously right after DOM mutations but
   // *before* the browser paints, so the canvas is fully redrawn for the
@@ -301,26 +298,33 @@ export function EntityRenderer({
   // fix React's own docs recommend for any imperative canvas/DOM paint
   // that's driven by props/state (see https://react.dev/reference/react/useLayoutEffect).
   useLayoutEffect(() => {
+    const activeMountKeys = [];
     computedEntities.forEach(({ entity, localTime }) => {
-      const canvasComp = entity.components.find((c) => c.type === 'CanvasRenderer');
-      if (!canvasComp) return;
-      const container = canvasContainerRefs.current[entity.id];
-      if (!container) return;
-      const scriptDef = scripts.find((s) => s.id === canvasComp.scriptId);
-      if (!scriptDef || !scriptDef.code) return;
- 
-      updateCanvasComponent({
-        entityId: entity.id,
-        scriptCode: scriptDef.code,
-        container,
-        localTime,
-        frame: Math.round(localTime * fps),
-        fps,
-        props: canvasComp.props || {},
-      });
+      for (const comp of entity.components || []) {
+        if (!isScriptComponent(comp) || comp.enabled === false || !comp.scriptId) continue;
+        const scriptDef = scripts.find((s) => s.id === comp.scriptId);
+        if (!scriptDef || !scriptDef.code) continue;
+        if (detectScriptKind(scriptDef.code) !== 'canvas') continue;
+
+        const mountKey = `${entity.id}::${comp.scriptId}`;
+        activeMountKeys.push(mountKey);
+        const container = canvasContainerRefs.current[mountKey];
+        if (!container) continue;
+
+        updateCanvasComponent({
+          entityId: entity.id,
+          scriptId: comp.scriptId,
+          scriptCode: scriptDef.code,
+          container,
+          localTime,
+          frame: Math.round(localTime * fps),
+          fps,
+          props: comp.props || {},
+        });
+      }
     });
- 
-    pruneCanvasComponents(computedEntities.map(({ entity }) => entity.id));
+
+    pruneCanvasComponents(activeMountKeys);
   }, [computedEntities, scripts, currentTime, fps]);
  
   // Unmount every CanvasRenderer instance when the whole EntityRenderer unmounts.
@@ -553,34 +557,38 @@ export function EntityRenderer({
             );
           })}
  
-          {/* 2. Foreground Overlay GameObjects (React Clips, Text, Shapes, Canvas, Prefabs) */}
+          {/* 2. Foreground Overlay GameObjects (Scripts, Text, Shapes, Prefabs) */}
           {activeOverlayItems.map(({ entity, transform }) => {
             const isSelected = entity.id === selectedEntityId;
             const textComp = entity.components.find((c) => c.type === 'TextRenderer');
             const shapeComp = entity.components.find((c) => c.type === 'ShapeRenderer');
-            const reactComp = entity.components.find((c) => c.type === 'ReactRenderer');
-            const canvasComp = entity.components.find((c) => c.type === 'CanvasRenderer');
- 
-            // Dynamic React Component rendering. ReactRenderer stays a
-            // dedicated inline-JSX path, separate from the CanvasRenderer
-            // contract below (see file header comment).
-            let ReactComponentNode = null;
-            if (reactComp) {
-              const scriptDef = scripts.find((s) => s.id === reactComp.scriptId);
-              if (scriptDef && scriptDef.code) {
-                const CompiledComponent = getCompiledReactComponent(scriptDef.code);
-                if (CompiledComponent) {
-                  const localTime = currentTime - entity.startTime;
-                  ReactComponentNode = (
-                    <CompiledComponent
-                      {...(reactComp.props || {})}
-                      frame={Math.round(localTime * fps)}
-                      time={localTime}
-                      duration={entity.duration}
-                    />
-                  );
-                }
-              }
+
+            // Script-driven visuals — every ScriptComponent renders by its
+            // detected kind: 'react' components mount as inline React
+            // elements; 'canvas' scripts get a container <div> driven
+            // imperatively in the useLayoutEffect above. Motion scripts
+            // affect only the Transform (already applied by
+            // computeActiveEntitiesAtTime) and render nothing here.
+            const scriptComps = (entity.components || []).filter(
+              (c) => isScriptComponent(c) && c.enabled !== false
+            );
+            const ReactComponentNodes = [];
+            for (const comp of scriptComps) {
+              const scriptDef = scripts.find((s) => s.id === comp.scriptId);
+              if (!scriptDef || !scriptDef.code) continue;
+              if (detectScriptKind(scriptDef.code) !== 'react') continue;
+              const CompiledComponent = getCompiledReactComponent(scriptDef.code);
+              if (!CompiledComponent) continue;
+              const localTime = currentTime - entity.startTime;
+              ReactComponentNodes.push(
+                <CompiledComponent
+                  key={comp.scriptId}
+                  {...(comp.props || {})}
+                  frame={Math.round(localTime * fps)}
+                  time={localTime}
+                  duration={entity.duration}
+                />
+              );
             }
  
             return (
@@ -607,27 +615,39 @@ export function EntityRenderer({
                   }
                 }}
               >
-                <EntityErrorBoundary entityName={entity.name} resetKey={reactComp?.scriptId || canvasComp?.scriptId}>
-                  {/* React Component Renderer */}
-                  {ReactComponentNode}
- 
-                  {/* P0 #2 — CanvasRenderer mount target. The actual drawing
-                      happens imperatively inside engine/canvasRunner.js via
-                      onMount/onUpdate against this <div>; React only owns
-                      the container element and its position. */}
-                  {canvasComp && (
-                    <div
-                      className="canvas-render-container"
-                      ref={(el) => {
-                        if (el) {
-                          canvasContainerRefs.current[entity.id] = el;
-                        } else {
-                          delete canvasContainerRefs.current[entity.id];
-                          unmountCanvasComponent(entity.id);
-                        }
-                      }}
-                    />
-                  )}
+                <EntityErrorBoundary
+                  entityName={entity.name}
+                  resetKey={scriptComps.map((c) => c.scriptId).join(',')}
+                >
+                  {/* React-kind component renderer */}
+                  {ReactComponentNodes}
+
+                  {/* Canvas-kind mount targets. The actual drawing happens
+                      imperatively inside engine/canvasRunner.js via
+                      onMount/onUpdate against these <div>s; React only owns
+                      the container elements and their positions. One
+                      container per canvas-kind script, keyed by
+                      entity::scriptId so multiple canvas scripts on one
+                      entity stay independent. */}
+                  {scriptComps.map((comp) => {
+                    const scriptDef = scripts.find((s) => s.id === comp.scriptId);
+                    if (!scriptDef?.code || detectScriptKind(scriptDef.code) !== 'canvas') return null;
+                    const mountKey = `${entity.id}::${comp.scriptId}`;
+                    return (
+                      <div
+                        key={mountKey}
+                        className="canvas-render-container"
+                        ref={(el) => {
+                          if (el) {
+                            canvasContainerRefs.current[mountKey] = el;
+                          } else {
+                            delete canvasContainerRefs.current[mountKey];
+                            unmountCanvasComponent(entity.id, comp.scriptId);
+                          }
+                        }}
+                      />
+                    );
+                  })}
  
                   {/* Shape Component */}
                   {shapeComp && (
@@ -746,12 +766,6 @@ export function EntityRenderer({
         </div>
       </div>
     </section>
-  );
-}
- 
-// Referenced for documentation/registry-driven dispatch clarity; not used
-// directly in this file's JSX branches yet since DOM renderer types are
-// still hand-rendered above (P0 #3 unifies their Inspector fields, not
-// their preview markup, which stays type-specific by design here).
-void RENDERER_REGISTRY;
+  );}
+
  
