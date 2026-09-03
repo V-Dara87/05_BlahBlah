@@ -5,6 +5,12 @@
  */
  
 import { DEFAULT_RESOLUTION } from '../types';
+// Raw text of the SDK's type declarations, bundled at build time via
+// Vite's `?raw` import so the copy written into new projects (see
+// `createNewProjectFolder` below) always matches whatever is actually
+// in `packages/blahblah-sdk/index.d.ts` — no separate file to keep in
+// sync by hand.
+import blahblahSdkDts from '../../packages/blahblah-sdk/index.d.ts?raw';
  
 /**
  * Basic shape validation for a `resolution` object read back from disk --
@@ -98,9 +104,58 @@ export async function createNewProjectFolder(parentDirHandle, projectName, defau
   await verifyPermission(projectDirHandle, true);
  
   // Create subfolders
-  await projectDirHandle.getDirectoryHandle('scripts', { create: true });
+  const scriptsDirHandle = await projectDirHandle.getDirectoryHandle('scripts', { create: true });
   await projectDirHandle.getDirectoryHandle('prefabs', { create: true });
   await projectDirHandle.getDirectoryHandle('media', { create: true });
+
+  // Vendor a copy of the SDK's type declarations into the project itself
+  // (scripts/.blahblah/sdk/index.d.ts) instead of pointing jsconfig at
+  // `../packages/blahblah-sdk`. That relative path only worked if the
+  // project folder happened to be created next to this repo's
+  // `packages/` folder, but `pickProjectDirectory()` lets the user
+  // choose ANY location on disk via the native folder picker — for
+  // most users the relative path pointed at nothing and type
+  // resolution silently failed. A self-contained per-project copy
+  // works no matter where the project lives, at the cost of the copy
+  // going stale if the SDK's types change later (acceptable: it's a
+  // types-only convenience file, not something scripts depend on at
+  // runtime — see index.d.ts's own header comment).
+  const blahblahDirHandle = await scriptsDirHandle.getDirectoryHandle('.blahblah', { create: true });
+  const sdkDirHandle = await blahblahDirHandle.getDirectoryHandle('sdk', { create: true });
+  const sdkDtsHandle = await sdkDirHandle.getFileHandle('index.d.ts', { create: true });
+  const sdkDtsWritable = await sdkDtsHandle.createWritable();
+  await sdkDtsWritable.write(blahblahSdkDts);
+  await sdkDtsWritable.close();
+
+  // Write scripts/jsconfig.json so VS Code (or any editor) recognizes the
+  // scripts/ folder as a JS project with working module resolution and
+  // autocomplete for relative imports between script files.
+  const jsconfig = {
+    compilerOptions: {
+      target: 'ES2020',
+      module: 'ESNext',
+      moduleResolution: 'Bundler',
+      jsx: 'react',
+      allowJs: true,
+      checkJs: false,
+      // No `baseUrl` — TypeScript 7.0 deprecates and removes it, and
+      // recent TS versions already warn on it. With
+      // moduleResolution: 'Bundler', `paths` below still resolves
+      // relative to this jsconfig.json's own folder without baseUrl.
+    },
+    include: ['**/*'],
+    paths: {
+      // Points at the self-contained copy written above, not at the
+      // (possibly nonexistent, from this project folder's perspective)
+      // repo-relative packages/blahblah-sdk.
+      '@blahblah/sdk': ['./.blahblah/sdk'],
+    },
+  };
+
+  const jsconfigHandle = await scriptsDirHandle.getFileHandle('jsconfig.json', { create: true });
+  const jsconfigWritable = await jsconfigHandle.createWritable();
+  await jsconfigWritable.write(JSON.stringify(jsconfig, null, 2));
+  await jsconfigWritable.close();
  
   const projectResolution = sanitizeResolution(resolution);
  

@@ -1,4 +1,5 @@
 import React from 'react';
+import * as esbuild from 'esbuild-wasm';
 import { 
   MotionTweenContext, 
   Easing, 
@@ -16,6 +17,108 @@ const compiledModuleCache = new Map();
 const propsSchemaCache = new Map();
 const lastErrorCache = new Map();
 const scriptKindCache = new Map();
+ 
+// ─── esbuild-wasm transpiler (background precompile only) ────────────────────
+//
+// compileScriptModule is called synchronously from inside React's useMemo
+// (EntityRenderer) and the export render loop, so it can NEVER await
+// anything and can NEVER call esbuild.transform() (which is always
+// async in the browser build — there is no synchronous transformSync
+// here). The previous implementation tried to fake synchronous access
+// to a promise's result by reading a `let result` variable right after
+// firing `.then()` with no `await`; that variable is guaranteed to
+// still be `null` at that point (the `.then` callback only runs once
+// the current synchronous stack unwinds), so esbuild's output was
+// silently discarded on every call and the regex transpiler
+// (`transpileJsxToJs`) ran for 100% of scripts regardless of whether
+// esbuild had initialised.
+//
+// Fix: `compileScriptModule` always uses the synchronous regex
+// transpiler directly — no swappable "active" transpiler, no fake-sync
+// trick. Separately, `precompileWithEsbuild(scriptCode)` is an explicit
+// async function that runs the *real* esbuild transform, recompiles the
+// script, and overwrites the existing `compiledModuleCache` entry for
+// that exact source string in place. Callers that want the better
+// transpiler's output (fewer edge-case bugs than the regex version, see
+// module docstring below) can call this after esbuild is ready; nothing
+// calls it automatically, so it never blocks or races the sync path.
+ 
+/**
+ * Rewrites an esbuild ESM transform's export syntax into the
+ * CommonJS-style assignments that compileScriptModule's module wrapper
+ * expects (it runs the compiled code inside `new Function()` with a
+ * bare `module`/`exports`, not a real ES module).
+ */
+function toCommonJsExports(js) {
+  // 1. export default class/function Foo  →  strip the export keyword
+  js = js.replace(
+    /export\s+default\s+(class|function)\s+([A-Za-z0-9_$]+)/g,
+    (_, kw, name) => `${kw} ${name}`,
+  );
+  // 2. Any remaining `export default <expr>`  →  `module.exports.default = <expr>`
+  if (/export\s+default\s/.test(js)) {
+    js = js.replace(/export\s+default\s+/g, 'module.exports.default = ');
+  }
+  // 3. export const / let / var / function / class  →  const / let / ...
+  js = js.replace(/\bexport\s+(const|let|var|function|class)\b/g, '$1');
+  // 4. export { … } re-exports — drop them (scripts are single-default-export)
+  js = js.replace(/export\s*\{[^}]*\};?\s*/g, '');
+  return js;
+}
+ 
+/** True once `esbuild.initialize()` has resolved successfully. */
+let esbuildReady = false;
+ 
+/** Resolves once `esbuild.initialize()` finishes (success or failure). */
+const esbuildInitPromise = (async () => {
+  try {
+    await esbuild.initialize({
+      wasmURL: '/esbuild.wasm',
+      worker: false,
+    });
+    esbuildReady = true;
+  } catch (err) {
+    console.warn('esbuild-wasm init failed, staying on regex transpiler:', err);
+  }
+})();
+ 
+/**
+ * Async, esbuild-backed alternative to the regex transpiler for a single
+ * script. Waits for esbuild init if it hasn't finished yet, transforms
+ * `scriptCode` (JSX + TS type stripping via esbuild's `tsx` loader),
+ * recompiles the resulting module the same way `compileScriptModule`
+ * does, and — on success — overwrites `compiledModuleCache`'s entry for
+ * this exact `scriptCode` string so the *next* synchronous call to
+ * `compileScriptModule(scriptCode)` picks up the better output for free.
+ *
+ * Safe to call speculatively (e.g. right after a script is saved) since
+ * it never blocks the render path and silently no-ops on failure,
+ * leaving the existing regex-compiled cache entry in place.
+ */
+export async function precompileWithEsbuild(scriptCode) {
+  if (!scriptCode) return;
+  await esbuildInitPromise;
+  if (!esbuildReady) return;
+ 
+  try {
+    const result = await esbuild.transform(scriptCode, {
+      loader: 'tsx',
+      jsx: 'automatic',
+      jsxImportSource: 'react',
+      target: 'es2020',
+      format: 'esm',
+    });
+    const transpiled = toCommonJsExports(result.code);
+    const exportedResult = runCompiledModule(transpiled);
+    lastErrorCache.delete(scriptCode);
+    compiledModuleCache.set(scriptCode, exportedResult);
+  } catch (err) {
+    // esbuild choked on this script (or it recompiled to something that
+    // throws at module-eval time) — leave whatever is already cached
+    // (regex-transpiled or a previous good esbuild result) untouched.
+    console.warn('esbuild precompile failed, keeping existing cached module:', err);
+  }
+}
  
 /**
  * Lightweight JSX & TypeScript to JavaScript Transpiler for in-browser live scripting.
@@ -371,6 +474,64 @@ export function detectScriptKind(code) {
 /**
  * Compiles a JS/JSX script into an executable module/class
  */
+function runCompiledModule(transpiled) {
+  // Module wrapper providing React, MotionTween, Easing, MathUtils, and Remotion hooks
+  const moduleWrapper = `
+    let exports = {};
+    let module = { exports: {} };
+ 
+    // Helper function to simulate default export
+    function exportDefault(target) {
+      module.exports.default = target;
+      return target;
+    }
+ 
+    // h(tag, props, children) -- no-JSX authoring helper. The Script
+    // Editor's own placeholder text tells users to write h(tag, props,
+    // children) for "React Component (no JSX)" templates instead of
+    // angle-bracket JSX, so this must be provided at runtime or every
+    // such script throws "h is not defined" the moment it renders.
+    const h = React.createElement;
+ 
+    ${transpiled}
+ 
+    // Resolve exported entity
+    const result = module.exports.default || module.exports || (typeof CustomComponent !== 'undefined' ? CustomComponent : null);
+    return result;
+  `;
+ 
+  const compiledFn = new Function(
+    'React',
+    'MotionTweenContext',
+    'Easing',
+    'Ease',
+    'LoopType',
+    'MathUtils',
+    'interpolate',
+    'spring',
+    moduleWrapper
+  );
+ 
+  return compiledFn(
+    React,
+    MotionTweenContext,
+    Easing,
+    Ease,
+    LoopType,
+    MathUtils,
+    interpolate,
+    spring
+  );
+}
+ 
+/**
+ * Compiles a JS/JSX script into an executable module/class. Always
+ * synchronous — always uses the regex transpiler (`transpileJsxToJs`),
+ * never esbuild — because this is called from inside React's useMemo
+ * (EntityRenderer) and the export render loop where an async transform
+ * is not an option. See `precompileWithEsbuild` above for the
+ * background upgrade path.
+ */
 export function compileScriptModule(scriptCode) {
   if (!scriptCode) return null;
   if (compiledModuleCache.has(scriptCode)) {
@@ -379,54 +540,7 @@ export function compileScriptModule(scriptCode) {
  
   try {
     const transpiled = transpileJsxToJs(scriptCode);
- 
-    // Module wrapper providing React, MotionTween, Easing, MathUtils, and Remotion hooks
-    const moduleWrapper = `
-      let exports = {};
-      let module = { exports: {} };
- 
-      // Helper function to simulate default export
-      function exportDefault(target) {
-        module.exports.default = target;
-        return target;
-      }
- 
-      // h(tag, props, children) -- no-JSX authoring helper. The Script
-      // Editor's own placeholder text tells users to write h(tag, props,
-      // children) for "React Component (no JSX)" templates instead of
-      // angle-bracket JSX, so this must be provided at runtime or every
-      // such script throws "h is not defined" the moment it renders.
-      const h = React.createElement;
- 
-      ${transpiled}
- 
-      // Resolve exported entity
-      const result = module.exports.default || module.exports || (typeof CustomComponent !== 'undefined' ? CustomComponent : null);
-      return result;
-    `;
- 
-    const compiledFn = new Function(
-      'React',
-      'MotionTweenContext',
-      'Easing',
-      'Ease',
-      'LoopType',
-      'MathUtils',
-      'interpolate',
-      'spring',
-      moduleWrapper
-    );
- 
-    const exportedResult = compiledFn(
-      React,
-      MotionTweenContext,
-      Easing,
-      Ease,
-      LoopType,
-      MathUtils,
-      interpolate,
-      spring
-    );
+    const exportedResult = runCompiledModule(transpiled);
  
     lastErrorCache.delete(scriptCode);
     compiledModuleCache.set(scriptCode, exportedResult);
