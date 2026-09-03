@@ -1,4 +1,130 @@
 /* ========================================================
+   0. MENU BAR — Unity-style top menu bar with dropdowns
+   ======================================================== */
+
+.menubar {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  background: var(--unity-darkest);
+  border-bottom: 1px solid var(--unity-border);
+  padding: 0 4px;
+  flex-shrink: 0;
+  z-index: 100;
+  -webkit-app-region: drag;
+}
+
+.menubar-item {
+  position: relative;
+}
+
+.menubar-btn {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  background: none;
+  border: none;
+  color: var(--unity-text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.08s;
+  -webkit-app-region: no-drag;
+}
+
+.menubar-btn:hover,
+.menubar-btn.active {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.menubar-dropdown {
+  position: absolute;
+  top: 24px;
+  left: 0;
+  min-width: 200px;
+  background: #1e1f26;
+  border: 1px solid var(--unity-border-light);
+  border-radius: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  padding: 4px 0;
+  z-index: 200;
+}
+
+.menubar-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 12px;
+  background: none;
+  border: none;
+  color: var(--unity-text);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  transition: background 0.06s;
+}
+
+.menubar-dropdown-item:hover {
+  background: rgba(56, 189, 248, 0.15);
+  color: #fff;
+}
+
+.menubar-dropdown-item.disabled {
+  color: var(--unity-text-dim);
+  cursor: default;
+  opacity: 0.5;
+}
+
+.menubar-dropdown-item.disabled:hover {
+  background: none;
+  color: var(--unity-text-dim);
+}
+
+.menubar-dropdown-item.danger {
+  color: #ef4444;
+}
+
+.menubar-dropdown-item.danger:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+}
+
+.menubar-item-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  width: 16px;
+  color: var(--unity-text-dim);
+}
+
+.menubar-dropdown-item:hover .menubar-item-icon {
+  color: inherit;
+}
+
+.menubar-item-label {
+  flex: 1;
+}
+
+.menubar-item-shortcut {
+  font-size: 10px;
+  color: var(--unity-text-dim);
+  margin-left: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.menubar-separator {
+  height: 1px;
+  background: var(--unity-border-light);
+  margin: 4px 8px;
+}
+
+/* ========================================================
    1. ROOT & MAIN APP WRAPPER
    ======================================================== */
 .app-container {
@@ -89,6 +215,50 @@
 
 .timeline-zoom-btn {
   padding: 4px 6px;
+}
+
+.timeline-zoom-btn.range-active {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #f87171;
+}
+
+.timeline-zoom-btn.range-active:hover {
+  background: rgba(239, 68, 68, 0.25);
+}
+
+.timeline-range-group {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 4px;
+}
+
+/* Export range overlay on timeline lanes */
+.export-range-dim {
+  position: absolute;
+  top: 0;
+  background: rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.export-range-marker {
+  position: absolute;
+  top: 0;
+  width: 3px;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.export-range-marker.in-marker {
+  background: #22c55e;
+  border-left: 2px solid #86efac;
+}
+
+.export-range-marker.out-marker {
+  background: #ef4444;
+  border-right: 2px solid #fca5a5;
 }
 
 .unity-hdr-btn, .unity-folder-btn {
@@ -845,8 +1015,9 @@
 .active-video-element {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   display: block;
+  background: #000;
 }
  
 .preview-empty-screen {
@@ -1025,6 +1196,53 @@
   gap: 6px;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+}
+
+/* Auto Key toggle bar — sits above the Transform card in the Inspector */
+.inspector-auto-key-bar {
+  flex-shrink: 0;
+}
+
+.inspector-auto-key-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--unity-text-muted);
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.inspector-auto-key-btn:hover {
+  background: var(--unity-subtle);
+  color: var(--unity-text);
+}
+
+.inspector-auto-key-btn.active {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.4);
+  color: #38bdf8;
+}
+
+.auto-key-state {
+  margin-left: auto;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--unity-subtle);
+  color: var(--unity-text-dim);
+}
+
+.inspector-auto-key-btn.active .auto-key-state {
+  background: rgba(56, 189, 248, 0.2);
+  color: #38bdf8;
 }
 
 .inspector-scroll-area::-webkit-scrollbar {
@@ -1405,18 +1623,30 @@
 }
  
 .timeline-split-wrapper {
-  display: grid;
-  grid-template-columns: 180px 1fr;
   flex: 1;
   min-height: 0;
   overflow: hidden;
-}
- 
-.timeline-headers-sidebar {
-  background: var(--unity-panel);
-  border-right: 1px solid var(--unity-border);
   display: flex;
   flex-direction: column;
+}
+
+/* One row per track: header + lane side by side, so they can never
+   drift out of sync with each other regardless of scroll or track count. */
+.track-full-row {
+  display: flex;
+  flex-direction: row;
+  height: 64px;
+  flex-shrink: 0;
+}
+
+/* Sticky track header — pinned left while the row scrolls horizontally */
+.track-header-sticky {
+  position: sticky;
+  left: 0;
+  width: 180px;
+  height: 64px;
+  z-index: 20;
+  flex-shrink: 0;
 }
  
 .track-header-row {
@@ -1469,7 +1699,8 @@
 /* Time Ruler Bar */
 .ruler-wrapper {
   height: 30px;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: visible;
   background: #18191f;
   border-bottom: 1px solid var(--unity-border);
   flex-shrink: 0;
@@ -1534,13 +1765,14 @@
 .playhead-handle {
   position: absolute;
   top: -2px;
-  left: -8px;
   width: 18px;
   height: 18px;
+  margin-left: -8px;
   cursor: grab;
   pointer-events: auto;
   display: flex;
   justify-content: center;
+  z-index: 41;
 }
  
 .playhead-handle:active {
@@ -1558,7 +1790,7 @@
  
 .playhead-line {
   position: absolute;
-  top: 10px;
+  top: 0;
   left: 0;
   width: 2px;
   bottom: 0;
@@ -1573,10 +1805,17 @@
   overflow-y: auto;
   position: relative;
 }
- 
+
 .lanes-surface {
   position: relative;
   min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  cursor: grab;
+}
+
+.lanes-surface:active {
+  cursor: grabbing;
 }
  
 .track-lane-row, .timeline-track-lane {
@@ -1584,6 +1823,7 @@
   border-bottom: 1px solid var(--unity-border);
   position: relative;
   background: rgba(28, 28, 32, 0.4);
+  flex-shrink: 0;
 }
  
 .track-lane-row.drag-target, .timeline-track-lane.drag-over {
@@ -1616,16 +1856,89 @@
   box-shadow: 0 2px 6px rgba(0,0,0,0.5);
 }
  
-.timeline-clip-card.video { background: #2d334d; border-color: #4f5882; border-left: 3px solid #6366f1; }
-.timeline-clip-card.audio { background: #1b3327; border-color: #2a523d; border-left: 3px solid #10b981; }
-.timeline-clip-card.text { background: #3d2f1f; border-color: #614a31; border-left: 3px solid #f59e0b; }
-.timeline-clip-card.shape { background: #35254d; border-color: #593c85; border-left: 3px solid #8b5cf6; }
-.timeline-clip-card.prefab { background: #1e354d; border-color: #2e537a; border-left: 3px solid #38bdf8; }
+.timeline-clip-card.video { background: #1a2744; border-left: 3px solid #3b82f6; }
+.timeline-clip-card.audio { background: #1a2233; border-left: 3px solid #8b5cf6; }
+.timeline-clip-card.text { background: #2a2218; border-left: 3px solid #f59e0b; }
+.timeline-clip-card.shape { background: #1a2a22; border-left: 3px solid #10b981; }
+.timeline-clip-card.prefab { background: #2a1a2a; border-left: 3px solid #ec4899; }
  
 .timeline-clip-card.selected {
   border: 2px solid #38bdf8 !important;
   box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.4);
   z-index: 15;
+}
+
+.timeline-clip-card.linked {
+  border-bottom: 2px solid rgba(251, 191, 36, 0.6);
+}
+
+.timeline-clip-card.linked::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #fbbf24, #f59e0b);
+  border-radius: 0 0 4px 4px;
+}
+
+.clip-link-indicator {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  z-index: 5;
+  font-size: 9px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.link-icon {
+  filter: grayscale(0.3);
+}
+
+/* Context menu for clips */
+.clip-context-menu {
+  position: fixed;
+  z-index: 9999;
+  background: #1e1f26;
+  border: 1px solid var(--unity-border-light);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  padding: 4px 0;
+  min-width: 140px;
+}
+
+.ctx-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 14px;
+  background: none;
+  border: none;
+  color: var(--unity-text);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ctx-menu-item:hover {
+  background: rgba(56, 189, 248, 0.15);
+}
+
+.ctx-menu-item.danger {
+  color: #ef4444;
+}
+
+.ctx-menu-item.danger:hover {
+  background: rgba(239, 68, 68, 0.15);
+}
+
+/* Timeline box/lasso selection */
+.timeline-box-select {
+  border: 1.5px dashed rgba(56, 189, 248, 0.8);
+  background: rgba(56, 189, 248, 0.08);
+  border-radius: 2px;
 }
  
 .clip-trim-handle {
@@ -1635,9 +1948,7 @@
   z-index: 20;
 }
  
-.clip-trim-handle:hover { background: #38bdf8; }
- 
-.clip-content-box {
+.clip-trim-handle:hover { background: #38bdf8; }.clip-content-box {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -1645,8 +1956,26 @@
   padding: 4px 6px;
   pointer-events: none;
   min-width: 0;
+  position: relative;
+  overflow: hidden;
 }
- 
+
+.clip-waveform-wrap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.clip-top-row,
+.clip-time-text {
+  position: relative;
+  z-index: 1;
+}
+
 .clip-top-row {
   display: flex;
   align-items: center;

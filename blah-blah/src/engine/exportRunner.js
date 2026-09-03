@@ -1,5 +1,6 @@
 import { executeScriptComponent } from './scriptRunner';
 import { updateCanvasComponent, unmountCanvasComponent } from './canvasRunner';
+import { resolveKeyframedComponents } from './keyframes';
  
 /**
  * P1 #11 — export-time equivalent of EntityRenderer.jsx's live preview.
@@ -34,10 +35,18 @@ export function computeActiveEntitiesAtTime({ entities, tracks, scripts = [], ti
     const track = tracks.find((t) => t.id === entity.trackId);
     if (track && (!track.visible || track.locked)) return false;
     return true;
-  });
+  });  return activeEntities.map((entity) => {
+    // GUI keyframing — resolve any Dopesheet keyframes at the current
+    // local time BEFORE reading components. This mirrors EntityRenderer.jsx's
+    // computedEntities useMemo, where resolveKeyframedComponents is called
+    // first so that Transform and component props carry their interpolated
+    // keyframe values into the motion-script and draw passes below.
+    const localTime = time - entity.startTime;
+    const keyframedComponents = resolveKeyframedComponents(entity, localTime);
+    const resolvedEntity =
+      keyframedComponents === entity.components ? entity : { ...entity, components: keyframedComponents };
  
-  return activeEntities.map((entity) => {
-    let currentTransform = entity.components.find((c) => c.type === 'Transform') || {
+    let currentTransform = resolvedEntity.components.find((c) => c.type === 'Transform') || {
       x: 0,
       y: 0,
       rotation: 0,
@@ -46,11 +55,9 @@ export function computeActiveEntitiesAtTime({ entities, tracks, scripts = [], ti
       opacity: 1,
     };
  
-    const scriptComp = entity.components.find(
+    const scriptComp = resolvedEntity.components.find(
       (c) => (c.type === 'ScriptComponent' || c.type === 'MonoBehaviour') && c.enabled
     );
- 
-    const localTime = time - entity.startTime;
  
     if (scriptComp) {
       const scriptDef = scripts.find((s) => s.id === scriptComp.scriptId);
@@ -74,7 +81,7 @@ export function computeActiveEntitiesAtTime({ entities, tracks, scripts = [], ti
       }
     }
  
-    return { entity, transform: currentTransform, localTime };
+    return { entity: resolvedEntity, transform: currentTransform, localTime };
   });
 }
  
@@ -454,4 +461,238 @@ function drawCanvasContainerContents(ctx, container, transform, width, height) {
     console.warn('Export: failed to draw CanvasRenderer output:', err);
   }
   ctx.restore();
+}
+// ---------------------------------------------------------------------------
+// Phase 2 — deterministic audio mixdown
+// ---------------------------------------------------------------------------
+//
+// This is the seam ExportModal.jsx's PLUG_IN_AUDIO_HERE comment pointed at:
+// an OfflineAudioContext-based mixdown that walks every AudioSource /
+// VideoRenderer(volume > 0) entity active anywhere in [exportStartTime,
+// exportStartTime + exportDuration), decodes each source once, and schedules
+// it into a single offline render at the right offset/gain/duration — same
+// "pure function of an explicit time range" contract as the video frame
+// loop, just rendered as one shot instead of per-frame.
+ 
+// Cache: src URL -> Promise<AudioBuffer>, so multiple entities/clips sharing
+// one source file (or repeated exports of the same project) don't refetch
+// and re-decode it every time.
+const decodedBufferCache = new Map();
+ 
+async function decodeAudioSource(src, referenceSampleRate) {
+  if (decodedBufferCache.has(src)) return decodedBufferCache.get(src);
+ 
+  const promise = (async () => {
+    const response = await fetch(src);
+    const arrayBuffer = await response.arrayBuffer();
+    // Decode at the export's target sample rate directly — avoids a second
+    // resample pass when this buffer is later copied into the offline mix,
+    // which runs at the same rate.
+    const decodeCtx = new OfflineAudioContext(2, 1, referenceSampleRate);
+    return decodeCtx.decodeAudioData(arrayBuffer);
+  })().catch((err) => {
+    decodedBufferCache.delete(src);
+    throw err;
+  });
+ 
+  decodedBufferCache.set(src, promise);
+  return promise;
+}
+ 
+/** Clear the decoded-audio-buffer cache (e.g. on project load). */
+export function clearExportAudioCache() {
+  decodedBufferCache.clear();
+}
+ 
+/**
+ * Collect every entity that contributes audio to the export: entities with
+ * an AudioSource component, or a VideoRenderer component with volume > 0
+ * (the demo scene mutes VideoRenderer to 0 and pairs it with a separate
+ * AudioSource entity for exactly this reason — see App.jsx's scene setup —
+ * but a project is free to just leave a video's own volume up instead).
+ * Only entities that overlap the export's [start, start+duration) window at
+ * all are included; per-entity trims for partial-overlap clips are handled
+ * by the caller when scheduling.
+ */
+function collectAudioSources({ entities, exportStartTime, exportDuration }) {
+  const exportEndTime = exportStartTime + exportDuration;
+  const sources = [];
+ 
+  for (const entity of entities) {
+    if (!entity.active) continue;
+    const entityEnd = entity.startTime + entity.duration;
+    if (entityEnd <= exportStartTime || entity.startTime >= exportEndTime) continue;
+ 
+    const audioComp = entity.components?.find((c) => c.type === 'AudioSource');
+    const videoComp = entity.components?.find((c) => c.type === 'VideoRenderer');
+ 
+    if (audioComp && (audioComp.src || entity.src) && (audioComp.volume ?? 1) > 0) {
+      sources.push({ entity, comp: audioComp, src: audioComp.src || entity.src });
+    } else if (videoComp && videoComp.src && (videoComp.volume ?? 0) > 0) {
+      sources.push({ entity, comp: videoComp, src: videoComp.src });
+    }
+  }
+ 
+  return sources;
+}
+ 
+/**
+ * Render a single deterministic stereo mixdown of every audio-bearing
+ * entity active during [exportStartTime, exportStartTime + exportDuration),
+ * relative to that window (i.e. sample 0 of the returned buffer is
+ * exportStartTime). Returns null if there is nothing to mix, so callers can
+ * skip configuring an audio track entirely for a silent project.
+ *
+ * mediaOffset/speed/volume are read the same way the live AudioSource /
+ * VideoRenderer DOM elements apply them (see PlaybackStoreBridge.jsx /
+ * EntityRenderer.jsx), so a clip's in-point trim and gain match what you'd
+ * hear scrubbing the timeline.
+ */
+export async function mixdownAudio({
+  entities,
+  exportStartTime,
+  exportDuration,
+  sampleRate = 48000,
+}) {
+  const sources = collectAudioSources({ entities, exportStartTime, exportDuration });
+  if (sources.length === 0) return null;
+ 
+  const totalFrames = Math.max(1, Math.ceil(exportDuration * sampleRate));
+  const offlineCtx = new OfflineAudioContext(2, totalFrames, sampleRate);
+ 
+  const decoded = await Promise.all(
+    sources.map(async ({ entity, comp, src }) => {
+      try {
+        const buffer = await decodeAudioSource(src, sampleRate);
+        return { entity, comp, buffer };
+      } catch (err) {
+        console.warn(`Export audio: failed to decode source for "${entity.name}":`, err);
+        return null;
+      }
+    })
+  );
+ 
+  let scheduledAny = false;
+ 
+  for (const item of decoded) {
+    if (!item) continue;
+    const { entity, comp, buffer } = item;
+ 
+    const speed = comp.speed || 1;
+    const mediaOffset = comp.mediaOffset || 0;
+    const volume = comp.volume ?? 1;
+ 
+    // Same clamped-overlap math as the video seek path: figure out what
+    // slice of this entity's timeline range actually falls inside the
+    // export window, then map that back to a source-buffer offset via
+    // mediaOffset + speed, exactly like scrubbing would.
+    const entityStart = entity.startTime;
+    const entityEnd = entity.startTime + entity.duration;
+    const clipStart = Math.max(entityStart, exportStartTime);
+    const clipEnd = Math.min(entityEnd, exportStartTime + exportDuration);
+    if (clipEnd <= clipStart) continue;
+ 
+    const whenInMix = clipStart - exportStartTime;
+    const localTimeAtClipStart = clipStart - entityStart;
+    const sourceOffset = mediaOffset + localTimeAtClipStart * speed;
+    const playDuration = (clipEnd - clipStart) * speed;
+ 
+    if (sourceOffset >= buffer.duration) continue;
+    const clampedDuration = Math.min(playDuration, buffer.duration - sourceOffset);
+    if (clampedDuration <= 0) continue;
+ 
+    const bufferSource = offlineCtx.createBufferSource();
+    bufferSource.buffer = buffer;
+    bufferSource.playbackRate.value = speed;
+ 
+    const gainNode = offlineCtx.createGain();
+    gainNode.gain.value = Math.max(0, volume);
+ 
+    bufferSource.connect(gainNode);
+    gainNode.connect(offlineCtx.destination);
+ 
+    // start(when, offset, duration) — duration/speed converts the
+    // speed-adjusted source duration back to real time, matching how long
+    // this clip should actually sound in the rendered mix.
+    bufferSource.start(whenInMix, sourceOffset, clampedDuration / speed);
+    scheduledAny = true;
+  }
+ 
+  if (!scheduledAny) return null;
+ 
+  return offlineCtx.startRendering();
+}
+ 
+// ---------------------------------------------------------------------------
+// AAC encode of the rendered mixdown into the same muxer as the video track
+// ---------------------------------------------------------------------------
+ 
+/**
+ * Encode a full AudioBuffer (from mixdownAudio) as AAC via WebCodecs
+ * AudioEncoder and push every chunk into `muxer`. Chunked into ~1-second
+ * AudioData pieces rather than one giant frame, since AudioEncoder expects
+ * frame-sized input and this keeps memory bounded the same way the video
+ * loop keeps its encoder queue bounded.
+ */
+export async function encodeAudioTrack({ audioBuffer, muxer, sampleRate = 48000 }) {
+  if (typeof AudioEncoder === 'undefined') {
+    throw new Error('This browser does not support WebCodecs (AudioEncoder), which audio export requires.');
+  }
+ 
+  const numberOfChannels = audioBuffer.numberOfChannels;
+ 
+  const audioEncoder = new AudioEncoder({
+    output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+    error: (e) => {
+      throw e;
+    },
+  });
+  audioEncoder.configure({
+    codec: 'mp4a.40.2', // AAC-LC
+    sampleRate,
+    numberOfChannels,
+    bitrate: 192_000,
+  });
+ 
+  const chunkFrames = sampleRate; // ~1s per AudioData chunk fed to the encoder
+  const totalFrames = audioBuffer.length;
+ 
+  // Interleave once up front (AudioData wants interleaved planar-per-channel
+  // or interleaved data depending on format; we use 'f32' interleaved here).
+  for (let start = 0; start < totalFrames; start += chunkFrames) {
+    const frameCount = Math.min(chunkFrames, totalFrames - start);
+    const interleaved = new Float32Array(frameCount * numberOfChannels);
+ 
+    for (let ch = 0; ch < numberOfChannels; ch++) {
+      const channelData = audioBuffer.getChannelData(ch);
+      for (let i = 0; i < frameCount; i++) {
+        interleaved[i * numberOfChannels + ch] = channelData[start + i];
+      }
+    }
+ 
+    const audioData = new AudioData({
+      format: 'f32',
+      sampleRate,
+      numberOfFrames: frameCount,
+      numberOfChannels,
+      timestamp: Math.round((start / sampleRate) * 1_000_000),
+      data: interleaved,
+    });
+ 
+    audioEncoder.encode(audioData);
+    audioData.close();
+ 
+    if (audioEncoder.encodeQueueSize > 4) {
+      await new Promise((resolve) => {
+        const check = () => {
+          if (audioEncoder.encodeQueueSize <= 2) resolve();
+          else requestAnimationFrame(check);
+        };
+        check();
+      });
+    }
+  }
+ 
+  await audioEncoder.flush();
+  audioEncoder.close();
 }

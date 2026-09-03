@@ -7,14 +7,19 @@ import { usePlaybackStore } from '../hooks/PlaybackContext';
  */
 export function EditorPlaybackShortcuts({
   selectedEntityId,
+  selectedIds = [],
   onSplitSelected,
   onDeleteSelected,
+  onDeleteMultiple,
   onSaveProject,
   onUndo,
   onRedo,
   onToggleSnapping,
   onZoomIn,
   onZoomOut,
+  onSetExportRange,
+  exportRange,
+  totalDuration,
 }) {
   const store = usePlaybackStore();
 
@@ -43,7 +48,10 @@ export function EditorPlaybackShortcuts({
           onSplitSelected();
         }
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selectedEntityId) {
+        if (selectedIds.length > 1) {
+          e.preventDefault();
+          onDeleteMultiple();
+        } else if (selectedEntityId) {
           e.preventDefault();
           onDeleteSelected();
         }
@@ -61,6 +69,16 @@ export function EditorPlaybackShortcuts({
         onZoomIn();
       } else if (e.key === '-' || e.key === '_') {
         onZoomOut();
+      } else if (e.key === 'i' || e.key === 'I') {
+        // Set export in-point at playhead
+        const t = store.getCurrentTime();
+        const out = exportRange?.out ?? totalDuration;
+        onSetExportRange({ in: Math.min(t, out - 0.1), out });
+      } else if (e.key === 'o' || e.key === 'O') {
+        // Set export out-point at playhead
+        const t = store.getCurrentTime();
+        const inp = exportRange?.in ?? 0;
+        onSetExportRange({ in: inp, out: Math.max(t, inp + 0.1) });
       }
     };
 
@@ -69,14 +87,19 @@ export function EditorPlaybackShortcuts({
   }, [
     store,
     selectedEntityId,
+    selectedIds,
     onSplitSelected,
     onDeleteSelected,
+    onDeleteMultiple,
     onSaveProject,
     onUndo,
     onRedo,
     onToggleSnapping,
     onZoomIn,
     onZoomOut,
+    onSetExportRange,
+    exportRange,
+    totalDuration,
   ]);
 
   return null;

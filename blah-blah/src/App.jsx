@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useUndoableState } from './hooks/useUndoableState';
+import { MenuBar } from './components/MenuBar';
 import { UnityHeader } from './components/UnityHeader';
+import { FilePlus, FolderOpen, Save, Download, Undo2, Redo2, Scissors, Trash2, Code, Sparkles, Settings, Copy, Clipboard, MousePointer2 } from 'lucide-react';
 import { ProjectJsonModal } from './components/ProjectJsonModal';
 import { ScriptEditorModal } from './components/ScriptEditorModal';
 import { ExportModal } from './components/ExportModal';
@@ -28,6 +30,7 @@ import {
   verifyPermission
 } from './services/projectFileSystem';
 import { recordProjectCreated, recordProjectOpened } from './services/recentProjects';
+import { getFieldKeyframes, setKeyframeCurve, getCurveSegment } from './engine/keyframes';
 import './App.css';
  
 export function App() {
@@ -91,9 +94,44 @@ export function App() {
   const [mediaAssets, setMediaAssets] = useState([]);
  
   const [selectedEntityId, setSelectedEntityId] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]); // multi-select for timeline clips
   const [pixelsPerSecond, setPixelsPerSecond] = useState(DEFAULT_PIXELS_PER_SECOND);
   const [snappingEnabled, setSnappingEnabled] = useState(true);
   const [autoKeyEnabled, setAutoKeyEnabled] = useState(false);
+
+  // Export range — in/out points on the timeline for selective rendering.
+  // null means "export the whole project"; when set, only the range
+  // [exportRange.in, exportRange.out] is rendered during export.
+  const [exportRange, setExportRange] = useState(null);
+
+  // Selected keyframe ID — shared between Dopesheet and Curve Editor
+  const [selectedKeyId, setSelectedKeyId] = useState(null);
+
+  // Dockview API ref — set by DockLayout on ready, used by focusDockPanel
+  const dockApiRef = useRef(null);
+  const setDockApi = useCallback((api) => { dockApiRef.current = api; }, []);
+
+  /** Focus an existing dock panel by id, or add it as a new tab next to
+   *  the dopesheet if it doesn't exist yet. */
+  const focusDockPanel = useCallback((panelId) => {
+    const api = dockApiRef.current;
+    if (!api) return;
+    const existing = api.getPanel(panelId);
+    if (existing) {
+      api.activePanel = existing;
+    } else {
+      // Add new tab next to dopesheet (or timeline if dopesheet missing)
+      const refPanel = api.getPanel('dopesheet') || api.getPanel('timeline');
+      if (refPanel) {
+        api.addPanel({
+          id: panelId,
+          component: panelId,
+          title: panelId === 'curveEditor' ? 'Curves' : panelId,
+          position: { direction: 'within', referencePanel: refPanel },
+        });
+      }
+    }
+  }, []);
 
   const handleZoomIn = () => {
     setPixelsPerSecond(prev => Math.min(prev + 15, 240));
@@ -298,8 +336,14 @@ export function App() {
   // number field, so we merge those into one undo step per gesture instead
   // of one per pixel/tick.
   const handleUpdateEntity = useCallback((entityId, updates) => {
+    // Support _delete flag for context menu deletion
+    if (updates._delete) {
+      setEntities((prev) => prev.filter((e) => e.id !== entityId));
+      if (selectedEntityId === entityId) setSelectedEntityId(null);
+      return;
+    }
     setEntities(prev => prev.map(e => e.id === entityId ? { ...e, ...updates } : e), { coalesce: true });
-  }, [setEntities]);
+  }, [setEntities, selectedEntityId]);
  
   // Delete entity
   const handleDeleteEntity = useCallback((entityId) => {
@@ -394,35 +438,84 @@ export function App() {
   // Add Media to Timeline
   const handleAddMediaToTimeline = (asset, targetTrackId = 'track-3', startTime = getPlaybackTime()) => {
     const isAudio = asset.type === 'audio';
- 
+    const clipName = asset.name.replace(/\.[^.]+$/, '');
+    const duration = asset.duration || 8;
+
+    // Video clips get split into a video entity + a linked audio entity
+    // on an audio track. They share a linkGroupId so they move together.
+    if (!isAudio) {
+      const groupId = `link-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+
+      const videoGO = createGameObject({
+        name: clipName,
+        trackId: targetTrackId,
+        startTime,
+        duration,
+        type: 'video',
+        src: asset.url,
+        components: [
+          createDefaultTransform({ x: 0, y: 0 }),
+          {
+            type: 'VideoRenderer',
+            src: asset.url,
+            volume: 0, // mute — audio is handled by the linked audio entity
+            speed: 1,
+            mediaOffset: 0,
+          },
+        ],
+      });
+      videoGO.linkGroupId = groupId;
+
+      // Place audio on the track immediately after the video track
+      const videoTrackIdx = tracks.findIndex((t) => t.id === targetTrackId);
+      const nextTrackIdx = videoTrackIdx >= 0 ? videoTrackIdx + 1 : 1;
+      const audioTrack = tracks[nextTrackIdx] || tracks[tracks.length - 1];
+      const audioGO = createGameObject({
+        name: `${clipName} 🎵`,
+        trackId: audioTrack?.id || 'track-4',
+        startTime,
+        duration,
+        type: 'audio',
+        src: asset.url,
+        components: [
+          createDefaultTransform({ x: 0, y: 0 }),
+          {
+            type: 'AudioSource',
+            src: asset.url,
+            volume: 1,
+            speed: 1,
+            mediaOffset: 0,
+          },
+        ],
+      });
+      audioGO.linkGroupId = groupId;
+
+      setEntities((prev) => [...prev, videoGO, audioGO]);
+      setSelectedEntityId(videoGO.id);
+      return;
+    }
+
+    // Pure audio clips stay as a single entity
     const newGO = createGameObject({
-      name: asset.name.replace(/\.[^.]+$/, ''),
+      name: clipName,
       trackId: targetTrackId,
-      startTime: startTime,
-      duration: asset.duration || 8,
-      type: isAudio ? 'audio' : 'video',
+      startTime,
+      duration,
+      type: 'audio',
       src: asset.url,
       components: [
         createDefaultTransform({ x: 0, y: 0 }),
-        isAudio
-          ? {
-              type: 'AudioSource',
-              src: asset.url,
-              volume: 1,
-              speed: 1,
-              mediaOffset: 0
-            }
-          : {
-              type: 'VideoRenderer',
-              src: asset.url,
-              volume: 1,
-              speed: 1,
-              mediaOffset: 0
-            }
-      ]
+        {
+          type: 'AudioSource',
+          src: asset.url,
+          volume: 1,
+          speed: 1,
+          mediaOffset: 0,
+        },
+      ],
     });
- 
-    setEntities(prev => [...prev, newGO]);
+
+    setEntities((prev) => [...prev, newGO]);
     setSelectedEntityId(newGO.id);
   };
  
@@ -808,6 +901,47 @@ export function App() {
   // Global keyboard shortcuts live in EditorPlaybackShortcuts (inside
   // PlaybackProvider) so App never re-renders on every playback frame.
 
+  // Menu bar configuration — Unity-style top menus.
+  // Add new menus by appending to this array; MenuBar renders them
+  // automatically. Each item can have: label, shortcut, icon, onClick,
+  // disabled, danger. Use { type: 'separator' } for dividers.
+  const menuBarConfig = useMemo(() => [
+    {
+      label: 'File',
+      items: [
+        { label: 'New Project', shortcut: 'Ctrl+N', icon: <FilePlus size={13} />, onClick: () => setIsNewProjectOpen(true) },
+        { label: 'Open Project...', shortcut: 'Ctrl+O', icon: <FolderOpen size={13} />, onClick: handleOpenProjectFolder },
+        { label: 'Save Project', shortcut: 'Ctrl+S', icon: <Save size={13} />, onClick: handleSaveProjectToDisk, disabled: !projectFolderHandle },
+        { type: 'separator' },
+        { label: 'Export Render...', shortcut: 'Ctrl+E', icon: <Download size={13} />, onClick: () => setIsExportOpen(true) },
+      ],
+    },
+    {
+      label: 'Edit',
+      items: [
+        { label: 'Undo', shortcut: 'Ctrl+Z', icon: <Undo2 size={13} />, onClick: undo, disabled: !canUndo },
+        { label: 'Redo', shortcut: 'Ctrl+Shift+Z', icon: <Redo2 size={13} />, onClick: redo, disabled: !canRedo },
+        { type: 'separator' },
+        { label: 'Split Clip', shortcut: 'S', icon: <Scissors size={13} />, onClick: () => selectedEntityId && handleSplitEntity(selectedEntityId), disabled: !selectedEntityId },
+        { label: 'Delete Clip', shortcut: 'Del', icon: <Trash2 size={13} />, onClick: () => selectedEntityId && handleDeleteEntity(selectedEntityId), disabled: !selectedEntityId, danger: true },
+      ],
+    },
+    {
+      label: 'View',
+      items: [
+        { label: 'Project Code', icon: <Code size={13} />, onClick: () => setIsProjectJsonOpen(true) },
+        { label: 'Load Demo Scene', icon: <Sparkles size={13} />, onClick: handleLoadDemoScene },
+        { type: 'separator' },
+        { label: 'Settings', icon: <Settings size={13} />, onClick: () => setIsSettingsOpen(true) },
+      ],
+    },
+  ], [
+    canUndo, canRedo, undo, redo, selectedEntityId,
+    handleSplitEntity, handleDeleteEntity, handleOpenProjectFolder,
+    handleSaveProjectToDisk, handleSaveProjectToDisk, handleLoadDemoScene,
+    projectFolderHandle,
+  ]);
+
   if (screen === 'hub') {
     return (
       <>
@@ -835,16 +969,28 @@ export function App() {
       <PlaybackStoreBridge storeRef={playbackStoreRef} />
       <EditorPlaybackShortcuts
         selectedEntityId={selectedEntityId}
+        selectedIds={selectedIds}
         onSplitSelected={() => selectedEntityId && handleSplitEntity(selectedEntityId)}
         onDeleteSelected={() => selectedEntityId && handleDeleteEntity(selectedEntityId)}
+        onDeleteMultiple={() => {
+          setEntities((prev) => prev.filter((e) => !selectedIds.includes(e.id)));
+          setSelectedIds([]);
+          setSelectedEntityId(null);
+        }}
         onSaveProject={handleSaveProjectToDisk}
         onUndo={undo}
         onRedo={redo}
         onToggleSnapping={() => setSnappingEnabled((prev) => !prev)}
         onZoomIn={() => setPixelsPerSecond((prev) => Math.min(160, prev + 10))}
         onZoomOut={() => setPixelsPerSecond((prev) => Math.max(10, prev - 10))}
+        onSetExportRange={setExportRange}
+        exportRange={exportRange}
+        totalDuration={calculatedDuration}
       />
       <div className="app-container">
+      {/* Top Menu Bar — Unity-style File/Edit/View menus */}
+      <MenuBar menus={menuBarConfig} />
+
       {/* Top Navigation Bar */}
       <EditorHeader
         projectName={projectName}
@@ -893,6 +1039,8 @@ export function App() {
           handleUpdateEntity, handleDeleteEntity, handleSaveAsPrefab,
           handleUpdateTrack, handleAddTrack, handleAddEmptyClip,
           handleDropItemOnTrack,
+          selectedKeyId, setSelectedKeyId,
+          selectedIds, setSelectedIds,
           recordingTrackId,
           onToggleRecordTrack: handleToggleRecordTrack,
           onAddMediaAsset: handleAddMediaAsset,
@@ -904,6 +1052,9 @@ export function App() {
           onAddMediaToTimeline: handleAddMediaToTimeline,
           onZoomIn: handleZoomIn,
           onZoomOut: handleZoomOut,
+          exportRange, setExportRange,
+          setDockApi,
+          focusDockPanel,
         }}
       >
         <DockLayout />
@@ -940,6 +1091,7 @@ export function App() {
         scripts={scripts}
         totalDuration={calculatedDuration}
         resolution={resolution}
+        exportRange={exportRange}
       />
  
       <SettingsModal

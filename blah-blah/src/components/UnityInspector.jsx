@@ -118,7 +118,8 @@ export const UnityInspector = memo(function UnityInspector({
   onOpenScriptEditor,
   onSaveAsPrefab,
   currentTime = 0,
-  autoKeyEnabled = false
+  autoKeyEnabled = false,
+  setAutoKeyEnabled
 }) {
   const [openFoldouts, setOpenFoldouts] = useState({
     Transform: true,
@@ -433,6 +434,19 @@ export const UnityInspector = memo(function UnityInspector({
  
       {/* Component Stack */}
       <div className="inspector-scroll-area">
+ 
+        {/* ========== AUTO KEY TOGGLE ========== */}
+        <div className="inspector-auto-key-bar">
+          <button
+            className={`inspector-auto-key-btn${autoKeyEnabled ? ' active' : ''}`}
+            onClick={() => setAutoKeyEnabled && setAutoKeyEnabled(!autoKeyEnabled)}
+            title={autoKeyEnabled ? 'Auto Key: ON — property changes create keyframes automatically' : 'Auto Key: OFF — click to enable automatic keyframing'}
+          >
+            <Key size={13} />
+            <span>Auto Key</span>
+            <span className="auto-key-state">{autoKeyEnabled ? 'ON' : 'OFF'}</span>
+          </button>
+        </div>
  
         {/* ========== TRANSFORM ========== */}
         {/* Transform is pinned first and not draggable/reorderable -- it's

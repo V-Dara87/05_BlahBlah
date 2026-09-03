@@ -455,6 +455,7 @@ export function createGameObject({
     type,
     src,
     color,
-    components: finalComponents
+    components: finalComponents,
+    linkGroupId: null, // when set, clips with the same groupId move together
   };
 }

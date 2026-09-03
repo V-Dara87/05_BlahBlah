@@ -9,7 +9,9 @@ import {
   InspectorDockPanel,
   TimelineDockPanel,
   DopesheetDockPanel,
+  CurveEditorDockPanel,
 } from './panels';
+import { useEditorContext } from './EditorContext';
 import 'dockview-react/dist/styles/dockview.css';
 import './dockview-unity-theme.css';
  
@@ -22,6 +24,7 @@ const DOCK_COMPONENTS = {
   inspector: InspectorDockPanel,
   timeline: TimelineDockPanel,
   dopesheet: DopesheetDockPanel,
+  curveEditor: CurveEditorDockPanel,
 };
  
 function buildDefaultLayout(api) {
@@ -66,17 +69,27 @@ function buildDefaultLayout(api) {
   // tab next to the main timeline/tree panel rather than a separate
   // docked region) -- switching tabs doesn't disturb the Timeline's own
   // scroll/zoom state since dockview keeps each tab's component mounted.
-  api.addPanel({
+  const dopesheetPanel = api.addPanel({
     id: 'dopesheet',
     component: 'dopesheet',
     title: 'Dopesheet',
     position: { direction: 'within', referencePanel: timelinePanel },
   });
-}
- 
-export const DockLayout = memo(function DockLayout() {
+
+  // Curve Editor — separate tab alongside Dopesheet. Shows the bezier
+  // curve for the currently selected keyframe (shared via selectedKeyId
+  // in EditorContext). Selecting a keyframe in the Dopesheet activates
+  // this tab's content automatically.
+  api.addPanel({
+    id: 'curveEditor',
+    component: 'curveEditor',
+    title: 'Curves',
+    position: { direction: 'within', referencePanel: dopesheetPanel },
+  });
+}export const DockLayout = memo(function DockLayout() {
   const apiRef = useRef(null);
- 
+  const { setDockApi } = useEditorContext();
+
   const persistLayout = useCallback(() => {
     if (!apiRef.current) return;
     try {
@@ -90,6 +103,7 @@ export const DockLayout = memo(function DockLayout() {
   const handleReady = useCallback((event) => {
     const api = event.api;
     apiRef.current = api;
+    setDockApi(api);
  
     let restored = false;
     try {

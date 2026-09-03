@@ -327,6 +327,7 @@ export async function saveProjectToDirectory(dirHandle, projectState) {
       src: e.src,
       active: e.active !== false,
       components: e.components,
+      keyframes: e.keyframes,
     })),
     // Filename -> id (+ description) map so loadProjectFromDirectory can
     // restore each script's ORIGINAL id instead of re-deriving one from the

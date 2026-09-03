@@ -7,16 +7,22 @@ export function TimeRuler({
   onSeek,
 }) {
   const rulerRef = useRef(null);
+  // Reserve the same width as the track-header column so ticks land
+  // directly above the clip positions they correspond to.
+  const HEADER_WIDTH = 180;
 
   const handlePointerDown = (e) => {
     if (!rulerRef.current) return;
+    // Account for scroll offset of the lanes-wrapper
+    const lanesWrapper = document.querySelector('.lanes-wrapper');
+    const scrollLeft = lanesWrapper?.scrollLeft || 0;
     const rect = rulerRef.current.getBoundingClientRect();
-    const offsetX = e.clientX - rect.left;
+    const offsetX = e.clientX - rect.left + scrollLeft - HEADER_WIDTH;
     const newTime = Math.max(0, offsetX / pixelsPerSecond);
     onSeek(newTime);
 
     const handlePointerMove = (moveEvent) => {
-      const moveOffsetX = moveEvent.clientX - rect.left;
+      const moveOffsetX = moveEvent.clientX - rect.left + scrollLeft - HEADER_WIDTH;
       const scrubTime = Math.max(0, moveOffsetX / pixelsPerSecond);
       onSeek(scrubTime);
     };
@@ -45,11 +51,11 @@ export function TimeRuler({
       className="time-ruler"
       ref={rulerRef}
       onPointerDown={handlePointerDown}
-      style={{ width: `${totalWidth}px` }}
+      style={{ width: `${totalWidth + HEADER_WIDTH}px` }}
     >
       {Array.from({ length: numTicks }).map((_, i) => {
         const timeSec = i * tickInterval;
-        const leftPos = timeSec * pixelsPerSecond;
+        const leftPos = HEADER_WIDTH + timeSec * pixelsPerSecond;
         const isMajor = i % 2 === 0;
 
         return (

@@ -1,5 +1,7 @@
 import { DragNumber } from '../DragNumber';
-import { trackKeyFor, getFieldKeyframes, setKeyframe, removeKeyframe } from '../../engine/keyframes';
+import { trackKeyFor, getFieldKeyframes, setKeyframe, removeKeyframe, setKeyframeEasing, setKeyframeCurve, CURVE_PRESETS } from '../../engine/keyframes';
+import { EasingTrigger } from '../EasingPicker';
+import { Easing } from '../../engine/motionTween';
 
 /**
  * P0 #3 — Unified Inspector field rendering.
@@ -116,16 +118,57 @@ export function InspectorField({ field, value, onChange, trackKey, fieldName, se
     }
   })();
 
+  // Get the keyframe at current time and check if it has a next keyframe
+  // (easing belongs to the "from" keyframe — only editable when there's
+  // an outgoing segment, i.e. it's not the last keyframe).
+  const keyframeInfo = (() => {
+    if (!selectedEntity || !trackKey || !fieldName) return null;
+    const kfs = getFieldKeyframes(selectedEntity, trackKey, fieldName);
+    const localTime = Math.max(0, currentTime - selectedEntity.startTime);
+    const idx = kfs.findIndex((k) => Math.abs(k.time - localTime) < 1 / 60);
+    if (idx < 0) return null;
+    return {
+      keyframe: kfs[idx],
+      hasNext: idx < kfs.length - 1,
+    };
+  })();
+
+  const handleChangeEasing = (easing) => {
+    if (!keyframeInfo || !selectedEntity || !trackKey || !fieldName) return;
+    // Check if this is a bezier curve preset
+    if (easing && easing.startsWith('curve:')) {
+      const presetName = easing.slice(6);
+      const preset = CURVE_PRESETS.find((p) => p.name === presetName);
+      if (preset) {
+        const keyframes = setKeyframeCurve(selectedEntity, trackKey, fieldName, keyframeInfo.keyframe.id, preset.cp1, preset.cp2);
+        onUpdateEntity(selectedEntity.id, { keyframes });
+        return;
+      }
+    }
+    // Named easing — clear custom bezier
+    const keyframes = setKeyframeCurve(
+      setKeyframeEasing(selectedEntity, trackKey, fieldName, keyframeInfo.keyframe.id, easing),
+      trackKey, fieldName, keyframeInfo.keyframe.id, null, null
+    );
+    onUpdateEntity(selectedEntity.id, { keyframes });
+  };
+
   // Only show keyframe button if keyframing props are provided
   if (selectedEntity && trackKey && fieldName) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flex: 1 }}>
         {fieldInput}
         <button
           className={`keyframe-btn ${hasKeyframes ? 'has-keys' : ''} ${hasKeyframeAtCurrentTime ? 'at-current-time' : ''}`}
           onClick={handleKeyframeToggle}
           title={hasKeyframeAtCurrentTime ? 'Remove keyframe at current time' : 'Add keyframe at current time'}
         />
+        {keyframeInfo?.hasNext && (
+          <EasingTrigger
+            currentEasing={keyframeInfo.keyframe.easing || 'linear'}
+            onChange={handleChangeEasing}
+          />
+        )}
       </div>
     );
   }

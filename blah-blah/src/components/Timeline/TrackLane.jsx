@@ -4,9 +4,13 @@ import { ClipItem } from './ClipItem';
 export const TrackLane = memo(function TrackLane({
   track,
   clips,
+  allClips,
   pixelsPerSecond,
   selectedClipId,
+  selectedIds,
   onSelectClip,
+  onToggleSelect,
+  onRangeSelect,
   onUpdateClip,
   onAddEmptyClip,
   onDropItemOnTrack,
@@ -16,6 +20,7 @@ export const TrackLane = memo(function TrackLane({
 }) {
   const [isDragOver, setIsDragOver] = useState(false);
   const trackClips = clips.filter((c) => c.trackId === track.id);
+  const fullClipList = allClips || clips;
 
   const handleDragOver = (e) => {
     e.preventDefault();
@@ -78,9 +83,13 @@ export const TrackLane = memo(function TrackLane({
         <ClipItem
           key={clip.id}
           clip={clip}
+          allClips={fullClipList}
           pixelsPerSecond={pixelsPerSecond}
           isSelected={selectedClipId === clip.id}
+          selectedIds={selectedIds}
           onSelectClip={onSelectClip}
+          onToggleSelect={onToggleSelect}
+          onRangeSelect={onRangeSelect}
           onUpdateClip={onUpdateClip}
           snappingPoints={snappingPoints}
           snappingEnabled={snappingEnabled}

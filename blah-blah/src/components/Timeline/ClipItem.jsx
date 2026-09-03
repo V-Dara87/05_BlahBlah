@@ -1,11 +1,16 @@
-import { useRef, memo } from 'react';
+import { useRef, useMemo, memo } from 'react';
 import { Film, Music, Type, Square, FileCode } from 'lucide-react';
+import { WaveformCanvas } from '../WaveformCanvas';
 
 export const ClipItem = memo(function ClipItem({
   clip,
+  allClips = [],
   pixelsPerSecond,
   isSelected,
+  selectedIds = [],
   onSelectClip,
+  onToggleSelect,
+  onRangeSelect,
   onUpdateClip,
   snappingPoints = [],
   snappingEnabled = true,
@@ -35,21 +40,75 @@ export const ClipItem = memo(function ClipItem({
     return rawTime;
   };
 
+  // Find linked clips (same linkGroupId, excluding self)
+  const linkedClips = clip.linkGroupId
+    ? allClips.filter((c) => c.linkGroupId === clip.linkGroupId && c.id !== clip.id)
+    : [];
+  const isLinked = linkedClips.length > 0;
+
+  const isSelectedMulti = selectedIds.includes(clip.id);
+
   const handleBodyPointerDown = (e) => {
     if (e.button !== 0) return;
     e.stopPropagation();
-    onSelectClip(clip.id);
+
+    // Multi-select modifiers
+    if (e.shiftKey && onRangeSelect) {
+      onRangeSelect(clip.id);
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && onToggleSelect) {
+      onToggleSelect(clip.id);
+      return;
+    }
+
+    // If this clip is part of a multi-selection, don't deselect others
+    if (!isSelectedMulti) {
+      onSelectClip(clip.id);
+    }
 
     isDraggingRef.current = true;
     const startX = e.clientX;
     const origStartTime = clip.startTime;
     let currentTrackId = clip.trackId;
 
+    // Determine which clips to move: all selected + linked
+    const allSelectedIds = new Set(isSelectedMulti ? selectedIds : [clip.id]);
+    // Also include linked clips of all selected
+    const moveIds = new Set(allSelectedIds);
+    allClips.forEach((c) => {
+      if (c.linkGroupId && allClips.some((s) => s.id !== c.id && s.linkGroupId === c.linkGroupId && allSelectedIds.has(s.id))) {
+        moveIds.add(c.id);
+      }
+    });
+
+    // Snapshot original positions of all clips being moved
+    const moveOriginals = allClips
+      .filter((c) => moveIds.has(c.id))
+      .map((c) => ({
+        id: c.id,
+        origStartTime: c.startTime,
+        origTrackId: c.trackId,
+      }));
+
     const handlePointerMove = (moveEvent) => {
       if (!isDraggingRef.current) return;
       const deltaPx = moveEvent.clientX - startX;
       const deltaTime = deltaPx / pixelsPerSecond;
       let rawNewStart = Math.max(0, origStartTime + deltaTime);
+
+      // Auto-scroll when dragging near timeline edges
+      const scrollEl = document.querySelector('.lanes-wrapper');
+      if (scrollEl) {
+        const scrollRect = scrollEl.getBoundingClientRect();
+        const edgeMargin = 60;
+        const scrollSpeed = 8;
+        if (moveEvent.clientX < scrollRect.left + edgeMargin) {
+          scrollEl.scrollLeft = Math.max(0, scrollEl.scrollLeft - scrollSpeed);
+        } else if (moveEvent.clientX > scrollRect.right - edgeMargin) {
+          scrollEl.scrollLeft += scrollSpeed;
+        }
+      }
       
       let finalNewStart = getSnappedTime(rawNewStart);
       const rightEdge = rawNewStart + clip.duration;
@@ -69,13 +128,19 @@ export const ClipItem = memo(function ClipItem({
         }
       }
 
-      const updates = { startTime: finalNewStart };
-      if (detectedTrackId && detectedTrackId !== currentTrackId) {
-        currentTrackId = detectedTrackId;
-        updates.trackId = detectedTrackId;
-      }
+      const timeDelta = finalNewStart - origStartTime;
 
-      onUpdateClip(clip.id, updates);
+      // Move all selected clips by the same delta
+      moveOriginals.forEach((mo) => {
+        const newStart = Math.max(0, mo.origStartTime + timeDelta);
+        const updates = { startTime: newStart };
+        // Only change track for the primary clip being dragged
+        if (mo.id === clip.id && detectedTrackId && detectedTrackId !== currentTrackId) {
+          currentTrackId = detectedTrackId;
+          updates.trackId = detectedTrackId;
+        }
+        onUpdateClip(mo.id, updates);
+      });
     };
 
     const handlePointerUp = () => {
@@ -167,15 +232,82 @@ export const ClipItem = memo(function ClipItem({
     window.addEventListener('pointerup', handlePointerUp);
   };
 
+  // Extract audio URL for waveform display (AudioSource or VideoRenderer src)
+  const audioUrl = useMemo(() => {
+    if (clip.src) return clip.src;
+    const audioComp = clip.components?.find((c) => c.type === 'AudioSource' || c.type === 'VideoRenderer');
+    return audioComp?.src || null;
+  }, [clip.src, clip.components]);
+
+  const showWaveform = hasAudio && audioUrl && widthPx > 30; // only audio clips get waveforms
+
+  const handleContextMenu = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Build context menu
+    const existing = document.querySelector('.clip-context-menu');
+    if (existing) existing.remove();
+
+    const menu = document.createElement('div');
+    menu.className = 'clip-context-menu';
+    menu.style.left = `${e.clientX}px`;
+    menu.style.top = `${e.clientY}px`;
+
+    if (isLinked) {
+      const unlinkBtn = document.createElement('button');
+      unlinkBtn.textContent = '🔓 Unlink';
+      unlinkBtn.className = 'ctx-menu-item';
+      unlinkBtn.onclick = () => {
+        onUpdateClip(clip.id, { linkGroupId: null });
+        linkedClips.forEach((lc) => onUpdateClip(lc.id, { linkGroupId: null }));
+        menu.remove();
+      };
+      menu.appendChild(unlinkBtn);
+    }
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.textContent = '🗑 Delete';
+    deleteBtn.className = 'ctx-menu-item danger';
+    deleteBtn.onclick = () => {
+      onSelectClip(null);
+      // Delete this clip and its linked clips
+      const idsToDelete = [clip.id, ...linkedClips.map((lc) => lc.id)];
+      idsToDelete.forEach((id) => onUpdateClip(id, { _delete: true }));
+      menu.remove();
+    };
+    menu.appendChild(deleteBtn);
+
+    document.body.appendChild(menu);
+    const closeMenu = (ev) => {
+      if (!menu.contains(ev.target)) {
+        menu.remove();
+        document.removeEventListener('pointerdown', closeMenu);
+        document.removeEventListener('keydown', onKey);
+      }
+    };
+    const onKey = (ev) => {
+      if (ev.key === 'Escape') {
+        menu.remove();
+        document.removeEventListener('pointerdown', closeMenu);
+        document.removeEventListener('keydown', onKey);
+      }
+    };
+    requestAnimationFrame(() => {
+      document.addEventListener('pointerdown', closeMenu);
+      document.addEventListener('keydown', onKey);
+    });
+  };
+
   return (
     <div
-      className={`timeline-clip-card ${clipCategory} ${isSelected ? 'selected' : ''}`}
+      className={`timeline-clip-card ${clipCategory} ${isSelected || isSelectedMulti ? 'selected' : ''} ${isLinked ? 'linked' : ''}`}
       style={{
         left: `${leftPx}px`,
         width: `${widthPx}px`,
       }}
       onPointerDown={handleBodyPointerDown}
-      title={`${clip.name} (${clip.duration.toFixed(1)}s)`}
+      onContextMenu={handleContextMenu}
+      title={`${clip.name} (${clip.duration.toFixed(1)}s)${isLinked ? ' 🔗 Linked' : ''}`}
     >
       {/* Left Trim Handle */}
       <div
@@ -186,6 +318,28 @@ export const ClipItem = memo(function ClipItem({
 
       {/* Clip Content */}
       <div className="clip-content-box">
+        {/* Linked clip indicator */}
+        {isLinked && (
+          <div className="clip-link-indicator" title="Linked clip">
+            <span className="link-icon">🔗</span>
+          </div>
+        )}
+
+        {/* Waveform overlay for audio/video clips */}
+        {showWaveform && (
+          <div className="clip-waveform-wrap">
+            <WaveformCanvas
+              url={audioUrl}
+              width={widthPx - 8}
+              height={48}
+              color={hasAudio ? 'rgba(139, 92, 246, 0.5)' : 'rgba(56, 189, 248, 0.35)'}
+              barWidth={2}
+              barGap={1}
+              mirror
+            />
+          </div>
+        )}
+
         <div className="clip-top-row">
           {hasVideo ? (
             <Film size={12} className="type-icon" />

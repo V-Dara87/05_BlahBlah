@@ -20,11 +20,14 @@ import {
   createCanvasContainerPool,
   createVideoFrameProvider,
   computeActiveEntitiesAtTime,
+  mixdownAudio,
+  encodeAudioTrack,
 } from '../engine/exportRunner';
  
 /**
- * P1 #11 — MP4 export, Phase 1 (silent video only; audio is Phase 2, see
- * the seam noted below).
+ * P1 #11 — MP4 export. Video is the original deterministic frame-by-frame
+ * render; audio is now mixed down and muxed in too (Phase 2, see
+ * mixdownAudio/encodeAudioTrack in exportRunner.js for the actual work).
  *
  * This is a deterministic frame-by-frame render, NOT a live real-time
  * recording. Per the roadmap: export renders off `time`/`frame` values the
@@ -56,14 +59,10 @@ import {
  * buffering at all).
  */
  
-// Phase 2 seam: once OfflineAudioContext-based deterministic audio mixdown
-// exists (AudioSource/VideoRenderer volume tracks -> a single audio blob),
-// this is the one place a caller needs to plug in: pass the resulting
-// AudioData/AAC track into the Muxer's `audio` config and feed it to an
-// AudioEncoder alongside the video frame loop below. Everything else in
-// this component (the frame loop, the video seek/draw path, the progress
-// UI) stays the same.
-const PLUG_IN_AUDIO_HERE = null;
+// Sample rate used for the offline audio mixdown + AAC encode below.
+// 48kHz matches what browsers' AudioEncoder AAC implementations expect and
+// is the standard rate for video-with-audio delivery.
+const AUDIO_SAMPLE_RATE = 48000;
  
 export function ExportModal({
   isOpen,
@@ -74,6 +73,7 @@ export function ExportModal({
   scripts = [],
   totalDuration,
   resolution,
+  exportRange,
 }) {
   // Default to the project's own resolution whenever it has one — a
   // portrait (or any non-1080p-landscape) project shouldn't silently open
@@ -90,6 +90,8 @@ export function ExportModal({
   const [currentSec, setCurrentSec] = useState(0);
   const [downloadUrl, setDownloadUrl] = useState(null);
   const [errorMessage, setErrorMessage] = useState(null);
+  // 'idle' | 'mixing' | 'mixed' | 'encoding' | 'silent'
+  const [audioStatus, setAudioStatus] = useState('idle');
  
   const previewCanvasRef = useRef(null);
   const abortRef = useRef(false);
@@ -98,8 +100,12 @@ export function ExportModal({
  
   const format = 'mp4'; // Phase 1 scope is MP4-only, per the export task.
   const targetFps = parseInt(fps) || 30;
-  const exportDuration = Math.max(1 / targetFps, totalDuration || 0);
+  // Use export range if set, otherwise full duration
+  const exportStartTime = exportRange?.in ?? 0;
+  const exportEndTime = exportRange?.out ?? totalDuration;
+  const exportDuration = Math.max(1 / targetFps, (exportEndTime - exportStartTime) || 0);
   const totalFrames = Math.max(1, Math.ceil(exportDuration * targetFps));
+  const hasRange = !!exportRange;
  
   const hasProjectRes = resolution?.width > 0 && resolution?.height > 0;
   const width =
@@ -113,6 +119,20 @@ export function ExportModal({
   const bitrateMbps = quality === 'ultra' ? 16 : quality === 'high' ? 8 : 4;
   const estSizeBytes = (bitrateMbps * 1_000_000 / 8) * exportDuration;
   const estSizeMB = (estSizeBytes / (1024 * 1024)).toFixed(1);
+ 
+  // Pre-export preview only — a coarse "does this project have anything
+  // that could produce sound" check (ignores overlap with the export
+  // range/mediaOffset trims, which the real mixdown accounts for exactly).
+  // Good enough for the summary badge; the real answer is audioStatus once
+  // handleStartExport actually runs mixdownAudio.
+  const hasAnyAudioSource = clips.some((c) => {
+    const audioComp = c.components?.find((comp) => comp.type === 'AudioSource');
+    const videoComp = c.components?.find((comp) => comp.type === 'VideoRenderer');
+    if (audioComp && (audioComp.volume ?? 1) > 0) return true;
+    if (videoComp && (videoComp.volume ?? 0) > 0) return true;
+    return false;
+  });
+  const audioSupported = typeof AudioEncoder !== 'undefined';
  
   const handleCancelExport = () => {
     abortRef.current = true;
@@ -139,6 +159,7 @@ export function ExportModal({
  
     let videoEncoder = null;
     let muxer = null;
+    setAudioStatus('mixing');
  
     try {
       if (typeof VideoEncoder === 'undefined') {
@@ -159,13 +180,56 @@ export function ExportModal({
         })
       );
  
-      // 2. Set up the muxer + WebCodecs encoder.
+      // 1b. Mix every AudioSource / audible VideoRenderer down into one
+      // deterministic buffer before the frame loop starts. Doing this
+      // up front (rather than interleaved with per-frame video work) keeps
+      // the mixdown itself a single pure render over the whole export
+      // window, same "explicit time range in, one buffer out" contract as
+      // computeActiveEntitiesAtTime is for a single frame. Decode/encode
+      // failures degrade to a silent export rather than aborting it — a
+      // broken audio source shouldn't block getting the video.
+      let mixedAudioBuffer = null;
+      const hasWebCodecsAudio = typeof AudioEncoder !== 'undefined';
+      if (!hasWebCodecsAudio) {
+        console.warn('Export audio: this browser does not support WebCodecs AudioEncoder — exporting video only.');
+      }
+      if (hasWebCodecsAudio) {
+        try {
+          mixedAudioBuffer = await mixdownAudio({
+            entities: clips,
+            exportStartTime,
+            exportDuration,
+            sampleRate: AUDIO_SAMPLE_RATE,
+          });
+        } catch (err) {
+          console.warn('Export audio: mixdown failed, exporting video only:', err);
+          mixedAudioBuffer = null;
+        }
+      }
+      setAudioStatus(mixedAudioBuffer ? 'mixed' : 'silent');
+ 
+      if (abortRef.current) {
+        setIsExporting(false);
+        return;
+      }
+ 
+      // 2. Set up the muxer + WebCodecs encoder. Only configure an `audio`
+      // track when there's actually a mixed buffer to encode — an empty
+      // project or a browser without AudioEncoder support still produces a
+      // valid (silent) MP4 rather than failing the whole export.
       muxer = new Muxer({
         target: new ArrayBufferTarget(),
         video: { codec: 'avc', width: encodeWidth, height: encodeHeight },
+        ...(mixedAudioBuffer
+          ? {
+              audio: {
+                codec: 'aac',
+                numberOfChannels: mixedAudioBuffer.numberOfChannels,
+                sampleRate: AUDIO_SAMPLE_RATE,
+              },
+            }
+          : {}),
         fastStart: 'in-memory',
-        // No `audio` config in Phase 1 — see PLUG_IN_AUDIO_HERE above for
-        // where that plugs in once the audio mixdown pipeline exists.
       });
  
       videoEncoder = new VideoEncoder({
@@ -189,7 +253,7 @@ export function ExportModal({
       for (let i = 0; i < totalFrames; i++) {
         if (abortRef.current) break;
  
-        const time = i / targetFps;
+        const time = exportStartTime + i / targetFps;
  
         // Seek every active video entity to this exact frame's local time
         // and await the browser actually landing the seek, before drawing
@@ -277,6 +341,31 @@ export function ExportModal({
  
       await videoEncoder.flush();
       videoEncoder.close();
+ 
+      // 4. Encode the mixed-down audio (if any) into the same muxer, after
+      // the video track is fully flushed. Order relative to the muxer
+      // doesn't matter — mp4-muxer buffers both tracks and interleaves them
+      // at finalize() — but doing it after the (usually much longer) video
+      // loop keeps the progress bar meaningfully tied to video frames
+      // throughout, with a short distinct "muxing audio" tail rather than
+      // splitting the bar's meaning across two interleaved phases.
+      if (mixedAudioBuffer) {
+        setAudioStatus('encoding');
+        try {
+          await encodeAudioTrack({
+            audioBuffer: mixedAudioBuffer,
+            muxer,
+            sampleRate: AUDIO_SAMPLE_RATE,
+          });
+        } catch (err) {
+          // Audio encode failing at this late stage would otherwise throw
+          // away an already-complete video render — fall back to muxing
+          // video-only instead of losing the whole export.
+          console.warn('Export audio: encode failed, finalizing video-only:', err);
+          setAudioStatus('silent');
+        }
+      }
+ 
       muxer.finalize();
  
       const { buffer } = muxer.target;
@@ -297,7 +386,6 @@ export function ExportModal({
       videoFrameProvider.disposeAll();
       canvasContainers.disposeAll();
       setIsExporting(false);
-      void PLUG_IN_AUDIO_HERE;
     }
   };
  
@@ -342,8 +430,8 @@ export function ExportModal({
               </p>
  
               <div className="rendered-summary-tags">
-                <span className="tag-pill"><Clock size={12} /> {formatTimecode(totalDuration)}</span>
-                <span className="tag-pill"><Volume2 size={12} /> Silent (Phase 1)</span>
+                <span className="tag-pill"><Clock size={12} /> {hasRange ? `${formatTimecode(exportStartTime)} → ${formatTimecode(exportEndTime)}` : formatTimecode(totalDuration)}</span>
+                <span className="tag-pill"><Volume2 size={12} /> {audioStatus === 'silent' ? 'Silent' : 'Audio Mixed (AAC)'}</span>
                 <span className="tag-pill"><HardDrive size={12} /> ~{estSizeMB} MB</span>
                 <span className="tag-pill"><Tv size={12} /> {format.toUpperCase()}</span>
               </div>
@@ -378,8 +466,14 @@ export function ExportModal({
  
               <div className="render-meta-row">
                 <span className="render-status-sub">
-                  Rendering frame {Math.min(totalFrames, Math.round(currentSec * targetFps) + 1)} / {totalFrames}
-                  {' '}({formatTimecode(currentSec)} / {formatTimecode(exportDuration)}) — {progress}%
+                  {audioStatus === 'mixing'
+                    ? 'Mixing audio…'
+                    : `Rendering frame ${Math.min(totalFrames, Math.round(currentSec * targetFps) + 1)} / ${totalFrames}`}
+                  {audioStatus !== 'mixing' && (
+                    <>
+                      {' '}({formatTimecode(currentSec)} / {formatTimecode(exportDuration)}) — {progress}%
+                    </>
+                  )}
                 </span>
               </div>
  
@@ -391,7 +485,11 @@ export function ExportModal({
               </div>
  
               <p className="render-caption">
-                Rendering each frame as a deterministic snapshot (not live playback) and encoding it into MP4 as it goes — render speed isn't tied to video duration.
+                {audioStatus === 'mixing'
+                  ? 'Decoding and mixing every audio-bearing clip in the export range down to one track before rendering video frames.'
+                  : audioStatus === 'encoding'
+                  ? 'Video render complete — encoding the mixed audio track to AAC and finalizing the MP4.'
+                  : "Rendering each frame as a deterministic snapshot (not live playback) and encoding it into MP4 as it goes — render speed isn't tied to video duration."}
               </p>
  
               <button
@@ -502,12 +600,14 @@ export function ExportModal({
                 <div className="summary-stat-grid">
                   <div className="stat-tile">
                     <span className="stat-tile-label"><Clock size={11} /> Duration</span>
-                    <span className="stat-tile-val">{formatTimecode(totalDuration)} ({totalFrames} frames)</span>
+                    <span className="stat-tile-val">{hasRange ? `${formatTimecode(exportStartTime)} → ${formatTimecode(exportEndTime)}` : formatTimecode(totalDuration)} ({totalFrames} frames)</span>
                   </div>
  
                   <div className="stat-tile">
                     <span className="stat-tile-label"><Volume2 size={11} /> Audio</span>
-                    <span className="stat-tile-val">Silent (Phase 1)</span>
+                    <span className="stat-tile-val">
+                      {!audioSupported ? 'Silent (unsupported browser)' : hasAnyAudioSource ? 'AAC, will mix down' : 'Silent (no audio clips)'}
+                    </span>
                   </div>
  
                   <div className="stat-tile">
@@ -525,7 +625,10 @@ export function ExportModal({
                   <Settings size={13} className="text-cyan" />
                   <span>
                     Renders every frame as a deterministic snapshot of the exact composition — video, shapes, typography,
-                    and BlahTween/CanvasRenderer motion — then encodes it to H.264 MP4. Audio muxing lands in Phase 2.
+                    and BlahTween/CanvasRenderer motion — then encodes it to H.264 MP4.
+                    {audioSupported
+                      ? ' Every AudioSource and audible VideoRenderer clip is mixed down and muxed in as AAC.'
+                      : ' This browser lacks WebCodecs AudioEncoder support, so the export will be video-only.'}
                   </span>
                 </div>
               </div>

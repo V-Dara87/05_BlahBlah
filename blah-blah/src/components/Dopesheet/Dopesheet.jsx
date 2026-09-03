@@ -3,8 +3,8 @@ import { useRef, useState, useMemo, useCallback, useEffect, memo } from 'react';
 import './dopesheet.css';
 import {
   ChevronDown, ChevronRight, Sliders, Type, Square, FileCode, Sparkles, Boxes,
-  ArrowRightToLine, Move, SlidersHorizontal, Repeat, Filter, Key,
-  ChevronsLeft, ChevronsRight, SkipBack, SkipForward, ZoomIn, ZoomOut
+  ArrowRightToLine, Move, SlidersHorizontal, Repeat, Filter,
+  ChevronsLeft, ChevronsRight, SkipBack, SkipForward, ZoomIn, ZoomOut, Spline
 } from 'lucide-react';
 import { TRANSFORM_FIELD_GROUPS } from '../inspector/InspectorField';
 import { extractScriptProps, detectScriptKind } from '../../engine/scriptRunner';
@@ -12,6 +12,7 @@ import {
   trackKeyFor, getFieldKeyframes, setKeyframe, removeKeyframe, moveKeyframe,
 } from '../../engine/keyframes';
 import { formatTimecode } from '../../utils/timeFormat';
+import { useEditorContext } from '../../dock/EditorContext';
  
 /**
  * Dopesheet — GUI keyframing panel (roadmap P1 #6).
@@ -80,18 +81,23 @@ export const Dopesheet = memo(function Dopesheet({
   loopEnd,
   onSeek,
   onUpdateEntity,
-  autoKeyEnabled = false,
-  setAutoKeyEnabled,
+  selectedKeyId: selectedKeyIdProp,
+  onSelectedKeyChange,
 }) {
+  const { focusDockPanel } = useEditorContext();
+
+  // Use shared state if provided, fall back to local state
+  const [localSelectedKeyId, setLocalSelectedKeyId] = useState(null);
+  const selectedKeyId = selectedKeyIdProp !== undefined ? selectedKeyIdProp : localSelectedKeyId;
+  const setSelectedKeyId = onSelectedKeyChange || setLocalSelectedKeyId;
   const lanesScrollRef = useRef(null);
   const rulerRef = useRef(null);
   const [pixelsPerSecond, setPixelsPerSecond] = useState(PIXELS_PER_SECOND);
   const [collapsedGroups, setCollapsedGroups] = useState({});
-  const [selectedKeyId, setSelectedKeyId] = useState(null);
   const [shiftMode, setShiftMode] = useState(false);
   const [showOnlyKeyframed, setShowOnlyKeyframed] = useState(false);
   const [snapToKeyframe, setSnapToKeyframe] = useState(false);
- 
+
   const localTime = selectedEntity ? Math.max(0, currentTime - selectedEntity.startTime) : 0;
   const clipDuration = selectedEntity?.duration ?? totalDuration;
  
@@ -317,14 +323,7 @@ export const Dopesheet = memo(function Dopesheet({
             <SlidersHorizontal size={12} />
             <span>Snap</span>
           </button>
-          <button
-            className={`dopesheet-tool-btn ${autoKeyEnabled ? 'active' : ''}`}
-            title={autoKeyEnabled ? 'Auto Key: ON - Changes create keyframes automatically' : 'Auto Key: OFF - Click to enable automatic keyframing'}
-            onClick={() => setAutoKeyEnabled && setAutoKeyEnabled(!autoKeyEnabled)}
-          >
-            <Key size={12} />
-            <span>Auto Key</span>
-          </button>
+
         </div>
  
         <div className="dopesheet-toolbar-divider" />
@@ -364,6 +363,15 @@ export const Dopesheet = memo(function Dopesheet({
           </button>
         </div>
  
+        <button
+          className="dopesheet-tool-btn"
+          title="Open Curves tab to edit keyframe easing"
+          onClick={() => focusDockPanel('curveEditor')}
+        >
+          <Spline size={12} />
+          <span>Curves</span>
+        </button>
+
         <button className="dopesheet-tool-btn-icon" title="Toggle loop playback">
           <Repeat size={13} />
         </button>
