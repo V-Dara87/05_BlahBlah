@@ -12,10 +12,10 @@ import {
   Layers
 } from 'lucide-react';
 import { formatSimpleTime } from '../utils/timeFormat';
-import { executeScriptComponent, getCompiledReactComponent } from '../engine/scriptRunner';
+import { getCompiledReactComponent } from '../engine/scriptRunner';
 import { updateCanvasComponent, unmountCanvasComponent, pruneCanvasComponents } from '../engine/canvasRunner';
 import { RENDERER_REGISTRY } from '../engine/ecs';
-import { resolveKeyframedComponents } from '../engine/keyframes';
+import { computeActiveEntitiesAtTime } from '../engine/renderPipeline';
 import { EntityErrorBoundary } from './EntityErrorBoundary';
  
 /**
@@ -59,6 +59,10 @@ export function EntityRenderer({
   onSeek,
   onToggleLoop,
   resolution = FALLBACK_RESOLUTION,
+  // Project framerate — the same value export's frame loop passes to
+  // computeActiveEntitiesAtTime, so motion-script `frame`/`fps` args match
+  // between preview and export. App.jsx's projectState carries fps: 30.
+  fps = 30,
 }) {
   const containerRef = useRef(null);
   const canvasFrameRef = useRef(null);
@@ -110,6 +114,19 @@ export function EntityRenderer({
     return () => observer.disconnect();
   }, [resolution?.width, resolution?.height]);
  
+  // Real `import` support: scripts with import statements are compiled
+  // ASYNC by the bundler (engine/scriptBundler.js) and fill a module-level
+  // cache; React never sees that cache change, so listen for the
+  // "scripts-recompiled" broadcast and re-run the memo when it fires —
+  // otherwise a freshly-bundled script would stay stuck in its "pending"
+  // (untransformed) state until some unrelated re-render happened to land.
+  const [scriptsRecompiledTick, setScriptsRecompiledTick] = useState(0);
+  useEffect(() => {
+    const handler = () => setScriptsRecompiledTick((t) => t + 1);
+    window.addEventListener('blahblah:scripts-recompiled', handler);
+    return () => window.removeEventListener('blahblah:scripts-recompiled', handler);
+  }, []);
+
   // P0 perf fix -- computedEntities used to be rebuilt as a brand-new array
   // literal on every single render (regardless of whether entities, tracks,
   // scripts, or currentTime had actually changed), and that array sat in
@@ -123,95 +140,23 @@ export function EntityRenderer({
   // this in useMemo, keyed on the actual inputs that matter (entities,
   // tracks, scripts, currentTime -- not prop identity/selection state),
   // lets those effects skip their work when only unrelated UI state changes.
+  // Active-entity computation is shared with export — ONE implementation
+  // (engine/renderPipeline.js) instead of the two hand-duplicated copies
+  // that used to drift (this memo previously hardcoded fps: 30 while
+  // export took a real fps parameter). This useMemo stays local because
+  // memoization is a React-specific concern; the logic inside is the
+  // shared pure function.
   const computedEntities = useMemo(() => {
-    // Filter visible and active entities at currentTime.
-    //
+    return computeActiveEntitiesAtTime({ entities, tracks, scripts, time: currentTime, fps });
     // NOTE -- clip-duration vs. tween-duration boundary: a non-looping
-    // tween (via executeScriptComponent -> MotionTweenContext.evaluate)
-    // correctly clamps its own progress to 1 and settles at its final value
-    // once localTime passes the tween's own duration -- that math is sound.
-    // But this active-entity check only knows about the *clip's* own
-    // duration (entity.startTime + entity.duration), not the tween's. If a
-    // script's declared tween duration outlasts the clip (e.g. after
-    // trimming the clip shorter with Split), the entity simply stops being
-    // "active" and disappears from the preview before the tween ever gets
-    // to settle -- it vanishes mid-animation instead of landing on its
-    // final frame. This isn't a bug in the tween math or in this filter
-    // individually; it's an authoring trap at the boundary between the
-    // two. Extending the active window to cover the tween's duration isn't
-    // correct either (a clip's duration is supposed to be an authoritative
-    // boundary), so this is intentionally left as documented behavior
-    // rather than "fixed" -- the right long-term fix is an authoring-time
-    // warning in the Script Editor / Inspector when a script's tween
-    // duration exceeds the clip's own duration, not a change here.
-    const activeEntities = entities.filter((entity) => {
-      if (!entity.active) return false;
-      if (currentTime < entity.startTime || currentTime >= entity.startTime + entity.duration) {
-        return false;
-      }
-      const track = tracks.find((t) => t.id === entity.trackId);
-      if (track && (!track.visible || track.locked)) return false;
-      return true;
-    });
- 
-    // Calculate animated transform for each active entity using attached JS/TS motion scripts.
-    // localTime is always (currentTime - entity.startTime): absolute timeline
-    // time, not wall-clock/rAF accumulation, so scrubbing stays deterministic.
-    return activeEntities.map((entity) => {
-      const localTime = currentTime - entity.startTime;
- 
-      // GUI keyframing (roadmap P1 #6) -- resolve any Dopesheet keyframes
-      // for this entity at the current local time BEFORE anything else
-      // reads entity.components, and fold them into a per-tick resolved
-      // copy. resolveKeyframedComponents is a pure function of localTime
-      // (same determinism contract as CanvasRenderer's onUpdate and the
-      // motion-script tween below), so scrubbing/export stay deterministic.
-      // Everything downstream -- Transform, ReactRenderer/CanvasRenderer
-      // props, motion-script publicValues -- reads from this resolved
-      // entity instead of the raw one. Keyframes apply first, then a motion
-      // script (if any) runs on top of the keyframed Transform, so a
-      // keyframed field and a script-driven field can coexist without
-      // fighting each other -- the script effectively layers over a
-      // GUI-keyframed base pose.
-      const keyframedComponents = resolveKeyframedComponents(entity, localTime);
-      const resolvedEntity =
-        keyframedComponents === entity.components ? entity : { ...entity, components: keyframedComponents };
- 
-      let currentTransform = resolvedEntity.components.find((c) => c.type === 'Transform') || {
-        x: 0,
-        y: 0,
-        rotation: 0,
-        scaleX: 1,
-        scaleY: 1,
-        opacity: 1,
-      };
- 
-      const scriptComp = resolvedEntity.components.find(
-        (c) => (c.type === 'ScriptComponent' || c.type === 'MonoBehaviour') && c.enabled
-      );
- 
-      if (scriptComp) {
-        const scriptDef = scripts.find((s) => s.id === scriptComp.scriptId);
-        if (scriptDef && scriptDef.code) {
-          currentTransform = executeScriptComponent({
-            scriptCode: scriptDef.code,
-            transform: currentTransform,
-            localTime,
-            clipDuration: entity.duration,
-            publicValues: scriptComp.props || {},
-            frame: Math.round(localTime * 30),
-            fps: 30,
-          });
-        }
-      }
- 
-      return {
-        entity: resolvedEntity,
-        transform: currentTransform,
-        localTime,
-      };
-    });
-  }, [entities, tracks, scripts, currentTime]);
+    // tween correctly clamps to 1 and settles once localTime passes the
+    // tween's own duration, but the active-entity check only knows about
+    // the clip's duration (see renderPipeline.js). If a script's declared
+    // tween duration outlasts the clip, the entity vanishes mid-animation
+    // instead of landing on its final frame — documented authoring trap,
+    // intentionally not "fixed" here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- scriptsRecompiledTick intentionally re-runs the memo when the module-level compile cache warms (the bundler fills it asynchronously, outside React state).
+  }, [entities, tracks, scripts, currentTime, fps, scriptsRecompiledTick]);
  
   // Track-order -> stacking order. Previously every overlay entity got the
   // same flat zIndex (15, or 30 if selected) regardless of which track it
@@ -369,14 +314,14 @@ export function EntityRenderer({
         scriptCode: scriptDef.code,
         container,
         localTime,
-        frame: Math.round(localTime * 30),
-        fps: 30,
+        frame: Math.round(localTime * fps),
+        fps,
         props: canvasComp.props || {},
       });
     });
  
     pruneCanvasComponents(computedEntities.map(({ entity }) => entity.id));
-  }, [computedEntities, scripts, currentTime]);
+  }, [computedEntities, scripts, currentTime, fps]);
  
   // Unmount every CanvasRenderer instance when the whole EntityRenderer unmounts.
   useEffect(() => {
@@ -629,7 +574,7 @@ export function EntityRenderer({
                   ReactComponentNode = (
                     <CompiledComponent
                       {...(reactComp.props || {})}
-                      frame={Math.round(localTime * 30)}
+                      frame={Math.round(localTime * fps)}
                       time={localTime}
                       duration={entity.duration}
                     />

@@ -7,9 +7,11 @@
  *
  * This package is referenced via `paths` in `scripts/jsconfig.json` so that
  * VS Code / Cursor can provide autocomplete for `@blahblah/sdk` imports
- * inside a project's `scripts/` folder. The actual runtime does NOT use
- * import resolution — it injects these globals via `new Function()` — but
- * the type declarations let you write scripts with full intellisense.
+ * inside a project's `scripts/` folder. The runtime injects these globals
+ * via `new Function()`; scripts that use real `import` statements are
+ * bundled in-browser by esbuild (npm packages resolved once through esm.sh
+ * and cached, local `./helpers.js` files read from the project's
+ * `scripts/` folder), and the same globals below remain in scope.
  */
  
 // Type-only import — this package ships no runtime code, so this must
@@ -305,6 +307,20 @@ export interface CanvasOnUpdateArgs {
  
 /**
  * CanvasRenderer contract — implement this in a class default-exported from a script.
+ *
+ * NOTE on libraries with their own internal clock (GSAP, some Three.js
+ * patterns): once a library is really `import`-ed, its own ticker (e.g.
+ * `gsap.ticker`) still runs independently of the timeline `time`/`frame`
+ * values passed into `onUpdate`, so free-running tweens won't scrub or
+ * export correctly. Use a seek-safe pattern instead — create a paused
+ * timeline and drive it from the deterministic `time` argument:
+ *
+ * ```js
+ * this.tl = gsap.timeline({ paused: true });
+ * this.tl.to(el, { x: 100, duration: 1 });
+ * // in onUpdate / onSeek:
+ * this.tl.seek(time);
+ * ```
  *
  * @example
  * ```js

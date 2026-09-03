@@ -15,9 +15,10 @@ import {
   Sparkles,
   Boxes,
   GripVertical,
-  Key
+  Key,
+  Clock
 } from 'lucide-react';
-import { extractScriptProps, getScriptError, detectScriptKind } from '../engine/scriptRunner';
+import { extractScriptProps, getScriptError, detectScriptKind, isScriptBundlePending } from '../engine/scriptRunner';
 import { DragNumber } from './DragNumber';
 import { InspectorFieldList, TRANSFORM_FIELD_GROUPS } from './inspector/InspectorField';
 import { trackKeyFor, getFieldKeyframes, setKeyframe, evaluateField } from '../engine/keyframes';
@@ -499,6 +500,7 @@ export const UnityInspector = memo(function UnityInspector({
           const scriptDef = scripts.find(s => s.id === reactComp.scriptId);
           const fields = scriptDef ? extractScriptProps(scriptDef.code) : [];
           const scriptError = scriptDef ? getScriptError(scriptDef.code) : null;
+          const bundlePending = scriptDef ? isScriptBundlePending(scriptDef.code) : false;
  
           return (
             <div className="inspector-card react-highlight">
@@ -533,6 +535,12 @@ export const UnityInspector = memo(function UnityInspector({
                       <span>{scriptError}</span>
                     </div>
                   )}
+                  {!scriptError && bundlePending && (
+                    <div className="script-pending-badge">
+                      <Clock size={12} />
+                      <span>Resolving imports…</span>
+                    </div>
+                  )}
  
                   <InspectorFieldList
                     fields={fields}
@@ -555,6 +563,7 @@ export const UnityInspector = memo(function UnityInspector({
           const scriptDef = scripts.find(s => s.id === canvasComp.scriptId);
           const fields = scriptDef ? extractScriptProps(scriptDef.code) : [];
           const scriptError = scriptDef ? getScriptError(scriptDef.code) : null;
+          const bundlePending = scriptDef ? isScriptBundlePending(scriptDef.code) : false;
  
           return (
             <div className="inspector-card canvas-highlight">
@@ -587,6 +596,12 @@ export const UnityInspector = memo(function UnityInspector({
                     <div className="script-error-badge">
                       <AlertCircle size={12} />
                       <span>{scriptError}</span>
+                    </div>
+                  )}
+                  {!scriptError && bundlePending && (
+                    <div className="script-pending-badge">
+                      <Clock size={12} />
+                      <span>Resolving imports…</span>
                     </div>
                   )}
  
@@ -807,6 +822,7 @@ export const UnityInspector = memo(function UnityInspector({
           const scriptDef = scripts.find(s => s.id === scriptComp.scriptId);
           const fields = scriptDef ? extractScriptProps(scriptDef.code) : [];
           const scriptError = scriptDef ? getScriptError(scriptDef.code) : null;
+          const bundlePending = scriptDef ? isScriptBundlePending(scriptDef.code) : false;
           const foldoutKey = `Script:${scriptComp.scriptId}`;
           const dragKey = `script:${scriptComp.scriptId}`;
           // Per-script foldout state defaults to open until the user
@@ -844,6 +860,12 @@ export const UnityInspector = memo(function UnityInspector({
                     <div className="script-error-badge">
                       <AlertCircle size={12} />
                       <span>{scriptError}</span>
+                    </div>
+                  )}
+                  {!scriptError && bundlePending && (
+                    <div className="script-pending-badge">
+                      <Clock size={12} />
+                      <span>Resolving imports…</span>
                     </div>
                   )}
  

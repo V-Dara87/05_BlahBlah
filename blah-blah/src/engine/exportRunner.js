@@ -1,15 +1,19 @@
-import { executeScriptComponent } from './scriptRunner';
-import { updateCanvasComponent, unmountCanvasComponent } from './canvasRunner';
-import { resolveKeyframedComponents } from './keyframes';
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import { flushSync } from 'react-dom';
+import { getCompiledReactComponent } from './scriptRunner.js';
+import { updateCanvasComponent, unmountCanvasComponent } from './canvasRunner.js';
+import { computeActiveEntitiesAtTime } from './renderPipeline.js';
  
 /**
  * P1 #11 — export-time equivalent of EntityRenderer.jsx's live preview.
  *
- * This file exists to be the actual home of the four functions
- * ExportModal.jsx already imports (drawExportFrame, createCanvasContainerPool,
- * createVideoFrameProvider, computeActiveEntitiesAtTime). Those were referenced
- * but never implemented — this was the missing piece that made export fail
- * immediately on module load.
+ * This file is the actual home of the functions ExportModal.jsx imports
+ * (drawExportFrame, createCanvasContainerPool, createVideoFrameProvider).
+ * Active-entity computation lives in engine/renderPipeline.js — the ONE
+ * shared implementation both this file and EntityRenderer.jsx call (it
+ * was previously hand-duplicated in both places, with drift like the
+ * preview hardcoding fps: 30).
  *
  * Everything here is a pure function of an explicit `time` argument, never
  * wall-clock/rAF, mirroring EntityRenderer.jsx's `computedEntities` memo and
@@ -17,73 +21,9 @@ import { resolveKeyframedComponents } from './keyframes';
  * per exported frame instead of on a live render cycle.
  */
  
-// ---------------------------------------------------------------------------
-// Active-entity computation (mirrors EntityRenderer.jsx's computedEntities)
-// ---------------------------------------------------------------------------
- 
-/**
- * Same filtering + transform logic as EntityRenderer.jsx's `computedEntities`
- * useMemo, but as a plain function driven by an explicit `time` instead of
- * component state. Returns [{ entity, transform, localTime }].
- */
-export function computeActiveEntitiesAtTime({ entities, tracks, scripts = [], time, fps = 30 }) {
-  const activeEntities = entities.filter((entity) => {
-    if (!entity.active) return false;
-    if (time < entity.startTime || time >= entity.startTime + entity.duration) {
-      return false;
-    }
-    const track = tracks.find((t) => t.id === entity.trackId);
-    if (track && (!track.visible || track.locked)) return false;
-    return true;
-  });  return activeEntities.map((entity) => {
-    // GUI keyframing — resolve any Dopesheet keyframes at the current
-    // local time BEFORE reading components. This mirrors EntityRenderer.jsx's
-    // computedEntities useMemo, where resolveKeyframedComponents is called
-    // first so that Transform and component props carry their interpolated
-    // keyframe values into the motion-script and draw passes below.
-    const localTime = time - entity.startTime;
-    const keyframedComponents = resolveKeyframedComponents(entity, localTime);
-    const resolvedEntity =
-      keyframedComponents === entity.components ? entity : { ...entity, components: keyframedComponents };
- 
-    let currentTransform = resolvedEntity.components.find((c) => c.type === 'Transform') || {
-      x: 0,
-      y: 0,
-      rotation: 0,
-      scaleX: 1,
-      scaleY: 1,
-      opacity: 1,
-    };
- 
-    const scriptComp = resolvedEntity.components.find(
-      (c) => (c.type === 'ScriptComponent' || c.type === 'MonoBehaviour') && c.enabled
-    );
- 
-    if (scriptComp) {
-      const scriptDef = scripts.find((s) => s.id === scriptComp.scriptId);
-      if (scriptDef && scriptDef.code) {
-        try {
-          currentTransform = executeScriptComponent({
-            scriptCode: scriptDef.code,
-            transform: currentTransform,
-            localTime,
-            clipDuration: entity.duration,
-            publicValues: scriptComp.props || {},
-            frame: Math.round(localTime * fps),
-            fps,
-          });
-        } catch (err) {
-          // A broken motion script must not abort the whole export — fall
-          // back to the untransformed transform for this frame, same
-          // containment principle as EntityErrorBoundary for live preview.
-          console.warn(`Export: motion script error on "${entity.name}":`, err);
-        }
-      }
-    }
- 
-    return { entity: resolvedEntity, transform: currentTransform, localTime };
-  });
-}
+// Re-exported so ExportModal.jsx keeps importing computeActiveEntitiesAtTime
+// from this module — the implementation now lives in renderPipeline.js.
+export { computeActiveEntitiesAtTime } from './renderPipeline.js';
  
 // ---------------------------------------------------------------------------
 // Offscreen <div> pool for CanvasRenderer entities
@@ -96,6 +36,9 @@ export function computeActiveEntitiesAtTime({ entities, tracks, scripts = [], ti
  * parent, positioned far off-canvas, holds one <div> per entity actively
  * using CanvasRenderer during this export run.
  */
+// React roots mounted into pooled containers (ReactRenderer export).
+const reactRoots = new Map(); // container -> Root
+
 export function createCanvasContainerPool() {
   const root = document.createElement('div');
   root.style.position = 'fixed';
@@ -134,6 +77,15 @@ export function createCanvasContainerPool() {
       const el = containers.get(entityId);
       if (el) {
         unmountCanvasComponent(entityId);
+        const rootEl = reactRoots.get(el);
+        if (rootEl) {
+          try {
+            rootEl.unmount();
+          } catch {
+            // already unmounted
+          }
+          reactRoots.delete(el);
+        }
         el.remove();
         containers.delete(entityId);
       }
@@ -306,6 +258,7 @@ export function drawExportFrame({
       }
  
       const canvasComp = entity.components.find((c) => c.type === 'CanvasRenderer');
+      const reactComp = entity.components.find((c) => c.type === 'ReactRenderer');
       const shapeComp = entity.components.find((c) => c.type === 'ShapeRenderer');
       const textComp = entity.components.find((c) => c.type === 'TextRenderer');
  
@@ -324,15 +277,37 @@ export function drawExportFrame({
           });
           drawCanvasContainerContents(ctx, container, transform, width, height);
         }
+      } else if (reactComp) {
+        // ReactRenderer export — mount the same compiled component the live
+        // preview uses (via getCompiledReactComponent) into a pooled
+        // offscreen container, flush it synchronously, and rasterize its
+        // <canvas> subtree (see drawReactComponentContents for the exact
+        // scope: canvas-rooted components; arbitrary DOM-only output is
+        // skipped rather than guessed at).
+        const scriptDef = scripts.find((s) => s.id === reactComp.scriptId);
+        if (scriptDef && scriptDef.code) {
+          const CompiledComponent = getCompiledReactComponent(scriptDef.code);
+          if (typeof CompiledComponent === 'function') {
+            const container = canvasContainers.getContainer(entity.id);
+            drawReactComponentContents({
+              ctx,
+              container,
+              Component: CompiledComponent,
+              props: reactComp.props || {},
+              localTime,
+              duration: entity.duration,
+              fps,
+              transform,
+              width,
+              height,
+            });
+          }
+        }
       } else if (shapeComp) {
         drawShape(ctx, shapeComp, transform, width, height);
       } else if (textComp) {
         drawText(ctx, textComp, entity, transform, width, height);
       }
-      // Note: ReactRenderer entities (arbitrary React component output) are
-      // not rasterized in this pass — see the header comment in
-      // ExportModal.jsx / roadmap P1.5 for the known gap. They're skipped
-      // rather than crashing the export.
     } catch (err) {
       console.warn(`Export: render error on entity "${entity.name}":`, err);
     }
@@ -459,6 +434,70 @@ function drawCanvasContainerContents(ctx, container, transform, width, height) {
     ctx.drawImage(innerCanvas, -innerCanvas.width / 2, -innerCanvas.height / 2, innerCanvas.width, innerCanvas.height);
   } catch (err) {
     console.warn('Export: failed to draw CanvasRenderer output:', err);
+  }
+  ctx.restore();
+}
+
+/**
+ * ReactRenderer export — mounts the compiled component into the pooled
+ * offscreen container (the same DOM-mounting approach the live preview
+ * uses, just off-page) and rasterizes its output.
+ *
+ * SCOPE (deliberate): a ReactRenderer script's contract is "a function
+ * component returning JSX" — no guarantee it renders a <canvas> at all.
+ * Rasterizing arbitrary DOM to a 2D context would need a DOM-to-image
+ * library (a new dependency with imperfect CSS fidelity) — out of scope
+ * for this pass. So this mounts + flushSync-renders the component, then
+ * draws its <canvas> subtree if one exists (mirroring
+ * drawCanvasContainerContents, which is the common case — raw
+ * Canvas2D/Three.js/WebGL all render to one), and otherwise skips the
+ * entity exactly as export did before this branch existed. Not a
+ * regression: DOM-only ReactRenderer clips previously never exported at
+ * all.
+ *
+ * flushSync is used (not an await) because the export frame loop is
+ * synchronous per frame — this is called from drawExportFrame. React's
+ * "flushSync from inside lifecycle" warning does not apply here: this
+ * runs from the export loop, not from React's render/commit phases.
+ */
+function drawReactComponentContents({
+  ctx,
+  container,
+  Component,
+  props,
+  localTime,
+  duration,
+  fps = 30,
+  transform,
+  width,
+  height,
+}) {
+  let root = reactRoots.get(container);
+  if (!root) {
+    root = createRoot(container);
+    reactRoots.set(container, root);
+  }
+
+  flushSync(() => {
+    root.render(
+      React.createElement(Component, {
+        ...props,
+        frame: Math.round(localTime * fps),
+        time: localTime,
+        duration,
+      })
+    );
+  });
+
+  const innerCanvas = container.querySelector('canvas');
+  if (!innerCanvas) return; // DOM-only output — skipped (see scope note above)
+
+  ctx.save();
+  applyTransform(ctx, transform, width, height);
+  try {
+    ctx.drawImage(innerCanvas, -innerCanvas.width / 2, -innerCanvas.height / 2, innerCanvas.width, innerCanvas.height);
+  } catch (err) {
+    console.warn('Export: failed to draw ReactRenderer output:', err);
   }
   ctx.restore();
 }

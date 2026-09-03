@@ -56,6 +56,7 @@ export const PreviewDockPanel = memo(function PreviewDockPanel() {
     entities, tracks, scripts, calculatedDuration,
     selectedEntityId, setSelectedEntityId,
     handleUpdateEntity, resolution,
+    fps = 30,
   } = useEditorContext();
  
   const currentTime = useCurrentTime();
@@ -79,6 +80,7 @@ export const PreviewDockPanel = memo(function PreviewDockPanel() {
       onSeek={(t) => store.seek(t)}
       onToggleLoop={() => store.toggleLoop()}
       resolution={resolution}
+      fps={fps}
     />
   );
 });

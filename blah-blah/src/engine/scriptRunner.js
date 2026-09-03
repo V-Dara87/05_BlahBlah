@@ -1,5 +1,8 @@
 import React from 'react';
+import ReactDOM from 'react-dom';
+import ReactDOMClient from 'react-dom/client';
 import * as esbuild from 'esbuild-wasm';
+import { bundleScript } from './scriptBundler.js';
 import { 
   MotionTweenContext, 
   Easing, 
@@ -17,6 +20,15 @@ const compiledModuleCache = new Map();
 const propsSchemaCache = new Map();
 const lastErrorCache = new Map();
 const scriptKindCache = new Map();
+
+/**
+ * Scripts whose code contains real ESM `import` statements and which have
+ * NOT finished their one-time async bundle yet. These are distinct from
+ * compile ERRORS: a pending script is expected to resolve itself shortly
+ * (first npm fetch + bundle), so the Inspector shows a "Resolving
+ * imports…" badge instead of a red error badge while it's in flight.
+ */
+const pendingBundleCache = new Set();
  
 // ─── esbuild-wasm transpiler (background precompile only) ────────────────────
 //
@@ -35,13 +47,14 @@ const scriptKindCache = new Map();
 //
 // Fix: `compileScriptModule` always uses the synchronous regex
 // transpiler directly — no swappable "active" transpiler, no fake-sync
-// trick. Separately, `precompileWithEsbuild(scriptCode)` is an explicit
-// async function that runs the *real* esbuild transform, recompiles the
-// script, and overwrites the existing `compiledModuleCache` entry for
-// that exact source string in place. Callers that want the better
-// transpiler's output (fewer edge-case bugs than the regex version, see
-// module docstring below) can call this after esbuild is ready; nothing
-// calls it automatically, so it never blocks or races the sync path.
+// trick. Separately, `precompileWithBundler(scriptCode, dirHandle)` is an
+// explicit async function that runs the *real* esbuild bundler for
+// scripts containing `import` statements (resolving npm packages once
+// via esm.sh + persistent cache, local scripts/ files, and React shims),
+// then overwrites the existing `compiledModuleCache` entry for that
+// exact source string in place. Nothing on the render path awaits it, so
+// it never blocks or races the sync path; scripts without imports never
+// touch it.
  
 /**
  * Rewrites an esbuild ESM transform's export syntax into the
@@ -72,52 +85,225 @@ let esbuildReady = false;
 /** Resolves once `esbuild.initialize()` finishes (success or failure). */
 const esbuildInitPromise = (async () => {
   try {
-    await esbuild.initialize({
-      wasmURL: '/esbuild.wasm',
-      worker: false,
-    });
+    // `wasmURL` is a browser-only option (the Node build of esbuild-wasm
+    // loads its own wasm binary); the app serves the binary from /esbuild.wasm
+    // (copied there by scripts/copy-esbuild-wasm.mjs on install).
+    const initOpts =
+      typeof window !== 'undefined'
+        ? { wasmURL: '/esbuild.wasm', worker: false }
+        : { worker: false };
+    await esbuild.initialize(initOpts);
     esbuildReady = true;
   } catch (err) {
     console.warn('esbuild-wasm init failed, staying on regex transpiler:', err);
   }
 })();
- 
+
+// ─── real `import` support (the async/sync split) ────────────────────────
+//
+// compileScriptModule is called synchronously from React's useMemo and the
+// export loop, so it can NEVER await a bundle. Real imports are therefore
+// compiled by `precompileWithBundler` — an explicit async path that runs
+// esbuild's build() (real module-graph resolution: npm packages via
+// packageResolver, local files via the File System Access API), then
+// overwrites compiledModuleCache for that exact script string. The sync
+// path treats any script whose code contains an `import` statement as
+// "pending" until that async bundle lands, instead of feeding it to the
+// regex transpiler (which would silently delete the import and leave the
+// script referencing undefined names). Scripts with NO imports never touch
+// any of this — they compile through the regex path exactly as before.
+
 /**
- * Async, esbuild-backed alternative to the regex transpiler for a single
- * script. Waits for esbuild init if it hasn't finished yet, transforms
- * `scriptCode` (JSX + TS type stripping via esbuild's `tsx` loader),
- * recompiles the resulting module the same way `compileScriptModule`
- * does, and — on success — overwrites `compiledModuleCache`'s entry for
- * this exact `scriptCode` string so the *next* synchronous call to
- * `compileScriptModule(scriptCode)` picks up the better output for free.
+ * All external specifiers this script statically imports, as strings
+ * ('three', './helpers.js', ...). Used both to decide whether the sync
+ * path must wait for the bundler, and by tests. Not a real parse — esbuild
+ * is the source of truth for what actually resolves; this is just the
+ * cheap gate that routes import-containing scripts away from the regex
+ * transpiler.
  *
- * Safe to call speculatively (e.g. right after a script is saved) since
- * it never blocks the render path and silently no-ops on failure,
- * leaving the existing regex-compiled cache entry in place.
+ * Implemented as a tiny scanner (not regex over the raw text) so comments
+ * and string literals can NEVER fake an import: it walks the code keeping
+ * track of '//' / '/* *\/' comments and ' " ` string state, and only
+ * captures a `from 'x'` / `import 'x'` specifier when it appears outside
+ * them. (A regex pass has to strip strings to avoid false positives, but
+ * stripping strings also destroys the very quotes the specifiers live in —
+ * the first version of this function made that exact mistake.)
  */
-export async function precompileWithEsbuild(scriptCode) {
+export function extractImportSpecifiers(code) {
+  if (!code) return [];
+  const specs = [];
+  const n = code.length;
+
+  let i = 0;
+  let quote = null; // ' " or ` when inside a string literal
+  let lineComment = false;
+  let blockComment = false;
+  let sawImportKeyword = false; // last keyword was `import` (or `export`)
+  let expectingFrom = false; // `from` seen after import/export — next quote is the specifier
+
+  const isWordChar = (ch) => /[A-Za-z0-9_$]/.test(ch);
+  const isIdentStart = (ch) => /[A-Za-z_$]/.test(ch);
+
+  while (i < n) {
+    const ch = code[i];
+    const next = code[i + 1];
+
+    if (lineComment) {
+      if (ch === '\n' || ch === '\r') lineComment = false;
+      i++;
+      continue;
+    }
+    if (blockComment) {
+      if (ch === '*' && next === '/') blockComment = false;
+      i++;
+      continue;
+    }
+    if (quote) {
+      if (ch === '\\') {
+        i += 2;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      i++;
+      continue;
+    }
+    if (ch === '/' && next === '/') {
+      lineComment = true;
+      i += 2;
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      blockComment = true;
+      i += 2;
+      continue;
+    }
+
+    // The specifier quote: either right after `from` or immediately after
+    // `import` (side-effect import: `import 'x'`). MUST run before the
+    // generic string-start check below, or the opening quote gets consumed
+    // as a string start and the specifier is never captured.
+    if ((expectingFrom || sawImportKeyword) && (ch === '"' || ch === "'")) {
+      const q = ch;
+      let j = i + 1;
+      while (j < n && code[j] !== q) j++;
+      const spec = code.slice(i + 1, j);
+      if (spec && !specs.includes(spec)) specs.push(spec);
+      expectingFrom = false;
+      sawImportKeyword = false;
+      i = j + 1;
+      continue;
+    }
+
+    if (ch === '"' || ch === "'" || ch === '`') {
+      quote = ch;
+      i++;
+      continue;
+    }
+
+    if (isIdentStart(ch)) {
+      let j = i;
+      while (j < n && isWordChar(code[j])) j++;
+      const word = code.slice(i, j);
+      if (word === 'import' || word === 'export') {
+        sawImportKeyword = true;
+        expectingFrom = false;
+      } else if (sawImportKeyword && word === 'from') {
+        expectingFrom = true;
+      }
+      // Any other identifier between import/export and the specifier
+      // (module name, `type`, `default`, `{`, ...) — for `import 'x'`
+      // side-effect imports the quote comes with NO intervening word, so
+      // other words only matter for the `from` state handled above.
+      i = j;
+      continue;
+    }
+
+    if (ch === ';' || ch === '\n') {
+      sawImportKeyword = false;
+      expectingFrom = false;
+    }
+    i++;
+  }
+
+  return specs;
+}
+
+/** True if the script contains any static import statement. */
+export function hasImportStatements(code) {
+  return extractImportSpecifiers(code).length > 0;
+}
+
+/** Tells the Inspector whether a script is waiting on its first bundle. */
+export function isScriptBundlePending(scriptCode) {
+  return !!scriptCode && pendingBundleCache.has(scriptCode);
+}
+
+function formatBundleError(err) {
+  const esbuildError = err?.errors?.[0];
+  if (esbuildError?.text) {
+    const loc = esbuildError.location
+      ? ` (line ${esbuildError.location.line}, column ${esbuildError.location.column})`
+      : '';
+    return `${esbuildError.text}${loc}`;
+  }
+  return err?.message || String(err);
+}
+
+/** Broadcast that some script finished bundling, so React re-renders. */
+function notifyScriptsRecompiled() {
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new CustomEvent('blahblah:scripts-recompiled'));
+  }
+}
+
+/**
+ * Async, esbuild-bundled compile path for scripts that contain real
+ * `import` statements. Resolves the full module graph (npm packages via
+ * esm.sh once-then-cached, local scripts/ files, React shims), bundles to
+ * one CJS string, evaluates it the same way compileScriptModule does, and
+ * on success overwrites compiledModuleCache for this exact script string
+ * so the next synchronous compileScriptModule call picks it up.
+ *
+ * On failure it records a real error in lastErrorCache (shown as the red
+ * badge) and leaves any previously-compiled entry untouched. Safe to call
+ * speculatively — it never blocks the render path.
+ *
+ * @param {string} scriptCode
+ * @param {*} projectDirHandle File System Access handle for the project
+ *   folder (scripts/ is resolved from it). May be null/undefined — the
+ *   bundle will then fail on relative imports but still resolve packages.
+ */
+export async function precompileWithBundler(scriptCode, projectDirHandle) {
   if (!scriptCode) return;
+  if (!hasImportStatements(scriptCode)) return; // regex path handles these
+
   await esbuildInitPromise;
   if (!esbuildReady) return;
- 
+
   try {
-    const result = await esbuild.transform(scriptCode, {
-      loader: 'tsx',
-      jsx: 'automatic',
-      jsxImportSource: 'react',
-      target: 'es2020',
-      format: 'esm',
-    });
-    const transpiled = toCommonJsExports(result.code);
-    const exportedResult = runCompiledModule(transpiled);
+    const bundled = await bundleScript(scriptCode, projectDirHandle);
+    const exportedResult = runCompiledModule(toCommonJsExports(bundled));
     lastErrorCache.delete(scriptCode);
+    pendingBundleCache.delete(scriptCode);
     compiledModuleCache.set(scriptCode, exportedResult);
+    notifyScriptsRecompiled();
   } catch (err) {
-    // esbuild choked on this script (or it recompiled to something that
-    // throws at module-eval time) — leave whatever is already cached
-    // (regex-transpiled or a previous good esbuild result) untouched.
-    console.warn('esbuild precompile failed, keeping existing cached module:', err);
+    console.warn('Script bundling failed:', err);
+    pendingBundleCache.delete(scriptCode);
+    lastErrorCache.set(scriptCode, formatBundleError(err));
   }
+}
+
+/**
+ * Kick off background bundling for every script that needs it (project
+ * load, hot-reload poll, before export). Skips import-free scripts in
+ * O(1); never rejects.
+ */
+export async function precompileAllProjectScripts(scripts, projectDirHandle) {
+  if (!scripts || scripts.length === 0) return;
+  await Promise.allSettled(
+    scripts.map((s) => (s?.code ? precompileWithBundler(s.code, projectDirHandle) : Promise.resolve()))
+  );
 }
  
 /**
@@ -502,6 +688,8 @@ function runCompiledModule(transpiled) {
  
   const compiledFn = new Function(
     'React',
+    'ReactDOM',
+    'ReactDOMClient',
     'MotionTweenContext',
     'Easing',
     'Ease',
@@ -514,6 +702,8 @@ function runCompiledModule(transpiled) {
  
   return compiledFn(
     React,
+    ReactDOM,
+    ReactDOMClient,
     MotionTweenContext,
     Easing,
     Ease,
@@ -526,16 +716,32 @@ function runCompiledModule(transpiled) {
  
 /**
  * Compiles a JS/JSX script into an executable module/class. Always
- * synchronous — always uses the regex transpiler (`transpileJsxToJs`),
- * never esbuild — because this is called from inside React's useMemo
- * (EntityRenderer) and the export render loop where an async transform
- * is not an option. See `precompileWithEsbuild` above for the
- * background upgrade path.
+ * synchronous — never awaits anything — because this is called from
+ * inside React's useMemo (EntityRenderer) and the export render loop.
+ *
+ * Two paths:
+ *  - Scripts WITHOUT import statements compile via the regex transpiler
+ *    (`transpileJsxToJs`), exactly as always.
+ *  - Scripts WITH import statements return null and are marked "pending"
+ *    until `precompileWithBundler` (the async esbuild bundle, triggered on
+ *    save / project load / hot-reload) lands and fills the cache — the
+ *    regex transpiler would silently delete those imports and leave the
+ *    script referencing undefined names, so it must not run on them.
  */
 export function compileScriptModule(scriptCode) {
   if (!scriptCode) return null;
   if (compiledModuleCache.has(scriptCode)) {
     return compiledModuleCache.get(scriptCode);
+  }
+ 
+  if (hasImportStatements(scriptCode)) {
+    // Mark pending only while there's no recorded error yet — a failed
+    // bundle records a real error (red badge) and must NOT keep showing
+    // the "Resolving imports…" state on every subsequent sync call.
+    if (!lastErrorCache.has(scriptCode)) {
+      pendingBundleCache.add(scriptCode);
+    }
+    return null;
   }
  
   try {

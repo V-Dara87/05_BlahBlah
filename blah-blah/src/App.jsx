@@ -31,6 +31,7 @@ import {
 } from './services/projectFileSystem';
 import { recordProjectCreated, recordProjectOpened } from './services/recentProjects';
 import { getFieldKeyframes, setKeyframeCurve, getCurveSegment } from './engine/keyframes';
+import { precompileWithBundler, precompileAllProjectScripts } from './engine/scriptRunner';
 import './App.css';
  
 export function App() {
@@ -658,6 +659,11 @@ export function App() {
     if (projectFolderHandle) {
       await writeScriptFile(projectFolderHandle, newScript.name, newScript.code).catch(() => {});
     }
+    // Real-import support: kick off the async bundle right away so the
+    // script is compiled (or shows its error) by the time it's scrubbed to.
+    if (newScript.code) {
+      precompileWithBundler(newScript.code, projectFolderHandle).catch(() => {});
+    }
   };
  
   const handleSaveScript = async (scriptId, updates) => {
@@ -667,6 +673,7 @@ export function App() {
       const code = updates.code !== undefined ? updates.code : scriptObj.code;
       const name = updates.name || scriptObj.name;
       await writeScriptFile(projectFolderHandle, name, code).catch(() => {});
+      precompileWithBundler(code, projectFolderHandle).catch(() => {});
     }
   };
  
@@ -763,6 +770,11 @@ export function App() {
     setSelectedEntityId(null);
     setSaveStatus('saved');
     setScreen('editor');
+
+    // Real-import support: pre-bundle every script with import statements
+    // up front, so by the time the user scrubs, the sync compile path's
+    // cache is already warm (scripts without imports no-op instantly).
+    precompileAllProjectScripts(loaded.scripts, dirHandle).catch(() => {});
  
     recordProjectOpened(dirHandle, loaded.projectName, null).catch((err) => {
       console.warn('Could not record project in recent list:', err);
@@ -869,6 +881,9 @@ export function App() {
         const updatedScripts = await checkScriptsForChanges(projectFolderHandle, scriptsRef.current);
         if (updatedScripts) {
           setScripts(updatedScripts);
+          // Real-import support: an external edit may have added `import`
+          // statements — bundle the changed scripts in the background.
+          precompileAllProjectScripts(updatedScripts, projectFolderHandle).catch(() => {});
         }
       } finally {
         isPollingScriptsRef.current = false;
@@ -1030,6 +1045,7 @@ export function App() {
           entities, tracks, scripts, prefabs, mediaAssets,
           calculatedDuration,
           selectedEntityId, pixelsPerSecond, snappingEnabled, resolution,
+          fps: projectState.fps,
           autoKeyEnabled,
           // setters
           setSelectedEntityId,
@@ -1092,6 +1108,11 @@ export function App() {
         totalDuration={calculatedDuration}
         resolution={resolution}
         exportRange={exportRange}
+        onBeforeExport={async () => {
+          if (projectFolderHandle) {
+            await precompileAllProjectScripts(scripts, projectFolderHandle);
+          }
+        }}
       />
  
       <SettingsModal

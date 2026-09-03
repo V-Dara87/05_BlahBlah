@@ -74,6 +74,11 @@ export function ExportModal({
   totalDuration,
   resolution,
   exportRange,
+  // Real-import support: awaited once at export start so every script's
+  // async bundle has landed before the (synchronous) frame loop reads the
+  // compile cache — a script using `import` would otherwise render in its
+  // untransformed/pending state for the whole export.
+  onBeforeExport,
 }) {
   // Default to the project's own resolution whenever it has one — a
   // portrait (or any non-1080p-landscape) project shouldn't silently open
@@ -148,6 +153,14 @@ export function ExportModal({
  
     const canvasContainers = createCanvasContainerPool();
     const videoFrameProvider = createVideoFrameProvider();
+
+    // Ensure any import-using scripts are bundled before the frame loop
+    // starts (no-op when everything is already compiled or import-free).
+    try {
+      await onBeforeExport?.();
+    } catch (err) {
+      console.warn('Export: pre-compile pass failed, exporting with whatever is already compiled:', err);
+    }
  
     // Offscreen render target — never attached to the page. The small
     // <canvas> in the "rendering" UI state below is a separate, cheap
