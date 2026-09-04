@@ -272,6 +272,15 @@ export function ExportModal({
         // and await the browser actually landing the seek, before drawing
         // anything — this is what makes the frame deterministic instead of
         // "whatever happened to be decoded" at the moment we got to it.
+        //
+        // The seek target mirrors the live preview's math exactly: media
+        // content time = mediaOffset + (t − clipStart) × (VideoRenderer.speed
+        // × Transform.speed). Transform.speed here comes from the
+        // keyframe/motion-script-resolved transform for THIS frame, so
+        // sped-up (or keyframe-animated) clips export frame-accurately the
+        // same way they preview. (This also folds in mediaOffset/comp.speed,
+        // which the old seek ignored — preview always applied them, so this
+        // closes a preview-vs-export drift rather than changing defaults.)
         const activeAtFrame = computeActiveEntitiesAtTime({
           entities: clips,
           tracks,
@@ -280,14 +289,16 @@ export function ExportModal({
           fps: targetFps,
         });
         await Promise.all(
-          activeAtFrame.map(({ entity }) => {
+          activeAtFrame.map(({ entity, transform }) => {
             const isVideo = entity.type === 'video' || entity.components.some((c) => c.type === 'VideoRenderer');
             if (!isVideo) return Promise.resolve();
             const videoComp = entity.components.find((c) => c.type === 'VideoRenderer') || { src: entity.src };
             const src = videoComp.src || entity.src;
             if (!src) return Promise.resolve();
-            const localTime = time - entity.startTime;
-            return videoFrameProvider.seekTo(entity.id, src, videoComp, localTime);
+            const effRate = (videoComp.speed || 1) * (transform?.speed ?? 1);
+            const localTime =
+              (time - entity.startTime) * effRate + (videoComp.mediaOffset || 0);
+            return videoFrameProvider.seekTo(entity.id, src, videoComp, localTime, effRate);
           })
         );
  

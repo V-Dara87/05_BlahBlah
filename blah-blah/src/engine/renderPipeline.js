@@ -21,6 +21,14 @@
  * detectScriptKind in scriptRunner.js) — 'motion' scripts mutate the
  * Transform here (this module), while 'react'/'canvas' scripts are visual
  * outputs rendered by the caller (EntityRenderer.jsx / exportRunner.js).
+ *
+ * Clip speed: Transform.speed (default 1, see TRANSFORM_FIELD_GROUPS in
+ * InspectorField.jsx) is a clip-level rate multiplier. Motion-kind scripts
+ * receive localTime × speed by default so a sped-up clip animates its
+ * scripts faster too; a script can opt out with ignoreParentSpeed: true on
+ * its ScriptComponent (pinned to raw timeline time). Media elements consume
+ * the same speed as element.playbackRate in EntityRenderer.jsx /
+ * exportRunner.js.
  */
 import { executeScriptComponent, detectScriptKind } from './scriptRunner.js';
 import { resolveKeyframedComponents } from './keyframes.js';
@@ -70,6 +78,17 @@ export function computeActiveEntitiesAtTime({ entities, tracks, scripts = [], ti
       opacity: 1,
     };
 
+    // Clip-level rate (Transform.speed, default 1). Motion-kind scripts run
+    // at localTime × speed by default, so a 2× clip makes its scripts play
+    // through their animation twice as fast too — one "clip speed" knob
+    // for both media and script motion. Captured ONCE here, from the
+    // resolved (keyframe-applied) Transform, before any script runs; a
+    // keyframed speed therefore animates this value, while a motion script
+    // itself editing `.speed` on the transform only affects subsequent
+    // sibling scripts — documented, not chased.
+    const transformSpeed =
+      resolvedEntity.components.find((c) => c.type === 'Transform')?.speed ?? 1;
+
     // Every attached script component runs per its detected kind. Only
     // 'motion' scripts affect the Transform here; multiple motion scripts
     // chain sequentially (each starts from the previous one's result),
@@ -84,14 +103,19 @@ export function computeActiveEntitiesAtTime({ entities, tracks, scripts = [], ti
       const scriptDef = scripts.find((s) => s.id === scriptComp.scriptId);
       if (!scriptDef || !scriptDef.code) continue;
       if (detectScriptKind(scriptDef.code) !== 'motion') continue;
+      // Per-script opt-out: ignoreParentSpeed keeps this script pinned to
+      // raw timeline time while the clip (media + other scripts) runs at
+      // Transform.speed. Absent = false, so the default follows speed.
+      const scriptLocalTime =
+        scriptComp.ignoreParentSpeed === true ? localTime : localTime * transformSpeed;
       try {
         currentTransform = executeScriptComponent({
           scriptCode: scriptDef.code,
           transform: currentTransform,
-          localTime,
+          localTime: scriptLocalTime,
           clipDuration: entity.duration,
           publicValues: scriptComp.props || {},
-          frame: Math.round(localTime * fps),
+          frame: Math.round(scriptLocalTime * fps),
           fps,
         });
       } catch (err) {

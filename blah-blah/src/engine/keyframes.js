@@ -24,8 +24,8 @@
  * of the entity — consistent with the script-driven render contract and
  * the export pipeline's determinism requirement (see roadmap #11).
  */
-import { Easing } from './motionTween';
-import { isScriptComponent } from './ecs';
+import { Easing } from './motionTween.js';
+import { isScriptComponent } from './ecs.js';
  
 export const trackKeyFor = (component) =>
   isScriptComponent(component)

@@ -64,3 +64,16 @@ export const RESOLUTION_PRESETS = [
  
 export const DEFAULT_RESOLUTION = { width: 1920, height: 1080 };
  
+/**
+ * Project-file schema version, stamped at the TOP LEVEL of every
+ * project.json (see projectFileSystem.js). Bump whenever the saved project
+ * structure changes in a way an older build can't safely read.
+ *
+ * Version 1 is the first stamped version: everything saved before the
+ * script type/extension unification (ReactRenderer / CanvasRenderer /
+ * MonoBehaviour components, non-.jsx script files) is treated as 0 and
+ * migrated in place on load by migrateEntities (see engine/ecs.js).
+ * Projects saved by this build always carry schemaVersion: 1.
+ */
+export const CURRENT_SCHEMA_VERSION = 1;
+ 

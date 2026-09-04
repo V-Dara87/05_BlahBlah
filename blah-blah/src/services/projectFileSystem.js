@@ -4,11 +4,18 @@
  * auto-saving, and hot-reloading from external code editors (VS Code, Cursor, etc.).
  */
  
-import { DEFAULT_RESOLUTION } from '../types';
-// Old ReactRenderer/CanvasRenderer/MonoBehaviour component migration — a
-// pure function in ecs.js (Node-importable + unit-tested), not here,
-// because this module's `?raw` SDK import below breaks plain-Node tests.
-import { migrateEntities } from '../engine/ecs';
+import { CURRENT_SCHEMA_VERSION, DEFAULT_RESOLUTION } from '../types';
+// Schema gate + migrations — pure functions in ecs.js (Node-importable +
+// unit-tested), not here, because this module's `?raw` SDK import below
+// breaks plain-Node tests. migrateEntities is the schemaVersion 0 → 1
+// migration (old component types / keyframe tracks); migrateProjectSchema
+// is the placeholder chain for future versions.
+import {
+  migrateEntities,
+  migrateProjectSchema,
+  readProjectSchemaVersion,
+  warnIfSchemaVersionTooNew,
+} from '../engine/ecs';
 // Raw text of the SDK's type declarations, bundled at build time via
 // Vite's `?raw` import so the copy written into new projects (see
 // `createNewProjectFolder` below) always matches whatever is actually
@@ -186,6 +193,7 @@ export async function createNewProjectFolder(parentDirHandle, projectName, defau
   const initialProjectJson = {
     name: safeName,
     version: '1.0',
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     createdAt: Date.now(),
     lastModified: Date.now(),
     resolution: projectResolution,
@@ -251,18 +259,26 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
     const projectJsonFile = await projectJsonHandle.getFile();
     const projectJsonText = await projectJsonFile.text();
     const parsed = JSON.parse(projectJsonText);
+    // Schema gate — a project from a NEWER build warns (never blocks the
+    // load); a missing schemaVersion reads as 0, which is exactly the
+    // pre-unification format migrateEntities below handles (the 0 → 1
+    // migration). migrateProjectSchema is the future structural-migration
+    // chain (currently a pass-through).
+    const fromVersion = readProjectSchemaVersion(parsed);
+    warnIfSchemaVersionTooNew(parsed);
+    const schemaProject = migrateProjectSchema(parsed, fromVersion, CURRENT_SCHEMA_VERSION);
     projectMeta = {
-      name: parsed.name || dirHandle.name,
-      tracks: parsed.tracks && parsed.tracks.length > 0 ? parsed.tracks : fallbackTracks,
-      entities: migrateEntities(Array.isArray(parsed.entities) ? parsed.entities : []),
+      name: schemaProject.name || dirHandle.name,
+      tracks: schemaProject.tracks && schemaProject.tracks.length > 0 ? schemaProject.tracks : fallbackTracks,
+      entities: migrateEntities(Array.isArray(schemaProject.entities) ? schemaProject.entities : []),
       // Older projects saved before resolution existed (or a hand-edited
       // project.json missing/mangling it) fall back to the default rather
       // than failing to load.
-      resolution: sanitizeResolution(parsed.resolution),
+      resolution: sanitizeResolution(schemaProject.resolution),
     };
-    if (Array.isArray(parsed.scriptIndex)) {
+    if (Array.isArray(schemaProject.scriptIndex)) {
       scriptIndex = new Map(
-        parsed.scriptIndex
+        schemaProject.scriptIndex
           .filter((entry) => entry && entry.name && entry.id)
           .map((entry) => [entry.name, entry])
       );
@@ -394,6 +410,7 @@ export async function saveProjectToDirectory(dirHandle, projectState) {
   const projectJson = {
     name: projectState.projectName,
     version: '1.0',
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     lastModified: Date.now(),
     resolution: sanitizeResolution(projectState.resolution),
     tracks: projectState.tracks,

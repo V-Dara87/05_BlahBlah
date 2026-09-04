@@ -241,9 +241,15 @@ export const UnityInspector = memo(function UnityInspector({
   };
  
   const updateComponent = (compType, updates) => {
-    const updatedComponents = selectedEntity.components.map(c =>
-      c.type === compType ? { ...c, ...updates } : c
-    );
+    // Create the component if the entity doesn't have one yet (legacy
+    // entities — e.g. a schema-0 `type: 'video'` clip with no
+    // VideoRenderer component — would otherwise swallow the update: the
+    // map finds no match and the volume change goes nowhere). Newer
+    // entities just get the in-place merge as before.
+    const exists = selectedEntity.components.some(c => c.type === compType);
+    const updatedComponents = exists
+      ? selectedEntity.components.map(c => c.type === compType ? { ...c, ...updates } : c)
+      : [...selectedEntity.components, { type: compType, ...updates }];
     onUpdateEntity(selectedEntity.id, { components: updatedComponents });
   };
  
@@ -627,12 +633,20 @@ export const UnityInspector = memo(function UnityInspector({
               <div className="inspector-card-body">
                 <div className="inspector-row">
                   <span className="row-label">Volume</span>
+                  {/* Up to 4.0 — volumes above 1 boost (clipping) via the
+                      Web Audio gain chain both in preview (EntityRenderer)
+                      and export mixdown (exportRunner.mixdownAudio); see
+                      utils/mediaAudio.js. Values ≤ 1 sound exactly like the
+                      old element.volume path. Defaults differ by type on
+                      purpose: a video clip is silent by default (its audio
+                      lives on the linked AudioSource entity — same default
+                      the export mixdown uses), an audio clip is audible. */}
                   <DragNumber
                     label="vol"
-                    value={parseFloat(((videoComp || audioComp)?.volume ?? 1).toFixed(2))}
+                    value={parseFloat((((videoComp || audioComp)?.volume ?? (videoComp ? 0 : 1)).toFixed(2)))}
                     step={0.01}
                     min={0}
-                    max={2}
+                    max={4}
                     onChange={(v) => {
                       const compType = videoComp ? 'VideoRenderer' : 'AudioSource';
                       updateComponent(compType, { volume: v });
@@ -706,6 +720,26 @@ export const UnityInspector = memo(function UnityInspector({
                       onChange={(e) => updateScriptComp(scriptComp.scriptId, { enabled: e.target.checked })}
                     />
                   </div>
+
+                  {/* Motion-kind scripts follow the Transform's Speed
+                      (clip-level rate) by default. ignoreParentSpeed is the
+                      per-script opt-out: when checked, this script's
+                      localTime stays on raw timeline time while media and
+                      sibling scripts run sped up. A ScriptComponent-level
+                      field (like Enabled), NOT a script prop — saved with
+                      the component, no migration needed (absent = false).
+                      Only meaningful for motion kind; react/canvas kinds are
+                      visual outputs driven by the caller and unaffected. */}
+                  {kind === 'motion' && (
+                    <div className="inspector-row">
+                      <span className="row-label">Ignore Parent Speed</span>
+                      <input
+                        type="checkbox"
+                        checked={scriptComp.ignoreParentSpeed === true}
+                        onChange={(e) => updateScriptComp(scriptComp.scriptId, { ignoreParentSpeed: e.target.checked })}
+                      />
+                    </div>
+                  )}
 
                   <InspectorFieldList
                     fields={fields}

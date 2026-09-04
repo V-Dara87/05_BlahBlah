@@ -2,6 +2,59 @@
  * Entity Component System (ECS) & Prefab models for blahblah
  * Modern JavaScript & React Component Architecture
  */
+
+import { CURRENT_SCHEMA_VERSION } from '../types.js';
+
+// ─── Project schema versioning ───────────────────────────────────────────────
+//
+// project.json carries a top-level `schemaVersion` (see CURRENT_SCHEMA_VERSION
+// in types.js). These helpers live here (not in projectFileSystem.js) so the
+// load-time version gate is a pure, Node-importable function the same way
+// migrateEntities is — projectFileSystem.js can't be imported by the Node
+// test harness because of its Vite `?raw` SDK import.
+
+/**
+ * Schema-level migration placeholder. project.json loads run this AFTER the
+ * version gate and BEFORE per-entity component migration, so future
+ * structure-level migrations (tracks, resolution, scriptIndex, ...) chain
+ * here stepwise from `fromVersion` to `toVersion`. There are none yet:
+ * the only real migration so far — the script type/extension unification —
+ * happens per-entity in migrateEntities below, which is exactly the
+ * schemaVersion 0 → 1 change.
+ */
+export function migrateProjectSchema(project, fromVersion, toVersion) {
+  void fromVersion;
+  void toVersion;
+  return project;
+}
+
+/**
+ * A saved project's schemaVersion, or 0 when it has none (projects saved
+ * before schemaVersion was introduced — the 0 → 1 boundary). Non-numeric
+ * values (e.g. a hand-typed string in a VS Code edit) also read as 0.
+ */
+export function readProjectSchemaVersion(project) {
+  return Number.isFinite(project?.schemaVersion) ? project.schemaVersion : 0;
+}
+
+/**
+ * Version gate: warn (without blocking the load) when a project was saved
+ * by a NEWER build than this one understands. Returns true when it warned.
+ * Projects newer than CURRENT_SCHEMA_VERSION usually still open — fields
+ * the newer build added are simply unknown to this one and are left
+ * untouched on the next save.
+ */
+export function warnIfSchemaVersionTooNew(project) {
+  const version = readProjectSchemaVersion(project);
+  if (version > CURRENT_SCHEMA_VERSION) {
+    console.warn(
+      `project.json schemaVersion ${version} is newer than this build of blahblah supports (${CURRENT_SCHEMA_VERSION}). ` +
+        'This project was created with a newer version of blahblah — some features may not work correctly.'
+    );
+    return true;
+  }
+  return false;
+}
  
 /**
  * P0 #1/#2 — Renderer component factory.
@@ -59,6 +112,12 @@ export const isScriptComponent = (c) =>
  * Pure function (no Vite/`?raw` or browser dependencies), so it lives
  * here — ecs.js is Node-importable and unit-tested — and is called by
  * projectFileSystem.js on every project load.
+ *
+ * This is the schemaVersion 0 → 1 migration: projects predating
+ * schemaVersion (treated as 0 by readProjectSchemaVersion) had these
+ * component types and keyframe track keys; version 1+ projects never
+ * contain them. Runs unconditionally on load because it is idempotent —
+ * version 1 data passes through unchanged.
  */
 export function migrateEntities(entities) {
   if (!Array.isArray(entities)) return entities || [];

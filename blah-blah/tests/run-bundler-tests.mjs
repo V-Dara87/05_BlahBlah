@@ -392,7 +392,13 @@ await test('precompileAllProjectScripts no-ops on import-free scripts', async ()
 
 // ─── 10. Old-project migration (ReactRenderer/CanvasRenderer/MonoBehaviour → ScriptComponent) ──
 
-const { migrateEntities } = await import('../src/engine/ecs.js');
+const {
+  migrateEntities,
+  migrateProjectSchema,
+  readProjectSchemaVersion,
+  warnIfSchemaVersionTooNew,
+} = await import('../src/engine/ecs.js');
+const { CURRENT_SCHEMA_VERSION } = await import('../src/types.js');
 
 // An old-format project entity mixing every pre-merge component type,
 // with keyframes stored under the old per-type track keys ('ReactRenderer',
@@ -474,6 +480,158 @@ await test('migrateEntities: prefab-style component lists migrate the same way',
 await test('migrateEntities: null/non-array input is safe', () => {
   assert.deepEqual(migrateEntities(null), []);
   assert.deepEqual(migrateEntities(undefined), []);
+});
+
+// ─── 11. project schemaVersion (0/1 boundary + future-version gate) ────────
+
+await test('schemaVersion helpers: missing reads as 0, current is 1', () => {
+  assert.equal(CURRENT_SCHEMA_VERSION, 1);
+  assert.equal(readProjectSchemaVersion({}), 0);
+  assert.equal(readProjectSchemaVersion({ schemaVersion: 1 }), 1);
+  assert.equal(readProjectSchemaVersion({ schemaVersion: '1' }), 0); // hand-typed junk → 0
+});
+
+await test('migrateProjectSchema placeholder passes the project through unchanged', () => {
+  const p = { name: 'x', entities: [1, 2] };
+  assert.equal(migrateProjectSchema(p, 0, CURRENT_SCHEMA_VERSION), p);
+});
+
+// A schemaVersion-less legacy project — exactly the loader's path
+// (projectFileSystem.js): read version (0) → warn gate (no-op at 0/1) →
+// migrateProjectSchema (pass-through) → migrateEntities (0 → 1 component
+// migration). projectFileSystem.js itself can't be imported in Node (its
+// `?raw` SDK import), so the chained pure steps are asserted here.
+await test('schemaVersion-less legacy project loads through the 0→1 path', () => {
+  const legacyProject = {
+    name: 'legacy',
+    tracks: [],
+    entities: [
+      {
+        id: 'go-1',
+        name: 'Old Clip',
+        components: [
+          { type: 'Transform', x: 0 },
+          { type: 'ReactRenderer', scriptId: 's1', scriptName: 'A.jsx', props: {} },
+        ],
+      },
+    ],
+  };
+  const fromVersion = readProjectSchemaVersion(legacyProject);
+  assert.equal(fromVersion, 0);
+  assert.equal(warnIfSchemaVersionTooNew(legacyProject), false);
+  const schemaMigrated = migrateProjectSchema(legacyProject, fromVersion, CURRENT_SCHEMA_VERSION);
+  const migrated = migrateEntities(schemaMigrated.entities);
+  assert.equal(migrated[0].components[1].type, 'ScriptComponent');
+  assert.equal(migrated[0].components[1].enabled, true);
+  assert.equal(migrated[0].components[0].type, 'Transform');
+});
+
+await test('schemaVersion 1 project passes the same chain unchanged', () => {
+  const v1 = {
+    schemaVersion: 1,
+    entities: [{ id: 'e', components: [{ type: 'Transform', x: 0 }] }],
+  };
+  assert.equal(readProjectSchemaVersion(v1), 1);
+  assert.equal(warnIfSchemaVersionTooNew(v1), false);
+  assert.deepEqual(migrateProjectSchema(v1, 1, CURRENT_SCHEMA_VERSION), v1);
+  assert.deepEqual(migrateEntities(v1.entities), v1.entities);
+});
+
+await test('newer schemaVersion warns but never blocks the load', () => {
+  const warnings = [];
+  const origWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.join(' '));
+  try {
+    const warned = warnIfSchemaVersionTooNew({ schemaVersion: 99, entities: [] });
+    assert.equal(warned, true);
+    assert.ok(
+      warnings.some((w) => /newer version of blahblah/i.test(w)),
+      `expected a newer-build warning, got: ${JSON.stringify(warnings)}`
+    );
+  } finally {
+    console.warn = origWarn;
+  }
+});
+
+// ─── 12. Transform.speed on motion scripts (follow + ignoreParentSpeed) ────
+
+const { computeActiveEntitiesAtTime } = await import('../src/engine/renderPipeline.js');
+
+// A motion script whose onUpdate writes transform.y = time * 100, so the
+// resolved y IS the localTime the script received × 100 — a direct probe
+// of the speed-scaling contract.
+const RAMP_CODE = `export default class RampY {
+  onUpdate({ transform, time }) {
+    transform.position.y = time * 100;
+  }
+}`;
+const RAMP_SCRIPTS = [{ id: 's-ramp', name: 'RampY.jsx', code: RAMP_CODE }];
+const RAMP_TRACKS = [
+  { id: 't1', name: 'Track 1', type: 'layer', muted: false, locked: false, visible: true, volume: 1.0 },
+];
+
+function rampEntity(transformExtra = {}, compExtra = {}, keyframes = undefined) {
+  return {
+    id: 'go-motion',
+    name: 'Motion Clip',
+    active: true,
+    trackId: 't1',
+    startTime: 0,
+    duration: 10,
+    type: 'shape',
+    keyframes,
+    components: [
+      { type: 'Transform', x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1, ...transformExtra },
+      { type: 'ScriptComponent', scriptId: 's-ramp', scriptName: 'RampY.jsx', enabled: true, props: {}, ...compExtra },
+    ],
+  };
+}
+
+const resolvedY = (entity, time = 1) =>
+  computeActiveEntitiesAtTime({ entities: [entity], tracks: RAMP_TRACKS, scripts: RAMP_SCRIPTS, time })[0]
+    .transform.y;
+
+await test('motion script localTime is unscaled when Transform has no speed (legacy default)', () => {
+  assert.equal(resolvedY(rampEntity({})), 100, 'speed absent → script sees raw timeline time');
+});
+
+await test('Transform.speed 2 doubles the motion script localTime', () => {
+  assert.equal(resolvedY(rampEntity({ speed: 2 })), 200);
+});
+
+await test('ignoreParentSpeed keeps a script on raw timeline time under speed 2', () => {
+  assert.equal(resolvedY(rampEntity({ speed: 2 }, { ignoreParentSpeed: true })), 100);
+});
+
+await test('ignoreParentSpeed absent (false/undefined) follows speed', () => {
+  assert.equal(resolvedY(rampEntity({ speed: 2 }, { ignoreParentSpeed: false })), 200);
+});
+
+// Keyframed speed resolves through the keyframe engine first, so the speed
+// curve itself can animate what time the script runs at (preview + video
+// export follow per-frame; the one-shot audio mixdown can't — documented in
+// exportRunner.js). Keyframes: speed 1 @0s → 4 @4s (linear); at t=2 the
+// resolved speed is 2.5 → script sees localTime 5 → y = 500.
+await test('keyframed Transform.speed animates the motion-script scale', () => {
+  const entity = rampEntity({}, {}, {
+    Transform: {
+      speed: [
+        { id: 'k0', time: 0, value: 1, easing: 'linear' },
+        { id: 'k4', time: 4, value: 4, easing: 'linear' },
+      ],
+    },
+  });
+  assert.equal(resolvedY(entity, 2), 500);
+});
+
+await test('returned localTime stays unscaled (react/canvas consumers unaffected)', () => {
+  const [item] = computeActiveEntitiesAtTime({
+    entities: [rampEntity({ speed: 2 })],
+    tracks: RAMP_TRACKS,
+    scripts: RAMP_SCRIPTS,
+    time: 1,
+  });
+  assert.equal(item.localTime, 1, 'callers render react/canvas at timeline time, not scaled');
 });
 
 // ─── Summary ─────────────────────────────────────────────────────────────────

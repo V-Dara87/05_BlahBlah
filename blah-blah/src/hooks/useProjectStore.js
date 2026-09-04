@@ -207,7 +207,7 @@ export function useProjectStore({
             {
               type: 'VideoRenderer',
               src: videoUrl,
-              volume: 1,
+              volume: 0, // mute — audio is handled by the linked audio entity
               speed: 1,
               mediaOffset: 0
             }

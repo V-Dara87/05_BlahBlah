@@ -16,6 +16,12 @@ import { getCompiledReactComponent, detectScriptKind } from '../engine/scriptRun
 import { updateCanvasComponent, unmountCanvasComponent, pruneCanvasComponents } from '../engine/canvasRunner';
 import { isScriptComponent } from '../engine/ecs';
 import { computeActiveEntitiesAtTime } from '../engine/renderPipeline';
+import {
+  setMediaElementVolume,
+  setMediaElementRate,
+  resumeAudioContext,
+  disconnectMediaGainChain,
+} from '../utils/mediaAudio';
 import { EntityErrorBoundary } from './EntityErrorBoundary';
  
 /**
@@ -195,24 +201,44 @@ export function EntityRenderer({
   );
  
   // Synchronize active Video playback & seeking smoothly
+  //
+  // Effective media rate = VideoRenderer.speed (content rate inside the
+  // clip) × Transform.speed (clip-level rate, the timeline-speed feature).
+  // The element's playbackRate is set to that product so media stays glued
+  // to its seek target instead of drifting (previously rate was always 1
+  // and speed≠1 clips lurched via periodic re-seeks); with the defaults
+  // (both 1) this is a pure no-op vs. the old behavior.
+  //
+  // Volume is applied through a Web Audio GainNode chain (see
+  // utils/mediaAudio.js) so it can exceed 1.0 — element.volume is clamped
+  // to [0,1] by the platform.
   useEffect(() => {
     const isStateTransition = wasPlayingRef.current !== isPlaying;
     wasPlayingRef.current = isPlaying;
  
-    activeVideoItems.forEach(({ entity }) => {
+    activeVideoItems.forEach(({ entity, transform }) => {
       const videoComp = entity.components.find((c) => c.type === 'VideoRenderer') || { src: entity.src };
       const vidSrc = videoComp.src || entity.src;
       if (!vidSrc) return;
  
       const vidEl = videoRefs.current[entity.id];
       if (vidEl) {
-        const speed = videoComp.speed || 1;
+        const speed = (videoComp.speed || 1) * (transform?.speed ?? 1);
         const offset = videoComp.mediaOffset || 0;
         const localTime = (currentTime - entity.startTime) * speed + offset;
  
-        vidEl.volume = videoComp.volume ?? 1;
+        // Default video volume to 0 (silent) — a video clip's audio is
+        // owned by its linked AudioSource entity (handleAddMediaToTimeline
+        // mutes the video and pairs it with one). This matches the export
+        // mixdown (exportRunner.js collectAudioSources defaults
+        // VideoRenderer volume to 0) so a video without an explicit volume
+        // never plays its own audio track in preview, and a volume slider
+        // on the video clip never silently does nothing.
+        setMediaElementVolume(vidEl, videoComp.volume ?? 0);
+        setMediaElementRate(vidEl, speed);
  
         if (isPlaying) {
+          resumeAudioContext();
           if (vidEl.paused || isStateTransition || Math.abs(vidEl.currentTime - localTime) > 0.6) {
             vidEl.currentTime = Math.max(0, localTime);
             vidEl.play().catch(() => {});
@@ -226,18 +252,25 @@ export function EntityRenderer({
       }
     });
  
-    // Pause any removed videos
+    // Pause any removed videos and tear down their gain chains, so a video
+    // clip leaving the active window doesn't keep a routed (silent but
+    // graph-referenced) element around until the next re-activation.
     Object.keys(videoRefs.current).forEach((id) => {
       if (!activeVideoItems.some(({ entity }) => entity.id === id)) {
         const el = videoRefs.current[id];
-        if (el && !el.paused) el.pause();
+        if (el) {
+          if (!el.paused) el.pause();
+          disconnectMediaGainChain(el);
+        }
       }
     });
   }, [currentTime, isPlaying, activeVideoItems]);
  
-  // Synchronize Audio smoothly
+  // Synchronize Audio smoothly — same volume-through-GainNode and
+  // clip-rate (AudioSource.speed × Transform.speed) treatment as video
+  // above; see the video effect's comment for the rationale.
   useEffect(() => {
-    computedEntities.forEach(({ entity }) => {
+    computedEntities.forEach(({ entity, transform }) => {
       const audioComp =
         entity.components.find((c) => c.type === 'AudioSource') ||
         (entity.type === 'audio' ? { src: entity.src } : null);
@@ -248,12 +281,14 @@ export function EntityRenderer({
           audioRefs.current[entity.id] = aud;
         }
  
-        const speed = audioComp.speed || 1;
+        const speed = (audioComp.speed || 1) * (transform?.speed ?? 1);
         const offset = audioComp.mediaOffset || 0;
         const localTime = (currentTime - entity.startTime) * speed + offset;
-        aud.volume = audioComp.volume ?? 1;
+        setMediaElementVolume(aud, audioComp.volume ?? 1);
+        setMediaElementRate(aud, speed);
  
         if (isPlaying) {
+          resumeAudioContext();
           if (aud.paused || Math.abs(aud.currentTime - localTime) > 0.6) {
             aud.currentTime = Math.max(0, localTime);
             aud.play().catch(() => {});
@@ -506,6 +541,12 @@ export function EntityRenderer({
             const isSelected = entity.id === selectedEntityId;
             const videoComp = entity.components.find((c) => c.type === 'VideoRenderer') || { src: entity.src };
             const vidSrc = videoComp.src || entity.src;
+            // Mount-time seek target: raw (un-keyframed) clip rate, since
+            // this runs before the sync effect resolves keyframes at the
+            // current time — the per-tick effect corrects any difference.
+            const rawClipSpeed =
+              (videoComp.speed || 1) *
+              ((entity.components || []).find((c) => c.type === 'Transform')?.speed ?? 1);
  
             return (
               <div
@@ -535,7 +576,7 @@ export function EntityRenderer({
                         videoRefs.current[entity.id] = el;
                         if (!isPlaying) {
                           const localTime =
-                            (currentTime - entity.startTime) * (videoComp.speed || 1) + (videoComp.mediaOffset || 0);
+                            (currentTime - entity.startTime) * rawClipSpeed + (videoComp.mediaOffset || 0);
                           if (Math.abs(el.currentTime - localTime) > 0.05) {
                             el.currentTime = Math.max(0, localTime);
                           }
@@ -547,7 +588,7 @@ export function EntityRenderer({
                     playsInline
                     onLoadedMetadata={(e) => {
                       const localTime =
-                        (currentTime - entity.startTime) * (videoComp.speed || 1) + (videoComp.mediaOffset || 0);
+                        (currentTime - entity.startTime) * rawClipSpeed + (videoComp.mediaOffset || 0);
                       e.target.currentTime = Math.max(0, localTime);
                       if (isPlaying) e.target.play().catch(() => {});
                     }}

@@ -169,9 +169,14 @@ export function createVideoFrameProvider() {
      * component's speed/mediaOffset by the caller) and resolve only once the
      * browser confirms the seek landed — this is what makes each exported
      * frame deterministic instead of "whatever the decoder had queued".
+     * `playbackRate` (optional) is applied to the element so it carries the
+     * same effective rate (VideoRenderer.speed × Transform.speed) the live
+     * preview sets — irrelevant to frame-accurate seeking itself, but keeps
+     * the provider element in the same state preview uses.
      */
-    async seekTo(entityId, src, videoComp, localTime) {
+    async seekTo(entityId, src, videoComp, localTime, playbackRate = 1) {
       const video = videos.get(entityId) || (await this.preload(entityId, src));
+      video.playbackRate = playbackRate;
       const clamped = Math.max(0, Math.min(localTime, video.duration || localTime));
  
       // Already close enough (same frame) — skip the seek/await round-trip.
@@ -643,7 +648,19 @@ export async function mixdownAudio({
     if (!item) continue;
     const { entity, comp, buffer } = item;
  
-    const speed = comp.speed || 1;
+    // Effective rate = AudioSource.speed (content rate inside the clip) ×
+    // Transform.speed (clip-level rate), matching how the live preview
+    // computes media rate (EntityRenderer.jsx) and the video frame
+    // provider's playbackRate. NOTE (Work C scope constraint): the mixdown
+    // is ONE static render over the whole export window, so only the raw
+    // component values can apply — a Transform.speed that is itself
+    // keyframe-animated or script-driven can't be followed here. Video
+    // frames and live preview resolve speed per frame; audio export uses
+    // the static value. Volume goes through an (offline) GainNode below,
+    // which — unlike HTMLMediaElement.volume — accepts boosts above 1.0
+    // unchanged, so loud clips export loud.
+    const transformSpeed = entity.components?.find((c) => c.type === 'Transform')?.speed ?? 1;
+    const speed = (comp.speed || 1) * transformSpeed;
     const mediaOffset = comp.mediaOffset || 0;
     const volume = comp.volume ?? 1;
  
