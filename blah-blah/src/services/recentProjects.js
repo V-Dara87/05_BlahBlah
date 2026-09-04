@@ -50,6 +50,27 @@ function withStore(mode, fn) {
   );
 }
  
+import { isTauri, createTauriDirectoryHandle } from './tauriFsAdapter';
+
+const TAURI_STORAGE_KEY = 'blahblah-tauri-recent-projects-v1';
+
+function getTauriRecents() {
+  try {
+    const raw = localStorage.getItem(TAURI_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveTauriRecents(recents) {
+  try {
+    localStorage.setItem(TAURI_STORAGE_KEY, JSON.stringify(recents));
+  } catch {
+    // Ignore storage failures
+  }
+}
+
 /**
  * A stable-ish identity for a directory handle so reopening the same
  * folder updates its existing entry instead of duplicating it. The File
@@ -69,6 +90,22 @@ function makeEntryId(dirHandle, parentName) {
  */
 export async function recordProjectCreated(dirHandle, projectName, parentName) {
   const now = Date.now();
+
+  if (isTauri() && dirHandle?.path) {
+    const recents = getTauriRecents();
+    const id = dirHandle.path;
+    const entry = {
+      id,
+      name: projectName || dirHandle.name,
+      path: dirHandle.path,
+      createdAt: now,
+      lastOpenedAt: now,
+    };
+    const filtered = recents.filter((r) => r.id !== id);
+    saveTauriRecents([entry, ...filtered]);
+    return { ...entry, dirHandle };
+  }
+
   const entry = {
     id: makeEntryId(dirHandle, parentName),
     name: projectName || dirHandle.name,
@@ -90,8 +127,25 @@ export async function recordProjectCreated(dirHandle, projectName, parentName) {
  * creation time isn't knowable from here.
  */
 export async function recordProjectOpened(dirHandle, projectName, parentName) {
-  const id = makeEntryId(dirHandle, parentName);
   const now = Date.now();
+
+  if (isTauri() && dirHandle?.path) {
+    const recents = getTauriRecents();
+    const id = dirHandle.path;
+    const existing = recents.find((r) => r.id === id);
+    const entry = {
+      id,
+      name: projectName || dirHandle.name,
+      path: dirHandle.path,
+      createdAt: existing ? existing.createdAt : now,
+      lastOpenedAt: now,
+    };
+    const filtered = recents.filter((r) => r.id !== id);
+    saveTauriRecents([entry, ...filtered]);
+    return { ...entry, dirHandle };
+  }
+
+  const id = makeEntryId(dirHandle, parentName);
   return withStore('readwrite', (store) => {
     const getReq = store.get(id);
     return new Promise((resolve, reject) => {
@@ -117,6 +171,16 @@ export async function recordProjectOpened(dirHandle, projectName, parentName) {
  * All known project folders, most-recently-opened first.
  */
 export async function listRecentProjects() {
+  if (isTauri()) {
+    const recents = getTauriRecents();
+    return recents
+      .map((item) => ({
+        ...item,
+        dirHandle: createTauriDirectoryHandle(item.path, item.name),
+      }))
+      .sort((a, b) => b.lastOpenedAt - a.lastOpenedAt);
+  }
+
   const entries = await withStore('readonly', (store) => {
     const req = store.getAll();
     return new Promise((resolve, reject) => {
@@ -132,5 +196,11 @@ export async function listRecentProjects() {
  * disk — just forgets the handle).
  */
 export async function forgetProject(id) {
+  if (isTauri()) {
+    const recents = getTauriRecents();
+    saveTauriRecents(recents.filter((r) => r.id !== id));
+    return;
+  }
+
   await withStore('readwrite', (store) => store.delete(id));
 }

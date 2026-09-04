@@ -59,8 +59,10 @@ const toScriptFileName = (name) => `${(name || '').replace(/\.(js|jsx|ts|tsx|cs)
 
 
  
+import { isTauri, createTauriDirectoryHandle } from './tauriFsAdapter';
+
 export function isFileSystemSupported() {
-  return typeof window !== 'undefined' && 'showDirectoryPicker' in window;
+  return isTauri() || (typeof window !== 'undefined' && 'showDirectoryPicker' in window);
 }
  
 /**
@@ -68,6 +70,7 @@ export function isFileSystemSupported() {
  */
 export async function verifyPermission(dirHandle, readWrite = true) {
   if (!dirHandle) return false;
+  if (dirHandle.isTauri) return true;
   const options = {};
   if (readWrite) {
     options.mode = 'readwrite';
@@ -88,12 +91,24 @@ export async function verifyPermission(dirHandle, readWrite = true) {
  
 /**
  * Prompt user to select a directory on their computer.
- * NOTE: throws if the returned handle doesn't actually have readwrite
- * permission (e.g. Brave's fingerprinting shield silently blocking the
- * permission prompt) instead of returning a handle that looks valid
- * but fails on every later write.
+ * Supports both Tauri native dialog and browser File System Access API.
  */
 export async function pickProjectDirectory() {
+  if (isTauri()) {
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: 'Select Project Directory',
+    });
+    if (!selected) {
+      const err = new Error('The user aborted a request.');
+      err.name = 'AbortError';
+      throw err;
+    }
+    return createTauriDirectoryHandle(selected);
+  }
+
   if (!isFileSystemSupported()) {
     throw new Error('File System Access API is not supported in this browser. Please use Chrome, Edge, or Brave.');
   }

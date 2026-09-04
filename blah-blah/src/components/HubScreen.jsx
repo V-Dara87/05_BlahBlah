@@ -143,6 +143,11 @@ export function HubScreen({ onNewProject, onOpenProjectFolder, onOpenRecentProje
                   </div>
                   <div className="hub-recent-info">
                     <span className="hub-recent-name">{entry.name}</span>
+                    {entry.path && (
+                      <span className="hub-recent-path" title={entry.path}>
+                        {entry.path}
+                      </span>
+                    )}
                     <span className="hub-recent-dates">
                       <Clock size={10} />
                       Opened {formatDate(entry.lastOpenedAt)}

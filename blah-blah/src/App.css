@@ -3347,6 +3347,16 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.hub-recent-path {
+  font-size: 10px;
+  color: var(--unity-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  max-width: 480px;
+}
  
 .hub-recent-dates {
   display: flex;
