@@ -212,6 +212,13 @@ export const UnityInspector = memo(function UnityInspector({
     let kfsSnapshot = selectedEntity.keyframes || {};
     let kfsChanged = false;
     const staticUpdates = {};
+    // Transform.speed is a clip-level rate multiplier — it changes how long
+    // the clip's source content takes to play, so the timeline clip length
+    // must follow it (content amount duration × speed is preserved): a 2×
+    // clip becomes half as long, a 0.5× clip twice as long. Only on the
+    // static (non-keyframe) write — an animated/keyframed speed has no
+    // single timeline length to derive, so it leaves duration alone.
+    let durationUpdate = null;
 
     Object.keys(updates).forEach((fieldName) => {
       const tempEntity = { ...selectedEntity, keyframes: kfsSnapshot };
@@ -221,11 +228,19 @@ export const UnityInspector = memo(function UnityInspector({
         kfsChanged = true;
       } else {
         staticUpdates[fieldName] = updates[fieldName];
+        if (fieldName === 'speed') {
+          const oldSpeed = Number(transformComp.speed ?? 1) || 1;
+          const newSpeed = Number(updates[fieldName]) || 1;
+          if (oldSpeed > 0 && newSpeed > 0 && oldSpeed !== newSpeed) {
+            durationUpdate = Math.max(0.2, (selectedEntity.duration || 0) * (oldSpeed / newSpeed));
+          }
+        }
       }
     });
 
     const batchUpdate = {};
     if (kfsChanged) batchUpdate.keyframes = kfsSnapshot;
+    if (durationUpdate !== null) batchUpdate.duration = durationUpdate;
     if (Object.keys(staticUpdates).length > 0) {
       const updatedComponents = selectedEntity.components.map((c) =>
         c.type === 'Transform' ? { ...c, ...staticUpdates } : c

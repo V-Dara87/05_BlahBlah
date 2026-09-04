@@ -271,9 +271,12 @@ export const TRANSFORM_FIELD_GROUPS = [
       // Clip-level rate multiplier: media elements play at speed × their
       // own AudioSource/VideoRenderer.speed, and motion-kind scripts run at
       // localTime × speed unless a script sets ignoreParentSpeed (see
-      // engine/renderPipeline.js). Missing on older saved Transforms reads
-      // as the 1 default here and in the engine (?? 1 / fallback), so old
-      // projects behave exactly as before — no migration needed.
+      // engine/renderPipeline.js). Editing it also resizes the timeline
+      // clip (content amount duration × speed is preserved — faster = shorter
+      // clip, slower = longer; see updateTransform in UnityInspector.jsx).
+      // Missing on older saved Transforms reads as the 1 default here and in
+      // the engine (?? 1 / fallback), so old projects behave exactly as
+      // before — no migration needed.
       { name: 'speed', type: 'number', dragLabel: '×', labelColor: '#22d3ee', step: 0.1, min: 0.1, max: 4, defaultVal: 1 },
     ],
   },
