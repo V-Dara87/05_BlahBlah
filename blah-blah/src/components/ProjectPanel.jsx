@@ -12,12 +12,15 @@ import {
   Folder,
   FolderOpen,
   ChevronDown,
-  ChevronRight
+  ChevronRight,
+  Code
 } from 'lucide-react';
 import { formatTimecode } from '../utils/timeFormat';
 import { createSyntheticAudio, createSyntheticVideo } from '../utils/sampleMedia';
 import { detectScriptKind } from '../engine/scriptRunner';
 import { importMediaFiles } from '../services/mediaImport';
+import { isTauri } from '../services/tauriFsAdapter';
+import { openProjectInVsCode } from '../services/ideLauncher';
 
 // Per-kind display metadata for script cards (see detectScriptKind).
 const SCRIPT_KIND_META = {
@@ -48,6 +51,7 @@ export const ProjectPanel = memo(function ProjectPanel({
   mediaAssets,
   prefabs,
   scripts,
+  projectFolderHandle,
   onAddMediaAsset,
   onRemoveMediaAsset,
   onRemovePrefab,
@@ -350,6 +354,16 @@ export const ProjectPanel = memo(function ProjectPanel({
             <span className="tree-folder-name">scripts</span>
             <span className="tree-folder-count">{filteredScripts.length}</span>
             <div className="tree-folder-add-wrapper">
+              {projectFolderHandle?.path && isTauri() && (
+                <button
+                  className="tree-folder-add-btn"
+                  title="Open scripts in VS Code"
+                  onClick={(e) => { e.stopPropagation(); openProjectInVsCode(projectFolderHandle.path); }}
+                  style={{ marginRight: 4 }}
+                >
+                  <Code size={12} />
+                </button>
+              )}
               <button
                 className="tree-folder-add-btn"
                 title="New script"

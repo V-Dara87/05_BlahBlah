@@ -14,6 +14,7 @@ import { useCurrentTime, useIsPlaying, useIsLooping, usePlaybackStore } from '..
 export const ProjectDockPanel = memo(function ProjectDockPanel() {
   const {
     mediaAssets, prefabs, scripts,
+    projectFolderHandle,
     onAddMediaAsset, onRemoveMediaAsset, onRemovePrefab,
     onCreateScript, onOpenScriptEditor,
     onAddPrefabToTimeline, onAddMediaToTimeline,
@@ -24,6 +25,7 @@ export const ProjectDockPanel = memo(function ProjectDockPanel() {
       mediaAssets={mediaAssets}
       prefabs={prefabs}
       scripts={scripts}
+      projectFolderHandle={projectFolderHandle}
       onAddMediaAsset={onAddMediaAsset}
       onRemoveMediaAsset={onRemoveMediaAsset}
       onRemovePrefab={onRemovePrefab}

@@ -390,13 +390,13 @@ export function App() {
             gets a slim native window bar (drag anywhere + window
             controls) so the window can always be moved/closed. */}
         {isTauri() && (
-          <div
-            className="hub-window-bar"
-            data-tauri-drag-region
-            onDoubleClick={() => toggleWindowMaximize()}
-          >
+          <div className="hub-window-bar">
             <span className="hub-window-bar-title">blahblah</span>
-            <div className="hub-window-bar-fill" />
+            <div
+              className="hub-window-bar-fill"
+              data-tauri-drag-region
+              onDoubleClick={() => toggleWindowMaximize()}
+            />
             <WindowControls />
           </div>
         )}
@@ -485,6 +485,7 @@ export function App() {
         value={{
           // data
           entities, tracks, scripts, prefabs, mediaAssets,
+          projectFolderHandle,
           calculatedDuration,
           selectedEntityId, pixelsPerSecond, snappingEnabled, resolution,
           fps: projectState.fps,

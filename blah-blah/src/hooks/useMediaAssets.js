@@ -42,14 +42,10 @@ export function useMediaAssets({ projectFolderHandle } = {}) {
       // sitting in media/, and free the blob (it was only for probing).
       if (savedPath) {
         const { convertFileSrc } = await import('@tauri-apps/api/core');
-        const prevUrl = asset.url;
         setMediaAssets(prev => prev.map(a => a.id === asset.id
           ? { ...a, url: convertFileSrc(savedPath), path: savedPath }
           : a
         ));
-        if (prevUrl && prevUrl.startsWith('blob:')) {
-          try { URL.revokeObjectURL(prevUrl); } catch { /* ignore */ }
-        }
       }
     }
   };

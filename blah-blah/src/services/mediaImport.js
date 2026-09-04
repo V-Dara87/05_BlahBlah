@@ -26,6 +26,7 @@ const METADATA_TIMEOUT_MS = 6000;
 function probeDuration(file, isVideo) {
   return new Promise((resolve) => {
     const el = document.createElement(isVideo ? 'video' : 'audio');
+    el.crossOrigin = 'anonymous';
     const url = URL.createObjectURL(file);
     el.preload = 'metadata';
     el.src = url;

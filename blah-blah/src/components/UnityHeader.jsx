@@ -23,6 +23,8 @@ import {
   Settings
 } from 'lucide-react';
 import { formatTimecode } from '../utils/timeFormat';
+import { isTauri } from '../services/tauriFsAdapter';
+import { openProjectInVsCode, openProjectInExplorer } from '../services/ideLauncher';
  
 export function UnityHeader({
   projectName,
@@ -104,6 +106,27 @@ export function UnityHeader({
             <Save size={13} className="text-cyan" />
             <span>Save</span>
           </button>
+        )}
+
+        {projectFolderHandle && isTauri() && (
+          <>
+            <button 
+              className="unity-hdr-btn"
+              onClick={() => openProjectInVsCode(projectFolderHandle.path)}
+              title={projectFolderHandle.path ? `Open ${projectFolderHandle.name} in VS Code` : 'Open in VS Code'}
+            >
+              <Code size={13} className="text-blue" />
+              <span>VS Code</span>
+            </button>
+            <button 
+              className="unity-hdr-btn"
+              onClick={() => openProjectInExplorer(projectFolderHandle.path)}
+              title={projectFolderHandle.path ? `Show ${projectFolderHandle.name} in File Explorer` : 'Show in File Explorer'}
+            >
+              <FolderOpen size={13} className="text-amber" />
+              <span>Explorer</span>
+            </button>
+          </>
         )}
  
         <button 

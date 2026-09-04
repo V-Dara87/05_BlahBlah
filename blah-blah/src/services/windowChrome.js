@@ -7,15 +7,30 @@ import { isTauri } from './tauriFsAdapter';
  * surface.
  */
 
-export async function withCurrentWindow(action) {
+let cachedWindow = null;
+
+if (typeof window !== 'undefined' && isTauri()) {
+  import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
+    cachedWindow = getCurrentWindow();
+  }).catch(() => {});
+}
+
+export function withCurrentWindow(action) {
   if (!isTauri()) return;
-  try {
-    const { getCurrentWindow } = await import('@tauri-apps/api/window');
-    const win = getCurrentWindow();
-    await action(win);
-  } catch (err) {
-    console.warn('Window control failed:', err);
+  if (cachedWindow) {
+    try {
+      action(cachedWindow);
+    } catch (err) {
+      console.warn('Window control failed:', err);
+    }
+    return;
   }
+  import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
+    cachedWindow = getCurrentWindow();
+    action(cachedWindow);
+  }).catch((err) => {
+    console.warn('Window control failed:', err);
+  });
 }
 
 /** Toggle maximize/restore — also bound to title-bar double-clicks. */

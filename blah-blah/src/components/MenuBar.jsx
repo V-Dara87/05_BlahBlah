@@ -74,7 +74,7 @@ export const MenuBar = memo(function MenuBar({ menus = [], trailing = null }) {
   }, []);
 
   return (
-    <div className="menubar" ref={barRef} data-tauri-drag-region>
+    <div className="menubar" ref={barRef}>
       {menus.map((menu, idx) => (
         <div key={menu.label} className="menubar-item">
           <button

@@ -424,6 +424,44 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
     console.warn('Could not read media directory:', err);
   }
  
+  // Reconcile entity src with live media URLs (e.g. convertFileSrc or fresh blobs)
+  if (loadedMedia.length > 0 && Array.isArray(projectMeta.entities)) {
+    const mediaMap = new Map();
+    for (const m of loadedMedia) {
+      mediaMap.set(m.name.toLowerCase(), m.url);
+      const cleanBase = m.name.replace(/\.[^.]+$/, '').toLowerCase();
+      mediaMap.set(cleanBase, m.url);
+    }
+
+    projectMeta.entities = projectMeta.entities.map((e) => {
+      let freshUrl = null;
+      if (e.src) {
+        const urlParts = e.src.split(/[/\\]/);
+        const lastPart = decodeURIComponent(urlParts[urlParts.length - 1] || '').toLowerCase();
+        if (mediaMap.has(lastPart)) {
+          freshUrl = mediaMap.get(lastPart);
+        }
+      }
+      if (!freshUrl && e.name) {
+        const cleanName = e.name.replace(/[🎵🎬\s]+$/g, '').trim().toLowerCase();
+        if (mediaMap.has(cleanName)) {
+          freshUrl = mediaMap.get(cleanName);
+        }
+      }
+
+      if (freshUrl) {
+        const updatedComponents = (e.components || []).map((c) => {
+          if ((c.type === 'VideoRenderer' || c.type === 'AudioSource') && c.src) {
+            return { ...c, src: freshUrl };
+          }
+          return c;
+        });
+        return { ...e, src: freshUrl, components: updatedComponents };
+      }
+      return e;
+    });
+  }
+
   return {
     projectName: projectMeta.name,
     tracks: projectMeta.tracks,

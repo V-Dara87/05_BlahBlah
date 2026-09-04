@@ -11,7 +11,6 @@
   padding: 0 4px;
   flex-shrink: 0;
   z-index: 100;
-  -webkit-app-region: drag;
 }
 
 .menubar-item {
@@ -3430,6 +3429,8 @@
   flex: 1 1 auto;
   align-self: stretch;
   min-width: 48px;
+  -webkit-app-region: drag;
+  cursor: default;
 }
 
 .window-controls {
@@ -3437,6 +3438,7 @@
   align-items: stretch;
   height: 100%;
   flex-shrink: 0;
+  -webkit-app-region: no-drag;
 }
 
 .window-control-btn {
@@ -3450,6 +3452,7 @@
   border: none;
   color: var(--unity-text-muted);
   cursor: pointer;
+  -webkit-app-region: no-drag;
 }
 
 .window-control-btn:hover {
@@ -3488,6 +3491,8 @@
 .hub-window-bar-fill {
   flex: 1 1 auto;
   align-self: stretch;
+  -webkit-app-region: drag;
+  cursor: default;
 }
 
 .hub-window-bar .window-controls {

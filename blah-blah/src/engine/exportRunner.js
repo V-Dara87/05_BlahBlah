@@ -140,6 +140,7 @@ export function createVideoFrameProvider() {
       if (videos.has(entityId)) return videos.get(entityId);
  
       const video = document.createElement('video');
+      video.crossOrigin = 'anonymous';
       video.src = src;
       video.muted = true; // Phase 1 is silent video; also avoids autoplay-policy issues.
       video.playsInline = true;

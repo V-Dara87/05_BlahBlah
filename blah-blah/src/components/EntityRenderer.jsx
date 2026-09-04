@@ -281,8 +281,13 @@ export function EntityRenderer({
       if (audioComp && audioComp.src) {
         let aud = audioRefs.current[entity.id];
         if (!aud) {
-          aud = new Audio(audioComp.src);
+          aud = new Audio();
+          aud.crossOrigin = 'anonymous';
+          aud.src = audioComp.src;
           audioRefs.current[entity.id] = aud;
+        } else if (aud.src !== audioComp.src) {
+          aud.crossOrigin = 'anonymous';
+          aud.src = audioComp.src;
         }
  
         const speed = (audioComp.speed || 1) * (transform?.speed ?? 1);
@@ -610,6 +615,7 @@ export function EntityRenderer({
                     }}
                     className="active-video-element"
                     src={vidSrc}
+                    crossOrigin="anonymous"
                     muted={(videoComp.volume ?? 0) === 0}
                     playsInline
                     onLoadedMetadata={(e) => {
