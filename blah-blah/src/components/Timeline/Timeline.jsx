@@ -12,7 +12,7 @@ const HEADER_WIDTH = 180;
 // live in utils/timelineLayout.js (shared with TrackLane / TrackHeader and
 // unit-tested). Re-exported here so existing importers stay unchanged.
 export { TRACK_HEIGHT, SUB_LANE_HEIGHT, SUB_LANE_INDENT } from '../../utils/timelineLayout';
-import { TRACK_HEIGHT, SUB_LANE_HEIGHT, computeTrackLanes } from '../../utils/timelineLayout';
+import { TRACK_HEIGHT, computeTrackLanes } from '../../utils/timelineLayout';
 
 export const Timeline = memo(function Timeline({
   tracks,
@@ -27,14 +27,10 @@ export const Timeline = memo(function Timeline({
   onUpdateClip,
   onUpdateClips,
   onDuplicateClips,
-  onGroupClips,
-  onUngroupClips,
   onUpdateTrack,
   onDeleteTrack,
   onAddTrack,
   onAddEmptyClip,
-  onAddEmptyChildClip,
-  onReorderChild,
   onDropItemOnTrack,
   onToggleRecordTrack,
   onZoomIn,
@@ -48,7 +44,6 @@ export const Timeline = memo(function Timeline({
   onClearSelection,
   setSelectedIds,
   setSelectedEntityId,
-  onReparentEntity,
   onAttachScriptToEntity,
   onAddMediaAsset,
 }) {
@@ -83,14 +78,6 @@ export const Timeline = memo(function Timeline({
   }, [tracks, clips]);
 
   const timelineLanesHeight = Math.max(layout.surfaceY, 180);
-
-  // Add a child clip under a parent clip
-  const handleAddChildClip = useCallback((parentClip, { startTime, targetTrackId } = {}) => {
-    if (!parentClip) return;
-    const track = tracks.find((t) => t.id === parentClip.trackId);
-    if (!track || track.locked) return;
-    onAddEmptyChildClip?.(parentClip.id, { startTime, targetTrackId });
-  }, [tracks, onAddEmptyChildClip]);
 
   const handleLanesScroll = () => {
     lastUserScrollTimeRef.current = Date.now();
@@ -674,13 +661,8 @@ export const Timeline = memo(function Timeline({
                     onUpdateClip={onUpdateClip}
                     onUpdateClips={onUpdateClips}
                     onDuplicateClips={onDuplicateClips}
-                    onGroupClips={onGroupClips}
-                    onUngroupClips={onUngroupClips}
-                    onReparentEntity={onReparentEntity}
                     onAttachScriptToEntity={onAttachScriptToEntity}
                     onAddEmptyClip={onAddEmptyClip}
-                    onAddChildClip={handleAddChildClip}
-                    onReorderChild={onReorderChild}
                     onDropItemOnTrack={onDropItemOnTrack}
                     onAddMediaAsset={onAddMediaAsset}
                     snappingPoints={snappingPoints}

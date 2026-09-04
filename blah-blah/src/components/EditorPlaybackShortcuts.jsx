@@ -13,8 +13,6 @@ export function EditorPlaybackShortcuts({
   onDeleteSelected,
   onDeleteMultiple,
   onDuplicateSelected,
-  onGroupSelected,
-  onUngroupSelected,
   onSelectAll,
   onClearSelection,
   onSaveProject,
@@ -54,17 +52,6 @@ export function EditorPlaybackShortcuts({
       if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) {
         e.preventDefault();
         onDuplicateSelected?.();
-        return;
-      }
-
-      // Group: Ctrl+G / Ungroup: Ctrl+Shift+G
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'g' || e.key === 'G')) {
-        e.preventDefault();
-        if (e.shiftKey) {
-          onUngroupSelected?.();
-        } else {
-          onGroupSelected?.();
-        }
         return;
       }
 
@@ -180,8 +167,6 @@ export function EditorPlaybackShortcuts({
     onDeleteSelected,
     onDeleteMultiple,
     onDuplicateSelected,
-    onGroupSelected,
-    onUngroupSelected,
     onSelectAll,
     onClearSelection,
     onSaveProject,

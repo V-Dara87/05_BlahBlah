@@ -4,15 +4,8 @@ import { INITIAL_TRACKS, DEFAULT_RESOLUTION } from '../types';
 import {
   createGameObject,
   createDefaultTransform,
-  collectDescendantIds,
   filterOutSubtrees,
-  isDescendantOf,
 } from '../engine/ecs';
-import { sortChildrenOf } from '../utils/timelineLayout';
-import {
-  staticWorldTransform,
-  localTransformFromWorld,
-} from '../engine/renderPipeline';
 import {
   pickProjectDirectory,
   loadProjectFromDirectory,
@@ -144,101 +137,34 @@ export function useProjectStore({
     }), { coalesce: true });
   }, [setEntities]);
 
-  // Duplicate one or more entities — hierarchy-aware & group-aware. Any duplicated
-  // entity drags its whole descendant subtree along and any linked clips (same linkGroupId).
-  // Fresh linkGroupId is assigned to copies so the duplicated group stays linked independently.
+  // Duplicate one or more entities. Each copy gets a fresh id, cloned
+  // components, and is offset by the extent of the selection so copies land
+  // right after the originals on their own tracks.
   const handleDuplicateClips = useCallback((clipIds) => {
     const ids = Array.isArray(clipIds) ? clipIds : [clipIds];
     if (ids.length === 0) return [];
 
-    // Expand every selected id to its recursive descendant subtree AND linked clips (same linkGroupId).
-    const dupIds = new Set();
-    const dupIdList = [];
-    ids.forEach((id) => {
-      if (!dupIds.has(id)) {
-        dupIds.add(id);
-        dupIdList.push(id);
-      }
-    });
-
-    let grew = true;
-    while (grew) {
-      grew = false;
-      // Descendants
-      entities.forEach((e) => {
-        if (e.parentId && dupIds.has(e.parentId) && !dupIds.has(e.id)) {
-          dupIds.add(e.id);
-          dupIdList.push(e.id);
-          grew = true;
-        }
-      });
-      // Linked clips (linkGroupId)
-      entities.forEach((e) => {
-        if (e.linkGroupId && !dupIds.has(e.id) && entities.some((s) => s.id !== e.id && s.linkGroupId === e.linkGroupId && dupIds.has(s.id))) {
-          dupIds.add(e.id);
-          dupIdList.push(e.id);
-          grew = true;
-        }
-      });
-    }
-
-    const targets = entities.filter(e => dupIds.has(e.id));
+    const targets = entities.filter((e) => ids.includes(e.id));
     if (targets.length === 0) return [];
 
-    // Group members by their topmost ancestor WITHIN the copy set, so each
-    // independent family is shifted by its own extent.
-    const entityById = new Map(entities.map(e => [e.id, e]));
-    const groupRootOf = (entityId) => {
-      let cur = entityId;
-      let guard = 0;
-      while (guard++ < entities.length) {
-        const ent = entityById.get(cur);
-        if (!ent?.parentId || !dupIds.has(ent.parentId)) return cur;
-        cur = ent.parentId;
-      }
-      return cur;
-    };
-    const groups = new Map(); // groupRootId -> member entities
-    dupIdList.forEach((entityId) => {
-      const root = groupRootOf(entityId);
-      if (!groups.has(root)) groups.set(root, []);
-      groups.get(root).push(entityById.get(entityId));
-    });
+    const minStart = Math.min(...targets.map((m) => m.startTime));
+    const maxEnd = Math.max(...targets.map((m) => m.startTime + m.duration));
+    const delta = maxEnd - minStart;
 
-    // Assign every copy a fresh id FIRST so parentId remapping below is order-independent.
-    const oldToNew = new Map();
-    const oldGroupToNew = new Map();
-    for (const members of groups.values()) {
-      for (const member of members) {
-        oldToNew.set(member.id, `go-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`);
-        if (member.linkGroupId && !oldGroupToNew.has(member.linkGroupId)) {
-          oldGroupToNew.set(member.linkGroupId, `group-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`);
-        }
-      }
-    }
-
-    const newClips = [];
-    for (const members of groups.values()) {
-      const minStart = Math.min(...members.map((m) => m.startTime));
-      const maxEnd = Math.max(...members.map((m) => m.startTime + m.duration));
-      const delta = maxEnd - minStart;
-      members.forEach((target) => {
-        const newId = oldToNew.get(target.id);
-        const parentInCopy = target.parentId && oldToNew.has(target.parentId);
-        const clonedComponents = target.components
+    const newClips = targets.map((target) => {
+      // Strip any legacy group/parent fields from old saved projects —
+      // duplicated clips are always independent flat clips.
+      const { linkGroupId: _linkGroupId, parentId: _parentId, ...rest } = target;
+      return {
+        ...rest,
+        id: `go-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        name: `${target.name} (Copy)`,
+        startTime: target.startTime + delta,
+        components: target.components
           ? JSON.parse(JSON.stringify(target.components))
-          : [];
-        newClips.push({
-          ...target,
-          id: newId,
-          name: `${target.name} (Copy)`,
-          startTime: target.startTime + delta,
-          parentId: parentInCopy ? oldToNew.get(target.parentId) : target.parentId,
-          linkGroupId: target.linkGroupId ? oldGroupToNew.get(target.linkGroupId) : null,
-          components: clonedComponents,
-        });
-      });
-    }
+          : [],
+      };
+    });
 
     setEntities(prev => [...prev, ...newClips]);
     const newIds = newClips.map(c => c.id);
@@ -247,49 +173,6 @@ export function useProjectStore({
     }
     return newIds;
   }, [entities, setEntities, setSelectedEntityId]);
-
-  // Group one or more clips together with a shared linkGroupId.
-  // Supports "grouping groups": any existing groups among the selected clips
-  // are consolidated into the new group.
-  const handleGroupClips = useCallback((clipIds) => {
-    const ids = Array.isArray(clipIds) ? clipIds : [clipIds];
-    if (ids.length < 2) return null;
-
-    // Collect all clips that are selected or belong to the same groups as selected clips
-    const selectedClips = entities.filter((e) => ids.includes(e.id));
-    const existingGroupIds = new Set(selectedClips.map((c) => c.linkGroupId).filter(Boolean));
-
-    const newGroupId = `group-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
-
-    setEntities((prev) =>
-      prev.map((e) => {
-        if (ids.includes(e.id) || (e.linkGroupId && existingGroupIds.has(e.linkGroupId))) {
-          return { ...e, linkGroupId: newGroupId };
-        }
-        return e;
-      })
-    );
-    return newGroupId;
-  }, [entities, setEntities]);
-
-  // Ungroup clips: removes linkGroupId from the specified clips
-  // (and any clips sharing their linkGroupId).
-  const handleUngroupClips = useCallback((clipIds) => {
-    const ids = Array.isArray(clipIds) ? clipIds : [clipIds];
-    if (ids.length === 0) return;
-
-    const selectedClips = entities.filter((e) => ids.includes(e.id));
-    const targetGroupIds = new Set(selectedClips.map((c) => c.linkGroupId).filter(Boolean));
-
-    setEntities((prev) =>
-      prev.map((e) => {
-        if (ids.includes(e.id) || (e.linkGroupId && targetGroupIds.has(e.linkGroupId))) {
-          return { ...e, linkGroupId: null };
-        }
-        return e;
-      })
-    );
-  }, [entities, setEntities]);
 
   // Split entity (or entities) at playhead
   const handleSplitEntity = useCallback((entityIdOrIds) => {
@@ -373,56 +256,6 @@ export function useProjectStore({
     setSelectedEntityId(newGO.id);
   }, [getPlaybackTime]);
 
-  // Reparent (or unparent) an entity via the timeline drag-and-drop or the
-  // Inspector dropdown. Unity-style parenting: the entity's LOCAL Transform
-  // is re-derived from its current WORLD pose expressed in the new parent's
-  // frame (static values — the same fallback the Inspector uses), so the
-  // clip does not visually jump when it gains or loses a parent. Cycles are
-  // guarded (never parent an entity to itself or one of its descendants).
-  // Optional trackId/startTime land the entity where the drag released it.
-  const handleReparentEntity = useCallback((entityId, newParentId, { trackId, startTime } = {}) => {
-    const child = entities.find((e) => e.id === entityId);
-    if (!child) return;
-    const targetParentId = newParentId || null;
-    if (
-      child.parentId === targetParentId &&
-      trackId === undefined &&
-      startTime === undefined
-    ) return;
-    if (targetParentId && (targetParentId === entityId || isDescendantOf(entities, targetParentId, entityId))) return;
-
-    // Keep the clip's world placement when its frame changes.
-    const childWorld = staticWorldTransform(child, entities);
-    const newParent = targetParentId ? entities.find((e) => e.id === targetParentId) : null;
-    const parentWorld = newParent ? staticWorldTransform(newParent, entities) : null;
-    const local = parentWorld
-      ? localTransformFromWorld(childWorld, parentWorld)
-      : { ...childWorld };
-
-    const existing = child.components?.find((c) => c.type === 'Transform');
-    const updatedTransform = {
-      ...(existing || createDefaultTransform()),
-      x: local.x,
-      y: local.y,
-      rotation: local.rotation,
-      scaleX: local.scaleX,
-      scaleY: local.scaleY,
-      opacity: local.opacity,
-    };
-    const components = existing
-      ? child.components.map((c) => (c.type === 'Transform' ? updatedTransform : c))
-      : [updatedTransform, ...(child.components || [])];
-
-    const updates = { parentId: targetParentId, components };
-    if (startTime !== undefined) updates.startTime = startTime;
-
-    if (trackId !== undefined) {
-      updates.trackId = trackId;
-    }
-
-    setEntities(prev => prev.map(e => e.id === entityId ? { ...e, ...updates } : e));
-  }, [entities, setEntities]);
-
   // Attach a script to an entity (Add Component click, or dropping a script
   // card from the Project panel onto a timeline clip / the Inspector).
   const handleAttachScriptToEntity = useCallback((entityId, scriptId) => {
@@ -460,83 +293,62 @@ export function useProjectStore({
   }, [setScripts]);
 
   // Add Prefab to Timeline. Handles BOTH prefab shapes:
-  //  - Legacy flat prefabs (a `components` snapshot of one entity) — the
-  //    original single-clip behavior.
-  //  - Nested prefabs (`entities`: a root + recursive children snapshot,
-  //    see handleSaveAsPrefab) — every snapshot is instantiated with a
-  //    fresh id, parentIds are remapped through the old→new id map so the
-  //    hierarchy survives, relative clip offsets are preserved around the
-  //    placement time, and each clip lands on its saved track when that
-  //    track still exists in this project (otherwise the drop target).
-  //
-  // Optional `parentEntityId` spawns the prefab's ROOT as a child of that
-  // clip (prefab dropped onto a sub-lane row) — the root placement is
-  // clamped into the new parent's window; saved inner hierarchy is kept.
-  const handleAddPrefabToTimeline = (prefab, targetTrackId = 'track-1', startTime = getPlaybackTime(), parentEntityId = null) => {
-    const parent = parentEntity(parentEntityId);
-    if (!Array.isArray(prefab.entities) || prefab.entities.length === 0) {
-      const placement = parent
-        ? clampChildIntoParent(parent, startTime, 5)
-        : { startTime: startTime ?? getPlaybackTime(), duration: 5 };
+  //  - Legacy flat prefabs (a `components` snapshot of one entity) — a
+  //    single independent clip.
+  //  - Nested prefabs (`entities`: a root + children snapshot, saved by
+  //    older builds) — every snapshot is instantiated as its own
+  //    INDEPENDENT clip with a fresh id: the root lands on targetTrackId
+  //    at the placement time, each additional snapshot keeps its saved
+  //    track (when it still exists) and its saved time offset from the
+  //    root. No parent/child relationship is created.
+  const handleAddPrefabToTimeline = (prefab, targetTrackId = 'track-1', startTime = getPlaybackTime()) => {
+    const snapshots = Array.isArray(prefab.entities) && prefab.entities.length > 0
+      ? prefab.entities
+      : null;
+
+    if (!snapshots) {
       const newGO = createGameObject({
         name: prefab.name.replace(/\.prefab(\.json)?$/i, ''),
-        trackId: parent ? parent.trackId : targetTrackId,
-        startTime: placement.startTime,
-        duration: placement.duration,
+        trackId: targetTrackId,
+        startTime: startTime ?? getPlaybackTime(),
+        duration: 5,
         type: prefab.type || 'text',
         components: JSON.parse(JSON.stringify(prefab.components || []))
       });
-      if (parent) newGO.parentId = parent.id;
       setEntities(prev => [...prev, newGO]);
       setSelectedEntityId(newGO.id);
       return;
     }
 
-    const snapshots = prefab.entities;
     const snapRoot = snapshots.find((e) => e.id === prefab.rootId) || snapshots[0];
     if (!snapRoot) return;
     const start = startTime ?? getPlaybackTime();
     const rootStart = snapRoot.startTime ?? 0;
     const trackIds = new Set((tracks || []).map((t) => t.id));
-    // Root placement may be clamped into a live parent's window when this
-    // prefab is spawned as a child of another clip.
-    const rootPlacement = parent
-      ? clampChildIntoParent(parent, start, snapRoot.duration ?? 5)
-      : null;
-    const actualStart = rootPlacement ? rootPlacement.startTime : start;
 
-    // Fresh ids for every snapshot, assigned up front so parentId remapping
-    // below is order-independent.
     const oldToNew = new Map();
     snapshots.forEach((snap) => {
       oldToNew.set(snap.id, `go-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`);
     });
 
     const newClips = snapshots.map((snap) => {
-      const components = snap.components
-        ? JSON.parse(JSON.stringify(snap.components))
-        : [];
       const isSnapRoot = snap.id === snapRoot.id;
-      // Root goes to the drop/requested (or live parent's) track; children
-      // keep their saved track when it still exists in this project, else
-      // share the root's.
       const trackId = isSnapRoot
-        ? (parent ? parent.trackId : targetTrackId)
-        : (trackIds.has(snap.trackId) ? snap.trackId : (parent ? parent.trackId : targetTrackId));
+        ? targetTrackId
+        : (trackIds.has(snap.trackId) ? snap.trackId : targetTrackId);
+      // Strip any legacy group/parent fields from old saved prefabs.
+      const { linkGroupId: _linkGroupId, parentId: _parentId, ...rest } = snap;
       return {
-        ...snap,
+        ...rest,
         id: oldToNew.get(snap.id),
-        // The root may adopt a live parent (sub-lane drop); inner snapshots
-        // keep their saved hierarchy remapped through the fresh ids.
-        parentId: isSnapRoot
-          ? (parentEntityId || null)
-          : (snap.parentId ? (oldToNew.get(snap.parentId) || null) : null),
         trackId,
         startTime: isSnapRoot
-          ? (rootPlacement ? rootPlacement.startTime : Math.max(0, actualStart))
-          : Math.max(0, actualStart + ((snap.startTime ?? rootStart) - rootStart)),
-        duration: isSnapRoot && rootPlacement ? rootPlacement.duration : (snap.duration ?? 5),
-        components,
+          ? Math.max(0, start)
+          : Math.max(0, start + ((snap.startTime ?? rootStart) - rootStart)),
+        duration: snap.duration ?? 5,
+        components: snap.components
+          ? JSON.parse(JSON.stringify(snap.components))
+          : [],
       };
     });
 
@@ -544,151 +356,18 @@ export function useProjectStore({
     setSelectedEntityId(newClips[0]?.id || null);
   };
 
-  // ── Hierarchy child placement helpers ─────────────────────────────────────
-  // Child clips live INSIDE their parent's timeline window (they only play
-  // while the parent plays and shift with it), so any clip spawned as a
-  // child gets its start/duration clamped into the parent's window. Children
-  // are the engine of the "nested sub-track" timeline model: every child
-  // renders as its OWN lane (its own mini track) under the parent's clip.
-  const parentEntity = (parentId) => (parentId ? entities.find((e) => e.id === parentId) : null);
-
-  const clampChildIntoParent = (parent, requestedStart, requestedDuration) => {
-    const pStart = parent?.startTime ?? 0;
-    const pEnd = pStart + (parent?.duration ?? 5);
-    const dur = Math.max(0.2, Math.min(requestedDuration || 5, Math.max(0.2, pEnd - pStart)));
-    const start = requestedStart === undefined || requestedStart === null
-      ? getPlaybackTime()
-      : requestedStart;
-    return {
-      startTime: Math.min(Math.max(start, pStart), Math.max(pStart, pEnd - dur)),
-      duration: dur,
-    };
-  };
-
-  // Reorder a child clip among its siblings ("rearrange the nested
-  // sub-tracks inside a track"). `toIndex` is the target position in the
-  // parent's lane order (0-based, over the whole sibling list); the child
-  // moves there and every sibling gets a fresh `order` number, which the
-  // timeline layout uses to order lanes. One undo step per rearrangement.
-  const handleReorderChild = useCallback((parentId, childId, toIndex) => {
-    const parent = parentEntity(parentId);
-    if (!parent) return false;
-    const siblings = sortChildrenOf(entities, parentId);
-    const fromIdx = siblings.findIndex((c) => c.id === childId);
-    if (fromIdx === -1) return false;
-    const target = Math.max(0, Math.min(toIndex ?? fromIdx, siblings.length - 1));
-    if (target === fromIdx) return false;
-    const reordered = [...siblings];
-    const [moved] = reordered.splice(fromIdx, 1);
-    reordered.splice(target, 0, moved);
-    const orderMap = new Map(reordered.map((c, i) => [c.id, i]));
-    setEntities((prev) =>
-      prev.map((e) => (orderMap.has(e.id) ? { ...e, order: orderMap.get(e.id) } : e))
-    );
-    return true;
-  }, [entities, setEntities]);
-
-  // Create a NEW EMPTY CHILD CLIP under an existing clip.
-  // In the flat model, the child clip is placed on targetTrackId or the next track down,
-  // and linked via parentId so it follows transform & time hierarchy!
-  const handleAddEmptyChildClip = useCallback((parentId, { startTime, targetTrackId } = {}) => {
-    const parent = parentEntity(parentId);
-    if (!parent) return null;
-    const placement = clampChildIntoParent(parent, startTime);
-
-    let childTrackId = targetTrackId;
-    if (!childTrackId) {
-      const pIdx = tracks.findIndex((t) => t.id === parent.trackId);
-      if (pIdx >= 0 && pIdx + 1 < tracks.length) {
-        childTrackId = tracks[pIdx + 1].id;
-      } else {
-        const nextNum = tracks.length + 1;
-        childTrackId = `track-${Date.now()}`;
-        const newTrack = {
-          id: childTrackId,
-          name: `Track ${nextNum}`,
-          type: 'layer',
-          parentTrackId: null,
-          muted: false,
-          locked: false,
-          visible: true,
-          volume: 1.0,
-        };
-        setTracks((prev) => [...prev, newTrack]);
-      }
-    }
-
-    const newGO = createGameObject({
-      name: `${parent.name} Child`,
-      trackId: childTrackId,
-      startTime: placement.startTime,
-      duration: placement.duration,
-      type: 'shape',
-      components: [
-        createDefaultTransform({ x: 0, y: 0 }),
-        {
-          type: 'ShapeRenderer',
-          shapeType: 'rect',
-          width: 120,
-          height: 120,
-          color: '#ffffff',
-          strokeColor: '#38bdf8',
-          strokeWidth: 0,
-          borderRadius: 0,
-        },
-      ],
-    });
-    newGO.parentId = parent.id;
-    setEntities((prev) => [...prev, newGO]);
-    setSelectedEntityId(newGO.id);
-    return newGO.id;
-  }, [entities, tracks, setTracks, setEntities, setSelectedEntityId]);
-
-  // Add Media to Timeline.
-  // In the flat track + group model:
-  // - Video is placed on targetTrackId
-  // - Audio child is placed on the next normal track (created if at bottom)
-  // - Both get a shared linkGroupId (so they move, duplicate, and delete together)
-  // - Audio also retains `parentId: videoGO.id` for transform / playback sync
-  const handleAddMediaToTimeline = (asset, targetTrackId = 'track-3', startTime = getPlaybackTime(), parentEntityId = null) => {
-    const isAudio = asset.type === 'audio';
+  // Add Media to Timeline. Every asset becomes ONE independent flat clip
+  // on the target track (video keeps its own audio — no companion clip).
+  const handleAddMediaToTimeline = (asset, targetTrackId = 'track-3', startTime = getPlaybackTime()) => {
     const clipName = asset.name.replace(/\.[^.]+$/, '');
-    const parent = parentEntity(parentEntityId);
-    const placement = parent
-      ? clampChildIntoParent(parent, startTime, asset.duration || 8)
-      : { startTime: startTime ?? getPlaybackTime(), duration: asset.duration || 8 };
-    const duration = placement.duration;
+    const duration = asset.duration || 8;
+    const finalStartTime = startTime ?? getPlaybackTime();
 
-    if (!isAudio) {
-      const videoTrackId = parent ? parent.trackId : targetTrackId;
-
-      // Find the next normal track for companion audio
-      const vIdx = tracks.findIndex((t) => t.id === videoTrackId);
-      let audioTrackId = null;
-      if (vIdx >= 0 && vIdx + 1 < tracks.length) {
-        audioTrackId = tracks[vIdx + 1].id;
-      } else {
-        const nextNum = tracks.length + 1;
-        audioTrackId = `track-${Date.now()}`;
-        const newTrack = {
-          id: audioTrackId,
-          name: `Track ${nextNum}`,
-          type: 'layer',
-          parentTrackId: null,
-          muted: false,
-          locked: false,
-          visible: true,
-          volume: 1.0,
-        };
-        setTracks((prev) => [...prev, newTrack]);
-      }
-
-      const linkGroupId = `group-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
-
+    if (asset.type !== 'audio') {
       const videoGO = createGameObject({
         name: clipName,
-        trackId: videoTrackId,
-        startTime: placement.startTime,
+        trackId: targetTrackId,
+        startTime: finalStartTime,
         duration,
         type: 'video',
         src: asset.url,
@@ -697,46 +376,22 @@ export function useProjectStore({
           {
             type: 'VideoRenderer',
             src: asset.url,
-            volume: 0, // mute — audio is handled by the companion audio entity
-            speed: 1,
-            mediaOffset: 0,
-          },
-        ],
-      });
-      videoGO.linkGroupId = linkGroupId;
-
-      const audioGO = createGameObject({
-        name: `${clipName} 🎵`,
-        trackId: audioTrackId,
-        startTime: placement.startTime,
-        duration,
-        type: 'audio',
-        src: asset.url,
-        components: [
-          createDefaultTransform({ x: 0, y: 0 }),
-          {
-            type: 'AudioSource',
-            src: asset.url,
             volume: 1,
             speed: 1,
             mediaOffset: 0,
           },
         ],
       });
-      audioGO.linkGroupId = linkGroupId;
-      audioGO.parentId = videoGO.id;
-      if (parent) videoGO.parentId = parent.id;
-
-      setEntities((prev) => [...prev, videoGO, audioGO]);
+      setEntities((prev) => [...prev, videoGO]);
       setSelectedEntityId(videoGO.id);
       return;
     }
 
-    // Pure audio clips stay as a single entity
+    // Pure audio clips are a single entity
     const newGO = createGameObject({
       name: clipName,
-      trackId: targetTrackId || (parent ? parent.trackId : 'track-3'),
-      startTime: placement.startTime,
+      trackId: targetTrackId || 'track-3',
+      startTime: finalStartTime,
       duration,
       type: 'audio',
       src: asset.url,
@@ -751,25 +406,22 @@ export function useProjectStore({
         },
       ],
     });
-    if (parent) newGO.parentId = parent.id;
-
     setEntities((prev) => [...prev, newGO]);
     setSelectedEntityId(newGO.id);
   };
 
-  // Drag-and-Drop from Project Panel onto a Timeline Track (or a sub-lane
-  // row of a parent clip). Accepts either an itemId (looked up in the live
-  // lists) or the full itemData object (used by OS-file drops, where the
-  // asset was just created in the same tick and hasn't flushed into state
-  // yet). Optional `parentEntityId` spawns the new content as a CHILD of
-  // that clip (dropped onto one of its sub-lanes), clamped into its window.
-  const handleDropItemOnTrack = ({ itemType, itemId, itemData, targetTrackId, startTime, parentEntityId = null }) => {
+  // Drag-and-Drop from Project Panel onto a Timeline Track. Accepts either
+  // an itemId (looked up in the live lists) or the full itemData object
+  // (used by OS-file drops, where the asset was just created in the same
+  // tick and hasn't flushed into state yet). Every drop spawns independent
+  // flat clips on the target track.
+  const handleDropItemOnTrack = ({ itemType, itemId, itemData, targetTrackId, startTime }) => {
     if (itemType === 'prefab') {
       const prefab = prefabs.find(p => p.id === itemId);
-      if (prefab) handleAddPrefabToTimeline(prefab, targetTrackId, startTime, parentEntityId);
+      if (prefab) handleAddPrefabToTimeline(prefab, targetTrackId, startTime);
     } else if (itemType === 'media') {
       const asset = mediaAssets.find(m => m.id === itemId) || itemData;
-      if (asset) handleAddMediaToTimeline(asset, targetTrackId, startTime, parentEntityId);
+      if (asset) handleAddMediaToTimeline(asset, targetTrackId, startTime);
     } else if (itemType === 'script') {
       const script = scripts.find(s => s.id === itemId);
       if (script) {
@@ -777,10 +429,6 @@ export function useProjectStore({
         // script's detected kind (motion / react / canvas). Motion scripts
         // get a shape fallback to animate; react/canvas scripts render
         // their own visual output.
-        const parent = parentEntity(parentEntityId);
-        const placement = parent
-          ? clampChildIntoParent(parent, startTime, 5)
-          : { startTime: startTime ?? getPlaybackTime(), duration: 5 };
         const kind = detectScriptKind(script.code || '');
         const components = [
           createDefaultTransform({ x: 0, y: 0 }),
@@ -806,37 +454,28 @@ export function useProjectStore({
         }
         const newGO = createGameObject({
           name: `${script.name.replace(/\.[^.]+$/, '')} Clip`,
-          trackId: targetTrackId || (parent ? parent.trackId : 'track-1'),
-          startTime: placement.startTime,
-          duration: placement.duration,
+          trackId: targetTrackId || 'track-1',
+          startTime: startTime ?? getPlaybackTime(),
+          duration: 5,
           type: 'shape',
           components
         });
-        if (parent) newGO.parentId = parent.id;
         setEntities(prev => [...prev, newGO]);
         setSelectedEntityId(newGO.id);
       }
     }
   };
 
-  // Save GameObject (and its whole child hierarchy) as a Prefab. Nested
-  // prefabs snapshot the full subtree — every recursive child of the
-  // entity — keeping their ids/parentIds/timeline offsets/durations so
-  // instantiating later can rebuild the exact same group with fresh ids.
+  // Save a GameObject as a Prefab — a single-entity snapshot (flat model:
+  // no child hierarchy to carry along). Legacy group/parent fields from
+  // old saved entities are stripped.
   const handleSaveAsPrefab = (entity) => {
-    const subtreeIds = [entity.id, ...collectDescendantIds(entities, entity.id)];
-    const subtree = entities
-      .filter((e) => subtreeIds.includes(e.id))
-      .map((e) => JSON.parse(JSON.stringify(e)));
+    const { linkGroupId: _linkGroupId, parentId: _parentId, ...snapshot } = JSON.parse(JSON.stringify(entity));
     const newPrefab = {
       id: `prefab-${Date.now()}`,
       name: `${entity.name}.prefab`,
       type: entity.type,
-      rootId: entity.id,
-      entities: subtree,
-      // Back-compat convenience field for consumers that still read the
-      // legacy `components` shape (root snapshot only).
-      components: JSON.parse(JSON.stringify(entity.components || [])),
+      components: snapshot.components || [],
     };
     setPrefabs(prev => [...prev, newPrefab]);
   };
@@ -1114,17 +753,12 @@ export function useProjectStore({
     handleUpdateEntity,
     handleUpdateClips,
     handleDuplicateClips,
-    handleGroupClips,
-    handleUngroupClips,
     handleDeleteEntity,
     handleSplitEntity,
     handleAddEmptyClip,
-    handleAddEmptyChildClip,
-    handleReorderChild,
     handleAddPrefabToTimeline,
     handleAddMediaToTimeline,
     handleDropItemOnTrack,
-    handleReparentEntity,
     handleAttachScriptToEntity,
     handleAddTrack,
     handleUpdateTrack,

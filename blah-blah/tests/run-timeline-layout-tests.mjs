@@ -1,5 +1,5 @@
 /**
- * Node test harness for the track-level hierarchy (sub-tracks) timeline geometry
+ * Node test harness for the flat-tracks timeline geometry
  * (utils/timelineLayout.js).
  *
  * Usage: `node tests/run-timeline-layout-tests.mjs`
@@ -9,8 +9,6 @@ import assert from 'node:assert/strict';
 const {
   TRACK_HEIGHT,
   computeTrackLanes,
-  flattenTrackHierarchy,
-  sortChildrenOf,
 } = await import('../src/utils/timelineLayout.js');
 
 let passed = 0;
@@ -35,13 +33,11 @@ const baseTracks = [
   { id: 't2', name: 'Track 2', parentTrackId: null },
 ];
 
-const clip = (id, trackId, parentId = null, startTime = 0, duration = 5, order) => ({
+const clip = (id, trackId, startTime = 0, duration = 5) => ({
   id,
   trackId,
-  parentId,
   startTime,
   duration,
-  ...(order !== undefined ? { order } : {})
 });
 
 // ── basics ──────────────────────────────────────────────────────────────────
@@ -58,9 +54,9 @@ await test('flat tracks: each track produces 1 row of TRACK_HEIGHT', () => {
 
 await test('multiple clips comfortably coexist on the same track row', () => {
   const clips = [
-    clip('c1', 't1', null, 0, 5),
-    clip('c2', 't1', null, 6, 4),
-    clip('c3', 't1', null, 11, 3),
+    clip('c1', 't1', 0, 5),
+    clip('c2', 't1', 6, 4),
+    clip('c3', 't1', 11, 3),
   ];
   const rows = computeTrackLanes(baseTracks, clips, {});
   assert.equal(rows[0].clips.length, 3);
@@ -82,58 +78,29 @@ await test('tracks with parentTrackId are still rendered as flat rows (depth=0)'
   assert.deepEqual(rows.map((r) => r.track.id), ['t1', 't1-sub1', 't1-sub2', 't2']);
 });
 
-await test('clips with parentId coexist on the same track row without separation', () => {
-  // In the group model, parentId is just metadata — clips still sit on their trackId row
+await test('clips on different tracks appear in their respective rows', () => {
   const tracks = [
     { id: 't1', name: 'Track 1', parentTrackId: null },
     { id: 't2', name: 'Track 2', parentTrackId: null },
   ];
   const clips = [
-    clip('video', 't1', null, 0, 10),
-    clip('audio', 't2', 'video', 0, 10), // parentId set but on a normal flat track
+    clip('c1', 't1', 2, 6),
+    clip('c2', 't2', 2, 6),
   ];
   const rows = computeTrackLanes(tracks, clips, {});
-  assert.equal(rows.length, 2);
-  assert.equal(rows[0].clips.length, 1);
-  assert.equal(rows[1].clips.length, 1);
-  assert.equal(rows[0].clips[0].id, 'video');
-  assert.equal(rows[1].clips[0].id, 'audio');
-});
-
-await test('linkGroupId clips on different tracks still appear in their respective rows', () => {
-  const tracks = [
-    { id: 't1', name: 'Track 1', parentTrackId: null },
-    { id: 't2', name: 'Track 2', parentTrackId: null },
-  ];
-  const linkedClip1 = { ...clip('c1', 't1', null, 2, 6), linkGroupId: 'grp-1' };
-  const linkedClip2 = { ...clip('c2', 't2', null, 2, 6), linkGroupId: 'grp-1' };
-  const rows = computeTrackLanes(tracks, [linkedClip1, linkedClip2], {});
   assert.equal(rows[0].clips[0].id, 'c1');
   assert.equal(rows[1].clips[0].id, 'c2');
 });
 
-await test('no sub-track auto-synthesis: child clips on same track remain on same row', () => {
-  // Old behavior synthesized a hidden sub-track; new behavior keeps everything flat
+await test('no sub-track auto-synthesis: multiple clips on same track remain on same row', () => {
   const tracks = [{ id: 't1', name: 'Track 1', parentTrackId: null }];
   const clips = [
-    clip('video', 't1', null, 0, 10),
-    clip('audio', 't1', 'video', 0, 10),
+    clip('video', 't1', 0, 10),
+    clip('audio', 't1', 0, 10),
   ];
   const rows = computeTrackLanes(tracks, clips, {});
   assert.equal(rows.length, 1, 'no auto-synthesized sub-track');
   assert.equal(rows[0].clips.length, 2, 'both clips on same row');
-});
-
-// ── sorting ─────────────────────────────────────────────────────────────────
-
-await test('sortChildrenOf orders by explicit order property', () => {
-  const clips = [
-    clip('a', 't1', null, 0, 5),
-    clip('c', 't1', 'a', 0, 5, 2),
-    clip('b', 't1', 'a', 0, 5, 1),
-    clip('d', 't1', 'a', 0, 5, 0),
-  ];
-  assert.deepEqual(sortChildrenOf(clips, 'a').map((c) => c.id), ['d', 'b', 'c']);
 });
 
 // ── summary ─────────────────────────────────────────────────────────────────

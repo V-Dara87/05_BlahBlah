@@ -4,7 +4,7 @@ import { usePlaybackController } from './hooks/usePlaybackController';
 import { useMediaAssets } from './hooks/useMediaAssets';
 import { useSharedLibrary } from './hooks/useSharedLibrary';
 import { MenuBar } from './components/MenuBar';
-import { FilePlus, FolderOpen, Save, Download, Undo2, Redo2, Scissors, Trash2, Code, MousePointer2, Settings, Link, Unlink } from 'lucide-react';
+import { FilePlus, FolderOpen, Save, Download, Undo2, Redo2, Scissors, Trash2, Code, MousePointer2, Settings } from 'lucide-react';
 import { ProjectJsonModal } from './components/ProjectJsonModal';
 import { ScriptEditorModal } from './components/ScriptEditorModal';
 import { ExportModal } from './components/ExportModal';
@@ -190,11 +190,10 @@ export function App() {
     setEntities, setPrefabs,
     undo, redo, canUndo, canRedo,
     handleUpdateEntity, handleUpdateClips, handleDuplicateClips,
-    handleGroupClips, handleUngroupClips,
     handleDeleteEntity, handleSplitEntity,
-    handleAddEmptyClip, handleAddEmptyChildClip, handleReorderChild,
+    handleAddEmptyClip,
     handleAddPrefabToTimeline, handleAddMediaToTimeline,
-    handleDropItemOnTrack, handleReparentEntity, handleAttachScriptToEntity,
+    handleDropItemOnTrack, handleAttachScriptToEntity,
     handleAddTrack, handleUpdateTrack, handleDeleteTrack,
     handleSaveAsPrefab, handleRemovePrefab, handleCreateScript, handleRemoveScript, handleRenameScript, handleSaveScript,
     handleApplyProjectJson,
@@ -410,27 +409,6 @@ export function App() {
         { label: 'Undo', shortcut: 'Ctrl+Z', icon: <Undo2 size={13} />, onClick: undo, disabled: !canUndo },
         { label: 'Redo', shortcut: 'Ctrl+Shift+Z', icon: <Redo2 size={13} />, onClick: redo, disabled: !canRedo },
         { type: 'separator' },
-        {
-          label: 'Group Clips',
-          shortcut: 'Ctrl+G',
-          icon: <Link size={13} />,
-          onClick: () => {
-            const ids = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
-            if (ids.length >= 2) handleGroupClips(ids);
-          },
-          disabled: selectedIds.length < 2,
-        },
-        {
-          label: 'Ungroup Clips',
-          shortcut: 'Ctrl+Shift+G',
-          icon: <Unlink size={13} />,
-          onClick: () => {
-            const ids = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
-            if (ids.length > 0) handleUngroupClips(ids);
-          },
-          disabled: selectedIds.length === 0 && !selectedEntityId,
-        },
-        { type: 'separator' },
         { label: 'Split Clip', shortcut: 'S', icon: <Scissors size={13} />, onClick: () => selectedEntityId && handleSplitEntity(selectedEntityId), disabled: !selectedEntityId },
         { label: 'Delete Clip', shortcut: 'Del', icon: <Trash2 size={13} />, onClick: () => selectedEntityId && handleDeleteEntity(selectedEntityId), disabled: !selectedEntityId, danger: true },
       ],
@@ -444,8 +422,7 @@ export function App() {
       ],
     },
   ], [
-    canUndo, canRedo, undo, redo, selectedEntityId, selectedIds,
-    handleGroupClips, handleUngroupClips,
+    canUndo, canRedo, undo, redo, selectedEntityId,
     handleSplitEntity, handleDeleteEntity, handleOpenProjectFolder,
     handleSaveProjectToDisk,
     projectFolderHandle,
@@ -520,18 +497,7 @@ export function App() {
         onDeleteSelected={() => {
           const idsToDelete = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
           if (idsToDelete.length > 0) {
-            const allDeleteIds = new Set(idsToDelete);
-            let grew = true;
-            while (grew) {
-              grew = false;
-              entities.forEach((e) => {
-                if (e.linkGroupId && !allDeleteIds.has(e.id) && entities.some((s) => s.id !== e.id && s.linkGroupId === e.linkGroupId && allDeleteIds.has(s.id))) {
-                  allDeleteIds.add(e.id);
-                  grew = true;
-                }
-              });
-            }
-            setEntities((prev) => filterOutSubtrees(prev, Array.from(allDeleteIds)));
+            setEntities((prev) => filterOutSubtrees(prev, Array.from(new Set(idsToDelete))));
             setSelectedIds([]);
             setSelectedEntityId(null);
           }
@@ -539,18 +505,7 @@ export function App() {
         onDeleteMultiple={() => {
           const idsToDelete = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
           if (idsToDelete.length > 0) {
-            const allDeleteIds = new Set(idsToDelete);
-            let grew = true;
-            while (grew) {
-              grew = false;
-              entities.forEach((e) => {
-                if (e.linkGroupId && !allDeleteIds.has(e.id) && entities.some((s) => s.id !== e.id && s.linkGroupId === e.linkGroupId && allDeleteIds.has(s.id))) {
-                  allDeleteIds.add(e.id);
-                  grew = true;
-                }
-              });
-            }
-            setEntities((prev) => filterOutSubtrees(prev, Array.from(allDeleteIds)));
+            setEntities((prev) => filterOutSubtrees(prev, Array.from(new Set(idsToDelete))));
             setSelectedIds([]);
             setSelectedEntityId(null);
           }
@@ -564,14 +519,6 @@ export function App() {
               setSelectedEntityId(newIds[0]);
             }
           }
-        }}
-        onGroupSelected={() => {
-          const ids = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
-          if (ids.length >= 2) handleGroupClips(ids);
-        }}
-        onUngroupSelected={() => {
-          const ids = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
-          if (ids.length > 0) handleUngroupClips(ids);
         }}
         onSelectAll={() => {
           const allIds = entities.map(e => e.id);
@@ -645,11 +592,9 @@ export function App() {
           setPixelsPerSecond,
           // handlers
           handleUpdateEntity, handleUpdateClips, handleDuplicateClips,
-          handleGroupClips, handleUngroupClips,
           handleDeleteEntity, handleSaveAsPrefab,
           handleUpdateTrack, handleDeleteTrack, handleAddTrack, handleAddEmptyClip,
-          handleAddEmptyChildClip, handleReorderChild,
-          handleDropItemOnTrack, handleReparentEntity, handleAttachScriptToEntity,
+          handleDropItemOnTrack, handleAttachScriptToEntity,
           selectedKeyId, setSelectedKeyId,
           selectedIds, setSelectedIds,
           recordingTrackId,

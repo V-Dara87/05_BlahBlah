@@ -30,117 +30,15 @@
  * the same speed as element.playbackRate in EntityRenderer.jsx /
  * exportRunner.js.
  *
- * Parent-child hierarchy: an entity whose `parentId` is set authorates its
- * Transform as LOCAL values relative to the parent's frame. World
- * Transforms are resolved here by composing down the chain (see
- * composeWorldTransform). Visibility is PARENT-GATED: a child is only
- * visible while its whole ancestor chain is present and playing at `time`
- * (each clip window must contain `time`). Timeline drags move children
- * together with parents (see ClipItem.jsx) so children stay inside their
- * parent's window by construction.
+ * Every entity is a flat timeline clip: its Transform IS its world pose
+ * (there is no parent-child hierarchy, so no world/local composition —
+ * `transform` and `localTransform` are the same value).
  */
 import { executeScriptComponent, detectScriptKind } from './scriptRunner.js';
 import { resolveKeyframedComponents } from './keyframes.js';
-import { isScriptComponent, getAncestorChain } from './ecs.js';
-
-// ─── Affine world/local transform helpers ───────────────────────────────────
-//
-// Transform hierarchy math. An entity WITHOUT a parentId uses its local
-// Transform directly as its World Transform. An entity WITH a parentId has
-// local Transform values authored relative to its parent's frame; its World
-// Transform is composed by walking down the chain from the root ancestor,
-// applying the 2D affine rules below at every level. Everything here is a
-// pure function of explicit input values — no state, deterministic per
-// frame — matching the module's scrubbing/export contract.
+import { isScriptComponent } from './ecs.js';
 
 const IDENTITY = { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1 };
-
-const num = (v, fallback) => (Number.isFinite(v) ? v : fallback);
-
-/**
- * Compose a child's LOCAL transform onto its parent's WORLD transform.
- *
- * The child's local x/y offset is expressed in the parent's local frame:
- * it is scaled by the parent's world scale and rotated by the parent's
- * world rotation before being added to the parent's world position.
- * Rotation/scale/opacity accumulate down the chain as specified:
- *   worldRotation = parent.rotation + local.rotation
- *   worldScaleX   = parent.scaleX * local.scaleX      (same for Y)
- *   worldOpacity  = parent.opacity * local.opacity
- *   rad = parent.rotation * π/180
- *   worldX = parent.x + local.x*parent.scaleX*cos(rad) - local.y*parent.scaleY*sin(rad)
- *   worldY = parent.y + local.x*parent.scaleX*sin(rad) + local.y*parent.scaleY*cos(rad)
- */
-export function composeWorldTransform(parentWorld, local) {
-  const pw = { ...IDENTITY, ...parentWorld };
-  const l = { ...IDENTITY, ...local };
-  const rad = (num(pw.rotation, 0) * Math.PI) / 180;
-  const sx = num(pw.scaleX, 1);
-  const sy = num(pw.scaleY, 1);
-  const cos = Math.cos(rad);
-  const sin = Math.sin(rad);
-  return {
-    ...l,
-    x: num(pw.x, 0) + num(l.x, 0) * sx * cos - num(l.y, 0) * sy * sin,
-    y: num(pw.y, 0) + num(l.x, 0) * sx * sin + num(l.y, 0) * sy * cos,
-    rotation: num(pw.rotation, 0) + num(l.rotation, 0),
-    scaleX: sx * num(l.scaleX, 1),
-    scaleY: sy * num(l.scaleY, 1),
-    opacity: num(pw.opacity, 1) * num(l.opacity, 1),
-    // Clip-level speed is per-entity (it scales the entity's own local
-    // time), never composed with ancestors — carry the child's own value.
-    speed: num(l.speed, 1),
-  };
-}
-
-/**
- * Inverse of composeWorldTransform: given a desired child WORLD pose and
- * the parent's WORLD pose, return the child LOCAL transform that produces
- * that world pose. Used when re-parenting an entity in the Inspector so it
- * stays visually in place (Unity-style parenting).
- */
-export function localTransformFromWorld(childWorld, parentWorld) {
-  const pw = { ...IDENTITY, ...parentWorld };
-  const w = { ...IDENTITY, ...childWorld };
-  const rad = (num(pw.rotation, 0) * Math.PI) / 180;
-  const sx = num(pw.scaleX, 1) || 1;
-  const sy = num(pw.scaleY, 1) || 1;
-  const dx = num(w.x, 0) - num(pw.x, 0);
-  const dy = num(w.y, 0) - num(pw.y, 0);
-  const cos = Math.cos(rad);
-  const sin = Math.sin(rad);
-  return {
-    ...w,
-    // Inverse of: dx = lx*sx*cos - ly*sy*sin ; dy = lx*sx*sin + ly*sy*cos
-    x: (dx * cos + dy * sin) / sx,
-    y: (-dx * sin + dy * cos) / sy,
-    rotation: num(w.rotation, 0) - num(pw.rotation, 0),
-    scaleX: num(w.scaleX, 1) / sx,
-    scaleY: num(w.scaleY, 1) / sy,
-    opacity: num(w.opacity, 1) / (num(pw.opacity, 1) || 1),
-  };
-}
-
-/**
- * Best-effort WORLD pose of `entity` from its STATIC stored Transform
- * values only (no keyframe/motion-script evaluation at a time). Used as
- * the fallback when an entity isn't inside its active window at the
- * current playhead, so a world pose still exists to convert against.
- * Dangling parentIds are treated as roots (the entity stands alone).
- */
-export function staticWorldTransform(entity, entities) {
-  if (!entity) return { ...IDENTITY };
-  const byId = new Map((entities || []).map((e) => [e?.id, e]));
-  // Resolve top-down: walk the chain to its root ancestor first.
-  const chain = [...getAncestorChain(entities, entity.id)].reverse();
-  let world = { ...IDENTITY };
-  for (const ancestorId of chain) {
-    const ancestor = byId.get(ancestorId);
-    if (!ancestor) break; // dangling parent → treat as root
-    world = composeWorldTransform(world, transformFromComponents(ancestor.components));
-  }
-  return composeWorldTransform(world, transformFromComponents(entity.components));
-}
 
 /** The Transform component values of an entity, or an identity default. */
 function transformFromComponents(components) {
@@ -227,20 +125,13 @@ function resolveEntityLocal({ entity, scripts, time, fps }) {
  *
  * Returns [{ entity, transform, localTransform, localTime, depth }] for
  * every entity actually visible at `time`:
- *   - the entity's own clip window must contain `time` (same rule as
- *     before), its track must be visible/unlocked, and it must be active;
- *   - PARENT-GATED: an entity with a parentId is only visible while its
- *     WHOLE ancestor chain is also present and playing at `time` (each
- *     ancestor's own clip window must contain `time`). Dragging a parent
- *     clip moves its children by the same time offset (see ClipItem.jsx)
- *     precisely so children stay inside their parent's window and this
- *     gate never surprises an author.
+ *   - the entity's own clip window must contain `time`, its track must be
+ *     visible/unlocked, and it must be active.
  *
- * `transform` is the resolved WORLD transform — callers (preview AND
- * export) must render with this. `localTransform` is the entity's own
- * local pose after keyframes + motion scripts. `depth` is the chain depth
- * (0 = root), used for deterministic draw ordering between parents and
- * children.
+ * `transform` is the entity's world pose — callers (preview AND export)
+ * must render with this. With no hierarchy it equals `localTransform`
+ * (the pose after keyframes + motion scripts). `depth` is always 0
+ * (flat model, kept for caller compatibility).
  *
  * @param {{ entities: any[], tracks: any[], scripts?: any[], time: number, fps?: number }} args
  */
@@ -257,71 +148,22 @@ export function computeActiveEntitiesAtTime({ entities, tracks, scripts = [], ti
 
   if (activeEntities.length === 0) return [];
 
-  // 1. LOCAL transforms for every scene-active entity (each resolved
-  //    inside its own clip window at its own local time).
-  const locals = new Map(); // entityId -> { entity, localTransform, localTime }
-  for (const entity of activeEntities) {
-    locals.set(entity.id, resolveEntityLocal({ entity, scripts, time, fps }));
-  }
-
-  // 2. Hierarchical WORLD transforms, top-down via memoized recursion.
-  //    Parent-gated: an entity whose parent isn't scene-active at `time`
-  //    is NOT visible and drops out of the result. A dangling parentId
-  //    (hand-edited JSON referencing a deleted entity) is treated as a
-  //    root — better to show the clip at its own pose than hide it.
-  //    Cycles (shouldn't happen — the Inspector prevents them) degrade to
-  //    the entity standing alone rather than hanging the render loop.
-  const worldMemo = new Map(); // entityId -> worldTransform | null (null = not visible)
-
-  const worldFor = (entityId, visiting = new Set()) => {
-    if (worldMemo.has(entityId)) return worldMemo.get(entityId);
-    if (visiting.has(entityId)) {
-      // Cycle guard (only reachable from hand-edited project JSON — the
-      // Inspector prevents circular parenting): treat the re-visited
-      // entity as its own root rather than looping forever.
-      return locals.get(entityId)?.localTransform || null;
-    }
-    const rec = locals.get(entityId);
-    if (!rec) return null; // not scene-active at this time
-    visiting.add(entityId);
-    let world = rec.localTransform;
-    if (rec.entity.parentId) {
-      if (!locals.has(rec.entity.parentId)) {
-        // Parent exists in the project but is NOT playing at this time —
-        // parent-gated: the child is hidden while its parent clip is off.
-        // If the parent doesn't exist at all (dangling id) the entity
-        // stands alone instead.
-        const parentExists = entities.some((e) => e.id === rec.entity.parentId);
-        if (parentExists) {
-          visiting.delete(entityId);
-          return null;
-        }
-      } else {
-        const parentWorld = worldFor(rec.entity.parentId, visiting);
-        if (!parentWorld) {
-          visiting.delete(entityId);
-          return null;
-        }
-        world = composeWorldTransform(parentWorld, rec.localTransform);
-      }
-    }
-    visiting.delete(entityId);
-    worldMemo.set(entityId, world);
-    return world;
-  };
-
+  // Resolve each scene-active entity inside its own clip window at its own
+  // local time. The local pose IS the world pose (flat model).
   const output = [];
-  const entityById = new Map(entities.map((e) => [e.id, e]));
-  for (const rec of locals.values()) {
-    const world = worldFor(rec.entity.id);
-    if (!world) continue;
-    const { entity, localTransform, localTime } = rec;
-    output.push({
+  for (const entity of activeEntities) {
+    const { entity: resolvedEntity, localTransform, localTime } = resolveEntityLocal({
       entity,
-      transform: world,
+      scripts,
+      time,
+      fps,
+    });
+    output.push({
+      entity: resolvedEntity,
+      transform: localTransform,
       localTransform,
       localTime,
-      depth: getAncestorChain(entityById, entity.id).length,
+      depth: 0,
     });
   }
   return output;

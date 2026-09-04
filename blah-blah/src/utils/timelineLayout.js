@@ -4,22 +4,12 @@
  * In this model:
  *   - Every track is a full, standard track row (height = TRACK_HEIGHT).
  *   - Multiple clips comfortably coexist on any track row.
- *   - Clips can be grouped/linked together (via linkGroupId) or parented (via parentId).
- *   - No restrictive sub-tracks or auto-synthesized tracks.
+ *   - No sub-tracks, no parent-child hierarchy, no clip grouping.
  */
 
 export const TRACK_HEIGHT = 64;      // Normal track height (px)
 export const SUB_LANE_HEIGHT = 64;   // Compatibility export
 export const SUB_LANE_INDENT = 0;    // Indent (px)
-
-/**
- * Children of a parent clip, in order. Framework-free helper.
- */
-export function sortChildrenOf(clips, parentId) {
-  return (clips || [])
-    .filter((c) => c.parentId === parentId)
-    .sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
-}
 
 /**
  * Compatibility export for track hierarchy flatten (returns 1:1 tracks as flat list).

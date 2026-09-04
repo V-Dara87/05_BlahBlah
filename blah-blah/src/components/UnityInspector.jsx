@@ -26,13 +26,8 @@ import { extractScriptProps, getScriptError, detectScriptKind, isScriptBundlePen
 import { DragNumber } from './DragNumber';
 import { InspectorFieldList, TRANSFORM_FIELD_GROUPS } from './inspector/InspectorField';
 import { getFieldKeyframes, setKeyframe, evaluateField } from '../engine/keyframes';
-import { isScriptComponent, isDescendantOf } from '../engine/ecs';
+import { isScriptComponent } from '../engine/ecs';
 import { readDragPayload, dragHasItemKind, ITEM_KIND_SCRIPT } from '../utils/dragData';
-import {
-  computeActiveEntitiesAtTime,
-  staticWorldTransform,
-  localTransformFromWorld,
-} from '../engine/renderPipeline';
 
 // Per-kind display metadata for script cards (icon + color + label). The
 // kind comes from detectScriptKind at runtime — there is ONE component type
@@ -130,7 +125,6 @@ function InspectorCardHeader({
  
 export const UnityInspector = memo(function UnityInspector({
   selectedEntity,
-  entities = [],
   tracks = [],
   scripts = [],
   onUpdateEntity,
@@ -209,93 +203,10 @@ export const UnityInspector = memo(function UnityInspector({
     return null;
   };
 
-  // ── Parent dropdown ──────────────────────────────────────────────────────
-  //
-  // Lists every other live entity as a candidate parent (excluding self and
-  // own descendants so a cycle can never be created). Picking one sets
-  // `parentId`; picking "None" clears it. On change the entity's LOCAL
-  // Transform is re-derived from its current WORLD pose minus the new
-  // parent's world pose (Unity-style parenting) so the clip does NOT jump:
-  // world pose is evaluated live at the current playhead when the clip is
-  // on-screen (keyframes + motion scripts), otherwise from its static
-  // stored values.
   const transformComp = selectedEntity.components.find(c => c.type === 'Transform') || {
     x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1
   };
 
-  const candidateParents = entities.filter(
-    (e) =>
-      e.id !== selectedEntity.id &&
-      e.active !== false &&
-      !isDescendantOf(entities, e.id, selectedEntity.id)
-  );
-
-  // Indentation depth of each candidate in its own chain (visual nesting
-  // cue for multi-level hierarchies).
-  const parentDepthOf = (entityId) => {
-    let depth = 0;
-    const seen = new Set([entityId]);
-    let current = entities.find((e) => e.id === entityId);
-    while (current?.parentId && !seen.has(current.parentId)) {
-      seen.add(current.parentId);
-      depth++;
-      current = entities.find((e) => e.id === current.parentId);
-    }
-    return depth;
-  };
-
-  const entityById = (entityId) => entities.find((e) => e.id === entityId);
-
-  /** Live world pose at currentTime when visible, else static-chain pose. */
-  const worldPoseOf = (entity) => {
-    if (!entity) return null;
-    try {
-      const items = computeActiveEntitiesAtTime({
-        entities,
-        tracks,
-        scripts,
-        time: currentTime,
-        fps: 30,
-      });
-      const item = items.find((i) => i.entity.id === entity.id);
-      if (item) return item.transform;
-    } catch (err) {
-      console.warn('Parenting: live pose unavailable, using static values:', err);
-    }
-    return staticWorldTransform(entity, entities);
-  };
-
-  const handleParentChange = (rawParentId) => {
-    const targetParentId = rawParentId || null;
-    if (selectedEntity.parentId === targetParentId) return;
-    if (targetParentId && isDescendantOf(entities, targetParentId, selectedEntity.id)) return;
-
-    const childWorld = worldPoseOf(selectedEntity);
-    const newParent = targetParentId ? entityById(targetParentId) : null;
-    const parentWorld = newParent ? worldPoseOf(newParent) : null;
-
-    // New local pose = current world pose expressed in the new frame.
-    // Unparenting (no parent) treats the canvas itself as the frame, so
-    // the entity keeps its current world placement as standalone values.
-    const local = parentWorld
-      ? localTransformFromWorld(childWorld, parentWorld)
-      : { ...childWorld };
-
-    const existing = selectedEntity.components.find((c) => c.type === 'Transform');
-    const updatedTransform = {
-      ...(existing || { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1, speed: 1 }),
-      x: local.x,
-      y: local.y,
-      rotation: local.rotation,
-      scaleX: local.scaleX,
-      scaleY: local.scaleY,
-      opacity: local.opacity,
-    };
-    const components = existing
-      ? selectedEntity.components.map((c) => (c.type === 'Transform' ? updatedTransform : c))
-      : [updatedTransform, ...selectedEntity.components];
-    onUpdateEntity(selectedEntity.id, { parentId: targetParentId, components });
-  };
   const textComp = selectedEntity.components.find(c => c.type === 'TextRenderer');
   const shapeComp = selectedEntity.components.find(c => c.type === 'ShapeRenderer');
   const videoComp = selectedEntity.components.find(c => c.type === 'VideoRenderer');
@@ -561,22 +472,6 @@ export const UnityInspector = memo(function UnityInspector({
           </select>
         </div>
 
-        <div className="inspector-header-field">
-          <label className="field-label-sm">Parent</label>
-          <select
-            className="inspector-track-select"
-            value={selectedEntity.parentId || ''}
-            onChange={(e) => handleParentChange(e.target.value)}
-            title="Parent this clip to another clip. Children use LOCAL transforms relative to their parent, only render while the parent is playing, and move with the parent on the timeline."
-          >
-            <option value="">None (Root)</option>
-            {candidateParents.map((p) => (
-              <option key={p.id} value={p.id}>
-                {'\u00A0\u00A0'.repeat(parentDepthOf(p.id))}{p.name}
-              </option>
-            ))}
-          </select>
-        </div>
       </div>
  
       {/* Component Stack */}

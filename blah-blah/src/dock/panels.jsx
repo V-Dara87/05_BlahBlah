@@ -122,10 +122,9 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
     selectedEntityId, setSelectedEntityId, snappingEnabled,
     selectedIds, setSelectedIds,
     handleUpdateEntity, handleUpdateClips, handleDuplicateClips,
-    handleGroupClips, handleUngroupClips,
     handleUpdateTrack, handleDeleteTrack,
-    handleAddTrack, handleAddEmptyClip, handleAddEmptyChildClip, handleReorderChild,
-    handleDropItemOnTrack, handleReparentEntity, handleAttachScriptToEntity,
+    handleAddTrack, handleAddEmptyClip,
+    handleDropItemOnTrack, handleAttachScriptToEntity,
     onAddMediaAsset,
     recordingTrackId, onToggleRecordTrack,
     onZoomIn, onZoomOut, setPixelsPerSecond,
@@ -170,16 +169,11 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
       onUpdateClip={handleUpdateEntity}
       onUpdateClips={handleUpdateClips}
       onDuplicateClips={handleDuplicateClips}
-      onGroupClips={handleGroupClips}
-      onUngroupClips={handleUngroupClips}
       onUpdateTrack={handleUpdateTrack}
       onDeleteTrack={handleDeleteTrack}
       onAddTrack={handleAddTrack}
       onAddEmptyClip={handleAddEmptyClip}
-      onAddEmptyChildClip={handleAddEmptyChildClip}
-      onReorderChild={handleReorderChild}
       onDropItemOnTrack={handleDropItemOnTrack}
-      onReparentEntity={handleReparentEntity}
       onAttachScriptToEntity={handleAttachScriptToEntity}
       onAddMediaAsset={onAddMediaAsset}
       onToggleRecordTrack={onToggleRecordTrack}

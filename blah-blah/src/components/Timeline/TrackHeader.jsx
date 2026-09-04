@@ -7,14 +7,9 @@ import {
   Eye, 
   EyeOff,
   Layers,
-  Plus,
   Mic,
   Square,
-  Trash2,
-  ChevronDown,
-  ChevronRight,
-  FolderPlus,
-  CornerDownRight
+  Trash2
 } from 'lucide-react';
 import { TRACK_HEIGHT } from '../../utils/timelineLayout';
  

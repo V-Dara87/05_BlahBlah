@@ -28,13 +28,8 @@ export const TrackLane = memo(function TrackLane({
   onUpdateClip,
   onUpdateClips,
   onDuplicateClips,
-  onGroupClips,
-  onUngroupClips,
-  onReparentEntity,
   onAttachScriptToEntity,
   onAddEmptyClip,
-  onAddChildClip,
-  onReorderChild,
   onDropItemOnTrack,
   onAddMediaAsset,
   snappingPoints,
@@ -131,14 +126,9 @@ export const TrackLane = memo(function TrackLane({
     onUpdateClip,
     onUpdateClips,
     onDuplicateClips,
-    onGroupClips,
-    onUngroupClips,
-    onReparentEntity,
     onAttachScriptToEntity,
     snappingPoints,
     snappingEnabled,
-    onAddChildClip,
-    onReorderChild,
   };
 
   return (

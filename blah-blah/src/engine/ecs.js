@@ -202,88 +202,17 @@ export function createGameObject({
     src,
     color,
     components: finalComponents,
-    linkGroupId: null, // when set, clips with the same groupId move together
-    // Parent-child hierarchy: when set, this entity's Transform values
-    // (x/y/rotation/scale/opacity) are LOCAL to the parent entity's frame;
-    // the resolved World Transform is computed in engine/renderPipeline.js
-    // by composing up the parent chain. null = root entity.
-    parentId: null,
   };
 }
 
-// ─── Parent-child hierarchy helpers ─────────────────────────────────────────
+// ─── Entity removal helper ──────────────────────────────────────────────────
 
 /**
- * Every descendant id of `rootId` (all levels, in entity-array order).
- * Used by delete/duplicate/prefab-save/timeline-move so a hierarchy is
- * always operated on as one group. `entities` may be the full project list
- * OR a candidate list — the lookup is by parentId either way.
- */
-export function collectDescendantIds(entities, rootId) {
-  const out = [];
-  const walk = (parentId) => {
-    for (const e of entities || []) {
-      if (e?.parentId === parentId && !out.includes(e.id)) {
-        out.push(e.id);
-        walk(e.id);
-      }
-    }
-  };
-  walk(rootId);
-  return out;
-}
-
-/**
- * The full ancestry chain ids of `entityId`, nearest ancestor first
- * ([] when the entity is a root). Stops when the chain loops back on
- * itself or refers to a missing entity, so hand-edited project JSON can
- * never hang this.
- */
-export function getAncestorChain(entities, entityId) {
-  const chain = [];
-  const seen = new Set([entityId]);
-  const byId = entities instanceof Map ? entities : new Map((entities || []).map((e) => [e?.id, e]));
-  let current = byId.get(entityId);
-  while (current?.parentId && !seen.has(current.parentId)) {
-    seen.add(current.parentId);
-    chain.push(current.parentId);
-    current = byId.get(current.parentId);
-  }
-  return chain;
-}
-
-/** True when `candidateId` is a descendant of `ancestorId` (any depth). */
-export function isDescendantOf(entities, candidateId, ancestorId) {
-  if (candidateId === ancestorId) return false;
-  return getAncestorChain(entities, candidateId).includes(ancestorId);
-}
-
-/**
- * Depth of an entity in its parent chain (0 = root). Walks raw parentId
- * links so it works on entity snapshots (e.g. prefab data) too; loops are
- * guarded by getAncestorChain.
- */
-export function getEntityDepth(entities, entityId) {
-  return getAncestorChain(entities, entityId).length;
-}
-
-/**
- * Return a NEW entity array with the subtrees rooted at `rootIds` removed
- * (each root and every recursive descendant). Deleting a clip deletes its
- * whole hierarchy, so children authored in parent-local space never get
- * orphaned onto the timeline.
+ * Return a NEW entity array with the entities whose ids are in `rootIds`
+ * removed (kept as a named helper for the delete paths; each clip is an
+ * independent timeline entity, so removal is a flat id filter).
  */
 export function filterOutSubtrees(entities, rootIds) {
   const doomed = new Set(rootIds);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const e of entities || []) {
-      if (e?.parentId && doomed.has(e.parentId) && !doomed.has(e.id)) {
-        doomed.add(e.id);
-        changed = true;
-      }
-    }
-  }
   return (entities || []).filter((e) => !doomed.has(e.id));
 }

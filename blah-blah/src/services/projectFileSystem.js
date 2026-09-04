@@ -511,10 +511,6 @@ export async function saveProjectToDirectory(dirHandle, projectState) {
       active: e.active !== false,
       components: e.components,
       keyframes: e.keyframes,
-      // Parent-child hierarchy — must persist or every group would come
-      // back unparented (children rendered at their raw local offsets)
-      // after a save + reload.
-      parentId: e.parentId || null,
     })),
     // Filename -> id (+ description) map so loadProjectFromDirectory can
     // restore each script's ORIGINAL id instead of re-deriving one from the
