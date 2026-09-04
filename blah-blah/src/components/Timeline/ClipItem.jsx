@@ -6,6 +6,8 @@ import { isScriptComponent } from '../../engine/ecs';
 export const ClipItem = memo(function ClipItem({
   clip,
   allClips = [],
+  tracks = [],
+  isLocked = false,
   pixelsPerSecond,
   isSelected,
   selectedIds = [],
@@ -13,6 +15,8 @@ export const ClipItem = memo(function ClipItem({
   onToggleSelect,
   onRangeSelect,
   onUpdateClip,
+  onUpdateClips,
+  onDuplicateClips,
   snappingPoints = [],
   snappingEnabled = true,
 }) {
@@ -63,54 +67,63 @@ export const ClipItem = memo(function ClipItem({
       return;
     }
 
-    // If this clip is part of a multi-selection, don't deselect others
+    // If this clip is part of a multi-selection, keep the multi-selection active
     if (!isSelectedMulti) {
       onSelectClip(clip.id);
     }
 
+    if (isLocked) return;
+
     isDraggingRef.current = true;
     const startX = e.clientX;
     const origStartTime = clip.startTime;
-    let currentTrackId = clip.trackId;
 
     // Determine which clips to move: all selected + linked
     const allSelectedIds = new Set(isSelectedMulti ? selectedIds : [clip.id]);
-    // Also include linked clips of all selected
-    const moveIds = new Set(allSelectedIds);
     allClips.forEach((c) => {
       if (c.linkGroupId && allClips.some((s) => s.id !== c.id && s.linkGroupId === c.linkGroupId && allSelectedIds.has(s.id))) {
         moveIds.add(c.id);
       }
     });
 
-    // Snapshot original positions of all clips being moved
+    const moveIds = new Set(allSelectedIds);
+
+    // Snapshot original positions and track indices of all clips being moved
     const moveOriginals = allClips
       .filter((c) => moveIds.has(c.id))
       .map((c) => ({
         id: c.id,
         origStartTime: c.startTime,
         origTrackId: c.trackId,
+        trackIdx: tracks.findIndex((t) => t.id === c.trackId),
+        duration: c.duration,
       }));
+
+    const minStartTime = Math.min(...moveOriginals.map((mo) => mo.origStartTime));
+    const origTrackIdx = tracks.findIndex((t) => t.id === clip.trackId);
 
     const handlePointerMove = (moveEvent) => {
       if (!isDraggingRef.current) return;
       const deltaPx = moveEvent.clientX - startX;
       const deltaTime = deltaPx / pixelsPerSecond;
-      let rawNewStart = Math.max(0, origStartTime + deltaTime);
 
       // Auto-scroll when dragging near timeline edges
       const scrollEl = document.querySelector('.lanes-wrapper');
       if (scrollEl) {
         const scrollRect = scrollEl.getBoundingClientRect();
         const edgeMargin = 60;
-        const scrollSpeed = 8;
-        if (moveEvent.clientX < scrollRect.left + edgeMargin) {
+        const scrollSpeed = 10;
+        if (moveEvent.clientX < scrollRect.left + 180 + edgeMargin) {
           scrollEl.scrollLeft = Math.max(0, scrollEl.scrollLeft - scrollSpeed);
         } else if (moveEvent.clientX > scrollRect.right - edgeMargin) {
           scrollEl.scrollLeft += scrollSpeed;
         }
       }
-      
+
+      // Clamp deltaTime so NO clip goes below 0
+      const clampedDeltaTime = Math.max(-minStartTime, deltaTime);
+      let rawNewStart = origStartTime + clampedDeltaTime;
+
       let finalNewStart = getSnappedTime(rawNewStart);
       const rightEdge = rawNewStart + clip.duration;
       const snappedRight = getSnappedTime(rightEdge);
@@ -118,30 +131,47 @@ export const ClipItem = memo(function ClipItem({
         finalNewStart = Math.max(0, snappedRight - clip.duration);
       }
 
+      const timeDelta = Math.max(-minStartTime, finalNewStart - origStartTime);
+
       // Check vertical position to detect target track
       const elementsUnderPointer = document.elementsFromPoint(moveEvent.clientX, moveEvent.clientY);
-      let detectedTrackId = currentTrackId;
+      let targetTrackIdx = origTrackIdx;
       for (const el of elementsUnderPointer) {
         const trackEl = el.closest('[data-track-id]');
         if (trackEl) {
-          detectedTrackId = trackEl.getAttribute('data-track-id');
+          const detectedTrackId = trackEl.getAttribute('data-track-id');
+          const idx = tracks.findIndex((t) => t.id === detectedTrackId);
+          if (idx >= 0) {
+            targetTrackIdx = idx;
+          }
           break;
         }
       }
 
-      const timeDelta = finalNewStart - origStartTime;
-
-      // Move all selected clips by the same delta
-      moveOriginals.forEach((mo) => {
-        const newStart = Math.max(0, mo.origStartTime + timeDelta);
-        const updates = { startTime: newStart };
-        // Only change track for the primary clip being dragged
-        if (mo.id === clip.id && detectedTrackId && detectedTrackId !== currentTrackId) {
-          currentTrackId = detectedTrackId;
-          updates.trackId = detectedTrackId;
-        }
-        onUpdateClip(mo.id, updates);
+      const trackDelta = (targetTrackIdx >= 0 && origTrackIdx >= 0) ? (targetTrackIdx - origTrackIdx) : 0;
+      // Verify all clips stay within valid tracks and don't land on locked tracks
+      const canShiftTracks = moveOriginals.every((mo) => {
+        const newIdx = mo.trackIdx + trackDelta;
+        return newIdx >= 0 && newIdx < tracks.length && !tracks[newIdx]?.locked;
       });
+
+      // Prepare batch updates for all moving clips
+      const batchUpdates = moveOriginals.map((mo) => {
+        const newStart = Math.max(0, mo.origStartTime + timeDelta);
+        const newTrackId = (canShiftTracks && trackDelta !== 0 && tracks[mo.trackIdx + trackDelta])
+          ? tracks[mo.trackIdx + trackDelta].id
+          : mo.origTrackId;
+        return {
+          id: mo.id,
+          updates: { startTime: newStart, trackId: newTrackId },
+        };
+      });
+
+      if (onUpdateClips) {
+        onUpdateClips(batchUpdates);
+      } else {
+        batchUpdates.forEach((u) => onUpdateClip(u.id, u.updates));
+      }
     };
 
     const handlePointerUp = () => {
@@ -155,6 +185,7 @@ export const ClipItem = memo(function ClipItem({
   };
 
   const handleLeftTrimPointerDown = (e) => {
+    if (isLocked) return;
     e.stopPropagation();
     onSelectClip(clip.id);
 
@@ -163,6 +194,19 @@ export const ClipItem = memo(function ClipItem({
     const origDuration = clip.duration;
 
     const handlePointerMove = (moveEvent) => {
+      // Auto-scroll when trimming near edges
+      const scrollEl = document.querySelector('.lanes-wrapper');
+      if (scrollEl) {
+        const scrollRect = scrollEl.getBoundingClientRect();
+        const edgeMargin = 60;
+        const scrollSpeed = 8;
+        if (moveEvent.clientX < scrollRect.left + 180 + edgeMargin) {
+          scrollEl.scrollLeft = Math.max(0, scrollEl.scrollLeft - scrollSpeed);
+        } else if (moveEvent.clientX > scrollRect.right - edgeMargin) {
+          scrollEl.scrollLeft += scrollSpeed;
+        }
+      }
+
       const deltaPx = moveEvent.clientX - startX;
       const deltaTime = deltaPx / pixelsPerSecond;
 
@@ -203,6 +247,7 @@ export const ClipItem = memo(function ClipItem({
   };
 
   const handleRightTrimPointerDown = (e) => {
+    if (isLocked) return;
     e.stopPropagation();
     onSelectClip(clip.id);
 
@@ -211,6 +256,19 @@ export const ClipItem = memo(function ClipItem({
     const origStartTime = clip.startTime;
 
     const handlePointerMove = (moveEvent) => {
+      // Auto-scroll when trimming near edges
+      const scrollEl = document.querySelector('.lanes-wrapper');
+      if (scrollEl) {
+        const scrollRect = scrollEl.getBoundingClientRect();
+        const edgeMargin = 60;
+        const scrollSpeed = 8;
+        if (moveEvent.clientX < scrollRect.left + 180 + edgeMargin) {
+          scrollEl.scrollLeft = Math.max(0, scrollEl.scrollLeft - scrollSpeed);
+        } else if (moveEvent.clientX > scrollRect.right - edgeMargin) {
+          scrollEl.scrollLeft += scrollSpeed;
+        }
+      }
+
       const deltaPx = moveEvent.clientX - startX;
       const deltaTime = deltaPx / pixelsPerSecond;
       let rawNewDuration = Math.max(0.2, origDuration + deltaTime);
@@ -245,7 +303,12 @@ export const ClipItem = memo(function ClipItem({
   const handleContextMenu = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    // Build context menu
+
+    // Ensure this clip is selected
+    if (!isSelected && !isSelectedMulti) {
+      onSelectClip(clip.id);
+    }
+
     const existing = document.querySelector('.clip-context-menu');
     if (existing) existing.remove();
 
@@ -253,6 +316,20 @@ export const ClipItem = memo(function ClipItem({
     menu.className = 'clip-context-menu';
     menu.style.left = `${e.clientX}px`;
     menu.style.top = `${e.clientY}px`;
+
+    const activeTargetIds = isSelectedMulti ? selectedIds : [clip.id];
+
+    // Duplicate button
+    if (onDuplicateClips && !isLocked) {
+      const dupBtn = document.createElement('button');
+      dupBtn.textContent = '📄 Duplicate';
+      dupBtn.className = 'ctx-menu-item';
+      dupBtn.onclick = () => {
+        onDuplicateClips(activeTargetIds);
+        menu.remove();
+      };
+      menu.appendChild(dupBtn);
+    }
 
     if (isLinked) {
       const unlinkBtn = document.createElement('button');
@@ -266,17 +343,19 @@ export const ClipItem = memo(function ClipItem({
       menu.appendChild(unlinkBtn);
     }
 
-    const deleteBtn = document.createElement('button');
-    deleteBtn.textContent = '🗑 Delete';
-    deleteBtn.className = 'ctx-menu-item danger';
-    deleteBtn.onclick = () => {
-      onSelectClip(null);
-      // Delete this clip and its linked clips
-      const idsToDelete = [clip.id, ...linkedClips.map((lc) => lc.id)];
-      idsToDelete.forEach((id) => onUpdateClip(id, { _delete: true }));
-      menu.remove();
-    };
-    menu.appendChild(deleteBtn);
+    if (!isLocked) {
+      const deleteBtn = document.createElement('button');
+      deleteBtn.textContent = '🗑 Delete';
+      deleteBtn.className = 'ctx-menu-item danger';
+      deleteBtn.onclick = () => {
+        onSelectClip(null);
+        // Delete this clip and its linked clips / selected clips
+        const idsToDelete = new Set([...activeTargetIds, ...linkedClips.map((lc) => lc.id)]);
+        idsToDelete.forEach((id) => onUpdateClip(id, { _delete: true }));
+        menu.remove();
+      };
+      menu.appendChild(deleteBtn);
+    }
 
     document.body.appendChild(menu);
     const closeMenu = (ev) => {
@@ -301,21 +380,23 @@ export const ClipItem = memo(function ClipItem({
 
   return (
     <div
-      className={`timeline-clip-card ${clipCategory} ${isSelected || isSelectedMulti ? 'selected' : ''} ${isLinked ? 'linked' : ''}`}
+      className={`timeline-clip-card ${clipCategory} ${isSelected || isSelectedMulti ? 'selected' : ''} ${isLinked ? 'linked' : ''} ${isLocked ? 'is-locked' : ''}`}
       style={{
         left: `${leftPx}px`,
         width: `${widthPx}px`,
       }}
       onPointerDown={handleBodyPointerDown}
       onContextMenu={handleContextMenu}
-      title={`${clip.name} (${clip.duration.toFixed(1)}s)${isLinked ? ' 🔗 Linked' : ''}`}
+      title={`${clip.name} (${clip.duration.toFixed(1)}s)${isLinked ? ' 🔗 Linked' : ''}${isLocked ? ' 🔒 Locked' : ''}`}
     >
       {/* Left Trim Handle */}
-      <div
-        className="clip-trim-handle left"
-        onPointerDown={handleLeftTrimPointerDown}
-        title="Trim Left (In-Point)"
-      />
+      {!isLocked && (
+        <div
+          className="clip-trim-handle left"
+          onPointerDown={handleLeftTrimPointerDown}
+          title="Trim Left (In-Point)"
+        />
+      )}
 
       {/* Clip Content */}
       <div className="clip-content-box">
@@ -364,11 +445,13 @@ export const ClipItem = memo(function ClipItem({
       </div>
 
       {/* Right Trim Handle */}
-      <div
-        className="clip-trim-handle right"
-        onPointerDown={handleRightTrimPointerDown}
-        title="Trim Right (Out-Point)"
-      />
+      {!isLocked && (
+        <div
+          className="clip-trim-handle right"
+          onPointerDown={handleRightTrimPointerDown}
+          title="Trim Right (Out-Point)"
+        />
+      )}
     </div>
   );
 });

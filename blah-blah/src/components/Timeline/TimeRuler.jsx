@@ -1,30 +1,61 @@
-import { useRef } from 'react';
+import { useRef, memo } from 'react';
 import { formatTimecode } from '../../utils/timeFormat';
 
-export function TimeRuler({
+export const TimeRuler = memo(function TimeRuler({
   totalDuration,
   pixelsPerSecond,
+  totalWidth: propTotalWidth,
   onSeek,
+  exportRange,
+  snappingPoints = [],
+  snappingEnabled = false,
 }) {
   const rulerRef = useRef(null);
-  // Reserve the same width as the track-header column so ticks land
-  // directly above the clip positions they correspond to.
   const HEADER_WIDTH = 180;
+
+  const getSnappedTime = (rawTime) => {
+    if (!snappingEnabled || !snappingPoints || snappingPoints.length === 0) return rawTime;
+    const snapThresholdSec = 8 / pixelsPerSecond;
+    for (const point of snappingPoints) {
+      if (Math.abs(rawTime - point) < snapThresholdSec) {
+        return point;
+      }
+    }
+    return rawTime;
+  };
 
   const handlePointerDown = (e) => {
     if (!rulerRef.current) return;
-    // Account for scroll offset of the lanes-wrapper
-    const lanesWrapper = document.querySelector('.lanes-wrapper');
-    const scrollLeft = lanesWrapper?.scrollLeft || 0;
+    if (e.button !== 0) return;
+    e.preventDefault();
+
     const rect = rulerRef.current.getBoundingClientRect();
-    const offsetX = e.clientX - rect.left + scrollLeft - HEADER_WIDTH;
-    const newTime = Math.max(0, offsetX / pixelsPerSecond);
-    onSeek(newTime);
+    // rect.left already accounts for horizontal scroll inside ruler-wrapper
+    const offsetX = e.clientX - rect.left - HEADER_WIDTH;
+    const rawTime = Math.max(0, offsetX / pixelsPerSecond);
+    const snappedTime = getSnappedTime(rawTime);
+    onSeek(snappedTime);
 
     const handlePointerMove = (moveEvent) => {
-      const moveOffsetX = moveEvent.clientX - rect.left + scrollLeft - HEADER_WIDTH;
-      const scrubTime = Math.max(0, moveOffsetX / pixelsPerSecond);
-      onSeek(scrubTime);
+      if (!rulerRef.current) return;
+      // Auto-scroll when scrubbing near edges
+      const lanesWrapper = document.querySelector('.lanes-wrapper');
+      if (lanesWrapper) {
+        const wrapRect = lanesWrapper.getBoundingClientRect();
+        const edgeMargin = 50;
+        const scrollSpeed = 12;
+        if (moveEvent.clientX < wrapRect.left + HEADER_WIDTH + edgeMargin) {
+          lanesWrapper.scrollLeft = Math.max(0, lanesWrapper.scrollLeft - scrollSpeed);
+        } else if (moveEvent.clientX > wrapRect.right - edgeMargin) {
+          lanesWrapper.scrollLeft += scrollSpeed;
+        }
+      }
+
+      const curRect = rulerRef.current.getBoundingClientRect();
+      const moveOffsetX = moveEvent.clientX - curRect.left - HEADER_WIDTH;
+      const scrubRaw = Math.max(0, moveOffsetX / pixelsPerSecond);
+      const scrubSnapped = getSnappedTime(scrubRaw);
+      onSeek(scrubSnapped);
     };
 
     const handlePointerUp = () => {
@@ -38,13 +69,14 @@ export function TimeRuler({
 
   // Determine tick interval based on zoom level
   let tickInterval = 5; // seconds
-  if (pixelsPerSecond >= 80) tickInterval = 1;
-  else if (pixelsPerSecond >= 40) tickInterval = 2;
-  else if (pixelsPerSecond >= 20) tickInterval = 5;
+  if (pixelsPerSecond >= 100) tickInterval = 0.5;
+  else if (pixelsPerSecond >= 60) tickInterval = 1;
+  else if (pixelsPerSecond >= 30) tickInterval = 2;
+  else if (pixelsPerSecond >= 15) tickInterval = 5;
   else tickInterval = 10;
 
-  const numTicks = Math.ceil(totalDuration / tickInterval) + 2;
-  const totalWidth = Math.max(totalDuration * pixelsPerSecond + 200, 1200);
+  const totalWidth = propTotalWidth || Math.max(totalDuration * pixelsPerSecond + 400, 1600);
+  const numTicks = Math.ceil((totalWidth) / (tickInterval * pixelsPerSecond)) + 4;
 
   return (
     <div
@@ -53,6 +85,33 @@ export function TimeRuler({
       onPointerDown={handlePointerDown}
       style={{ width: `${totalWidth + HEADER_WIDTH}px` }}
     >
+      {/* Export range bar & markers on ruler */}
+      {exportRange && (
+        <>
+          <div
+            className="ruler-export-range-bar"
+            style={{
+              left: `${HEADER_WIDTH + exportRange.in * pixelsPerSecond}px`,
+              width: `${Math.max(2, (exportRange.out - exportRange.in) * pixelsPerSecond)}px`,
+            }}
+          />
+          <div
+            className="ruler-export-marker in-marker"
+            style={{ left: `${HEADER_WIDTH + exportRange.in * pixelsPerSecond}px` }}
+            title={`Export In: ${formatTimecode(exportRange.in)}`}
+          >
+            <div className="ruler-marker-flag">In</div>
+          </div>
+          <div
+            className="ruler-export-marker out-marker"
+            style={{ left: `${HEADER_WIDTH + exportRange.out * pixelsPerSecond}px` }}
+            title={`Export Out: ${formatTimecode(exportRange.out)}`}
+          >
+            <div className="ruler-marker-flag">Out</div>
+          </div>
+        </>
+      )}
+
       {Array.from({ length: numTicks }).map((_, i) => {
         const timeSec = i * tickInterval;
         const leftPos = HEADER_WIDTH + timeSec * pixelsPerSecond;
@@ -73,4 +132,4 @@ export function TimeRuler({
       })}
     </div>
   );
-}
+});

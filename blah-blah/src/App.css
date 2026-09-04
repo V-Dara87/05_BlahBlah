@@ -260,6 +260,108 @@
   border-right: 2px solid #fca5a5;
 }
 
+/* Ruler export range styles */
+.ruler-export-range-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(56, 189, 248, 0.12);
+  border-top: 2px solid rgba(34, 197, 94, 0.9);
+  border-bottom: 2px solid rgba(239, 68, 68, 0.9);
+  pointer-events: none;
+  z-index: 25;
+}
+
+.ruler-export-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  z-index: 30;
+  pointer-events: none;
+}
+
+.ruler-export-marker.in-marker {
+  background: #22c55e;
+}
+
+.ruler-export-marker.out-marker {
+  background: #ef4444;
+}
+
+.ruler-marker-flag {
+  position: absolute;
+  top: 2px;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 0 4px;
+  border-radius: 2px;
+  line-height: 13px;
+  color: #fff;
+  user-select: none;
+}
+
+.ruler-export-marker.in-marker .ruler-marker-flag {
+  left: 0;
+  background: #22c55e;
+}
+
+.ruler-export-marker.out-marker .ruler-marker-flag {
+  right: 0;
+  background: #ef4444;
+}
+
+/* Track rename input */
+.track-name-input {
+  background: var(--unity-darkest, #141416);
+  border: 1px solid var(--unity-accent, #38bdf8);
+  border-radius: 3px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 4px;
+  width: 100%;
+  max-width: 125px;
+  box-sizing: border-box;
+  outline: none;
+}
+
+/* Locked track & clip styles */
+.track-header-row.track-locked {
+  background: rgba(245, 158, 11, 0.05);
+}
+
+.track-lane-row.lane-locked {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(22, 22, 26, 0.6),
+    rgba(22, 22, 26, 0.6) 10px,
+    rgba(28, 28, 34, 0.6) 10px,
+    rgba(28, 28, 34, 0.6) 20px
+  );
+  cursor: not-allowed;
+}
+
+.timeline-clip-card.is-locked {
+  opacity: 0.7;
+  cursor: not-allowed !important;
+  border-style: dashed;
+}
+
+.timeline-clip-card.is-locked::after {
+  content: '🔒';
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.delete-track-btn:hover {
+  background: rgba(239, 68, 68, 0.2) !important;
+  color: #ef4444 !important;
+}
+
 .unity-hdr-btn, .unity-folder-btn {
   display: flex;
   align-items: center;
@@ -1643,30 +1745,65 @@
   height: 64px;
   z-index: 20;
   flex-shrink: 0;
+  overflow: hidden;
+  box-sizing: border-box;
 }
  
 .track-header-row {
   height: 64px;
+  width: 180px;
   border-bottom: 1px solid var(--unity-border);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 5px 8px;
+  background: var(--unity-panel);
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.track-header-top-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 8px;
-  background: var(--unity-panel);
+  width: 100%;
+  min-width: 0;
+  height: 22px;
 }
- 
+
 .track-header-title-box {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+  overflow: hidden;
 }
- 
-.track-icon { color: var(--unity-accent-blue); }
-.track-name { font-size: 11px; font-weight: 600; color: #fff; }
- 
+
+.track-icon {
+  color: var(--unity-accent-blue);
+  flex-shrink: 0;
+}
+
+.track-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 130px;
+  display: block;
+}
+
 .track-header-btns {
   display: flex;
-  gap: 3px;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  height: 22px;
 }
  
 .track-btn {

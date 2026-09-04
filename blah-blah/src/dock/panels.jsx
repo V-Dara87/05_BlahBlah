@@ -121,10 +121,11 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
     tracks, entities, calculatedDuration, pixelsPerSecond,
     selectedEntityId, setSelectedEntityId, snappingEnabled,
     selectedIds, setSelectedIds,
-    handleUpdateEntity, handleUpdateTrack,
+    handleUpdateEntity, handleUpdateClips, handleDuplicateClips,
+    handleUpdateTrack, handleDeleteTrack,
     handleAddTrack, handleAddEmptyClip, handleDropItemOnTrack,
     recordingTrackId, onToggleRecordTrack,
-    onZoomIn, onZoomOut,
+    onZoomIn, onZoomOut, setPixelsPerSecond,
     exportRange, setExportRange,
   } = useEditorContext();
 
@@ -164,13 +165,17 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
       onSeek={(t) => store.seek(t)}
       onSelectClip={setSelectedEntityId}
       onUpdateClip={handleUpdateEntity}
+      onUpdateClips={handleUpdateClips}
+      onDuplicateClips={handleDuplicateClips}
       onUpdateTrack={handleUpdateTrack}
+      onDeleteTrack={handleDeleteTrack}
       onAddTrack={handleAddTrack}
       onAddEmptyClip={handleAddEmptyClip}
       onDropItemOnTrack={handleDropItemOnTrack}
       onToggleRecordTrack={onToggleRecordTrack}
       onZoomIn={onZoomIn}
       onZoomOut={onZoomOut}
+      onSetPixelsPerSecond={setPixelsPerSecond}
       exportRange={exportRange}
       onSetExportRange={setExportRange}
       selectedIds={selectedIds}

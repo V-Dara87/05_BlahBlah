@@ -13,7 +13,9 @@ const HEADER_WIDTH = 180;
 function usePlayheadDrag({ pixelsPerSecond, onSeek, onDragPosition, isDraggingRef }) {
   const store = usePlaybackStore();
   const pixelsPerSecondRef = useRef(pixelsPerSecond);
-  pixelsPerSecondRef.current = pixelsPerSecond;
+  useEffect(() => {
+    pixelsPerSecondRef.current = pixelsPerSecond;
+  }, [pixelsPerSecond]);
   const dragStartRef = useRef({ x: 0, time: 0 });
 
   const handlePointerDown = (e) => {
@@ -24,6 +26,20 @@ function usePlayheadDrag({ pixelsPerSecond, onSeek, onDragPosition, isDraggingRe
     const handlePointerMove = (moveEvent) => {
       if (!isDraggingRef.current) return;
       const { x, time } = dragStartRef.current;
+
+      // Auto-scroll when scrubbing near edge
+      const lanesWrapper = document.querySelector('.lanes-wrapper');
+      if (lanesWrapper) {
+        const wrapRect = lanesWrapper.getBoundingClientRect();
+        const edgeMargin = 50;
+        const scrollSpeed = 12;
+        if (moveEvent.clientX < wrapRect.left + HEADER_WIDTH + edgeMargin) {
+          lanesWrapper.scrollLeft = Math.max(0, lanesWrapper.scrollLeft - scrollSpeed);
+        } else if (moveEvent.clientX > wrapRect.right - edgeMargin) {
+          lanesWrapper.scrollLeft += scrollSpeed;
+        }
+      }
+
       const deltaPx = moveEvent.clientX - x;
       const newTime = Math.max(0, time + deltaPx / pixelsPerSecondRef.current);
       onSeek(newTime);

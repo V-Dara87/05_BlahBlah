@@ -272,46 +272,98 @@ export function useProjectStore({
     if (selectedEntityId === entityId) setSelectedEntityId(null);
   }, [selectedEntityId]);
 
-  // Split entity at playhead
-  const handleSplitEntity = useCallback((entityId) => {
-    const target = entities.find(e => e.id === (entityId || selectedEntityId));
-    if (!target) return;
+  // Batch update multiple entities atomically
+  const handleUpdateClips = useCallback((updatesList) => {
+    if (!updatesList || updatesList.length === 0) return;
+    const updatesMap = new Map(updatesList.map(u => [u.id, u.updates]));
+    setEntities(prev => prev.map(e => {
+      const u = updatesMap.get(e.id);
+      return u ? { ...e, ...u } : e;
+    }), { coalesce: true });
+  }, [setEntities]);
+
+  // Duplicate one or more entities
+  const handleDuplicateClips = useCallback((clipIds) => {
+    const ids = Array.isArray(clipIds) ? clipIds : [clipIds];
+    if (ids.length === 0) return [];
+    const targets = entities.filter(e => ids.includes(e.id));
+    if (targets.length === 0) return [];
+
+    const newClips = targets.map(target => {
+      const newId = `go-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+      const clonedComponents = target.components
+        ? JSON.parse(JSON.stringify(target.components))
+        : [];
+      return {
+        ...target,
+        id: newId,
+        name: `${target.name} (Copy)`,
+        startTime: target.startTime + target.duration,
+        components: clonedComponents,
+      };
+    });
+
+    setEntities(prev => [...prev, ...newClips]);
+    const newIds = newClips.map(c => c.id);
+    if (newIds.length > 0) {
+      setSelectedEntityId(newIds[0]);
+    }
+    return newIds;
+  }, [entities, setEntities, setSelectedEntityId]);
+
+  // Split entity (or entities) at playhead
+  const handleSplitEntity = useCallback((entityIdOrIds) => {
+    const ids = Array.isArray(entityIdOrIds)
+      ? entityIdOrIds
+      : entityIdOrIds
+        ? [entityIdOrIds]
+        : selectedEntityId ? [selectedEntityId] : [];
+    if (ids.length === 0) return;
 
     const splitPoint = getPlaybackTime();
-    const start = target.startTime;
-    const end = target.startTime + target.duration;
+    let anySplit = false;
+    const toAdd = [];
+    const updatedMap = new Map();
 
-    if (splitPoint <= start + 0.1 || splitPoint >= end - 0.1) return;
+    ids.forEach(id => {
+      const target = entities.find(e => e.id === id);
+      if (!target) return;
+      const start = target.startTime;
+      const end = target.startTime + target.duration;
+      if (splitPoint <= start + 0.1 || splitPoint >= end - 0.1) return;
 
-    const part1Dur = splitPoint - start;
-    const part2Dur = end - splitPoint;
+      anySplit = true;
+      const part1Dur = splitPoint - start;
+      const part2Dur = end - splitPoint;
 
-    const part1 = { ...target, duration: part1Dur };
+      const part2Components = target.components?.map(c => {
+        if (c.type === 'VideoRenderer' || c.type === 'AudioSource') {
+          const origOffset = c.mediaOffset || 0;
+          return { ...c, mediaOffset: origOffset + part1Dur };
+        }
+        return JSON.parse(JSON.stringify(c));
+      }) || [];
 
-    // Update mediaOffset for part 2 so it continues seamlessly
-    const part2Components = target.components?.map(c => {
-      if (c.type === 'VideoRenderer' || c.type === 'AudioSource') {
-        const origOffset = c.mediaOffset || 0;
-        return {
-          ...c,
-          mediaOffset: origOffset + part1Dur
-        };
-      }
-      return JSON.parse(JSON.stringify(c));
-    }) || [];
+      const part1 = { ...target, duration: part1Dur };
+      const part2 = {
+        ...target,
+        id: `go-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        name: `${target.name} (Part 2)`,
+        startTime: splitPoint,
+        duration: part2Dur,
+        components: part2Components,
+      };
 
-    const part2 = {
-      ...target,
-      id: `go-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      name: `${target.name} (Part 2)`,
-      startTime: splitPoint,
-      duration: part2Dur,
-      components: part2Components
-    };
+      updatedMap.set(target.id, part1);
+      toAdd.push(part2);
+    });
 
-    setEntities(prev => prev.map(e => e.id === target.id ? part1 : e).concat(part2));
-    setSelectedEntityId(part2.id);
-  }, [entities, selectedEntityId, getPlaybackTime]);
+    if (!anySplit) return;
+    setEntities(prev => prev.map(e => updatedMap.has(e.id) ? updatedMap.get(e.id) : e).concat(toAdd));
+    if (toAdd.length > 0) {
+      setSelectedEntityId(toAdd[0].id);
+    }
+  }, [entities, selectedEntityId, getPlaybackTime, setEntities, setSelectedEntityId]);
 
   // Create an Empty Clip with Transform & Shape / Renderer
   const handleAddEmptyClip = useCallback((targetTrackId = 'track-1', startTime) => {
@@ -745,6 +797,12 @@ export function useProjectStore({
     setTracks(prev => prev.map(t => t.id === trackId ? { ...t, ...updates } : t), { coalesce: true });
   };
 
+  const handleDeleteTrack = (trackId) => {
+    if (tracks.length <= 1) return;
+    setTracks(prev => prev.filter(t => t.id !== trackId));
+    setEntities(prev => prev.filter(e => e.trackId !== trackId));
+  };
+
   return {
     // data
     entities,
@@ -763,6 +821,8 @@ export function useProjectStore({
     canRedo,
     // entity / track operations
     handleUpdateEntity,
+    handleUpdateClips,
+    handleDuplicateClips,
     handleDeleteEntity,
     handleSplitEntity,
     handleAddEmptyClip,
@@ -771,6 +831,7 @@ export function useProjectStore({
     handleDropItemOnTrack,
     handleAddTrack,
     handleUpdateTrack,
+    handleDeleteTrack,
     // prefab / script operations
     handleSaveAsPrefab,
     handleRemovePrefab,

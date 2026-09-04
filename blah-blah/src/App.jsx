@@ -177,9 +177,10 @@ export function App() {
     entities, tracks, scripts, prefabs,
     setEntities,
     undo, redo, canUndo, canRedo,
-    handleUpdateEntity, handleDeleteEntity, handleSplitEntity,
+    handleUpdateEntity, handleUpdateClips, handleDuplicateClips,
+    handleDeleteEntity, handleSplitEntity,
     handleAddEmptyClip, handleAddPrefabToTimeline, handleAddMediaToTimeline,
-    handleDropItemOnTrack, handleAddTrack, handleUpdateTrack,
+    handleDropItemOnTrack, handleAddTrack, handleUpdateTrack, handleDeleteTrack,
     handleSaveAsPrefab, handleRemovePrefab, handleCreateScript, handleSaveScript,
     handleApplyProjectJson,
     handleLoadDemoScene, handleProjectCreated,
@@ -423,12 +424,45 @@ export function App() {
     <PlaybackProvider totalDuration={calculatedDuration}>
       <PlaybackStoreBridge storeRef={playbackStoreRef} />
       <EditorPlaybackShortcuts
+        entities={entities}
         selectedEntityId={selectedEntityId}
         selectedIds={selectedIds}
-        onSplitSelected={() => selectedEntityId && handleSplitEntity(selectedEntityId)}
-        onDeleteSelected={() => selectedEntityId && handleDeleteEntity(selectedEntityId)}
+        onSplitSelected={() => {
+          const ids = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
+          if (ids.length > 0) handleSplitEntity(ids);
+        }}
+        onDeleteSelected={() => {
+          const idsToDelete = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
+          if (idsToDelete.length > 0) {
+            setEntities((prev) => prev.filter((e) => !idsToDelete.includes(e.id)));
+            setSelectedIds([]);
+            setSelectedEntityId(null);
+          }
+        }}
         onDeleteMultiple={() => {
-          setEntities((prev) => prev.filter((e) => !selectedIds.includes(e.id)));
+          const idsToDelete = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
+          if (idsToDelete.length > 0) {
+            setEntities((prev) => prev.filter((e) => !idsToDelete.includes(e.id)));
+            setSelectedIds([]);
+            setSelectedEntityId(null);
+          }
+        }}
+        onDuplicateSelected={() => {
+          const ids = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
+          if (ids.length > 0) {
+            const newIds = handleDuplicateClips(ids);
+            if (newIds && newIds.length > 0) {
+              setSelectedIds(newIds);
+              setSelectedEntityId(newIds[0]);
+            }
+          }
+        }}
+        onSelectAll={() => {
+          const allIds = entities.map(e => e.id);
+          setSelectedIds(allIds);
+          setSelectedEntityId(allIds[0] || null);
+        }}
+        onClearSelection={() => {
           setSelectedIds([]);
           setSelectedEntityId(null);
         }}
@@ -436,8 +470,8 @@ export function App() {
         onUndo={undo}
         onRedo={redo}
         onToggleSnapping={() => setSnappingEnabled((prev) => !prev)}
-        onZoomIn={() => setPixelsPerSecond((prev) => Math.min(160, prev + 10))}
-        onZoomOut={() => setPixelsPerSecond((prev) => Math.max(10, prev - 10))}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
         onSetExportRange={setExportRange}
         exportRange={exportRange}
         totalDuration={calculatedDuration}
@@ -495,8 +529,9 @@ export function App() {
           setAutoKeyEnabled,
           setPixelsPerSecond,
           // handlers
-          handleUpdateEntity, handleDeleteEntity, handleSaveAsPrefab,
-          handleUpdateTrack, handleAddTrack, handleAddEmptyClip,
+          handleUpdateEntity, handleUpdateClips, handleDuplicateClips,
+          handleDeleteEntity, handleSaveAsPrefab,
+          handleUpdateTrack, handleDeleteTrack, handleAddTrack, handleAddEmptyClip,
           handleDropItemOnTrack,
           selectedKeyId, setSelectedKeyId,
           selectedIds, setSelectedIds,

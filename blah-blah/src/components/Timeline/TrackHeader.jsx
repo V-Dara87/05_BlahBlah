@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { useState, useRef, useEffect, memo } from 'react';
 import { 
   Volume2, 
   VolumeX, 
@@ -9,26 +9,101 @@ import {
   Layers,
   Plus,
   Mic,
-  Square
+  Square,
+  Trash2
 } from 'lucide-react';
  
 export const TrackHeader = memo(function TrackHeader({
   track,
   onUpdateTrack,
+  onDeleteTrack,
+  canDeleteTrack = false,
   onAddEmptyClip,
   isRecordingTarget,
   isAnyTrackRecording,
   onToggleRecordTrack,
 }) {
   const recording = !!isRecordingTarget;
- 
+  const [isEditing, setIsEditing] = useState(false);
+  const [tempName, setTempName] = useState(track.name);
+  const [prevName, setPrevName] = useState(track.name);
+  if (track.name !== prevName) {
+    setPrevName(track.name);
+    setTempName(track.name);
+  }
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isEditing]);
+
+  const handleStartRename = (e) => {
+    e.stopPropagation();
+    setIsEditing(true);
+    setTempName(track.name);
+  };
+
+  const handleFinishRename = () => {
+    setIsEditing(false);
+    const trimmed = tempName.trim();
+    if (trimmed && trimmed !== track.name) {
+      onUpdateTrack(track.id, { name: trimmed });
+    } else {
+      setTempName(track.name);
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      handleFinishRename();
+    } else if (e.key === 'Escape') {
+      setIsEditing(false);
+      setTempName(track.name);
+    }
+  };
+
   return (
-    <div className={`track-header-row ${recording ? 'recording-active' : ''}`}>
-      <div className="track-header-title-box">
-        <Layers size={13} className="track-icon" />
-        <span className="track-name">{track.name}</span>
+    <div className={`track-header-row ${recording ? 'recording-active' : ''} ${track.locked ? 'track-locked' : ''}`}>
+      <div className="track-header-top-row">
+        <div 
+          className="track-header-title-box"
+          onDoubleClick={handleStartRename}
+          title="Double-click to rename track"
+        >
+          <Layers size={13} className="track-icon" />
+          {isEditing ? (
+            <input
+              ref={inputRef}
+              type="text"
+              className="track-name-input"
+              value={tempName}
+              onChange={(e) => setTempName(e.target.value)}
+              onBlur={handleFinishRename}
+              onKeyDown={handleKeyDown}
+              onClick={(e) => e.stopPropagation()}
+            />
+          ) : (
+            <span className="track-name" title={track.name}>{track.name}</span>
+          )}
+        </div>
+
+        {canDeleteTrack && onDeleteTrack && (
+          <button
+            className="track-btn delete-track-btn"
+            title={`Delete ${track.name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDeleteTrack(track.id);
+            }}
+          >
+            <Trash2 size={11} />
+          </button>
+        )}
       </div>
- 
+
       <div className="track-header-btns">
         {onToggleRecordTrack && (
           <button
@@ -40,15 +115,16 @@ export const TrackHeader = memo(function TrackHeader({
             {recording ? <Square size={11} /> : <Mic size={12} />}
           </button>
         )}
- 
+
         <button
           className="track-btn add-clip-track-btn"
           title={`Add Clip to ${track.name} at Playhead`}
           onClick={() => onAddEmptyClip && onAddEmptyClip(track.id)}
+          disabled={track.locked}
         >
           <Plus size={11} className="text-cyan" />
         </button>
- 
+
         <button
           className={`track-btn ${!track.visible ? 'active-off' : ''}`}
           title={track.visible ? 'Hide Track' : 'Show Track'}
@@ -56,7 +132,7 @@ export const TrackHeader = memo(function TrackHeader({
         >
           {track.visible ? <Eye size={12} /> : <EyeOff size={12} />}
         </button>
- 
+
         <button
           className={`track-btn ${track.muted ? 'active-off' : ''}`}
           title={track.muted ? 'Unmute Track' : 'Mute Track'}
@@ -64,7 +140,7 @@ export const TrackHeader = memo(function TrackHeader({
         >
           {track.muted ? <VolumeX size={12} /> : <Volume2 size={12} />}
         </button>
- 
+
         <button
           className={`track-btn ${track.locked ? 'active-lock' : ''}`}
           title={track.locked ? 'Unlock Track' : 'Lock Track'}

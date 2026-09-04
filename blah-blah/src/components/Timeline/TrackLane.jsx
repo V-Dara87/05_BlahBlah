@@ -3,6 +3,7 @@ import { ClipItem } from './ClipItem';
 
 export const TrackLane = memo(function TrackLane({
   track,
+  tracks = [],
   clips,
   allClips,
   pixelsPerSecond,
@@ -12,6 +13,8 @@ export const TrackLane = memo(function TrackLane({
   onToggleSelect,
   onRangeSelect,
   onUpdateClip,
+  onUpdateClips,
+  onDuplicateClips,
   onAddEmptyClip,
   onDropItemOnTrack,
   snappingPoints,
@@ -23,6 +26,7 @@ export const TrackLane = memo(function TrackLane({
   const fullClipList = allClips || clips;
 
   const handleDragOver = (e) => {
+    if (track.locked) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     setIsDragOver(true);
@@ -33,6 +37,7 @@ export const TrackLane = memo(function TrackLane({
   };
 
   const handleDrop = (e) => {
+    if (track.locked) return;
     e.preventDefault();
     setIsDragOver(false);
     try {
@@ -58,7 +63,8 @@ export const TrackLane = memo(function TrackLane({
   };
 
   const handleDoubleClick = (e) => {
-    if (e.target.closest('.clip-item-card')) return;
+    if (track.locked) return;
+    if (e.target.closest('.timeline-clip-card')) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const clickTime = Math.max(0, clickX / pixelsPerSecond);
@@ -70,13 +76,13 @@ export const TrackLane = memo(function TrackLane({
   return (
     <div
       data-track-id={track.id}
-      className={`track-lane-row ${isDragOver ? 'drag-target' : ''}`}
+      className={`track-lane-row ${isDragOver ? 'drag-target' : ''} ${track.locked ? 'lane-locked' : ''}`}
       style={{ width: `${totalWidth}px` }}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       onDoubleClick={handleDoubleClick}
-      title="Double-click empty track space to add a clip here"
+      title={track.locked ? `${track.name} is locked` : "Double-click empty track space to add a clip here"}
     >
       <div className="track-grid-pattern" />
       {trackClips.map((clip) => (
@@ -84,6 +90,8 @@ export const TrackLane = memo(function TrackLane({
           key={clip.id}
           clip={clip}
           allClips={fullClipList}
+          tracks={tracks}
+          isLocked={track.locked}
           pixelsPerSecond={pixelsPerSecond}
           isSelected={selectedClipId === clip.id}
           selectedIds={selectedIds}
@@ -91,6 +99,8 @@ export const TrackLane = memo(function TrackLane({
           onToggleSelect={onToggleSelect}
           onRangeSelect={onRangeSelect}
           onUpdateClip={onUpdateClip}
+          onUpdateClips={onUpdateClips}
+          onDuplicateClips={onDuplicateClips}
           snappingPoints={snappingPoints}
           snappingEnabled={snappingEnabled}
         />
