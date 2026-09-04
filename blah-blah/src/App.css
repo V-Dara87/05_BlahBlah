@@ -861,40 +861,9 @@
 }
  
 .preview-canvas-frame {
-  max-width: 860px;
+  max-width: 100%;
   max-height: 100%;
-  /* IMPORTANT: this frame sits inside .preview-viewport-box, a flex
-     container, and every child of this frame (.preview-render-layer,
-     .video-layer-container, the resolution badge) is `position: absolute`.
-     Absolutely positioned elements never contribute to their parent's
-     intrinsic content size. That means a plain `width: auto; height: auto;`
-     here has NO content to size itself from, so as a flex item it collapses
-     toward a 0-size content box before `aspect-ratio` ever gets a
-     reference dimension to resolve against -- the frame (and everything
-     inside it) visually disappears even though the resolution badge text
-     and border can still peek through at ~0px. This was the regression
-     introduced when the old `width: 100%; height: 100%;` was removed to
-     fix letterboxing for non-16:9 resolutions: that fix was correct in
-     principle (100% + 100% + aspect-ratio was over-constrained) but
-     traded one bug for another by leaving the frame with no sizing basis
-     at all in this flex context.
-     Fix: use `flex: 0 1 auto` so the frame participates in the flex
-     layout's sizing pass (getting a real starting size from max-width/
-     max-height as its flex-basis reference) while `align-self: stretch`
-     lets it actually fill the cross-axis up to max-height. `aspect-ratio`
-     then constrains the *other* axis against that real size, instead of
-     both axes trying to derive from empty content. This keeps the
-     letterboxing fix (portrait/square/landscape all still shrink to fit
-     via max-width/max-height + aspect-ratio) without the frame collapsing. */
-  flex: 0 1 auto;
-  align-self: stretch;
-  width: auto;
-  height: auto;
-  /* Fallback only — EntityRenderer sets this inline from the project's
-     actual resolution (see App.jsx `resolution` state), so a project
-     created at 9:16/1:1/custom sizes renders at its real aspect ratio,
-     not always 16:9. This value only shows up for the brief instant
-     before that inline style is applied. */
+  flex-shrink: 0;
   aspect-ratio: 16 / 9;
   position: relative;
   background: #090a0f;

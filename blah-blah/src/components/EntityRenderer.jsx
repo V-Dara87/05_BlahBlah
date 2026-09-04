@@ -68,6 +68,7 @@ export function EntityRenderer({
   fps = 30,
 }) {
   const containerRef = useRef(null);
+  const viewportBoxRef = useRef(null);
   const canvasFrameRef = useRef(null);
   const videoRefs = useRef({});
   const audioRefs = useRef({});
@@ -97,23 +98,38 @@ export function EntityRenderer({
   // one wrapper scale is what makes it visually fit the smaller on-screen
   // frame. At `frameScale === 1` (frame rendered at its true resolution
   // size) this is a no-op, which is exactly export's situation.
-  const [frameScale, setFrameScale] = useState(1);
- 
+  const [frameDimensions, setFrameDimensions] = useState({
+    width: 0,
+    height: 0,
+    scale: 1,
+  });
+
+  const frameScale = frameDimensions.scale;
+
   useEffect(() => {
-    const frameEl = canvasFrameRef.current;
-    if (!frameEl) return;
- 
-    const updateScale = () => {
-      const resWidth = resolution?.width > 0 ? resolution.width : FALLBACK_RESOLUTION.width;
-      if (frameEl.clientWidth > 0 && resWidth > 0) {
-        setFrameScale(frameEl.clientWidth / resWidth);
-      }
+    const box = viewportBoxRef.current;
+    if (!box) return;
+
+    const resWidth = resolution?.width > 0 ? resolution.width : FALLBACK_RESOLUTION.width;
+    const resHeight = resolution?.height > 0 ? resolution.height : FALLBACK_RESOLUTION.height;
+
+    const updateDimensions = () => {
+      // Available box area minus padding (16px on each side = 32px)
+      const availW = Math.max(10, box.clientWidth - 32);
+      const availH = Math.max(10, box.clientHeight - 32);
+
+      // Strict aspect-ratio preserving fit
+      const scale = Math.min(availW / resWidth, availH / resHeight);
+      const width = Math.max(1, Math.round(resWidth * scale));
+      const height = Math.max(1, Math.round(resHeight * scale));
+
+      setFrameDimensions({ width, height, scale });
     };
- 
-    updateScale();
- 
-    const observer = new ResizeObserver(updateScale);
-    observer.observe(frameEl);
+
+    updateDimensions();
+
+    const observer = new ResizeObserver(updateDimensions);
+    observer.observe(box);
     return () => observer.disconnect();
   }, [resolution?.width, resolution?.height]);
  
@@ -527,18 +543,21 @@ export function EntityRenderer({
       {/* Viewport Screen Frame */}
       <div
         className="preview-viewport-box"
+        ref={viewportBoxRef}
         onClick={(e) => {
           if (e.target === e.currentTarget) onSelectEntity(null);
         }}
       >
-        {/* aspectRatio is set inline (not via a CSS class/variable) because
-            it's per-project data, not a design-time constant -- the CSS
-            fallback in App.css (.preview-canvas-frame { aspect-ratio: 16/9 })
-            only applies before this first renders with a real resolution. */}
+        {/* Strictly preserves project aspect ratio — width and height are dynamically
+            fitted to the available viewport box without distortion or stretching. */}
         <div
           className="preview-canvas-frame"
           ref={canvasFrameRef}
-          style={{ aspectRatio: `${safeResWidth} / ${safeResHeight}` }}
+          style={{
+            width: frameDimensions.width > 0 ? `${frameDimensions.width}px` : undefined,
+            height: frameDimensions.height > 0 ? `${frameDimensions.height}px` : undefined,
+            aspectRatio: `${safeResWidth} / ${safeResHeight}`,
+          }}
         >
           {/* Resolution badge -- confirms at a glance that the preview is
               actually locked to the project's resolution, not just a fixed
