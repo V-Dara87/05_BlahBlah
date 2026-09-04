@@ -37,7 +37,7 @@ import { useState, useRef, useEffect, useCallback, memo } from 'react';
  *     }>
  *   }
  */
-export const MenuBar = memo(function MenuBar({ menus = [] }) {
+export const MenuBar = memo(function MenuBar({ menus = [], trailing = null }) {
   const [openIndex, setOpenIndex] = useState(null);
   const [hovering, setHovering] = useState(false);
   const barRef = useRef(null);
@@ -74,7 +74,7 @@ export const MenuBar = memo(function MenuBar({ menus = [] }) {
   }, []);
 
   return (
-    <div className="menubar" ref={barRef}>
+    <div className="menubar" ref={barRef} data-tauri-drag-region>
       {menus.map((menu, idx) => (
         <div key={menu.label} className="menubar-item">
           <button
@@ -109,6 +109,11 @@ export const MenuBar = memo(function MenuBar({ menus = [] }) {
           )}
         </div>
       ))}
+      {/* Optional right-aligned content (window controls + drag fill on
+          the frameless desktop build). data-tauri-drag-region only affects
+          the exact element it is on, so the menu buttons above stay fully
+          interactive while the fill area below drags the window. */}
+      {trailing && <div className="menubar-trailing">{trailing}</div>}
     </div>
   );
 });

@@ -3,7 +3,7 @@ import { useProjectStore } from './hooks/useProjectStore';
 import { usePlaybackController } from './hooks/usePlaybackController';
 import { useMediaAssets } from './hooks/useMediaAssets';
 import { MenuBar } from './components/MenuBar';
-import { FilePlus, FolderOpen, Save, Download, Undo2, Redo2, Scissors, Trash2, Code, Sparkles, Settings } from 'lucide-react';
+import { FilePlus, FolderOpen, Save, Download, Undo2, Redo2, Scissors, Trash2, Code, MousePointer2, Sparkles, Settings } from 'lucide-react';
 import { ProjectJsonModal } from './components/ProjectJsonModal';
 import { ScriptEditorModal } from './components/ScriptEditorModal';
 import { ExportModal } from './components/ExportModal';
@@ -21,6 +21,11 @@ import { INITIAL_TRACKS, DEFAULT_PIXELS_PER_SECOND, DEFAULT_RESOLUTION } from '.
 import { loadAudioSettings } from './services/audioSettings';
 import { saveProjectToDirectory } from './services/projectFileSystem';
 import { precompileAllProjectScripts } from './engine/scriptRunner';
+import { isTauri } from './services/tauriFsAdapter';
+import { importMediaFiles } from './services/mediaImport';
+import { openProjectInExplorer, openProjectInVsCode, openProjectInCursor } from './services/ideLauncher';
+import { WindowControls } from './components/WindowControls';
+import { toggleWindowMaximize } from './services/windowChrome';
 import './App.css';
 
 /**
@@ -136,6 +141,36 @@ export function App() {
   // Media library (out of undo scope by design — see hook header).
   const { mediaAssets, setMediaAssets, handleAddMediaAsset, handleRemoveMediaAsset } =
     useMediaAssets({ projectFolderHandle });
+
+  // OS file drag-and-drop coexistence (P2-1). The window runs with
+  // dragDropEnabled: false because dockview's HTML5 DnD (tab/panel
+  // movement) is what actually works in the webview then — that same flag
+  // disables Tauri's onDragDropEvent, so OS file drops arrive the same
+  // way they do in a browser: as DOM drag events carrying sandboxed File
+  // objects. This window-level handler catches exactly those (a real drop
+  // always has dataTransfer.files) and imports any video/audio into the
+  // media library via the shared importMediaFiles helper. In-app drags
+  // (timeline clips, project-panel cards) carry custom JSON with NO files
+  // and pass straight through untouched.
+  useEffect(() => {
+    const isFileDrop = (e) => (e.dataTransfer?.files?.length ?? 0) > 0;
+
+    const onDragOver = (e) => {
+      if (isFileDrop(e)) e.preventDefault();
+    };
+    const onDrop = (e) => {
+      if (!isFileDrop(e)) return;
+      e.preventDefault();
+      importMediaFiles({ files: e.dataTransfer.files, onAddMediaAsset: handleAddMediaAsset });
+    };
+
+    document.addEventListener('dragover', onDragOver);
+    document.addEventListener('drop', onDrop);
+    return () => {
+      document.removeEventListener('dragover', onDragOver);
+      document.removeEventListener('drop', onDrop);
+    };
+  }, [handleAddMediaAsset]);
 
   // Project document model + undo + load paths (the undo-scoped half).
   const {
@@ -298,6 +333,10 @@ export function App() {
         { label: 'Save Project', shortcut: 'Ctrl+S', icon: <Save size={13} />, onClick: handleSaveProjectToDisk, disabled: !projectFolderHandle },
         { type: 'separator' },
         { label: 'Export Render...', shortcut: 'Ctrl+E', icon: <Download size={13} />, onClick: () => setIsExportOpen(true) },
+        { type: 'separator' },
+        { label: 'Open in VS Code', icon: <Code size={13} />, onClick: () => openProjectInVsCode(projectFolderHandle?.path), disabled: !isTauri() || !projectFolderHandle?.path },
+        { label: 'Open in Cursor', icon: <MousePointer2 size={13} />, onClick: () => openProjectInCursor(projectFolderHandle?.path), disabled: !isTauri() || !projectFolderHandle?.path },
+        { label: 'Show in Explorer', icon: <FolderOpen size={13} />, onClick: () => openProjectInExplorer(projectFolderHandle?.path), disabled: !isTauri() || !projectFolderHandle?.path },
       ],
     },
     {
@@ -326,9 +365,41 @@ export function App() {
     projectFolderHandle,
   ]);
 
+  // window-controls chrome is environment-dependent but cheap to compute
+  // per render; isTauri() reads a window flag synchronously.
+
+  const framelessChrome = isTauri() && (
+    <>
+      {/* Drag fill: takes the whole remaining top-bar width so the window
+          can be grabbed anywhere right of the menus. Double-click it to
+          maximize. data-tauri-drag-region applies only to this exact
+          element — the menu buttons beside it stay clickable. */}
+      <div
+        className="menubar-drag-fill"
+        data-tauri-drag-region
+        onDoubleClick={() => toggleWindowMaximize()}
+      />
+      <WindowControls />
+    </>
+  );
+
   if (screen === 'hub') {
     return (
       <>
+        {/* Frameless desktop build: the Hub screen has no MenuBar, so it
+            gets a slim native window bar (drag anywhere + window
+            controls) so the window can always be moved/closed. */}
+        {isTauri() && (
+          <div
+            className="hub-window-bar"
+            data-tauri-drag-region
+            onDoubleClick={() => toggleWindowMaximize()}
+          >
+            <span className="hub-window-bar-title">blahblah</span>
+            <div className="hub-window-bar-fill" />
+            <WindowControls />
+          </div>
+        )}
         <HubScreen
           onNewProject={() => setIsNewProjectOpen(true)}
           onOpenProjectFolder={handleOpenProjectFolder}
@@ -372,8 +443,10 @@ export function App() {
         totalDuration={calculatedDuration}
       />
       <div className="app-container">
-      {/* Top Menu Bar — Unity-style File/Edit/View menus */}
-      <MenuBar menus={menuBarConfig} />
+      {/* Top Menu Bar — Unity-style File/Edit/View menus. In the
+          frameless desktop build the right end carries window controls
+          and a drag region (see framelessChrome above). */}
+      <MenuBar menus={menuBarConfig} trailing={framelessChrome} />
 
       {/* Top Navigation Bar */}
       <EditorHeader

@@ -17,6 +17,7 @@ import {
 import { formatTimecode } from '../utils/timeFormat';
 import { createSyntheticAudio, createSyntheticVideo } from '../utils/sampleMedia';
 import { detectScriptKind } from '../engine/scriptRunner';
+import { importMediaFiles } from '../services/mediaImport';
 
 // Per-kind display metadata for script cards (see detectScriptKind).
 const SCRIPT_KIND_META = {
@@ -76,42 +77,10 @@ export const ProjectPanel = memo(function ProjectPanel({
   };
  
   const handleFileUpload = (files) => {
-    Array.from(files).forEach((file) => {
-      const isVideo = file.type.startsWith('video/');
-      const isAudio = file.type.startsWith('audio/');
-      if (!isVideo && !isAudio) return;
- 
-      const url = URL.createObjectURL(file);
-      const id = `asset-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
- 
-      if (isVideo) {
-        const video = document.createElement('video');
-        video.src = url;
-        video.onloadedmetadata = () => {
-          onAddMediaAsset({
-            id,
-            name: file.name,
-            type: 'video',
-            url,
-            duration: video.duration || 8,
-            size: file.size,
-          }, file);
-        };
-      } else {
-        const audio = document.createElement('audio');
-        audio.src = url;
-        audio.onloadedmetadata = () => {
-          onAddMediaAsset({
-            id,
-            name: file.name,
-            type: 'audio',
-            url,
-            duration: audio.duration || 10,
-            size: file.size,
-          }, file);
-        };
-      }
-    });
+    // Shared import helper (same probe + asset shape as OS file drops,
+    // see services/mediaImport.js) so the picker and desktop drag&drop
+    // stay in sync.
+    importMediaFiles({ files, onAddMediaAsset });
   };
  
   const handleQuickSynthAudio = () => {

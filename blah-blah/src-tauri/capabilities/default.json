@@ -9,6 +9,15 @@
     "core:default",
     "dialog:default",
     "fs:default",
+    "opener:default",
+    "opener:allow-open-path",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "vscode://*" },
+        { "url": "cursor://*" }
+      ]
+    },
     {
       "identifier": "fs:allow-read-text-file",
       "allow": [{ "path": "**" }]
@@ -39,6 +48,18 @@
     },
     {
       "identifier": "fs:allow-exists",
+      "allow": [{ "path": "**" }]
+    },
+    {
+      "identifier": "fs:allow-stat",
+      "allow": [{ "path": "**" }]
+    },
+    {
+      "identifier": "fs:allow-watch",
+      "allow": [{ "path": "**" }]
+    },
+    {
+      "identifier": "fs:allow-unwatch",
       "allow": [{ "path": "**" }]
     }
   ]

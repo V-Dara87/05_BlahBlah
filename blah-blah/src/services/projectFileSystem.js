@@ -59,7 +59,8 @@ const toScriptFileName = (name) => `${(name || '').replace(/\.(js|jsx|ts|tsx|cs)
 
 
  
-import { isTauri, createTauriDirectoryHandle } from './tauriFsAdapter';
+import { isTauri, createTauriDirectoryHandle, joinPath } from './tauriFsAdapter';
+import { convertFileSrc } from '@tauri-apps/api/core';
 
 export function isFileSystemSupported() {
   return isTauri() || (typeof window !== 'undefined' && 'showDirectoryPicker' in window);
@@ -362,24 +363,49 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
   const loadedMedia = [];
   const readMediaEntry = async (entry, folderName) => {
     if (entry.kind !== 'file') return;
-    const file = await entry.getFile();
     const ext = entry.name.toLowerCase();
     const isVideo = ext.endsWith('.mp4') || ext.endsWith('.webm') || ext.endsWith('.mov');
     const isAudio = ext.endsWith('.mp3') || ext.endsWith('.wav') || ext.endsWith('.ogg') || ext.endsWith('.aac');
  
-    if (isVideo || isAudio) {
-      const url = URL.createObjectURL(file);
-      loadedMedia.push({
-        id: `asset-${(folderName || '')}${entry.name.replace(/[^a-zA-Z0-9_-]/g, '_')}`,
-        name: entry.name,
-        type: isVideo ? 'video' : 'audio',
-        url: url,
-        size: file.size,
-        duration: 10,
-        thumbnail: isVideo ? '🎬' : '🎵',
-        ...(folderName ? { folder: folderName } : {}),
-      });
+    if (!isVideo && !isAudio) return;
+
+    // Tauri: stream straight off disk through the asset protocol
+    // (HTTP Range requests) instead of slurping the whole file into
+    // memory to make a blob URL — large video/audio files load in
+    // O(1) and seek instantly. The native directory-handle adapter
+    // exposes each entry's absolute `path`; size comes from a cheap
+    // stat, not a full read.
+    const isNative = isTauri() && entry.path;
+    let url;
+    let size = 0;
+    if (isNative) {
+      url = convertFileSrc(entry.path);
+      try {
+        const { stat } = await import('@tauri-apps/plugin-fs');
+        const info = await stat(entry.path);
+        size = info?.size || 0;
+      } catch (err) {
+        console.warn('Could not stat media file:', entry.path, err);
+      }
+    } else {
+      const file = await entry.getFile();
+      url = URL.createObjectURL(file);
+      size = file.size;
     }
+
+    loadedMedia.push({
+      id: `asset-${(folderName || '')}${entry.name.replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+      name: entry.name,
+      type: isVideo ? 'video' : 'audio',
+      url: url,
+      size: size,
+      duration: 10,
+      thumbnail: isVideo ? '🎬' : '🎵',
+      // Absolute on-disk path (Tauri only) — lets the app re-stream or
+      // reveal the file without re-importing it.
+      ...(entry.path ? { path: entry.path } : {}),
+      ...(folderName ? { folder: folderName } : {}),
+    });
   };
  
   try {
@@ -520,6 +546,10 @@ export async function saveMediaFileToFolder(dirHandle, file, subfolder = null) {
   const writable = await fileHandle.createWritable();
   await writable.write(file);
   await writable.close();
+
+  // Tauri: report the on-disk absolute path of the saved copy so callers
+  // can stream it via convertFileSrc instead of keeping a blob in memory.
+  return mediaDirHandle?.path ? joinPath(mediaDirHandle.path, file.name) : null;
 }
  
 /**
@@ -566,4 +596,46 @@ export async function checkScriptsForChanges(dirHandle, existingScripts) {
   }
  
   return null;
+}
+
+/**
+ * Tauri-only: subscribe to OS file-system events for the project's
+ * scripts/ folder instead of the 2s polling loop used in the browser.
+ * External saves from VS Code / Cursor land as near-instant native events
+ * (create / modify / remove) rather than on the next poll tick.
+ *
+ * Events are filtered down to script files (.js/.jsx/.ts/.tsx) and
+ * debounced by the fs plugin (delayMs), so one save burst fires a single
+ * callback. The callback itself is expected to re-scan the folder (see
+ * checkScriptsForChanges) since native events only say "something under
+ * scripts/ changed", not what the new contents are.
+ *
+ * @returns {Promise<(() => void) | null>} unwatch function, or null when
+ *   not running under Tauri / the watcher couldn't be created (callers
+ *   then fall back to polling).
+ */
+export async function watchScriptsDirectory(dirHandle, onChange) {
+  if (!isTauri() || !dirHandle?.path) return null;
+
+  try {
+    const { watch, exists } = await import('@tauri-apps/plugin-fs');
+    const scriptsPath = joinPath(dirHandle.path, 'scripts');
+    if (!(await exists(scriptsPath))) return null;
+
+    const unwatch = await watch(
+      scriptsPath,
+      (event) => {
+        const paths = Array.isArray(event?.paths) ? event.paths : [];
+        const touchedScript = paths.some((p) => isScriptFile(String(p || '').split(/[\\/]/).pop() || p));
+        if (touchedScript) {
+          onChange?.();
+        }
+      },
+      { recursive: true, delayMs: 250 }
+    );
+    return unwatch;
+  } catch (err) {
+    console.warn('fs watch unavailable — falling back to polling:', err);
+    return null;
+  }
 }

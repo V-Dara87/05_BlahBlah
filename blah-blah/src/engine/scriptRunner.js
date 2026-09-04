@@ -85,13 +85,33 @@ let esbuildReady = false;
 /** Resolves once `esbuild.initialize()` finishes (success or failure). */
 const esbuildInitPromise = (async () => {
   try {
-    // `wasmURL` is a browser-only option (the Node build of esbuild-wasm
-    // loads its own wasm binary); the app serves the binary from /esbuild.wasm
-    // (copied there by scripts/copy-esbuild-wasm.mjs on install).
-    const initOpts =
-      typeof window !== 'undefined'
-        ? { wasmURL: '/esbuild.wasm', worker: false }
-        : { worker: false };
+    let initOpts;
+    if (typeof window === 'undefined') {
+      // Node build of esbuild-wasm loads its own wasm binary.
+      initOpts = { worker: false };
+    } else {
+      // Browser (and Tauri webview) build needs the wasm binary reachable
+      // by URL. Default: /esbuild.wasm — the copy scripts/
+      // copy-esbuild-wasm.mjs puts in public/, which Vite bundles into the
+      // frontend (works offline once packaged). Under Tauri we prefer the
+      // resource-packaged copy resolved via resolveResource() and turned
+      // into an asset URL with convertFileSrc(), so esbuild keeps working
+      // fully offline even if the frontend asset fetch path ever changes;
+      // if the resource isn't bundled (e.g. `tauri dev`), fall back to the
+      // frontend copy at /esbuild.wasm.
+      let wasmURL = '/esbuild.wasm';
+      try {
+        const { isTauri } = await import('../services/tauriFsAdapter');
+        if (isTauri()) {
+          const { resolveResource } = await import('@tauri-apps/api/path');
+          const { convertFileSrc } = await import('@tauri-apps/api/core');
+          wasmURL = convertFileSrc(await resolveResource('esbuild.wasm'));
+        }
+      } catch (err) {
+        console.warn('esbuild-wasm: packaged resource unavailable, using /esbuild.wasm:', err);
+      }
+      initOpts = { wasmURL, worker: false };
+    }
     await esbuild.initialize(initOpts);
     esbuildReady = true;
   } catch (err) {

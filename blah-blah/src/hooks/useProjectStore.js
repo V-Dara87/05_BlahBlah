@@ -9,6 +9,7 @@ import {
   checkScriptsForChanges,
   writeScriptFile,
   verifyPermission,
+  watchScriptsDirectory,
 } from '../services/projectFileSystem';
 import { recordProjectCreated, recordProjectOpened } from '../services/recentProjects';
 import { precompileWithBundler, precompileAllProjectScripts, detectScriptKind } from '../engine/scriptRunner';
@@ -671,12 +672,18 @@ export function useProjectStore({
   useEffect(() => {
     if (!projectFolderHandle) return;
 
-    const poller = setInterval(async () => {
+    let disposed = false;
+    let unwatchFn = null;
+    let poller = null;
+
+    // Shared by both the native watcher callback and the browser poll
+    // fallback below — re-scan scripts/ and apply + precompile any diff.
+    const refreshScripts = async () => {
       if (isPollingScriptsRef.current) return;
       isPollingScriptsRef.current = true;
       try {
         const updatedScripts = await checkScriptsForChanges(projectFolderHandle, scriptsRef.current);
-        if (updatedScripts) {
+        if (updatedScripts && !disposed) {
           setScripts(updatedScripts);
           // Real-import support: an external edit may have added `import`
           // statements — bundle the changed scripts in the background.
@@ -685,9 +692,37 @@ export function useProjectStore({
       } finally {
         isPollingScriptsRef.current = false;
       }
-    }, 2000);
+    };
 
-    return () => clearInterval(poller);
+    // Hot-Reload — two backends, same refreshScripts core:
+    //
+    // 1. Tauri desktop: subscribe to OS file-system events on scripts/
+    //    (create/modify/remove, recursive, debounced) for near-instant
+    //    reload with zero polling overhead. watchScriptsDirectory returns
+    //    an unwatch fn when the native watcher is active, or null when
+    //    running in a plain browser / the watcher can't be created.
+    // 2. Browser fallback: the old 2s setInterval poll. Kept only for
+    //    `npm run dev` in a browser — native events don't exist there.
+    watchScriptsDirectory(projectFolderHandle, refreshScripts).then((unwatch) => {
+      if (disposed) {
+        try { unwatch?.(); } catch { /* already unregistered */ }
+        return;
+      }
+      unwatchFn = unwatch;
+      if (!unwatchFn) {
+        poller = setInterval(() => {
+          refreshScripts();
+        }, 2000);
+      }
+    });
+
+    return () => {
+      disposed = true;
+      if (unwatchFn) {
+        try { unwatchFn(); } catch { /* already unregistered */ }
+      }
+      if (poller) clearInterval(poller);
+    };
   }, [projectFolderHandle]);
 
   // Track management

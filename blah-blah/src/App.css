@@ -3405,3 +3405,119 @@
 .unity-logo-hub-btn:hover {
   background: var(--unity-subtle);
 }
+
+/* ========================================================
+   13. FRAMELESS WINDOW CHROME (P2-2) — custom title bar
+   ======================================================== */
+/* The Unity-style bar is the drag surface; interactive children (menu
+   buttons, window controls) remain clickable because Tauri's
+   data-tauri-drag-region only applies to the element it is on. */
+.menubar {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.menubar-trailing {
+  margin-left: auto;
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  flex-shrink: 0;
+}
+
+/* Grabbable stretch between the last menu and the window controls. */
+.menubar-drag-fill {
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 48px;
+}
+
+.window-controls {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  flex-shrink: 0;
+}
+
+.window-control-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 100%;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--unity-text-muted);
+  cursor: pointer;
+}
+
+.window-control-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.window-control-close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+/* Hub screen gets a slim native window bar (no MenuBar there). */
+.hub-window-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 28px;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  padding-left: 12px;
+  background: var(--unity-darkest);
+  border-bottom: 1px solid var(--unity-border);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.hub-window-bar-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--unity-text-muted);
+}
+
+.hub-window-bar-fill {
+  flex: 1 1 auto;
+  align-self: stretch;
+}
+
+.hub-window-bar .window-controls {
+  height: 28px;
+}
+
+.hub-window-bar .window-control-btn {
+  width: 42px;
+}
+
+/* Saved-path line + "Show in Explorer" on the export success card (P1-2). */
+.export-saved-path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  margin-top: 12px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--unity-border);
+  border-radius: 6px;
+  color: var(--unity-text-muted);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.export-saved-path svg {
+  flex-shrink: 0;
+}
+
+.hub-screen {
+  padding-top: calc(40px + 28px);
+}

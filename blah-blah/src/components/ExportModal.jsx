@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import {
   Download,
+  FolderOpen,
   X,
   Film,
   CheckCircle2,
@@ -15,6 +16,7 @@ import {
   Volume2
 } from 'lucide-react';
 import { formatTimecode } from '../utils/timeFormat';
+import { isTauri } from '../services/tauriFsAdapter';
 import {
   drawExportFrame,
   createCanvasContainerPool,
@@ -94,6 +96,10 @@ export function ExportModal({
   const [progress, setProgress] = useState(0);
   const [currentSec, setCurrentSec] = useState(0);
   const [downloadUrl, setDownloadUrl] = useState(null);
+  // Tauri: absolute path the finished MP4 was saved to (native save
+  // dialog), which powers the "Show in Explorer" action on the success
+  // card. Web fallback keeps downloadUrl + the <a download> anchor.
+  const [savedFilePath, setSavedFilePath] = useState(null);
   const [errorMessage, setErrorMessage] = useState(null);
   // 'idle' | 'mixing' | 'mixed' | 'encoding' | 'silent'
   const [audioStatus, setAudioStatus] = useState('idle');
@@ -143,13 +149,48 @@ export function ExportModal({
     abortRef.current = true;
   };
  
+  const handleRevealSavedFile = async () => {
+    try {
+      const { revealItemInDir } = await import('@tauri-apps/plugin-opener');
+      await revealItemInDir(savedFilePath);
+    } catch (err) {
+      console.warn('Could not reveal exported file in Explorer:', err);
+    }
+  };
+
   const handleStartExport = async () => {
     setIsExporting(true);
     setProgress(0);
     setCurrentSec(0);
     setDownloadUrl(null);
+    setSavedFilePath(null);
     setErrorMessage(null);
     abortRef.current = false;
+
+    // Tauri: ask where the finished video should live BEFORE doing any
+    // render work (native "Save As" dialog). Cancelling aborts the whole
+    // export — no point rendering something the user then can't place.
+    let savePath = null;
+    if (isTauri()) {
+      try {
+        const { save } = await import('@tauri-apps/plugin-dialog');
+        const defaultFileName = `${(projectName || 'blahblah-video').replace(/[\\/:*?"<>|]/g, '-')}_${encodeWidth}x${encodeHeight}.mp4`;
+        savePath = await save({
+          title: 'Save Rendered Video',
+          defaultPath: defaultFileName,
+          filters: [{ name: 'MP4 Video', extensions: ['mp4'] }],
+        });
+        if (!savePath) {
+          setIsExporting(false);
+          return;
+        }
+      } catch (err) {
+        console.error('Save dialog error:', err);
+        setErrorMessage(`Could not open the save dialog: ${err.message || err}`);
+        setIsExporting(false);
+        return;
+      }
+    }
  
     const canvasContainers = createCanvasContainerPool();
     const videoFrameProvider = createVideoFrameProvider();
@@ -394,9 +435,18 @@ export function ExportModal({
  
       const { buffer } = muxer.target;
       const blob = new Blob([buffer], { type: 'video/mp4' });
-      const url = URL.createObjectURL(blob);
- 
-      setDownloadUrl(url);
+
+      if (isTauri() && savePath) {
+        // Native save: write the bytes straight to the path the user
+        // picked in the dialog, then surface it with a "Show in Explorer"
+        // action instead of the browser download anchor.
+        const { writeFile } = await import('@tauri-apps/plugin-fs');
+        await writeFile(savePath, new Uint8Array(buffer));
+        setSavedFilePath(savePath);
+      } else {
+        const url = URL.createObjectURL(blob);
+        setDownloadUrl(url);
+      }
       setProgress(100);
     } catch (err) {
       console.error('Export error:', err);
@@ -460,26 +510,60 @@ export function ExportModal({
                 <span className="tag-pill"><Tv size={12} /> {format.toUpperCase()}</span>
               </div>
  
-              <div className="completed-actions">
-                <a
-                  href={downloadUrl}
-                  download={`${projectName || 'blahblah-video'}.${format}`}
-                  className="unity-btn unity-btn-primary download-hero-btn"
-                >
-                  <Download size={18} />
-                  <span>Download Video ({format.toUpperCase()})</span>
-                </a>
- 
-                <button
-                  className="unity-btn unity-btn-secondary"
-                  onClick={() => {
-                    setDownloadUrl(null);
-                    setProgress(0);
-                  }}
-                >
-                  Render Another Preset
-                </button>
-              </div>
+              {/* Web: the usual blob download anchor. */}
+              {downloadUrl && (
+                <div className="completed-actions">
+                  <a
+                    href={downloadUrl}
+                    download={`${projectName || 'blahblah-video'}.${format}`}
+                    className="unity-btn unity-btn-primary download-hero-btn"
+                  >
+                    <Download size={18} />
+                    <span>Download Video ({format.toUpperCase()})</span>
+                  </a>
+
+                  <button
+                    className="unity-btn unity-btn-secondary"
+                    onClick={() => {
+                      setDownloadUrl(null);
+                      setProgress(0);
+                    }}
+                  >
+                    Render Another Preset
+                  </button>
+                </div>
+              )}
+
+              {/* Tauri: the file was saved natively — show where, and
+                  offer to reveal it (highlighted) in Explorer. */}
+              {isTauri() && savedFilePath && (
+                <>
+                  <p className="export-saved-path" title={savedFilePath}>
+                    <HardDrive size={13} />
+                    <span>{savedFilePath}</span>
+                  </p>
+                  <div className="completed-actions">
+                    <button
+                      className="unity-btn unity-btn-primary download-hero-btn"
+                      onClick={handleRevealSavedFile}
+                    >
+                      <FolderOpen size={18} />
+                      <span>Show in Explorer</span>
+                    </button>
+
+                    <button
+                      className="unity-btn unity-btn-secondary"
+                      onClick={() => {
+                        setDownloadUrl(null);
+                        setSavedFilePath(null);
+                        setProgress(0);
+                      }}
+                    >
+                      Render Another Preset
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           ) : isExporting ? (
             /* STATE 2: FRAME-BY-FRAME RENDERING MONITOR */

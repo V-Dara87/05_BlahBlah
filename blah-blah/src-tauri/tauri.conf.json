@@ -19,11 +19,16 @@
         "minHeight": 640,
         "resizable": true,
         "fullscreen": false,
+        "decorations": false,
         "dragDropEnabled": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
     }
   },
   "bundle": {
@@ -36,6 +41,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": {
+      "../public/esbuild.wasm": "esbuild.wasm"
+    },
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

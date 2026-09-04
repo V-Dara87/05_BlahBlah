@@ -17,11 +17,18 @@ import { saveMediaFileToFolder } from '../services/projectFileSystem';
  * in the same useUndoableState history stack and doesn't belong in the
  * store that owns undo.
  *
- * No logic changes from App.jsx — `projectFolderHandle` is injected as a
- * hook param (the shell owns that state) purely so handleAddMediaAsset can
- * still persist imported files next to the project. The full `setMediaAssets`
- * is returned because the project-swap load paths (in useProjectStore) and
- * the Project-JSON apply replace the whole list at once.
+ * `projectFolderHandle` is injected as a hook param (the shell owns that
+ * state) purely so handleAddMediaAsset can still persist imported files
+ * next to the project. The full `setMediaAssets` is returned because the
+ * project-swap load paths (in useProjectStore) and the Project-JSON apply
+ * replace the whole list at once.
+ *
+ * Tauri note: after persisting an imported file into media/, the asset's
+ * URL is re-pointed at the on-disk copy via convertFileSrc (HTTP Range
+ * streaming instead of holding the whole file in memory as a blob), and
+ * the temporary blob URL used to probe it is revoked. saveMediaFileToFolder
+ * returns the saved absolute path so this works even when the imported
+ * file was never readable as a blob.
  */
 export function useMediaAssets({ projectFolderHandle } = {}) {
   const [mediaAssets, setMediaAssets] = useState([]);
@@ -30,7 +37,20 @@ export function useMediaAssets({ projectFolderHandle } = {}) {
   const handleAddMediaAsset = async (asset, originalFile = null) => {
     setMediaAssets(prev => [asset, ...prev]);
     if (projectFolderHandle && originalFile) {
-      await saveMediaFileToFolder(projectFolderHandle, originalFile, asset.folder || null).catch(() => {});
+      const savedPath = await saveMediaFileToFolder(projectFolderHandle, originalFile, asset.folder || null).catch(() => null);
+      // Tauri: swap the in-memory blob for a streamed URL of the copy now
+      // sitting in media/, and free the blob (it was only for probing).
+      if (savedPath) {
+        const { convertFileSrc } = await import('@tauri-apps/api/core');
+        const prevUrl = asset.url;
+        setMediaAssets(prev => prev.map(a => a.id === asset.id
+          ? { ...a, url: convertFileSrc(savedPath), path: savedPath }
+          : a
+        ));
+        if (prevUrl && prevUrl.startsWith('blob:')) {
+          try { URL.revokeObjectURL(prevUrl); } catch { /* ignore */ }
+        }
+      }
     }
   };
 
