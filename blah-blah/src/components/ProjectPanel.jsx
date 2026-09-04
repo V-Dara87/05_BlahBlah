@@ -13,10 +13,10 @@ import {
   FolderOpen,
   ChevronDown,
   ChevronRight,
-  Code
+  Code,
+  Share2
 } from 'lucide-react';
 import { formatTimecode } from '../utils/timeFormat';
-import { createSyntheticAudio, createSyntheticVideo } from '../utils/sampleMedia';
 import { detectScriptKind } from '../engine/scriptRunner';
 import { importMediaFiles } from '../services/mediaImport';
 import { isTauri } from '../services/tauriFsAdapter';
@@ -40,18 +40,23 @@ const scriptKindMeta = (kind) => SCRIPT_KIND_META[kind] || SCRIPT_KIND_META.moti
  * `media/`'s existing subfolder grouping (e.g. "Recordings") is preserved
  * as a nested level under `media/` rather than its own top-level folder.
  *
- * Every action that existed before (import media, quick-synth buttons,
- * new script buttons, add-to-timeline, delete, drag-to-timeline, search,
- * click-to-edit-script) still works exactly the same — each top-level
- * folder just carries its own "+" popover for the actions that used to
- * live in the tab-specific action row, so they're reachable without a
- * persistent tab context.
+ * Every action that existed before (import media, new script buttons,
+ * add-to-timeline, delete, drag-to-timeline, search, click-to-edit-script)
+ * still works exactly the same — each top-level folder just carries its
+ * own "+" popover for the actions that used to live in the tab-specific
+ * action row, so they're reachable without a persistent tab context.
  */
 export const ProjectPanel = memo(function ProjectPanel({
   mediaAssets,
   prefabs,
   scripts,
   projectFolderHandle,
+  // App-wide Shared Library (persists outside any project folder)
+  sharedItems = [],
+  onRemoveSharedItem,
+  onSharePrefab,
+  onShareScript,
+  onImportSharedItem,
   onAddMediaAsset,
   onRemoveMediaAsset,
   onRemovePrefab,
@@ -61,8 +66,8 @@ export const ProjectPanel = memo(function ProjectPanel({
   onAddMediaToTimeline,
 }) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [isGenerating, setIsGenerating] = useState(false);
   const [openFolders, setOpenFolders] = useState({
+    shared: true,
     prefabs: true,
     media: true,
     scripts: true,
@@ -87,66 +92,19 @@ export const ProjectPanel = memo(function ProjectPanel({
     importMediaFiles({ files, onAddMediaAsset });
   };
  
-  const handleQuickSynthAudio = () => {
-    setMediaMenuOpen(false);
-    setIsGenerating(true);
-    setTimeout(() => {
-      try {
-        const url = createSyntheticAudio(10);
-        onAddMediaAsset({
-          id: `synth-aud-${Date.now()}`,
-          name: 'Electronic Synth.wav',
-          type: 'audio',
-          url,
-          duration: 10,
-          size: 1764000,
-        });
-      } finally {
-        setIsGenerating(false);
-      }
-    }, 100);
-  };
- 
-  const handleQuickMotionVideo = async () => {
-    setMediaMenuOpen(false);
-    setIsGenerating(true);
-    try {
-      const url = await createSyntheticVideo(6, 640, 360);
-      onAddMediaAsset({
-        id: `synth-vid-${Date.now()}`,
-        name: 'Glowing Motion.mp4',
-        type: 'video',
-        url,
-        duration: 6,
-        size: 1200000,
-      });
-    } finally {
-      setIsGenerating(false);
-    }
-  };
- 
   const handleCreateNewScript = () => {
     setScriptsMenuOpen(false);
     const newScript = {
       id: `script-${Date.now()}`,
       name: 'NewScript.jsx',
-      description: 'Custom JavaScript Motion script',
-      code: `export default class CustomMotion {
-  static props = {
-    speed: { type: 'number', default: 2.0, min: 0.1, max: 10, step: 0.1 },
-    amplitude: { type: 'number', default: 30.0, min: 0, max: 200, step: 1 },
-  };
+      description: 'Blank JavaScript Motion script',
+      code: `export default class NewScript {
+  static props = {};
  
-  onStart({ transform, tween, props }) {
-    tween.to(transform.position, { y: -props.amplitude }, {
-      duration: 1.0,
-      ease: 'outBounce',
-      loop: 'yoyo'
-    });
-  }
- 
-  onUpdate({ transform, time, props }) {
-    transform.rotation += (1 / 60) * props.speed * 30.0;
+  onUpdate({ transform, time }) {
+    // Animate transform.x / transform.y / transform.rotation /
+    // transform.scaleX / transform.scaleY / transform.opacity here.
+    transform.x = Math.sin(time * 2) * 50; // placeholder — replace with your own motion
   }
 }`
     };
@@ -161,6 +119,7 @@ export const ProjectPanel = memo(function ProjectPanel({
   };
  
   const query = searchQuery.toLowerCase();
+  const filteredShared = sharedItems.filter((i) => i.name.toLowerCase().includes(query));
   const filteredPrefabs = prefabs.filter((p) => p.name.toLowerCase().includes(query));
   const filteredMedia = mediaAssets.filter((m) => m.name.toLowerCase().includes(query));
   const filteredScripts = scripts.filter((s) => s.name.toLowerCase().includes(query));
@@ -229,7 +188,62 @@ export const ProjectPanel = memo(function ProjectPanel({
  
       {/* Folder Tree */}
       <div className="project-tree">
- 
+
+        {/* ========== Shared Library (app-wide, outside any project) ========== */}
+        <div className="tree-folder-group">
+          <div className="tree-folder-header" onClick={() => toggleFolder('shared')}>
+            {openFolders.shared ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            {openFolders.shared ? <FolderOpen size={13} className="text-violet" /> : <Folder size={13} className="text-violet" />}
+            <span className="tree-folder-name">Shared Library</span>
+            <span className="tree-folder-count">{filteredShared.length}</span>
+          </div>
+
+          {openFolders.shared && (
+            <div className="tree-folder-contents">
+              {filteredShared.length === 0 && (
+                <p className="tree-empty-hint">
+                  App-wide library — use the share button on a prefab or script below to keep it
+                  available across every project.
+                </p>
+              )}
+              {filteredShared.map((item) => {
+                const isPrefab = item.type === 'prefab';
+                return (
+                  <div
+                    key={item.id}
+                    className="asset-card shared-card"
+                    title={isPrefab ? 'Shared prefab — add to timeline' : 'Shared script — copy into this project'}
+                  >
+                    <div className={`asset-icon-box ${isPrefab ? 'text-violet' : 'text-emerald'}`}>
+                      {isPrefab ? <Package size={20} /> : <FileCode size={20} />}
+                    </div>
+                    <div className="asset-info-box">
+                      <span className="asset-title-main">{item.name}</span>
+                      <span className="asset-subtitle">{isPrefab ? 'Prefab · shared' : 'Script · shared'}</span>
+                    </div>
+                    <div className="asset-card-btns">
+                      <button
+                        className="card-action-btn add-btn"
+                        title={isPrefab ? 'Add to timeline' : 'Copy into this project'}
+                        onClick={() => (isPrefab ? onAddPrefabToTimeline(item.data) : onImportSharedItem(item))}
+                      >
+                        <Plus size={14} />
+                      </button>
+                      <button
+                        className="card-action-btn del-btn"
+                        title="Remove from shared library"
+                        onClick={() => onRemoveSharedItem(item.id)}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
         {/* ========== prefabs/ ========== */}
         <div className="tree-folder-group">
           <div className="tree-folder-header" onClick={() => toggleFolder('prefabs')}>
@@ -267,6 +281,13 @@ export const ProjectPanel = memo(function ProjectPanel({
                       <Plus size={14} />
                     </button>
                     <button
+                      className="card-action-btn share-btn"
+                      title="Save to Shared Library (available in every project)"
+                      onClick={() => onSharePrefab(prefab)}
+                    >
+                      <Share2 size={12} />
+                    </button>
+                    <button
                       className="card-action-btn del-btn"
                       title="Delete prefab"
                       onClick={() => onRemovePrefab(prefab.id)}
@@ -301,14 +322,6 @@ export const ProjectPanel = memo(function ProjectPanel({
                     <Upload size={12} />
                     <span>Import Media</span>
                   </button>
-                  <button className="popover-item" onClick={handleQuickSynthAudio} disabled={isGenerating}>
-                    <Sparkles size={12} className="text-cyan" />
-                    <span>+ Synth Audio</span>
-                  </button>
-                  <button className="popover-item" onClick={handleQuickMotionVideo} disabled={isGenerating}>
-                    <Sparkles size={12} className="text-cyan" />
-                    <span>+ Synth Video</span>
-                  </button>
                 </div>
               )}
             </div>
@@ -317,7 +330,7 @@ export const ProjectPanel = memo(function ProjectPanel({
           {openFolders.media && (
             <div className="tree-folder-contents">
               {filteredMedia.length === 0 && (
-                <p className="tree-empty-hint">No media yet. Use + to import or generate a clip.</p>
+                <p className="tree-empty-hint">No media yet. Use + to import a clip.</p>
               )}
  
               {/* Subfolders (e.g. "Recordings") nested one level under media/ */}
@@ -403,6 +416,18 @@ export const ProjectPanel = memo(function ProjectPanel({
                     <div className="asset-info-box">
                       <span className="asset-title-main">{script.name}</span>
                       <span className="asset-subtitle">{Meta.label}</span>
+                    </div>
+                    <div className="asset-card-btns">
+                      <button
+                        className="card-action-btn share-btn"
+                        title="Save to Shared Library (available in every project)"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onShareScript(script);
+                        }}
+                      >
+                        <Share2 size={12} />
+                      </button>
                     </div>
                   </div>
                 );

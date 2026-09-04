@@ -61,7 +61,7 @@ export function createCanvasContainerPool() {
      * entity+script. Deliberately given NO explicit width/height: the live
      * DOM's `.canvas-render-container` has none either (see App.css) —
      * it's a plain, unsized <div> that shrinks to fit whatever the
-     * script's onMount actually appends (e.g. CanvasOrbit.jsx's fixed
+     * script's onMount actually appends (e.g. a canvas script's fixed
      * 300x300 <canvas>). Forcing it to the full project resolution here
      * (an earlier version of this file did) made every canvas-kind render
      * come out at the wrong size/position, since the entity's Transform
@@ -248,12 +248,19 @@ export function drawExportFrame({
     return idx === -1 ? 0 : idx + 1;
   };
  
-  // Stable sort (by track order only) so entities on the same track keep
-  // their original relative draw order.
+  // Stable sort (by track order, then hierarchy depth) so entities on the
+  // same track keep their original relative draw order and a parented
+  // entity always draws AFTER (in front of) its own ancestors — matching
+  // EntityRenderer.jsx's live-preview zIndex (trackZIndexOf + depth there
+  // too). Without the depth tiebreaker, a child sharing its parent's track
+  // could draw underneath the parent whenever the parent came later in the
+  // entity array.
   const drawOrder = computed
     .map((item, originalIndex) => ({ item, originalIndex }))
     .sort((a, b) => {
-      const diff = trackZIndexOf(a.item.entity.trackId) - trackZIndexOf(b.item.entity.trackId);
+      const aKey = trackZIndexOf(a.item.entity.trackId) + (a.item.depth || 0);
+      const bKey = trackZIndexOf(b.item.entity.trackId) + (b.item.depth || 0);
+      const diff = aKey - bKey;
       return diff !== 0 ? diff : a.originalIndex - b.originalIndex;
     })
     .map(({ item }) => item);
@@ -578,9 +585,9 @@ export function clearExportAudioCache() {
 /**
  * Collect every entity that contributes audio to the export: entities with
  * an AudioSource component, or a VideoRenderer component with volume > 0
- * (the demo scene mutes VideoRenderer to 0 and pairs it with a separate
- * AudioSource entity for exactly this reason — see App.jsx's scene setup —
- * but a project is free to just leave a video's own volume up instead).
+ * (a video clip may mute its own VideoRenderer and pair it with a
+ * separate AudioSource entity — but a project is free to just leave a
+ * video's own volume up instead).
  * Only entities that overlap the export's [start, start+duration) window at
  * all are included; per-entity trims for partial-overlap clips are handled
  * by the caller when scheduling.

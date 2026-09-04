@@ -340,13 +340,20 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
         const text = await file.text();
         try {
           const prefabObj = JSON.parse(text);
+          const isNested = Array.isArray(prefabObj.entities);
           loadedPrefabs.push({
             id: `prefab-${entry.name.replace(/\.[^.]+$/, '')}`,
             name: prefabObj.name || entry.name,
             type: prefabObj.type || 'prefab',
+            rootId: prefabObj.rootId ?? null,
             // Same ReactRenderer/CanvasRenderer/MonoBehaviour migration as
-            // entities, applied to the prefab's component list.
-            components: migrateEntities([{ components: prefabObj.components || [] }])[0].components,
+            // entities, applied to the prefab's component list(s). Nested
+            // prefabs carry an `entities` array (root + children snapshot);
+            // legacy flat prefabs carry only `components`.
+            components: isNested
+              ? prefabObj.components || []
+              : migrateEntities([{ components: prefabObj.components || [] }])[0].components,
+            entities: isNested ? migrateEntities(prefabObj.entities) : undefined,
           });
         } catch {
           // Skip invalid JSON
@@ -504,6 +511,10 @@ export async function saveProjectToDirectory(dirHandle, projectState) {
       active: e.active !== false,
       components: e.components,
       keyframes: e.keyframes,
+      // Parent-child hierarchy — must persist or every group would come
+      // back unparented (children rendered at their raw local offsets)
+      // after a save + reload.
+      parentId: e.parentId || null,
     })),
     // Filename -> id (+ description) map so loadProjectFromDirectory can
     // restore each script's ORIGINAL id instead of re-deriving one from the

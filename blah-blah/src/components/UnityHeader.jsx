@@ -17,7 +17,6 @@ import {
   Save,
   CheckCircle2,
   HardDrive,
-  Sparkles,
   Undo2,
   Redo2,
   Settings
@@ -54,7 +53,6 @@ export function UnityHeader({
   onNewProject,
   onOpenProjectFolder,
   onSaveProjectToDisk,
-  onLoadDemoScene,
   onOpenSettings,
   onGoToHub,
 }) {
@@ -128,15 +126,6 @@ export function UnityHeader({
             </button>
           </>
         )}
- 
-        <button 
-          className="unity-hdr-btn demo-btn"
-          onClick={onLoadDemoScene}
-          title="Load sample demo scene with animated clips & scripts"
-        >
-          <Sparkles size={12} className="text-amber" />
-          <span>Demo</span>
-        </button>
  
         <div className="unity-divider-v" />
  

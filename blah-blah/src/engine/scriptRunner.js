@@ -648,10 +648,9 @@ export function detectScriptKind(code) {
   const hasTransformArg = /\{\s*[^}]*\btransform\b[^}]*\}\s*\)\s*\{/.test(code);
  
   // JSX detection also covers the `h(tag, props, children)` helper form
-  // used by a couple of the built-in DEFAULT_SCRIPTS samples (shorthand for
-  // React.createElement) — those still return React.createElement calls at
-  // runtime, they just don't spell "React.createElement" or "<div" in the
-  // source text.
+  // (shorthand for React.createElement) — those still return
+  // React.createElement calls at runtime, they just don't spell
+  // "React.createElement" or "<div" in the source text.
   const returnsJsx =
     /return\s*\(?\s*</.test(code) ||
     /React\.createElement\s*\(/.test(code) ||

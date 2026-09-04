@@ -15,6 +15,8 @@ export const ProjectDockPanel = memo(function ProjectDockPanel() {
   const {
     mediaAssets, prefabs, scripts,
     projectFolderHandle,
+    sharedLibraryItems,
+    onSharePrefab, onShareScript, onRemoveSharedItem, onImportSharedItem,
     onAddMediaAsset, onRemoveMediaAsset, onRemovePrefab,
     onCreateScript, onOpenScriptEditor,
     onAddPrefabToTimeline, onAddMediaToTimeline,
@@ -26,6 +28,11 @@ export const ProjectDockPanel = memo(function ProjectDockPanel() {
       prefabs={prefabs}
       scripts={scripts}
       projectFolderHandle={projectFolderHandle}
+      sharedItems={sharedLibraryItems}
+      onRemoveSharedItem={onRemoveSharedItem}
+      onSharePrefab={onSharePrefab}
+      onShareScript={onShareScript}
+      onImportSharedItem={onImportSharedItem}
       onAddMediaAsset={onAddMediaAsset}
       onRemoveMediaAsset={onRemoveMediaAsset}
       onRemovePrefab={onRemovePrefab}
@@ -102,6 +109,7 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
     <div className="dock-panel-root">
       <UnityInspector
         selectedEntity={selectedEntity}
+        entities={entities}
         tracks={tracks}
         scripts={scripts}
         onUpdateEntity={handleUpdateEntity}

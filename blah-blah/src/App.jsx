@@ -2,8 +2,9 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useProjectStore } from './hooks/useProjectStore';
 import { usePlaybackController } from './hooks/usePlaybackController';
 import { useMediaAssets } from './hooks/useMediaAssets';
+import { useSharedLibrary } from './hooks/useSharedLibrary';
 import { MenuBar } from './components/MenuBar';
-import { FilePlus, FolderOpen, Save, Download, Undo2, Redo2, Scissors, Trash2, Code, MousePointer2, Sparkles, Settings } from 'lucide-react';
+import { FilePlus, FolderOpen, Save, Download, Undo2, Redo2, Scissors, Trash2, Code, MousePointer2, Settings } from 'lucide-react';
 import { ProjectJsonModal } from './components/ProjectJsonModal';
 import { ScriptEditorModal } from './components/ScriptEditorModal';
 import { ExportModal } from './components/ExportModal';
@@ -21,6 +22,7 @@ import { INITIAL_TRACKS, DEFAULT_PIXELS_PER_SECOND, DEFAULT_RESOLUTION } from '.
 import { loadAudioSettings } from './services/audioSettings';
 import { saveProjectToDirectory } from './services/projectFileSystem';
 import { precompileAllProjectScripts } from './engine/scriptRunner';
+import { filterOutSubtrees } from './engine/ecs';
 import { isTauri } from './services/tauriFsAdapter';
 import { importMediaFiles } from './services/mediaImport';
 import { openProjectInExplorer, openProjectInVsCode, openProjectInCursor } from './services/ideLauncher';
@@ -55,7 +57,7 @@ export function App() {
   // Which top-level screen is showing. 'hub' is the landing screen (recent
   // projects + New/Open), shown on every app load before the editor mounts
   // — a separate screen from NewProjectModal, not a replacement for it.
-  // Any successful create/open/demo-load flips this to 'editor'.
+  // Any successful create/open flips this to 'editor'.
   const [screen, setScreen] = useState('hub');
   const [projectName, setProjectName] = useState('new-project');
   // Actual pixel dimensions the project renders/exports at (see
@@ -142,6 +144,11 @@ export function App() {
   const { mediaAssets, setMediaAssets, handleAddMediaAsset, handleRemoveMediaAsset } =
     useMediaAssets({ projectFolderHandle });
 
+  // App-wide Shared Library — prefabs/scripts that persist OUTSIDE any
+  // single project folder (IndexedDB/localStorage) so they're available in
+  // every project. Undo-independent by nature (not part of the document).
+  const sharedLibrary = useSharedLibrary();
+
   // OS file drag-and-drop coexistence (P2-1). The window runs with
   // dragDropEnabled: false because dockview's HTML5 DnD (tab/panel
   // movement) is what actually works in the webview then — that same flag
@@ -175,7 +182,7 @@ export function App() {
   // Project document model + undo + load paths (the undo-scoped half).
   const {
     entities, tracks, scripts, prefabs,
-    setEntities,
+    setEntities, setPrefabs,
     undo, redo, canUndo, canRedo,
     handleUpdateEntity, handleUpdateClips, handleDuplicateClips,
     handleDeleteEntity, handleSplitEntity,
@@ -183,7 +190,7 @@ export function App() {
     handleDropItemOnTrack, handleAddTrack, handleUpdateTrack, handleDeleteTrack,
     handleSaveAsPrefab, handleRemovePrefab, handleCreateScript, handleSaveScript,
     handleApplyProjectJson,
-    handleLoadDemoScene, handleProjectCreated,
+    handleProjectCreated,
     handleOpenProjectFolder, handleOpenRecentProject,
   } = useProjectStore({
     projectFolderHandle,
@@ -249,6 +256,45 @@ export function App() {
     setEditingScript(script);
     setIsScriptEditorOpen(true);
   };
+
+  // Shared-library actions (see hooks/useSharedLibrary.js). Share = copy a
+  // project prefab/script into the app-wide library; import = bring a
+  // shared item into THIS project (scripts must exist in the project to
+  // run, prefabs are copied into the project's prefab list so they persist
+  // with the folder on disk).
+  const handleSharePrefab = useCallback(
+    (prefab) => { sharedLibrary.addPrefab(prefab); },
+    [sharedLibrary]
+  );
+  const handleShareScript = useCallback(
+    (script) => { sharedLibrary.addScript(script); },
+    [sharedLibrary]
+  );
+  const handleRemoveSharedItem = useCallback(
+    (id) => { sharedLibrary.removeSharedItem(id); },
+    [sharedLibrary]
+  );
+
+  const handleImportSharedItem = useCallback(async (sharedItem) => {
+    if (!sharedItem) return;
+    const data = sharedItem.data || {};
+    if (sharedItem.type === 'script') {
+      const newScript = {
+        id: `script-${Date.now()}`,
+        name: data.name || sharedItem.name || 'ImportedScript.jsx',
+        description: data.description || 'Imported from Shared Library',
+        code: data.code || '',
+      };
+      await handleCreateScript(newScript);
+      handleOpenScriptEditor(newScript);
+    } else if (sharedItem.type === 'prefab') {
+      if (!data || typeof data !== 'object' || !data.name) return;
+      setPrefabs((prev) => [
+        ...prev,
+        { ...JSON.parse(JSON.stringify(data)), id: `prefab-${Date.now()}` },
+      ]);
+    }
+  }, [handleCreateScript, setPrefabs]);
 
   // Calculate timeline duration based on entity placements
   // BUG FIX -- this used to return a fabricated `30` when there were no
@@ -354,7 +400,6 @@ export function App() {
       label: 'View',
       items: [
         { label: 'Project Code', icon: <Code size={13} />, onClick: () => setIsProjectJsonOpen(true) },
-        { label: 'Load Demo Scene', icon: <Sparkles size={13} />, onClick: handleLoadDemoScene },
         { type: 'separator' },
         { label: 'Settings', icon: <Settings size={13} />, onClick: () => setIsSettingsOpen(true) },
       ],
@@ -362,7 +407,7 @@ export function App() {
   ], [
     canUndo, canRedo, undo, redo, selectedEntityId,
     handleSplitEntity, handleDeleteEntity, handleOpenProjectFolder,
-    handleSaveProjectToDisk, handleSaveProjectToDisk, handleLoadDemoScene,
+    handleSaveProjectToDisk, handleSaveProjectToDisk,
     projectFolderHandle,
   ]);
 
@@ -434,7 +479,8 @@ export function App() {
         onDeleteSelected={() => {
           const idsToDelete = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
           if (idsToDelete.length > 0) {
-            setEntities((prev) => prev.filter((e) => !idsToDelete.includes(e.id)));
+            // Hierarchy: deleting clips removes their whole subtrees.
+            setEntities((prev) => filterOutSubtrees(prev, idsToDelete));
             setSelectedIds([]);
             setSelectedEntityId(null);
           }
@@ -442,7 +488,8 @@ export function App() {
         onDeleteMultiple={() => {
           const idsToDelete = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
           if (idsToDelete.length > 0) {
-            setEntities((prev) => prev.filter((e) => !idsToDelete.includes(e.id)));
+            // Hierarchy: deleting clips removes their whole subtrees.
+            setEntities((prev) => filterOutSubtrees(prev, idsToDelete));
             setSelectedIds([]);
             setSelectedEntityId(null);
           }
@@ -505,7 +552,6 @@ export function App() {
         onNewProject={() => setIsNewProjectOpen(true)}
         onOpenProjectFolder={handleOpenProjectFolder}
         onSaveProjectToDisk={handleSaveProjectToDisk}
-        onLoadDemoScene={handleLoadDemoScene}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onGoToHub={() => setScreen('hub')}
       />
@@ -544,6 +590,12 @@ export function App() {
           onOpenScriptEditor: handleOpenScriptEditor,
           onAddPrefabToTimeline: handleAddPrefabToTimeline,
           onAddMediaToTimeline: handleAddMediaToTimeline,
+          // App-wide Shared Library (project-panel "shared" folder)
+          sharedLibraryItems: sharedLibrary.items,
+          onSharePrefab: handleSharePrefab,
+          onShareScript: handleShareScript,
+          onRemoveSharedItem: handleRemoveSharedItem,
+          onImportSharedItem: handleImportSharedItem,
           onZoomIn: handleZoomIn,
           onZoomOut: handleZoomOut,
           exportRange, setExportRange,

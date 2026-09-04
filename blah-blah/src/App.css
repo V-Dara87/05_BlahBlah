@@ -387,15 +387,6 @@
   border-color: rgba(56, 189, 248, 0.4);
 }
  
-.unity-hdr-btn.demo-btn {
-  border-color: rgba(245, 158, 11, 0.35);
-}
- 
-.unity-hdr-btn.demo-btn:hover {
-  border-color: #f59e0b;
-  background: rgba(245, 158, 11, 0.15);
-}
- 
 .folder-name-label {
   max-width: 100px;
   overflow: hidden;
@@ -937,6 +928,28 @@
 .card-action-btn.del-btn:hover {
   background: rgba(239, 68, 68, 0.2);
   color: #ef4444;
+}
+ 
+/* "Save to Shared Library" action on prefab/script cards — violet to
+   match the app-wide Shared Library folder header. */
+.card-action-btn.share-btn {
+  background: rgba(167, 139, 250, 0.15);
+  color: #a78bfa;
+}
+ 
+.card-action-btn.share-btn:hover {
+  background: #7c3aed;
+  color: #fff;
+}
+ 
+/* Shared-library cards aren't draggable/clickable as a whole, only their
+   action buttons are. */
+.asset-card.shared-card {
+  cursor: default;
+}
+ 
+.asset-card.shared-card:hover {
+  background: var(--unity-hover);
 }
  
 /* 3B. Center: Video Preview Player Window */

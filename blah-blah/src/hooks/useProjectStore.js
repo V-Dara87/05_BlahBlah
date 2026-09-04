@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useUndoableState } from './useUndoableState';
 import { INITIAL_TRACKS, DEFAULT_RESOLUTION } from '../types';
-import { createSyntheticAudio, createSyntheticVideo } from '../utils/sampleMedia';
-import { DEFAULT_SCRIPTS, DEFAULT_PREFABS, createGameObject, createDefaultTransform } from '../engine/ecs';
+import {
+  createGameObject,
+  createDefaultTransform,
+  collectDescendantIds,
+  filterOutSubtrees,
+} from '../engine/ecs';
 import {
   pickProjectDirectory,
   loadProjectFromDirectory,
@@ -26,9 +30,9 @@ import { precompileWithBundler, precompileAllProjectScripts, detectScriptKind } 
  *
  * Extracted out of App.jsx (it was ~60% of that file): this is the
  * "document model" half of the app — entity/track/script/prefab operations,
- * the three project-swap load paths (Demo Scene / New Project / Open Folder,
- * each of which resets undo history), the scripts/ hot-reload poll, and
- * disk round-trips that only touch the undo-scoped slices.
+ * the project-swap load paths (New Project / Open Folder, each of which
+ * resets undo history), the scripts/ hot-reload poll, and disk round-trips
+ * that only touch the undo-scoped slices.
  *
  * Everything here is a faithful move from App.jsx — no logic changes, no
  * signature changes, and useCallback dep arrays are preserved verbatim, so
@@ -101,156 +105,6 @@ export function useProjectStore({
     }), options);
   }, [setProjectHistoryState]);
 
-  // Helper to load sample demo scene with animated clips & scripts
-  const handleLoadDemoScene = useCallback(async () => {
-    try {
-      const audioUrl = createSyntheticAudio(12);
-      const videoUrl = await createSyntheticVideo(8, 640, 360);
-
-      const demoMedia = [
-        {
-          id: 'asset-intro-video',
-          name: 'Motion Video.mp4',
-          type: 'video',
-          url: videoUrl,
-          duration: 8,
-          size: 1400000
-        },
-        {
-          id: 'asset-soundtrack',
-          name: 'Synth Track.wav',
-          type: 'audio',
-          url: audioUrl,
-          duration: 12,
-          size: 2100000
-        }
-      ];
-
-      const demoGOs = [
-        createGameObject({
-          name: 'Glass Card (React Clip)',
-          trackId: 'track-1',
-          startTime: 0,
-          duration: 8,
-          type: 'react',
-          components: [
-            createDefaultTransform({ x: 0, y: -45 }),
-            {
-              type: 'ScriptComponent',
-              scriptId: 'script-glass-card',
-              scriptName: 'GlassCard.jsx',
-              enabled: true,
-              props: {
-                title: 'BLAHBLAH STUDIO',
-                badge: 'REACT COMPONENT',
-                accentColor: '#6366f1'
-              }
-            },
-            {
-              type: 'ScriptComponent',
-              scriptId: 'script-float-bounce',
-              scriptName: 'FloatAndBounce.jsx',
-              enabled: true,
-              props: {
-                amplitude: 25,
-                duration: 1.2,
-                rotationAngle: 6
-              }
-            }
-          ]
-        }),
-        createGameObject({
-          name: 'Glowing Badge (JS Pulse)',
-          trackId: 'track-2',
-          startTime: 0,
-          duration: 8,
-          type: 'shape',
-          components: [
-            createDefaultTransform({ x: 0, y: 55 }),
-            {
-              type: 'ShapeRenderer',
-              shapeType: 'rounded-rect',
-              width: 200,
-              height: 46,
-              color: '#4f46e5',
-              strokeColor: '#38bdf8',
-              strokeWidth: 2,
-              borderRadius: 23
-            },
-            {
-              type: 'TextRenderer',
-              text: '⚡ MOTION ENGINE',
-              fontSize: 13,
-              fontColor: '#ffffff',
-              fontFamily: 'Inter'
-            },
-            {
-              type: 'ScriptComponent',
-              scriptId: 'script-pulse-scale',
-              scriptName: 'PulseScale.jsx',
-              enabled: true,
-              props: {
-                maxScale: 1.18,
-                pulseSpeed: 0.6
-              }
-            }
-          ]
-        }),
-        createGameObject({
-          name: 'Motion Background Video',
-          trackId: 'track-3',
-          startTime: 0,
-          duration: 8,
-          type: 'video',
-          src: videoUrl,
-          components: [
-            createDefaultTransform({ x: 0, y: 0 }),
-            {
-              type: 'VideoRenderer',
-              src: videoUrl,
-              volume: 0, // mute — audio is handled by the linked audio entity
-              speed: 1,
-              mediaOffset: 0
-            }
-          ]
-        }),
-        createGameObject({
-          name: 'Electronic Soundtrack',
-          trackId: 'track-4',
-          startTime: 0,
-          duration: 12,
-          type: 'audio',
-          src: audioUrl,
-          components: [
-            {
-              type: 'AudioSource',
-              src: audioUrl,
-              volume: 0.8,
-              speed: 1,
-              mediaOffset: 0
-            }
-          ]
-        })
-      ];
-
-      setProjectName('demo-scene');
-      // Loading a whole demo scene is a "swap the project" action, not an
-      // editable step in the current one — start its own fresh undo history
-      // instead of stacking on top of (or being undoable back into) whatever
-      // was open before.
-      resetProjectHistoryState({
-        entities: demoGOs,
-        tracks: INITIAL_TRACKS,
-        scripts: DEFAULT_SCRIPTS,
-        prefabs: DEFAULT_PREFABS,
-      });
-      setMediaAssets(demoMedia);
-      setSelectedEntityId(demoGOs[0].id);
-      setScreen('editor');
-    } catch (err) {
-      console.warn('Could not load demo scene:', err);
-    }
-  }, [resetProjectHistoryState]);
 
   // Update entity properties / components. Coalesced: this fires on every
   // intermediate value while dragging a clip or scrubbing an Inspector
@@ -259,16 +113,18 @@ export function useProjectStore({
   const handleUpdateEntity = useCallback((entityId, updates) => {
     // Support _delete flag for context menu deletion
     if (updates._delete) {
-      setEntities((prev) => prev.filter((e) => e.id !== entityId));
+      // Hierarchy: deleting a clip deletes its whole subtree — children are
+      // authored in parent-local space, so they can't survive on their own.
+      setEntities((prev) => filterOutSubtrees(prev, [entityId]));
       if (selectedEntityId === entityId) setSelectedEntityId(null);
       return;
     }
     setEntities(prev => prev.map(e => e.id === entityId ? { ...e, ...updates } : e), { coalesce: true });
   }, [setEntities, selectedEntityId]);
 
-  // Delete entity
+  // Delete entity (+ its whole subtree — see the _delete path above).
   const handleDeleteEntity = useCallback((entityId) => {
-    setEntities(prev => prev.filter(e => e.id !== entityId));
+    setEntities((prev) => filterOutSubtrees(prev, [entityId]));
     if (selectedEntityId === entityId) setSelectedEntityId(null);
   }, [selectedEntityId]);
 
@@ -282,26 +138,87 @@ export function useProjectStore({
     }), { coalesce: true });
   }, [setEntities]);
 
-  // Duplicate one or more entities
+  // Duplicate one or more entities — hierarchy-aware. Any duplicated
+  // entity drags its whole descendant subtree along (a parent can't be
+  // copied without the children it parents — their local offsets only make
+  // sense under a parent), parentId links inside the copy are remapped to
+  // the freshly generated ids so the copied group is self-contained, and a
+  // duplicate whose parent is NOT part of the copy keeps its original
+  // parentId so it stays locked under the same live parent (Unity's
+  // duplicate-a-child behavior). Each independent family is placed right
+  // after its own extent so source and copy never overlap.
   const handleDuplicateClips = useCallback((clipIds) => {
     const ids = Array.isArray(clipIds) ? clipIds : [clipIds];
     if (ids.length === 0) return [];
-    const targets = entities.filter(e => ids.includes(e.id));
+
+    // Expand every selected id to its recursive descendant subtree.
+    const dupIds = new Set();
+    const dupIdList = [];
+    ids.forEach((id) => {
+      if (dupIds.has(id)) return;
+      for (const sid of [id, ...collectDescendantIds(entities, id)]) {
+        if (!dupIds.has(sid)) {
+          dupIds.add(sid);
+          dupIdList.push(sid);
+        }
+      }
+    });
+    const targets = entities.filter(e => dupIds.has(e.id));
     if (targets.length === 0) return [];
 
-    const newClips = targets.map(target => {
-      const newId = `go-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
-      const clonedComponents = target.components
-        ? JSON.parse(JSON.stringify(target.components))
-        : [];
-      return {
-        ...target,
-        id: newId,
-        name: `${target.name} (Copy)`,
-        startTime: target.startTime + target.duration,
-        components: clonedComponents,
-      };
+    // Group members by their topmost ancestor WITHIN the copy set, so each
+    // independent family is shifted by its own extent.
+    const entityById = new Map(entities.map(e => [e.id, e]));
+    const groupRootOf = (entityId) => {
+      let cur = entityId;
+      let guard = 0;
+      while (guard++ < entities.length) {
+        const ent = entityById.get(cur);
+        if (!ent?.parentId || !dupIds.has(ent.parentId)) return cur;
+        cur = ent.parentId;
+      }
+      return cur;
+    };
+    const groups = new Map(); // groupRootId -> member entities
+    dupIdList.forEach((entityId) => {
+      const root = groupRootOf(entityId);
+      if (!groups.has(root)) groups.set(root, []);
+      groups.get(root).push(entityById.get(entityId));
     });
+
+    // Assign every copy a fresh id FIRST so parentId remapping below is
+    // order-independent.
+    const oldToNew = new Map();
+    for (const members of groups.values()) {
+      for (const member of members) {
+        oldToNew.set(member.id, `go-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`);
+      }
+    }
+
+    const newClips = [];
+    for (const members of groups.values()) {
+      const minStart = Math.min(...members.map((m) => m.startTime));
+      const maxEnd = Math.max(...members.map((m) => m.startTime + m.duration));
+      const delta = maxEnd - minStart;
+      members.forEach((target) => {
+        const newId = oldToNew.get(target.id);
+        const parentInCopy = target.parentId && oldToNew.has(target.parentId);
+        const clonedComponents = target.components
+          ? JSON.parse(JSON.stringify(target.components))
+          : [];
+        newClips.push({
+          ...target,
+          id: newId,
+          name: `${target.name} (Copy)`,
+          startTime: target.startTime + delta,
+          // Remap to the copied parent when it's part of this duplicate;
+          // otherwise keep the original parentId so a child-only copy stays
+          // parented to the same live object it came from.
+          parentId: parentInCopy ? oldToNew.get(target.parentId) : target.parentId,
+          components: clonedComponents,
+        });
+      });
+    }
 
     setEntities(prev => [...prev, ...newClips]);
     const newIds = newClips.map(c => c.id);
@@ -393,19 +310,67 @@ export function useProjectStore({
     setSelectedEntityId(newGO.id);
   }, [getPlaybackTime]);
 
-  // Add Prefab to Timeline
+  // Add Prefab to Timeline. Handles BOTH prefab shapes:
+  //  - Legacy flat prefabs (a `components` snapshot of one entity) — the
+  //    original single-clip behavior.
+  //  - Nested prefabs (`entities`: a root + recursive children snapshot,
+  //    see handleSaveAsPrefab) — every snapshot is instantiated with a
+  //    fresh id, parentIds are remapped through the old→new id map so the
+  //    hierarchy survives, relative clip offsets are preserved around the
+  //    placement time, and each clip lands on its saved track when that
+  //    track still exists in this project (otherwise the drop target).
   const handleAddPrefabToTimeline = (prefab, targetTrackId = 'track-1', startTime = getPlaybackTime()) => {
-    const newGO = createGameObject({
-      name: prefab.name.replace(/\.prefab(\.json)?$/i, ''),
-      trackId: targetTrackId,
-      startTime: startTime,
-      duration: 5,
-      type: prefab.type || 'text',
-      components: JSON.parse(JSON.stringify(prefab.components || []))
+    if (!Array.isArray(prefab.entities) || prefab.entities.length === 0) {
+      const newGO = createGameObject({
+        name: prefab.name.replace(/\.prefab(\.json)?$/i, ''),
+        trackId: targetTrackId,
+        startTime: startTime,
+        duration: 5,
+        type: prefab.type || 'text',
+        components: JSON.parse(JSON.stringify(prefab.components || []))
+      });
+      setEntities(prev => [...prev, newGO]);
+      setSelectedEntityId(newGO.id);
+      return;
+    }
+
+    const snapshots = prefab.entities;
+    const snapRoot = snapshots.find((e) => e.id === prefab.rootId) || snapshots[0];
+    if (!snapRoot) return;
+    const start = startTime ?? getPlaybackTime();
+    const rootStart = snapRoot.startTime ?? 0;
+    const trackIds = new Set((tracks || []).map((t) => t.id));
+
+    // Fresh ids for every snapshot, assigned up front so parentId remapping
+    // below is order-independent.
+    const oldToNew = new Map();
+    snapshots.forEach((snap) => {
+      oldToNew.set(snap.id, `go-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`);
     });
 
-    setEntities(prev => [...prev, newGO]);
-    setSelectedEntityId(newGO.id);
+    const newClips = snapshots.map((snap) => {
+      const components = snap.components
+        ? JSON.parse(JSON.stringify(snap.components))
+        : [];
+      // Root goes to the drop/requested track; children keep their saved
+      // track when it still exists in this project, else share the root's.
+      const trackId =
+        snap.id === snapRoot.id
+          ? targetTrackId
+          : trackIds.has(snap.trackId) ? snap.trackId : targetTrackId;
+      return {
+        ...snap,
+        id: oldToNew.get(snap.id),
+        parentId: snap.parentId ? (oldToNew.get(snap.parentId) || null) : null,
+        trackId,
+        startTime: Math.max(0, start + ((snap.startTime ?? rootStart) - rootStart)),
+        duration: snap.duration ?? 5,
+        components,
+      };
+    });
+
+    setEntities(prev => [...prev, ...newClips]);
+    setSelectedEntityId(newClips[0]?.id || null);
   };
 
   // Add Media to Timeline
@@ -544,13 +509,24 @@ export function useProjectStore({
     }
   };
 
-  // Save GameObject as Prefab
+  // Save GameObject (and its whole child hierarchy) as a Prefab. Nested
+  // prefabs snapshot the full subtree — every recursive child of the
+  // entity — keeping their ids/parentIds/timeline offsets/durations so
+  // instantiating later can rebuild the exact same group with fresh ids.
   const handleSaveAsPrefab = (entity) => {
+    const subtreeIds = [entity.id, ...collectDescendantIds(entities, entity.id)];
+    const subtree = entities
+      .filter((e) => subtreeIds.includes(e.id))
+      .map((e) => JSON.parse(JSON.stringify(e)));
     const newPrefab = {
       id: `prefab-${Date.now()}`,
       name: `${entity.name}.prefab`,
       type: entity.type,
-      components: JSON.parse(JSON.stringify(entity.components || []))
+      rootId: entity.id,
+      entities: subtree,
+      // Back-compat convenience field for consumers that still read the
+      // legacy `components` shape (root snapshot only).
+      components: JSON.parse(JSON.stringify(entity.components || [])),
     };
     setPrefabs(prev => [...prev, newPrefab]);
   };
@@ -646,7 +622,7 @@ export function useProjectStore({
     setProjectName(loaded.projectName);
     setResolution(loaded.resolution || DEFAULT_RESOLUTION);
     // Opening a different project folder is a fresh start, not an edit —
-    // fresh undo history, same as New Project / Load Demo Scene.
+    // fresh undo history, same as New Project.
     resetProjectHistoryState({
       entities: loaded.entities, // 0 clips if empty project!
       tracks: loaded.tracks,
@@ -840,7 +816,6 @@ export function useProjectStore({
     // project JSON apply
     handleApplyProjectJson,
     // project-swap load paths
-    handleLoadDemoScene,
     handleProjectCreated,
     handleOpenProjectFolder,
     handleOpenRecentProject,

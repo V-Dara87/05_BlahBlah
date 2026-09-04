@@ -78,15 +78,35 @@ export const ClipItem = memo(function ClipItem({
     const startX = e.clientX;
     const origStartTime = clip.startTime;
 
-    // Determine which clips to move: all selected + linked
+    // Determine which clips to move: all selected + linked + descendants
+    // of anything moving. Hierarchy: dragging a parent clip shifts its
+    // whole child subtree by the same Δt so children stay time-locked
+    // inside the parent's window (see renderPipeline.js's parent-gated
+    // visibility).
     const allSelectedIds = new Set(isSelectedMulti ? selectedIds : [clip.id]);
-    allClips.forEach((c) => {
-      if (c.linkGroupId && allClips.some((s) => s.id !== c.id && s.linkGroupId === c.linkGroupId && allSelectedIds.has(s.id))) {
-        moveIds.add(c.id);
-      }
-    });
-
     const moveIds = new Set(allSelectedIds);
+
+    // Iterate both rules to a fixpoint so e.g. a parent's child that is
+    // itself part of a link group pulls its linked partner along too.
+    let grew = true;
+    while (grew) {
+      grew = false;
+      // Linked clips (same linkGroupId) of any moving clip move together.
+      allClips.forEach((c) => {
+        if (c.linkGroupId && !moveIds.has(c.id) && allClips.some((s) => s.id !== c.id && s.linkGroupId === c.linkGroupId && moveIds.has(s.id))) {
+          moveIds.add(c.id);
+          grew = true;
+        }
+      });
+      // Recursive descendants of any moving clip (children of children
+      // too) stay time-locked under their parent.
+      allClips.forEach((c) => {
+        if (c.parentId && moveIds.has(c.parentId) && !moveIds.has(c.id)) {
+          moveIds.add(c.id);
+          grew = true;
+        }
+      });
+    }
 
     // Snapshot original positions and track indices of all clips being moved
     const moveOriginals = allClips

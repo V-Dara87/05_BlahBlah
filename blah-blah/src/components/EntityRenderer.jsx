@@ -188,10 +188,18 @@ export function EntityRenderer({
   // lower ones (Track 3 sits on top of Track 2 and Track 1). Entities on a
   // track not found in `tracks` (shouldn't normally happen) fall back to
   // the back-most layer rather than crashing or defaulting to front.
+  //
+  // Hierarchy: computedEntities items carry a `depth` (chain depth, 0 =
+  // root) so a parented entity stacks just above its own ancestors — a
+  // child on the same track as its parent renders in front of it instead
+  // of being buried by it (deterministic: exportRunner.js sorts by the
+  // same trackZIndexOf + depth key). The bump is one per chain level, so
+  // track order still dominates across unrelated clips.
   const trackZIndexOf = (trackId) => {
     const idx = tracks.findIndex((t) => t.id === trackId);
     return idx === -1 ? 0 : idx + 1;
   };
+  const layerZIndexOf = (item) => trackZIndexOf(item.entity.trackId) + (item.depth || 0);
  
   // Separate video clips (background layer) from overlay graphics/text/react/canvas.
   // Derived from computedEntities (already memoized above), so these only
@@ -357,9 +365,9 @@ export function EntityRenderer({
   // effect catches up. That reads as flicker/glitching, and gets worse the
   // higher a script's `speed`-style prop is (more visual change per frame
   // makes the stale frame more noticeable). This is not a bug in
-  // individual canvas scripts (RandomBoxes/CanvasOrbit are both pure
-  // functions of absolute `time`, exactly per the P0 #2 contract) — it's
-  // the renderer's effect timing.
+  // individual canvas scripts (they are pure functions of absolute
+  // `time`, exactly per the P0 #2 contract) — it's the renderer's effect
+  // timing.
   //
   // `useLayoutEffect` runs synchronously right after DOM mutations but
   // *before* the browser paints, so the canvas is fully redrawn for the
@@ -434,7 +442,7 @@ export function EntityRenderer({
     onUpdateEntity(entityId, { components: updatedComponents });
   };
  
-  const handleMoveGizmoPointerDown = (e, entity, transform) => {
+  const handleMoveGizmoPointerDown = (e, entity, transform, localTransform) => {
     if (!onUpdateEntity) return;
     e.stopPropagation();
     e.preventDefault();
@@ -450,14 +458,37 @@ export function EntityRenderer({
     // actually captured the project-vs-screen scale difference.
     const scale = frameScale || 1;
  
+    // Hierarchy: for a parented entity the gizmo drags in WORLD space but
+    // writes LOCAL Transform x/y (the Transform component values ARE
+    // local). Without conversion a child under a rotated/scaled parent
+    // would move along the parent's rotated axes and at the parent's
+    // scale multiplier instead of following the cursor. The parent-chain
+    // frame is derivable from the leaf's world-vs-local poses:
+    //   parentRotation = worldRotation - ownRotation
+    //   parentChainScale = worldScale / ownScale   (scale of ancestors only)
+    // and the local delta is the world delta un-rotated by the parent's
+    // rotation and un-scaled by the ancestor scale. Roots (parentRotation
+    // 0, chainScale 1) reduce to plain world-space drag — the old math.
+    const lx = localTransform || {};
+    const parentRotationDeg = (transform.rotation || 0) - (lx.rotation || 0);
+    const parentRad = (parentRotationDeg * Math.PI) / 180;
+    const chainSx = (transform.scaleX ?? 1) / ((lx.scaleX ?? 1) || 1);
+    const chainSy = (transform.scaleY ?? 1) / ((lx.scaleY ?? 1) || 1);
+    const cos = Math.cos(parentRad);
+    const sin = Math.sin(parentRad);
+ 
     gizmoDragRef.current = {
       mode: 'move',
       entityId: entity.id,
       startClientX: e.clientX,
       startClientY: e.clientY,
-      startX: transform.x,
-      startY: transform.y,
+      startX: lx.x ?? transform.x,
+      startY: lx.y ?? transform.y,
       scale,
+      toLocal: (dx, dy) => ({
+        x: (dx * cos + dy * sin) / (chainSx || 1),
+        y: (-dx * sin + dy * cos) / (chainSy || 1),
+      }),
     };
  
     const handlePointerMove = (moveEvent) => {
@@ -465,7 +496,8 @@ export function EntityRenderer({
       if (!drag || drag.mode !== 'move') return;
       const dx = (moveEvent.clientX - drag.startClientX) / (drag.scale || 1);
       const dy = (moveEvent.clientY - drag.startClientY) / (drag.scale || 1);
-      updateSelectedTransform(drag.entityId, { x: drag.startX + dx, y: drag.startY + dy });
+      const local = drag.toLocal(dx, dy);
+      updateSelectedTransform(drag.entityId, { x: drag.startX + local.x, y: drag.startY + local.y });
     };
     const handlePointerUp = () => {
       gizmoDragRef.current = null;
@@ -586,7 +618,8 @@ export function EntityRenderer({
             }}
           >
           {/* 1. Background Video Layer */}
-          {activeVideoItems.map(({ entity, transform }) => {
+          {activeVideoItems.map((item) => {
+            const { entity, transform } = item;
             const isSelected = entity.id === selectedEntityId;
             const videoComp = entity.components.find((c) => c.type === 'VideoRenderer') || { src: entity.src };
             const vidSrc = videoComp.src || entity.src;
@@ -611,7 +644,7 @@ export function EntityRenderer({
                   // type. Selected entity gets a large boost so it's always
                   // visible on top while you're actively editing it,
                   // regardless of its track.
-                  zIndex: (isSelected ? 1000 : 0) + 100 + trackZIndexOf(entity.trackId),
+                  zIndex: (isSelected ? 1000 : 0) + 100 + layerZIndexOf(item),
                 }}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -650,7 +683,8 @@ export function EntityRenderer({
           })}
  
           {/* 2. Foreground Overlay GameObjects (Scripts, Text, Shapes, Prefabs) */}
-          {activeOverlayItems.map(({ entity, transform }) => {
+          {activeOverlayItems.map((item) => {
+            const { entity, transform, localTransform } = item;
             const isSelected = entity.id === selectedEntityId;
             const textComp = entity.components.find((c) => c.type === 'TextRenderer');
             const shapeComp = entity.components.find((c) => c.type === 'ShapeRenderer');
@@ -690,7 +724,7 @@ export function EntityRenderer({
                 style={{
                   transform: `translate(calc(-50% + ${transform.x}px), calc(-50% + ${transform.y}px)) rotate(${transform.rotation}deg) scale(${transform.scaleX}, ${transform.scaleY})`,
                   opacity: transform.opacity,
-                  zIndex: (isSelected ? 1000 : 0) + 100 + trackZIndexOf(entity.trackId),
+                  zIndex: (isSelected ? 1000 : 0) + 100 + layerZIndexOf(item),
                   willChange: 'transform, opacity',
                 }}
                 onClick={(e) => {
@@ -703,7 +737,7 @@ export function EntityRenderer({
                   // second press-drag on an already-selected clip moves it —
                   // avoids fighting with the plain-click-to-select gesture.
                   if (isSelected && onUpdateEntity) {
-                    handleMoveGizmoPointerDown(e, entity, transform);
+                    handleMoveGizmoPointerDown(e, entity, transform, localTransform);
                   }
                 }}
               >
