@@ -614,42 +614,67 @@ export const UnityInspector = memo(function UnityInspector({
           </div>
         )}
  
-        {/* ========== MEDIA SETTINGS ========== */}
-        {(videoComp || audioComp) && (
+        {/* ========== MEDIA SETTINGS (VideoRenderer / AudioSource volume) ========== */}
+        {videoComp && (
           <div className="inspector-card">
             <InspectorCardHeader
               icon={<Volume2 size={13} className="text-emerald" />}
-              title="Media Settings"
-              isOpen={openFoldouts.Media}
-              onToggle={() => toggleFoldout('Media')}
+              title={audioComp ? 'Video Media Settings' : 'Media Settings'}
+              isOpen={openFoldouts.VideoMedia !== undefined ? openFoldouts.VideoMedia : openFoldouts.Media}
+              onToggle={() => toggleFoldout(audioComp ? 'VideoMedia' : 'Media')}
               draggable
-              isDragOver={dragOverCompType === (videoComp ? 'VideoRenderer' : 'AudioSource')}
-              onDragStart={handleCardDragStart(videoComp ? 'VideoRenderer' : 'AudioSource')}
-              onDragOver={handleCardDragOver(videoComp ? 'VideoRenderer' : 'AudioSource')}
-              onDrop={handleCardDrop(videoComp ? 'VideoRenderer' : 'AudioSource')}
+              isDragOver={dragOverCompType === 'VideoRenderer'}
+              onDragStart={handleCardDragStart('VideoRenderer')}
+              onDragOver={handleCardDragOver('VideoRenderer')}
+              onDrop={handleCardDrop('VideoRenderer')}
               onDragEnd={handleCardDragEnd}
             />
-            {openFoldouts.Media && (
+            {(openFoldouts.VideoMedia !== undefined ? openFoldouts.VideoMedia : openFoldouts.Media) && (
               <div className="inspector-card-body">
                 <div className="inspector-row">
                   <span className="row-label">Volume</span>
-                  {/* Up to 4.0 — volumes above 1 boost (clipping) via the
-                      Web Audio gain chain both in preview (EntityRenderer)
-                      and export mixdown (exportRunner.mixdownAudio); see
-                      utils/mediaAudio.js. Values ≤ 1 sound exactly like the
-                      old element.volume path. Defaults differ by type on
-                      purpose: a video clip is silent by default (its audio
-                      lives on the linked AudioSource entity — same default
-                      the export mixdown uses), an audio clip is audible. */}
                   <DragNumber
                     label="vol"
-                    value={parseFloat((((videoComp || audioComp)?.volume ?? (videoComp ? 0 : 1)).toFixed(2)))}
+                    value={parseFloat((videoComp.volume ?? 0).toFixed(2))}
                     step={0.01}
                     min={0}
                     max={4}
                     onChange={(v) => {
-                      const compType = videoComp ? 'VideoRenderer' : 'AudioSource';
-                      updateComponent(compType, { volume: v });
+                      updateComponent('VideoRenderer', { volume: v });
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {audioComp && (
+          <div className="inspector-card">
+            <InspectorCardHeader
+              icon={<Volume2 size={13} className="text-emerald" />}
+              title={videoComp ? 'Audio Media Settings' : 'Media Settings'}
+              isOpen={openFoldouts.AudioMedia !== undefined ? openFoldouts.AudioMedia : openFoldouts.Media}
+              onToggle={() => toggleFoldout(videoComp ? 'AudioMedia' : 'Media')}
+              draggable
+              isDragOver={dragOverCompType === 'AudioSource'}
+              onDragStart={handleCardDragStart('AudioSource')}
+              onDragOver={handleCardDragOver('AudioSource')}
+              onDrop={handleCardDrop('AudioSource')}
+              onDragEnd={handleCardDragEnd}
+            />
+            {(openFoldouts.AudioMedia !== undefined ? openFoldouts.AudioMedia : openFoldouts.Media) && (
+              <div className="inspector-card-body">
+                <div className="inspector-row">
+                  <span className="row-label">Volume</span>
+                  <DragNumber
+                    label="vol"
+                    value={parseFloat((audioComp.volume ?? 1).toFixed(2))}
+                    step={0.01}
+                    min={0}
+                    max={4}
+                    onChange={(v) => {
+                      updateComponent('AudioSource', { volume: v });
                     }}
                   />
                 </div>

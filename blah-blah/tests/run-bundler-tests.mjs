@@ -634,6 +634,116 @@ await test('returned localTime stays unscaled (react/canvas consumers unaffected
   assert.equal(item.localTime, 1, 'callers render react/canvas at timeline time, not scaled');
 });
 
+// ─── 13. mediaAudio volume control & Web Audio gain chain ────────────────────
+
+const {
+  clampVolume,
+  setMediaElementVolume,
+  setMediaElementRate,
+  ensureMediaGainChain,
+  disconnectMediaGainChain,
+} = await import('../src/utils/mediaAudio.js');
+
+await test('clampVolume clamps to [0, 4] with safe defaults', () => {
+  assert.equal(clampVolume(1), 1);
+  assert.equal(clampVolume(0), 0);
+  assert.equal(clampVolume(-0.5), 0);
+  assert.equal(clampVolume(4), 4);
+  assert.equal(clampVolume(10), 4);
+  assert.equal(clampVolume('2.5'), 2.5);
+  assert.equal(clampVolume(NaN), 1);
+  assert.equal(clampVolume(undefined), 1);
+});
+
+await test('setMediaElementVolume fallback (without AudioContext) sets volume and muted state', () => {
+  const el = { volume: 1, muted: false, tagName: 'AUDIO' };
+  setMediaElementVolume(el, 0);
+  assert.equal(el.volume, 0);
+  assert.equal(el.muted, true);
+
+  setMediaElementVolume(el, 0.7);
+  assert.equal(el.volume, 0.7);
+  assert.equal(el.muted, false);
+
+  setMediaElementVolume(el, 2.5);
+  assert.equal(el.volume, 1, 'values > 1 clamped to 1 in element.volume fallback');
+  assert.equal(el.muted, false);
+});
+
+await test('setMediaElementRate clamps playback rate to safe [0.0625, 16] range', () => {
+  const el = { playbackRate: 1 };
+  setMediaElementRate(el, 2);
+  assert.equal(el.playbackRate, 2);
+
+  setMediaElementRate(el, 0.01);
+  assert.equal(el.playbackRate, 0.0625);
+
+  setMediaElementRate(el, 32);
+  assert.equal(el.playbackRate, 16);
+
+  setMediaElementRate(el, -1);
+  assert.equal(el.playbackRate, 16, 'invalid rate ignored');
+});
+
+await test('setMediaElementVolume with Web Audio: properly updates gain.gain.value on subsequent calls (volume 0 and increase)', () => {
+  const sourceConnectedTo = [];
+  const gainConnectedTo = [];
+  let sourceDisconnected = false;
+  let gainDisconnected = false;
+
+  const mockGainNode = {
+    gain: { value: 1 },
+    connect(dest) { gainConnectedTo.push(dest); },
+    disconnect() { gainDisconnected = true; },
+  };
+
+  const mockSourceNode = {
+    connect(dest) { sourceConnectedTo.push(dest); },
+    disconnect() { sourceDisconnected = true; },
+  };
+
+  const mockCtx = {
+    state: 'running',
+    destination: { name: 'destination' },
+    createGain() { return mockGainNode; },
+    createMediaElementSource(el) { return mockSourceNode; },
+  };
+
+  // Set up mock window and AudioContext
+  globalThis.window = {
+    AudioContext: function() { return mockCtx; },
+  };
+
+  const el = { volume: 1, muted: false, tagName: 'AUDIO' };
+
+  // 1. Initial volume set to 1.0
+  setMediaElementVolume(el, 1.0);
+  assert.equal(mockGainNode.gain.value, 1.0);
+  assert.equal(el.muted, false);
+  assert.equal(el.volume, 1);
+  assert.equal(sourceConnectedTo[0], mockGainNode);
+  assert.equal(gainConnectedTo[0], mockCtx.destination);
+
+  // 2. Subsequent volume set to 0 (the exact bug: muted and gain value 0)
+  setMediaElementVolume(el, 0);
+  assert.equal(mockGainNode.gain.value, 0, 'gain.gain.value MUST be 0 when volume is 0');
+  assert.equal(el.muted, true, 'element MUST be muted when volume is 0');
+  assert.equal(mockGainNode.value, undefined, 'GainNode.value dummy property should NOT be set');
+
+  // 3. Subsequent volume increase to 3.0 (the exact bug: gain value increases above 1)
+  setMediaElementVolume(el, 3.0);
+  assert.equal(mockGainNode.gain.value, 3.0, 'gain.gain.value MUST be 3.0 when volume increased');
+  assert.equal(el.muted, false, 'element MUST NOT be muted when volume > 0');
+  assert.equal(el.volume, 1, 'element.volume pinned to 1 to allow full gain boost');
+
+  // 4. Clean up gain chain
+  disconnectMediaGainChain(el);
+  assert.equal(sourceDisconnected, true);
+  assert.equal(gainDisconnected, true);
+
+  delete globalThis.window;
+});
+
 // ─── Summary ─────────────────────────────────────────────────────────────────
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -252,19 +252,23 @@ export function EntityRenderer({
       }
     });
  
-    // Pause any removed videos and tear down their gain chains, so a video
-    // clip leaving the active window doesn't keep a routed (silent but
-    // graph-referenced) element around until the next re-activation.
+    // Pause any videos outside the active timeline window
     Object.keys(videoRefs.current).forEach((id) => {
       if (!activeVideoItems.some(({ entity }) => entity.id === id)) {
+        const el = videoRefs.current[id];
+        if (el && !el.paused) el.pause();
+      }
+      // Clean up videos whose entity was deleted from the project
+      if (!entities.some((e) => e.id === id)) {
         const el = videoRefs.current[id];
         if (el) {
           if (!el.paused) el.pause();
           disconnectMediaGainChain(el);
         }
+        delete videoRefs.current[id];
       }
     });
-  }, [currentTime, isPlaying, activeVideoItems]);
+  }, [currentTime, isPlaying, activeVideoItems, entities]);
  
   // Synchronize Audio smoothly — same volume-through-GainNode and
   // clip-rate (AudioSource.speed × Transform.speed) treatment as video
@@ -307,8 +311,17 @@ export function EntityRenderer({
         const aud = audioRefs.current[id];
         if (aud && !aud.paused) aud.pause();
       }
+      // Clean up audio elements whose entity was deleted from the project
+      if (!entities.some((e) => e.id === id)) {
+        const aud = audioRefs.current[id];
+        if (aud) {
+          if (!aud.paused) aud.pause();
+          disconnectMediaGainChain(aud);
+        }
+        delete audioRefs.current[id];
+      }
     });
-  }, [currentTime, isPlaying, computedEntities]);
+  }, [currentTime, isPlaying, computedEntities, entities]);
  
   // P0 #2 — Drive canvas-kind script components every frame: mount on
   // first appearance, onUpdate with absolute-timeline localTime every
@@ -362,10 +375,22 @@ export function EntityRenderer({
     pruneCanvasComponents(activeMountKeys);
   }, [computedEntities, scripts, currentTime, fps]);
  
-  // Unmount every CanvasRenderer instance when the whole EntityRenderer unmounts.
+  // Clean up canvas and media elements when the whole EntityRenderer unmounts.
   useEffect(() => {
     return () => {
       pruneCanvasComponents([]);
+      Object.values(audioRefs.current).forEach((aud) => {
+        if (aud) {
+          if (!aud.paused) aud.pause();
+          disconnectMediaGainChain(aud);
+        }
+      });
+      Object.values(videoRefs.current).forEach((vid) => {
+        if (vid) {
+          if (!vid.paused) vid.pause();
+          disconnectMediaGainChain(vid);
+        }
+      });
     };
   }, []);
  
@@ -585,6 +610,7 @@ export function EntityRenderer({
                     }}
                     className="active-video-element"
                     src={vidSrc}
+                    muted={(videoComp.volume ?? 0) === 0}
                     playsInline
                     onLoadedMetadata={(e) => {
                       const localTime =

@@ -27,7 +27,8 @@
 let sharedAudioCtx = null;
 
 function getAudioContext() {
-  if (!sharedAudioCtx) {
+  if (typeof window === 'undefined') return null;
+  if (!sharedAudioCtx || sharedAudioCtx.state === 'closed') {
     const Ctor = window.AudioContext || window.webkitAudioContext;
     if (!Ctor) return null;
     sharedAudioCtx = new Ctor();
@@ -82,7 +83,11 @@ if (typeof window !== 'undefined') {
  */
 export function ensureMediaGainChain(el) {
   dbg('ensureMediaGainChain', { tag: el?.tagName, hasChain: gainChains.has(el) });
-  if (!el || gainChains.has(el)) return gainChains.get(el)?.gain || null;
+  if (!el) return null;
+  const existing = gainChains.get(el);
+  if (existing !== undefined) {
+    return existing ? existing.gain : null;
+  }
   const ctx = getAudioContext();
   if (!ctx) {
     dbg('ensureMediaGainChain: no AudioContext available', { tag: el.tagName });
@@ -125,16 +130,32 @@ export function clampVolume(volume) {
 export function setMediaElementVolume(el, volume) {
   if (!el) return;
   const v = clampVolume(volume);
-  const had = gainChains.has(el);
-  let chain = had ? gainChains.get(el) : ensureMediaGainChain(el);
-  if (chain) {
-    chain.gain.value = v;
-    dbg('setMediaElementVolume: gain set', { tag: el.tagName, requested: volume, v, reused: had, ctxState: sharedAudioCtx?.state, gainValue: chain.gain.value });
-  } else if (v <= 1) {
-    el.volume = v;
-    dbg('setMediaElementVolume: element.volume fallback', { tag: el.tagName, requested: volume, v });
+  const gainNode = ensureMediaGainChain(el);
+  if (gainNode) {
+    gainNode.gain.value = v;
+    // When volume is 0, also mute the element so absolutely no sound leaks through
+    el.muted = v === 0;
+    if (v > 0) {
+      el.volume = 1;
+    }
+    dbg('setMediaElementVolume: gain set', {
+      tag: el.tagName,
+      requested: volume,
+      v,
+      ctxState: sharedAudioCtx?.state,
+      gainValue: gainNode.gain.value,
+      muted: el.muted,
+    });
   } else {
-    dbg('setMediaElementVolume: NO CHAIN and v>1 — nothing applied!', { tag: el.tagName, requested: volume, v });
+    el.volume = Math.max(0, Math.min(1, v));
+    el.muted = v === 0;
+    dbg('setMediaElementVolume: element.volume fallback', {
+      tag: el.tagName,
+      requested: volume,
+      v,
+      elVolume: el.volume,
+      muted: el.muted,
+    });
   }
 }
 
