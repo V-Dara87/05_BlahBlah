@@ -1,39 +1,53 @@
 import { isTauri } from './tauriFsAdapter';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
 /**
  * Frameless-window actions (P2-2). Desktop-only: the OS owns window chrome
- * in a plain browser, so every helper no-ops when !isTauri(). The window
- * API is imported dynamically so the browser bundle never touches the IPC
- * surface.
+ * in a plain browser, so every helper no-ops when !isTauri().
  */
 
-let cachedWindow = null;
+let appWindow = null;
 
-if (typeof window !== 'undefined' && isTauri()) {
-  import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
-    cachedWindow = getCurrentWindow();
-  }).catch(() => {});
+function getAppWindow() {
+  if (!isTauri()) return null;
+  if (!appWindow) {
+    try {
+      appWindow = getCurrentWindow();
+    } catch (err) {
+      console.warn('Failed to get current window handle:', err);
+    }
+  }
+  return appWindow;
 }
 
 export function withCurrentWindow(action) {
-  if (!isTauri()) return;
-  if (cachedWindow) {
-    try {
-      action(cachedWindow);
-    } catch (err) {
-      console.warn('Window control failed:', err);
+  const win = getAppWindow();
+  if (!win) return;
+  try {
+    const res = action(win);
+    if (res && typeof res.catch === 'function') {
+      res.catch((err) => {
+        console.error('Window control action failed:', err);
+      });
     }
-    return;
+  } catch (err) {
+    console.error('Window control error:', err);
   }
-  import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
-    cachedWindow = getCurrentWindow();
-    action(cachedWindow);
-  }).catch((err) => {
-    console.warn('Window control failed:', err);
-  });
 }
 
 /** Toggle maximize/restore — also bound to title-bar double-clicks. */
 export function toggleWindowMaximize() {
-  return withCurrentWindow((win) => win.toggleMaximize());
+  return withCurrentWindow(async (win) => {
+    try {
+      await win.toggleMaximize();
+    } catch (err) {
+      const isMax = await win.isMaximized();
+      if (isMax) {
+        await win.unmaximize();
+      } else {
+        await win.maximize();
+      }
+    }
+  });
 }
+

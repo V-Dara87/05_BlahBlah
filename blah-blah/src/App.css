@@ -3417,18 +3417,18 @@
 }
 
 .menubar-trailing {
-  margin-left: auto;
+  flex: 1 1 auto;
   display: flex;
   align-items: stretch;
   height: 100%;
-  flex-shrink: 0;
+  min-width: 0;
 }
 
 /* Grabbable stretch between the last menu and the window controls. */
 .menubar-drag-fill {
   flex: 1 1 auto;
   align-self: stretch;
-  min-width: 48px;
+  min-width: 32px;
   -webkit-app-region: drag;
   cursor: default;
 }
@@ -3438,6 +3438,8 @@
   align-items: stretch;
   height: 100%;
   flex-shrink: 0;
+  position: relative;
+  z-index: 10;
   -webkit-app-region: no-drag;
 }
 
@@ -3453,6 +3455,7 @@
   color: var(--unity-text-muted);
   cursor: pointer;
   -webkit-app-region: no-drag;
+  pointer-events: auto;
 }
 
 .window-control-btn:hover {
@@ -3497,10 +3500,15 @@
 
 .hub-window-bar .window-controls {
   height: 28px;
+  position: relative;
+  z-index: 10;
+  -webkit-app-region: no-drag;
 }
 
 .hub-window-bar .window-control-btn {
   width: 42px;
+  -webkit-app-region: no-drag;
+  pointer-events: auto;
 }
 
 /* Saved-path line + "Show in Explorer" on the export success card (P1-2). */

@@ -23,7 +23,11 @@ export function WindowControls() {
         type="button"
         className="window-control-btn"
         title="Minimize"
-        onClick={() => withCurrentWindow((win) => win.minimize())}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          withCurrentWindow((win) => win.minimize());
+        }}
       >
         <Minus size={12} />
       </button>
@@ -31,7 +35,11 @@ export function WindowControls() {
         type="button"
         className="window-control-btn"
         title="Maximize"
-        onClick={() => toggleWindowMaximize()}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          toggleWindowMaximize();
+        }}
       >
         <Square size={10} />
       </button>
@@ -39,7 +47,11 @@ export function WindowControls() {
         type="button"
         className="window-control-btn window-control-close"
         title="Close"
-        onClick={() => withCurrentWindow((win) => win.close())}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          withCurrentWindow((win) => win.close());
+        }}
       >
         <X size={12} />
       </button>
