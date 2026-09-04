@@ -167,6 +167,10 @@ export function App() {
     };
     const onDrop = (e) => {
       if (!isFileDrop(e)) return;
+      // Timeline track lanes handle OS file drops themselves (import + place
+      // at the drop position, see TrackLane.jsx) — skip so files aren't
+      // imported twice.
+      if (e.target?.closest?.('.track-lane-row')) return;
       e.preventDefault();
       importMediaFiles({ files: e.dataTransfer.files, onAddMediaAsset: handleAddMediaAsset });
     };
@@ -186,9 +190,11 @@ export function App() {
     undo, redo, canUndo, canRedo,
     handleUpdateEntity, handleUpdateClips, handleDuplicateClips,
     handleDeleteEntity, handleSplitEntity,
-    handleAddEmptyClip, handleAddPrefabToTimeline, handleAddMediaToTimeline,
-    handleDropItemOnTrack, handleAddTrack, handleUpdateTrack, handleDeleteTrack,
-    handleSaveAsPrefab, handleRemovePrefab, handleCreateScript, handleSaveScript,
+    handleAddEmptyClip, handleAddEmptyChildClip, handleReorderChild,
+    handleAddPrefabToTimeline, handleAddMediaToTimeline,
+    handleDropItemOnTrack, handleReparentEntity, handleAttachScriptToEntity,
+    handleAddTrack, handleUpdateTrack, handleDeleteTrack,
+    handleSaveAsPrefab, handleRemovePrefab, handleCreateScript, handleRemoveScript, handleRenameScript, handleSaveScript,
     handleApplyProjectJson,
     handleProjectCreated,
     handleOpenProjectFolder, handleOpenRecentProject,
@@ -256,6 +262,16 @@ export function App() {
     setEditingScript(script);
     setIsScriptEditorOpen(true);
   };
+
+  // Project explorer renames (Project panel context menu). Media/prefab
+  // renames are in-memory record renames; scripts rename the record too
+  // (the on-disk file follows on the next editor save of that script).
+  const handleRenameMediaAsset = useCallback((assetId, name) => {
+    setMediaAssets((prev) => prev.map((m) => (m.id === assetId ? { ...m, name } : m)));
+  }, [setMediaAssets]);
+  const handleRenamePrefab = useCallback((prefabId, name) => {
+    setPrefabs((prev) => prev.map((p) => (p.id === prefabId ? { ...p, name } : p)));
+  }, [setPrefabs]);
 
   // Shared-library actions (see hooks/useSharedLibrary.js). Share = copy a
   // project prefab/script into the app-wide library; import = bring a
@@ -578,7 +594,8 @@ export function App() {
           handleUpdateEntity, handleUpdateClips, handleDuplicateClips,
           handleDeleteEntity, handleSaveAsPrefab,
           handleUpdateTrack, handleDeleteTrack, handleAddTrack, handleAddEmptyClip,
-          handleDropItemOnTrack,
+          handleAddEmptyChildClip, handleReorderChild,
+          handleDropItemOnTrack, handleReparentEntity, handleAttachScriptToEntity,
           selectedKeyId, setSelectedKeyId,
           selectedIds, setSelectedIds,
           recordingTrackId,
@@ -586,7 +603,11 @@ export function App() {
           onAddMediaAsset: handleAddMediaAsset,
           onRemoveMediaAsset: handleRemoveMediaAsset,
           onRemovePrefab: handleRemovePrefab,
+          onRenamePrefab: handleRenamePrefab,
           onCreateScript: handleCreateScript,
+          onRemoveScript: handleRemoveScript,
+          onRenameScript: handleRenameScript,
+          onRenameMediaAsset: handleRenameMediaAsset,
           onOpenScriptEditor: handleOpenScriptEditor,
           onAddPrefabToTimeline: handleAddPrefabToTimeline,
           onAddMediaToTimeline: handleAddMediaToTimeline,

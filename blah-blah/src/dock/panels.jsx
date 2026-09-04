@@ -1,7 +1,6 @@
  
 import { memo, useRef, useCallback, useMemo } from 'react';
 import { ProjectPanel } from '../components/ProjectPanel';
-import { ClipListPanel } from '../components/ClipListPanel';
 import { EntityRenderer } from '../components/EntityRenderer';
 import { UnityInspector } from '../components/UnityInspector';
 import { Timeline } from '../components/Timeline/Timeline';
@@ -17,9 +16,11 @@ export const ProjectDockPanel = memo(function ProjectDockPanel() {
     projectFolderHandle,
     sharedLibraryItems,
     onSharePrefab, onShareScript, onRemoveSharedItem, onImportSharedItem,
-    onAddMediaAsset, onRemoveMediaAsset, onRemovePrefab,
+    onAddMediaAsset, onRemoveMediaAsset, onRemovePrefab, onRemoveScript,
+    onRenameMediaAsset, onRenamePrefab, onRenameScript,
     onCreateScript, onOpenScriptEditor,
     onAddPrefabToTimeline, onAddMediaToTimeline,
+    handleAddEmptyClip,
   } = useEditorContext();
  
   return (
@@ -36,26 +37,15 @@ export const ProjectDockPanel = memo(function ProjectDockPanel() {
       onAddMediaAsset={onAddMediaAsset}
       onRemoveMediaAsset={onRemoveMediaAsset}
       onRemovePrefab={onRemovePrefab}
+      onRemoveScript={onRemoveScript}
+      onRenameMediaAsset={onRenameMediaAsset}
+      onRenamePrefab={onRenamePrefab}
+      onRenameScript={onRenameScript}
       onCreateScript={onCreateScript}
       onOpenScriptEditor={onOpenScriptEditor}
       onAddPrefabToTimeline={onAddPrefabToTimeline}
       onAddMediaToTimeline={onAddMediaToTimeline}
-    />
-  );
-});
- 
-export const ClipsDockPanel = memo(function ClipsDockPanel() {
-  const {
-    entities, tracks, selectedEntityId, setSelectedEntityId, handleDeleteEntity,
-  } = useEditorContext();
- 
-  return (
-    <ClipListPanel
-      entities={entities}
-      tracks={tracks}
-      selectedEntityId={selectedEntityId}
-      onSelectEntity={setSelectedEntityId}
-      onDeleteEntity={handleDeleteEntity}
+      onAddEmptyClip={handleAddEmptyClip}
     />
   );
 });
@@ -99,6 +89,7 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
     entities, selectedEntityId, tracks, scripts,
     handleUpdateEntity, handleDeleteEntity,
     onOpenScriptEditor, handleSaveAsPrefab,
+    handleAttachScriptToEntity,
     autoKeyEnabled, setAutoKeyEnabled,
   } = useEditorContext();
 
@@ -116,6 +107,7 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
         onDeleteEntity={handleDeleteEntity}
         onOpenScriptEditor={onOpenScriptEditor}
         onSaveAsPrefab={handleSaveAsPrefab}
+        onAttachScriptToEntity={handleAttachScriptToEntity}
         currentTime={currentTime}
         autoKeyEnabled={autoKeyEnabled}
         setAutoKeyEnabled={setAutoKeyEnabled}
@@ -131,7 +123,9 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
     selectedIds, setSelectedIds,
     handleUpdateEntity, handleUpdateClips, handleDuplicateClips,
     handleUpdateTrack, handleDeleteTrack,
-    handleAddTrack, handleAddEmptyClip, handleDropItemOnTrack,
+    handleAddTrack, handleAddEmptyClip, handleAddEmptyChildClip, handleReorderChild,
+    handleDropItemOnTrack, handleReparentEntity, handleAttachScriptToEntity,
+    onAddMediaAsset,
     recordingTrackId, onToggleRecordTrack,
     onZoomIn, onZoomOut, setPixelsPerSecond,
     exportRange, setExportRange,
@@ -179,7 +173,12 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
       onDeleteTrack={handleDeleteTrack}
       onAddTrack={handleAddTrack}
       onAddEmptyClip={handleAddEmptyClip}
+      onAddEmptyChildClip={handleAddEmptyChildClip}
+      onReorderChild={handleReorderChild}
       onDropItemOnTrack={handleDropItemOnTrack}
+      onReparentEntity={handleReparentEntity}
+      onAttachScriptToEntity={handleAttachScriptToEntity}
+      onAddMediaAsset={onAddMediaAsset}
       onToggleRecordTrack={onToggleRecordTrack}
       onZoomIn={onZoomIn}
       onZoomOut={onZoomOut}

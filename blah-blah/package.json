@@ -9,6 +9,7 @@
     "lint": "oxlint",
     "test": "node tests/run-bundler-tests.mjs",
     "test:hierarchy": "node tests/run-hierarchy-tests.mjs",
+    "test:timeline": "node tests/run-timeline-layout-tests.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

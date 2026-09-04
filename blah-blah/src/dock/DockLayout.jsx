@@ -4,7 +4,6 @@ import { DockviewReact } from 'dockview-react';
 import { RotateCcw } from 'lucide-react';
 import {
   ProjectDockPanel,
-  ClipsDockPanel,
   PreviewDockPanel,
   InspectorDockPanel,
   TimelineDockPanel,
@@ -19,7 +18,6 @@ const LAYOUT_STORAGE_KEY = 'blahblah-dock-layout-v1';
  
 const DOCK_COMPONENTS = {
   project: ProjectDockPanel,
-  clips: ClipsDockPanel,
   preview: PreviewDockPanel,
   inspector: InspectorDockPanel,
   timeline: TimelineDockPanel,
@@ -34,7 +32,7 @@ function buildDefaultLayout(api) {
     title: 'Game',
   });
  
-  const projectPanel = api.addPanel({
+  api.addPanel({
     id: 'project',
     component: 'project',
     title: 'Project',
@@ -42,12 +40,8 @@ function buildDefaultLayout(api) {
     initialWidth: 280,
   });
  
-  api.addPanel({
-    id: 'clips',
-    component: 'clips',
-    title: 'Clips',
-    position: { direction: 'within', referencePanel: projectPanel },
-  });
+  // (Clips tab removed — all project navigation now lives in the Project
+  // panel; clips are visible on the timeline itself.)
  
   api.addPanel({
     id: 'inspector',
@@ -111,6 +105,20 @@ function buildDefaultLayout(api) {
       if (saved) {
         api.fromJSON(JSON.parse(saved));
         restored = true;
+        // Panels from older builds (e.g. the removed Clips tab) have no
+        // registered component — drop them so the restored layout stays
+        // functional.
+        requestAnimationFrame(() => {
+          api.panels.forEach((panel) => {
+            if (!DOCK_COMPONENTS[panel.component]) {
+              try {
+                panel.api.removePanel(panel);
+              } catch {
+                // Panel may already be gone
+              }
+            }
+          });
+        });
       }
     } catch {
       // Corrupt/incompatible saved layout

@@ -16,13 +16,18 @@ import {
   Boxes,
   GripVertical,
   Key,
-  Clock
+  Clock,
+  Search,
+  FolderOpen,
+  Folder,
+  Film
 } from 'lucide-react';
 import { extractScriptProps, getScriptError, detectScriptKind, isScriptBundlePending } from '../engine/scriptRunner';
 import { DragNumber } from './DragNumber';
 import { InspectorFieldList, TRANSFORM_FIELD_GROUPS } from './inspector/InspectorField';
 import { getFieldKeyframes, setKeyframe, evaluateField } from '../engine/keyframes';
 import { isScriptComponent, isDescendantOf } from '../engine/ecs';
+import { readDragPayload, dragHasItemKind, ITEM_KIND_SCRIPT } from '../utils/dragData';
 import {
   computeActiveEntitiesAtTime,
   staticWorldTransform,
@@ -144,6 +149,9 @@ export const UnityInspector = memo(function UnityInspector({
     Media: true
   });
   const [showAddComponent, setShowAddComponent] = useState(false);
+  const [componentSearch, setComponentSearch] = useState('');
+  const [openCompCategories, setOpenCompCategories] = useState({ renderers: true, scripts: true });
+  const [isScriptDragOver, setIsScriptDragOver] = useState(false);
   const [savedPrefab, setSavedPrefab] = useState(false);
   const [dragCompType, setDragCompType] = useState(null); // component `type` (or scriptId for scripts) currently being dragged
   const [dragOverCompType, setDragOverCompType] = useState(null);
@@ -440,6 +448,12 @@ export const UnityInspector = memo(function UnityInspector({
       newComp = { type: 'TextRenderer', text: 'New Text', fontSize: 36, fontColor: '#ffffff', fontFamily: 'Inter' };
     } else if (type === 'ShapeRenderer') {
       newComp = { type: 'ShapeRenderer', shapeType: 'rect', width: 140, height: 140, color: '#ffffff', strokeColor: '#38bdf8', strokeWidth: 0, borderRadius: 0 };
+    } else if (type === 'VideoRenderer') {
+      // A bare VideoRenderer (no src) is inert until a media source is
+      // assigned — harmless, and matches the existing media-settings card.
+      newComp = { type: 'VideoRenderer', src: '', volume: 0, speed: 1, mediaOffset: 0 };
+    } else if (type === 'AudioSource') {
+      newComp = { type: 'AudioSource', src: '', volume: 1, speed: 1, mediaOffset: 0 };
     } else if (type === 'ScriptComponent' && scriptId) {
       // ONE script component type — the runtime dispatches per the
       // script's detected kind (motion / react / canvas).
@@ -456,6 +470,30 @@ export const UnityInspector = memo(function UnityInspector({
       onUpdateEntity(selectedEntity.id, { components: [...selectedEntity.components, newComp] });
     }
   };
+
+  // Attach a script by id (Add Component click or a Project-panel script
+  // card dropped onto the Inspector).
+  const handleAttachScript = (scriptId) => {
+    if (scriptId) handleAddComponent('ScriptComponent', scriptId);
+  };
+
+  // HTML5 drop zone: a script card dragged from the Project panel (scripts/
+  // or shared/) lands on the Inspector and attaches to the selected clip.
+  const handleInspectorDragOver = (e) => {
+    if (!selectedEntity || !dragHasItemKind(e.dataTransfer, ITEM_KIND_SCRIPT)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    if (!isScriptDragOver) setIsScriptDragOver(true);
+  };
+
+  const handleInspectorDrop = (e) => {
+    if (!selectedEntity) return;
+    const payload = readDragPayload(e.dataTransfer);
+    if (!payload || payload.itemType !== 'script' || !payload.itemData?.id) return;
+    e.preventDefault();
+    setIsScriptDragOver(false);
+    handleAttachScript(payload.itemData.id);
+  };
  
   const handleSavePrefabClick = () => {
     onSaveAsPrefab(selectedEntity);
@@ -463,14 +501,41 @@ export const UnityInspector = memo(function UnityInspector({
     setTimeout(() => setSavedPrefab(false), 2000);
   };
  
-  // Add Component list — every script, tagged with its detected kind.
-  // There is no per-kind filtering anymore: any script attaches as a
-  // ScriptComponent and the runtime dispatches by kind, so a half-written
-  // script ('unknown') is never hidden while being written.
+  // ── Add Component catalog ───────────────────────────────────────────────
+  // Organized into collapsible category folders (Renderers / Scripts with
+  // per-kind subfolders Motion / React / Canvas), filtered live by the
+  // search box at the top of the popover. Scripts attach as the ONE
+  // ScriptComponent type and the runtime dispatches by detected kind, so a
+  // half-written script ('unknown') is never hidden while being written.
   const allScripts = scripts.map(s => ({ ...s, kind: detectScriptKind(s.code) }));
+  const scriptKindLabel = (kind) => (SCRIPT_KIND_META[kind] || SCRIPT_KIND_META.motion).label;
+
+  const searchTerm = componentSearch.trim().toLowerCase();
+  const matchesSearch = (name) => !searchTerm || name.toLowerCase().includes(searchTerm);
+
+  const rendererItems = [
+    { type: 'TextRenderer', icon: <Type size={12} className="text-amber" />, label: 'Text Component', present: !!textComp },
+    { type: 'ShapeRenderer', icon: <Square size={12} className="text-cyan" />, label: 'Shape Component', present: !!shapeComp },
+    { type: 'VideoRenderer', icon: <Film size={12} className="text-indigo" />, label: 'Video Component', present: !!videoComp },
+    { type: 'AudioSource', icon: <Volume2 size={12} className="text-emerald" />, label: 'Audio Component', present: !!audioComp },
+  ].filter((it) => matchesSearch(it.label) || matchesSearch(it.type));
+
+  const scriptKinds = ['motion', 'react', 'canvas'];
+  const scriptsByKind = (kind) => allScripts.filter((s) => s.kind === kind && matchesSearch(s.name));
+
+  const toggleCompCategory = (name) => {
+    setOpenCompCategories(prev => ({ ...prev, [name]: !prev[name] }));
+  };
  
   return (
-    <aside className="inspector-sidebar">
+    <aside
+      className={`inspector-sidebar${isScriptDragOver ? ' script-drop-zone' : ''}`}
+      onDragOver={handleInspectorDragOver}
+      onDragLeave={(e) => {
+        if (e.currentTarget === e.target) setIsScriptDragOver(false);
+      }}
+      onDrop={handleInspectorDrop}
+    >
       {/* GameObject Name & Track */}
       <div className="inspector-header-box">
         <div className="inspector-header-field">
@@ -917,35 +982,113 @@ export const UnityInspector = memo(function UnityInspector({
           </button>
  
           {showAddComponent && (
-            <div className="comp-dropdown-popover">
-              <div className="popover-heading">Visual Elements</div>
-              {!textComp && (
-                <button className="popover-item" onClick={() => handleAddComponent('TextRenderer')}>
-                  <Type size={12} />
-                  <span>Text Component</span>
-                </button>
-              )}
-              {!shapeComp && (
-                <button className="popover-item" onClick={() => handleAddComponent('ShapeRenderer')}>
-                  <Square size={12} />
-                  <span>Shape Component</span>
-                </button>
-              )}
- 
-              <div className="popover-heading">Scripts</div>
-              {allScripts.map(s => {
-                const Meta = scriptKindMeta(s.kind);
-                return (
-                  <button key={s.id} className="popover-item" onClick={() => handleAddComponent('ScriptComponent', s.id)}>
-                    <Meta.icon size={12} className={Meta.className} />
-                    <span>{s.name}</span>
-                    <span className="popover-kind-tag">{Meta.label}</span>
+            <div className="comp-dropdown-popover add-component-popover">
+              {/* Live search across built-in components + scripts */}
+              <div className="search-bar-sm add-comp-search">
+                <Search size={11} className="search-icon" />
+                <input
+                  type="text"
+                  placeholder="Search components…"
+                  value={componentSearch}
+                  onChange={(e) => setComponentSearch(e.target.value)}
+                  autoFocus
+                />
+                {componentSearch && (
+                  <button
+                    className="clear-search-btn"
+                    onClick={() => setComponentSearch('')}
+                    title="Clear search"
+                  >
+                    ×
                   </button>
-                );
-              })}
-              {allScripts.length === 0 && (
-                <div className="popover-empty-hint">No scripts yet. Create one from the Project panel.</div>
-              )}
+                )}
+              </div>
+
+              <div className="add-comp-scroll">
+                {/* 📁 Renderers — built-in visual components */}
+                <div className="comp-category">
+                  <button
+                    className="comp-category-header"
+                    onClick={() => toggleCompCategory('renderers')}
+                  >
+                    {openCompCategories.renderers ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                    {openCompCategories.renderers ? <FolderOpen size={12} className="text-cyan" /> : <Folder size={12} className="text-cyan" />}
+                    <span>Renderers</span>
+                  </button>
+                  {openCompCategories.renderers && (
+                    <div className="comp-category-items">
+                      {rendererItems.map((item) => (
+                        <button
+                          key={item.type}
+                          className="popover-item"
+                          onClick={() => handleAddComponent(item.type)}
+                          title={item.present ? 'Already attached to this clip' : `Add ${item.label}`}
+                          disabled={item.present}
+                        >
+                          {item.icon}
+                          <span>{item.label}</span>
+                          {item.present && <span className="popover-kind-tag">added</span>}
+                        </button>
+                      ))}
+                      {rendererItems.length === 0 && (
+                        <div className="popover-empty-hint">No renderers match your search.</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* 📁 Scripts — grouped by kind (Motion / React / Canvas) */}
+                <div className="comp-category">
+                  <button
+                    className="comp-category-header"
+                    onClick={() => toggleCompCategory('scripts')}
+                  >
+                    {openCompCategories.scripts ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                    {openCompCategories.scripts ? <FolderOpen size={12} className="text-emerald" /> : <Folder size={12} className="text-emerald" />}
+                    <span>Scripts</span>
+                  </button>
+                  {openCompCategories.scripts && (
+                    <div className="comp-category-items">
+                      {allScripts.length === 0 && !searchTerm && (
+                        <div className="popover-empty-hint">No scripts yet. Create one from the Project panel.</div>
+                      )}
+                      {scriptKinds.map((kind) => {
+                        const kindScripts = scriptsByKind(kind);
+                        if (kindScripts.length === 0) return null;
+                        const Meta = scriptKindMeta(kind);
+                        return (
+                          <div key={kind} className="comp-kind-group">
+                            <div className="popover-kind-heading">
+                              <Meta.icon size={11} className={Meta.className} />
+                              <span>{scriptKindLabel(kind)}</span>
+                            </div>
+                            {kindScripts.map((s) => {
+                              const Meta2 = scriptKindMeta(s.kind);
+                              const attached = scriptComps.some((c) => c.scriptId === s.id);
+                              return (
+                                <button
+                                  key={s.id}
+                                  className="popover-item"
+                                  onClick={() => handleAttachScript(s.id)}
+                                  title={attached ? 'Already attached to this clip' : `Attach ${s.name}`}
+                                >
+                                  <Meta2.icon size={12} className={Meta2.className} />
+                                  <span className="popover-item-name">{s.name}</span>
+                                  {attached && <span className="popover-kind-tag">added</span>}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
+                      {allScripts.length > 0 && searchTerm &&
+                        scriptKinds.every((kind) => scriptsByKind(kind).length === 0) && (
+                          <div className="popover-empty-hint">No scripts match your search.</div>
+                        )}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
         </div>

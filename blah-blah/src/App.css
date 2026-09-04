@@ -3653,3 +3653,634 @@
 .hub-screen {
   padding-top: calc(40px + 28px);
 }
+
+/* ========================================================
+   TIMELINE HIERARCHY SUB-TRACKS (nested sub-track model)
+   ======================================================== */
+
+/* Root clips live in the main lane; every child clip renders as its OWN
+   sub-lane row beneath its parent — like "more tracks inside a root track".
+   Each row is a full-width, time-exact lane (see TrackLane.jsx). */
+.timeline-lane-main {
+  position: relative;
+  height: 64px;
+}
+
+.timeline-sub-lane-row {
+  position: relative;
+  box-sizing: border-box;
+  background: linear-gradient(90deg, rgba(139, 92, 246, 0.05), rgba(139, 92, 246, 0.012));
+  border-top: 1px dashed rgba(139, 92, 246, 0.16);
+  border-bottom: 1px solid rgba(139, 92, 246, 0.07);
+}
+
+/* Compact child cards inside sub-lane rows */
+.timeline-clip-card.compact {
+  top: 4px;
+  height: 32px;
+  border-radius: 3px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  font-size: 10px;
+}
+
+.timeline-clip-card.compact .clip-content-box {
+  padding: 2px 6px;
+  justify-content: center;
+}
+
+.timeline-clip-card.compact .clip-time-text {
+  display: none;
+}
+
+.timeline-clip-card.compact .script-tag {
+  display: none;
+}
+
+.timeline-clip-card.compact .clip-waveform-wrap {
+  display: none;
+}
+
+/* Card-level "Add Child Clip" chip (top-right of every clip) — spawns a
+   nested sub-track lane under this clip. */
+.timeline-clip-card.has-child-chip .clip-content-box {
+  padding-right: 17px;
+}
+
+.add-child-chip {
+  position: absolute;
+  top: 1px;
+  right: 8px;
+  z-index: 30;
+  width: 15px;
+  height: 15px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #c4b5fd;
+  background: rgba(167, 139, 250, 0.16);
+  border: 1px solid rgba(167, 139, 250, 0.35);
+  cursor: pointer;
+  opacity: 0.55;
+  padding: 0;
+}
+
+.add-child-chip:hover {
+  opacity: 1;
+  color: #fff;
+  background: rgba(167, 139, 250, 0.45);
+}
+
+.timeline-clip-card.selected .add-child-chip {
+  opacity: 1;
+}
+
+/* Header column: root track controls are a fixed-height block; each child
+   clip gets a mini sub-track header row underneath, aligned 1:1 with its
+   lane row in the lanes area. */
+.track-header-row {
+  height: 100%;
+  min-height: 64px;
+  justify-content: flex-start;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+.track-header-controls {
+  width: 180px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 5px 8px;
+  background: var(--unity-panel);
+  border-bottom: 1px solid var(--unity-border);
+}
+
+.sub-lane-header {
+  width: 180px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  min-width: 0;
+  padding-right: 6px;
+  border-bottom: 1px dashed rgba(139, 92, 246, 0.12);
+  background: linear-gradient(90deg, rgba(139, 92, 246, 0.08), rgba(139, 92, 246, 0.02));
+}
+
+.sub-lane-name {
+  font-size: 10px;
+  font-weight: 600;
+  color: #c4b5fd;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.sub-lane-add-btn {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  color: #a78bfa;
+  background: rgba(139, 92, 246, 0.12);
+}
+
+.sub-lane-add-btn:hover {
+  background: rgba(139, 92, 246, 0.35);
+  color: #fff;
+}
+
+.sub-lane-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.sub-lane-reorder-btn {
+  width: 15px;
+  height: 15px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  color: #94a3b8;
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.sub-lane-reorder-btn:hover {
+  background: rgba(148, 163, 184, 0.35);
+  color: #fff;
+}
+
+/* Bordered box around an expanded parent's child lanes — the visual group
+   that shows which sub-clips live under which clip inside a root track.
+   Drawn behind the lane rows (rows keep their own separators on top). */
+.timeline-parent-box {
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 1px solid rgba(139, 92, 246, 0.38);
+  border-radius: 4px;
+  background: rgba(139, 92, 246, 0.045);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+}
+
+.timeline-parent-box-label {
+  position: absolute;
+  top: 2px;
+  left: 6px;
+  max-width: calc(100% - 10px);
+  font-size: 9px;
+  font-weight: 600;
+  color: #c4b5fd;
+  background: rgba(24, 24, 31, 0.82);
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Overflow marker on a child clip: only the part of the card that sticks
+   OUT of its parent's box (past the parent's time window) gets the dashed,
+   faded treatment — the part inside the box stays normal. The overlay sits
+   above clip content but below trim handles / the add-child chip and never
+   intercepts pointer events. */
+.clip-outside-window {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  z-index: 5;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 1px dashed rgba(148, 163, 184, 0.75);
+  border-radius: 2px;
+  background:
+    repeating-linear-gradient(135deg, rgba(148, 163, 184, 0.12) 0 5px, transparent 5px 10px),
+    rgba(12, 13, 18, 0.5);
+}
+
+.clip-outside-window::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+.sub-track-toggle-btn {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #a78bfa;
+  background: rgba(139, 92, 246, 0.12);
+  flex-shrink: 0;
+}
+
+.sub-track-toggle-btn:hover {
+  background: rgba(139, 92, 246, 0.3);
+  color: #fff;
+}
+
+.sub-track-toggle-btn.active-sub-open {
+  color: #c4b5fd;
+}
+
+/* Parenting drag feedback: valid drop target clip / sub-lane row gets a
+   highlight ring; the dragged clip's own lane signals the drop zone. */
+.timeline-clip-card.parent-drop-target {
+  outline: 2px solid #a78bfa;
+  outline-offset: 1px;
+  box-shadow: 0 0 0 4px rgba(167, 139, 250, 0.25);
+  z-index: 25;
+}
+
+.timeline-sub-lane-row.parent-drop-target {
+  background: rgba(167, 139, 250, 0.14);
+  box-shadow: inset 0 0 0 1.5px #a78bfa;
+}
+
+/* Script drop target (project-panel script card onto a clip) */
+.timeline-clip-card.script-drop-target {
+  outline: 2px solid #34d399;
+  outline-offset: 1px;
+  box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.25);
+}
+
+/* ========================================================
+   PROJECT PANEL EXPLORER (grid/list, previews, menus)
+   ======================================================== */
+
+.project-header-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.project-view-toggle {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--unity-subtle);
+  border-radius: 4px;
+  padding: 2px;
+  flex-shrink: 0;
+}
+
+.view-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 20px;
+  border-radius: 3px;
+  color: var(--unity-text-dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.view-toggle-btn:hover {
+  color: #fff;
+}
+
+.view-toggle-btn.active {
+  background: rgba(56, 189, 248, 0.25);
+  color: #38bdf8;
+}
+
+/* List view — file manager rows */
+.asset-list-header,
+.asset-list-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  font-size: 10px;
+  min-width: 0;
+}
+
+.asset-list-header {
+  color: var(--unity-text-dim);
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.4px;
+  border-bottom: 1px solid var(--unity-border);
+  margin-top: 2px;
+}
+
+.asset-list-row {
+  border-radius: 4px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.asset-list-row:hover {
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.asset-row-icon {
+  width: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.asset-row-name {
+  flex: 1;
+  min-width: 0;
+  color: #e2e8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.asset-row-type {
+  width: 46px;
+  flex-shrink: 0;
+  color: var(--unity-text-dim);
+  text-transform: capitalize;
+}
+
+.asset-row-meta {
+  width: 62px;
+  flex-shrink: 0;
+  color: var(--unity-text-dim);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-align: right;
+}
+
+.asset-row-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.asset-list-row:hover .asset-row-actions {
+  opacity: 1;
+}
+
+.asset-row-actions .card-action-btn {
+  width: 18px;
+  height: 18px;
+}
+
+/* Inline rename input (context-menu rename) */
+.asset-rename-input {
+  background: #12141c;
+  border: 1px solid #38bdf8;
+  border-radius: 3px;
+  color: #fff;
+  font-size: 10px;
+  padding: 2px 5px;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.new-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+}
+
+/* Right-click context menu (project panel) */
+.project-context-menu {
+  position: fixed;
+  z-index: 9999;
+  background: #1e1f26;
+  border: 1px solid var(--unity-border-light);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  padding: 4px;
+  min-width: 170px;
+}
+
+.project-context-menu .ctx-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+}
+
+/* Hover asset preview popover */
+.asset-hover-preview {
+  position: fixed;
+  z-index: 9000;
+  width: 270px;
+  max-height: 220px;
+  overflow: hidden;
+  background: #16171d;
+  border: 1px solid var(--unity-border-light);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.asset-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--unity-border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.asset-preview-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.asset-preview-meta {
+  font-size: 9px;
+  color: var(--unity-text-dim);
+  padding: 4px 8px 6px;
+  font-family: var(--font-mono);
+}
+
+.asset-preview-media {
+  width: 100%;
+  max-height: 150px;
+  background: #000;
+  display: block;
+}
+
+.asset-preview-audio {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 8px;
+}
+
+.asset-preview-audio audio {
+  width: 100%;
+  height: 30px;
+}
+
+.asset-preview-code {
+  margin: 0;
+  padding: 8px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.45;
+  color: #a5b4fc;
+  overflow: auto;
+  max-height: 160px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.asset-preview-breakdown {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  overflow: auto;
+}
+
+.preview-entity-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.preview-entity-name {
+  font-size: 10px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.preview-entity-comps {
+  font-size: 9px;
+  color: var(--unity-text-dim);
+}
+
+/* Add Component popover (Inspector): search + category folders */
+.add-component-popover {
+  width: 240px;
+  max-height: 340px;
+  display: flex;
+  flex-direction: column;
+}
+
+.add-comp-search {
+  flex-shrink: 0;
+  margin: 6px 6px 2px;
+}
+
+.clear-search-btn {
+  background: none;
+  border: none;
+  color: var(--unity-text-dim);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.clear-search-btn:hover {
+  color: #fff;
+}
+
+.add-comp-scroll {
+  overflow-y: auto;
+  padding: 2px 0 4px;
+}
+
+.comp-category {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.comp-category:last-child {
+  border-bottom: none;
+}
+
+.comp-category-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  color: #cbd5e1;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.comp-category-header:hover {
+  background: rgba(56, 189, 248, 0.1);
+}
+
+.comp-category-items {
+  padding-bottom: 3px;
+}
+
+.comp-kind-group .popover-item {
+  padding-left: 24px;
+}
+
+.popover-kind-heading {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 2px 14px;
+  font-size: 9px;
+  color: var(--unity-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.popover-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.popover-item-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.popover-kind-tag {
+  font-size: 8px;
+  color: var(--unity-text-dim);
+  margin-left: auto;
+  flex-shrink: 0;
+  padding-left: 6px;
+}
+
+/* Inspector accepts script drops */
+.inspector-sidebar.script-drop-zone {
+  outline: 2px solid #34d399;
+  outline-offset: -2px;
+  box-shadow: inset 0 0 0 3px rgba(52, 211, 153, 0.15);
+}
