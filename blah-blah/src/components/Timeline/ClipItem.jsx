@@ -21,6 +21,8 @@ export const ClipItem = memo(function ClipItem({
   onUpdateClip,
   onUpdateClips,
   onDuplicateClips,
+  onGroupClips,
+  onUngroupClips,
   onReparentEntity,
   onAttachScriptToEntity,
   onAddChildClip,
@@ -114,39 +116,25 @@ export const ClipItem = memo(function ClipItem({
   // lane must never unparent it), and empty space below lanes in an expanded
   // row is not a root drop zone.
   const resolveParentTargetAt = (elements, moveIds, selfId) => {
-    let mainLaneTrackId = null;
+    let laneTrackId = null;
     for (const el of elements) {
-      // Another clip's card — highest priority parenting target.
+      // Another clip's card — parent to that clip
       const card = el.closest && el.closest('.timeline-clip-card');
       if (card) {
         const targetId = card.getAttribute('data-clip-id');
         if (targetId && targetId !== selfId && !moveIds.has(targetId)) {
           return { kind: 'parent', element: card, id: targetId, viaLane: false };
         }
-        // Self/being-dragged card — keep scanning lower elements.
         continue;
       }
-      // A sub-lane row owned by ANOTHER clip — dropping there parents to
-      // the clip that owns the lane (viaLane marks it as a lane-row drop,
-      // so pointerup can rearrange siblings instead of parenting when the
-      // lane belongs to a sibling of the dragged child).
-      const subRow = el.hasAttribute && el.hasAttribute('data-sub-lane-of') ? el : (el.closest && el.closest('[data-sub-lane-of]'));
-      if (subRow) {
-        const pid = subRow.getAttribute('data-sub-lane-of');
-        if (pid && pid !== selfId && !moveIds.has(pid)) {
-          return { kind: 'parent', element: subRow, id: pid, viaLane: true };
-        }
-        // Own lane — keep scanning; nothing below it is a parent target.
-        continue;
-      }
-      // A root main-lane strip (top of a track row) = unparent / move there.
-      if (el.classList && el.classList.contains('timeline-lane-main')) {
-        const rowEl = el.closest && el.closest('[data-track-id]');
-        mainLaneTrackId = rowEl ? rowEl.getAttribute('data-track-id') : null;
+      // Track lane strip — move to this track
+      const rowEl = el.closest && el.closest('[data-track-id]');
+      if (rowEl) {
+        laneTrackId = rowEl.getAttribute('data-track-id');
         break;
       }
     }
-    return mainLaneTrackId ? { kind: 'root', trackId: mainLaneTrackId } : null;
+    return laneTrackId ? { kind: 'root', trackId: laneTrackId } : null;
   };
 
   // Probe several points around the pointer — the dragged card occludes the
@@ -295,6 +283,17 @@ export const ClipItem = memo(function ClipItem({
       const clampedDeltaTime = Math.max(-minStartTime, deltaTime);
       let rawNewStart = origStartTime + clampedDeltaTime;
 
+      // If moving a single child clip with a parent, keep it inside the parent's window
+      if (clip.parentId && moveIds.size === 1) {
+        const parentClip = allClips.find((c) => c.id === clip.parentId);
+        if (parentClip) {
+          const pStart = parentClip.startTime;
+          const pEnd = parentClip.startTime + parentClip.duration;
+          const maxStart = Math.max(pStart, pEnd - clip.duration);
+          rawNewStart = Math.min(Math.max(rawNewStart, pStart), maxStart);
+        }
+      }
+
       let finalNewStart = getSnappedTime(rawNewStart);
       const rightEdge = rawNewStart + clip.duration;
       const snappedRight = getSnappedTime(rightEdge);
@@ -387,21 +386,12 @@ export const ClipItem = memo(function ClipItem({
             const toIdx = siblings.findIndex((s) => s.id === newParentId);
             if (toIdx >= 0) onReorderChild(clip.parentId, clip.id, toIdx);
           } else if (newParentId !== clip.parentId && onReparentEntity) {
-            onReparentEntity(clip.id, newParentId, {
-              // Land inside the new parent's sub-track on the parent's lane.
-              ...(parentEntity ? { trackId: parentEntity.trackId } : {}),
-            });
+            onReparentEntity(clip.id, newParentId);
           }
         } else if (finalHit && finalHit.kind === 'root') {
-          // Dropped on a root MAIN-LANE strip: a child becomes an
-          // independent entity (unparent), landing as a root on the lane's
-          // track — dropping a child onto its OWN lane never resolves to a
-          // root hit, so this can't accidentally detach it. Root clips only
-          // reparent when the lane belongs to a different track (moving it
-          // off its current row).
           const dropTrackId = finalHit.trackId || clip.trackId;
-          if (onReparentEntity && (clip.parentId || dropTrackId !== clip.trackId)) {
-            onReparentEntity(clip.id, null, { trackId: dropTrackId });
+          if (dropTrackId !== clip.trackId) {
+            onUpdateClip(clip.id, { trackId: dropTrackId });
           }
         }
       }
@@ -442,6 +432,12 @@ export const ClipItem = memo(function ClipItem({
 
       let newStartTime = Math.max(0, origStartTime + deltaTime);
       newStartTime = getSnappedTime(newStartTime);
+      if (clip.parentId) {
+        const parentClip = allClips.find((c) => c.id === clip.parentId);
+        if (parentClip) {
+          newStartTime = Math.max(newStartTime, parentClip.startTime);
+        }
+      }
 
       const appliedDeltaTime = newStartTime - origStartTime;
       const newDuration = origDuration - appliedDeltaTime;
@@ -507,6 +503,14 @@ export const ClipItem = memo(function ClipItem({
       const snappedEnd = getSnappedTime(targetEnd);
       if (snappedEnd !== targetEnd) {
         rawNewDuration = Math.max(0.2, snappedEnd - origStartTime);
+      }
+
+      if (clip.parentId) {
+        const parentClip = allClips.find((c) => c.id === clip.parentId);
+        if (parentClip) {
+          const maxDur = Math.max(0.2, parentClip.startTime + parentClip.duration - origStartTime);
+          rawNewDuration = Math.min(rawNewDuration, maxDur);
+        }
       }
 
       onUpdateClip(clip.id, { duration: rawNewDuration });
@@ -606,16 +610,42 @@ export const ClipItem = memo(function ClipItem({
       menu.appendChild(dupBtn);
     }
 
-    if (isLinked) {
-      const unlinkBtn = document.createElement('button');
-      unlinkBtn.textContent = '🔓 Unlink';
-      unlinkBtn.className = 'ctx-menu-item';
-      unlinkBtn.onclick = () => {
-        onUpdateClip(clip.id, { linkGroupId: null });
-        linkedClips.forEach((lc) => onUpdateClip(lc.id, { linkGroupId: null }));
+    // Group button (when 2 or more clips are selected)
+    if (activeTargetIds.length >= 2 && onGroupClips && !isLocked) {
+      const groupBtn = document.createElement('button');
+      groupBtn.textContent = '🔗 Group (Ctrl+G)';
+      groupBtn.className = 'ctx-menu-item';
+      groupBtn.onclick = () => {
+        onGroupClips(activeTargetIds);
         menu.remove();
       };
-      menu.appendChild(unlinkBtn);
+      menu.appendChild(groupBtn);
+    }
+
+    // Ungroup button (when any target clip is grouped)
+    const anyGrouped = activeTargetIds.some((id) => allClips.find((c) => c.id === id)?.linkGroupId);
+    if (anyGrouped && onUngroupClips && !isLocked) {
+      const ungroupBtn = document.createElement('button');
+      ungroupBtn.textContent = '🔓 Ungroup (Ctrl+Shift+G)';
+      ungroupBtn.className = 'ctx-menu-item';
+      ungroupBtn.onclick = () => {
+        onUngroupClips(activeTargetIds);
+        menu.remove();
+      };
+      menu.appendChild(ungroupBtn);
+    }
+
+    // Detach from Parent
+    if (clip.parentId && onReparentEntity && !isLocked) {
+      const parentClip = allClips.find((c) => c.id === clip.parentId);
+      const unparentBtn = document.createElement('button');
+      unparentBtn.textContent = `⛓ Detach from ${parentClip?.name || 'Parent'}`;
+      unparentBtn.className = 'ctx-menu-item';
+      unparentBtn.onclick = () => {
+        onReparentEntity(clip.id, null);
+        menu.remove();
+      };
+      menu.appendChild(unparentBtn);
     }
 
     if (!isLocked) {
@@ -751,6 +781,18 @@ export const ClipItem = memo(function ClipItem({
           )}
           <span className="clip-title-text">{clip.name}</span>
           
+          {parentOfClip && (
+            <span className="clip-parent-badge" title={`Parent: ${parentOfClip.name}`}>
+              ↳ {parentOfClip.name}
+            </span>
+          )}
+
+          {isLinked && (
+            <span className="clip-group-badge" title="Grouped / Linked">
+              🔗
+            </span>
+          )}
+
           {hasScript && (
             <span className="script-tag" title="Attached script">
               <FileCode size={9} /> Script

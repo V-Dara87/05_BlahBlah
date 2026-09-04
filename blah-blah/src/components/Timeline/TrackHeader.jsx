@@ -13,10 +13,10 @@ import {
   Trash2,
   ChevronDown,
   ChevronRight,
-  ArrowUp,
-  ArrowDown
+  FolderPlus,
+  CornerDownRight
 } from 'lucide-react';
-import { TRACK_HEIGHT, SUB_LANE_HEIGHT } from './Timeline';
+import { TRACK_HEIGHT } from '../../utils/timelineLayout';
  
 export const TrackHeader = memo(function TrackHeader({
   track,
@@ -24,18 +24,9 @@ export const TrackHeader = memo(function TrackHeader({
   onDeleteTrack,
   canDeleteTrack = false,
   onAddEmptyClip,
-  onAddChildClip,
-  onReorderChild,
   isRecordingTarget,
   isAnyTrackRecording,
   onToggleRecordTrack,
-  hasChildTracks = false,
-  subTracksExpanded = true,
-  onToggleSubTracks,
-  // Depth-first { clip, depth } rows for every child clip of this track's
-  // roots — rendered as mini track headers under the root controls, aligned
-  // 1:1 with the sub-lane rows in the lanes area (see Timeline.jsx layout).
-  subLaneRows = [],
 }) {
   const recording = !!isRecordingTarget;
   const [isEditing, setIsEditing] = useState(false);
@@ -80,24 +71,12 @@ export const TrackHeader = memo(function TrackHeader({
   };
 
   return (
-    <div className={`track-header-row ${recording ? 'recording-active' : ''} ${track.locked ? 'track-locked' : ''}`}>
-      {/* Root track controls (fixed TRACK_HEIGHT tall — child sub-lane
-          labels stack below, aligned to their lanes). */}
+    <div
+      className={`track-header-row ${recording ? 'recording-active' : ''} ${track.locked ? 'track-locked' : ''}`}
+      style={{ height: TRACK_HEIGHT }}
+    >
       <div className="track-header-controls" style={{ height: TRACK_HEIGHT }}>
         <div className="track-header-top-row">
-          {hasChildTracks && onToggleSubTracks && (
-            <button
-              className={`track-btn sub-track-toggle-btn ${subTracksExpanded ? 'active-sub-open' : ''}`}
-              title={subTracksExpanded ? 'Collapse child sub-tracks' : 'Expand child sub-tracks (children stay active while collapsed)'}
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggleSubTracks();
-              }}
-            >
-              {subTracksExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            </button>
-          )}
-
           <div 
             className="track-header-title-box"
             onDoubleClick={handleStartRename}
@@ -148,11 +127,12 @@ export const TrackHeader = memo(function TrackHeader({
 
           <button
             className="track-btn add-clip-track-btn"
-            title={`Add Clip to ${track.name} at Playhead`}
+            style={{ padding: '0 4px', height: '20px', minWidth: '24px' }}
+            title={`Add Clip to ${track.name} at Playhead (+C)`}
             onClick={() => onAddEmptyClip && onAddEmptyClip(track.id)}
             disabled={track.locked}
           >
-            <Plus size={11} className="text-cyan" />
+            <span style={{ fontSize: '10px', fontWeight: 700, color: '#38bdf8' }}>+C</span>
           </button>
 
           <button
@@ -180,65 +160,6 @@ export const TrackHeader = memo(function TrackHeader({
           </button>
         </div>
       </div>
-
-      {/* Sub-lane headers — every child clip of this track's roots gets a
-          mini track header row aligned to its lane: name + an "add child"
-          chip so the hierarchy can keep nesting (more tracks inside a track). */}
-      {subTracksExpanded &&
-        subLaneRows.map((row) => {
-          // Sibling index within this parent's box — for the ↑/↓ reorder
-          // buttons ("rearrange the nested sub-tracks").
-          const siblings = subLaneRows.filter((r) => r.parentClip.id === row.parentClip.id);
-          const idx = siblings.findIndex((r) => r.clip.id === row.clip.id);
-          return (
-            <div
-              key={row.clip.id}
-              className="sub-lane-header"
-              style={{ height: SUB_LANE_HEIGHT, paddingLeft: 6 + Math.min(row.depth, 8) * 14 }}
-              title={track.locked ? 'Track is locked' : `Sub-track: ${row.clip.name}`}
-            >
-              <span className="sub-lane-name" title={row.clip.name}>{row.clip.name}</span>
-              <span className="sub-lane-actions">
-                {!track.locked && onReorderChild && (
-                  <>
-                    <button
-                      className="track-btn sub-lane-reorder-btn"
-                      title={`Move ${row.clip.name} up`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onReorderChild(row.parentClip.id, row.clip.id, idx - 1);
-                      }}
-                    >
-                      <ArrowUp size={9} />
-                    </button>
-                    <button
-                      className="track-btn sub-lane-reorder-btn"
-                      title={`Move ${row.clip.name} down`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onReorderChild(row.parentClip.id, row.clip.id, idx + 1);
-                      }}
-                    >
-                      <ArrowDown size={9} />
-                    </button>
-                  </>
-                )}
-                {!track.locked && onAddChildClip && (
-                  <button
-                    className="track-btn sub-lane-add-btn"
-                    title={`Add a child clip under ${row.clip.name} (nested sub-track)`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onAddChildClip(row.clip);
-                    }}
-                  >
-                    <Plus size={9} />
-                  </button>
-                )}
-              </span>
-            </div>
-          );
-        })}
     </div>
   );
 });

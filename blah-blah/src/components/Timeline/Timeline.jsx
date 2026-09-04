@@ -12,7 +12,7 @@ const HEADER_WIDTH = 180;
 // live in utils/timelineLayout.js (shared with TrackLane / TrackHeader and
 // unit-tested). Re-exported here so existing importers stay unchanged.
 export { TRACK_HEIGHT, SUB_LANE_HEIGHT, SUB_LANE_INDENT } from '../../utils/timelineLayout';
-import { computeTrackLanes } from '../../utils/timelineLayout';
+import { TRACK_HEIGHT, SUB_LANE_HEIGHT, computeTrackLanes } from '../../utils/timelineLayout';
 
 export const Timeline = memo(function Timeline({
   tracks,
@@ -27,6 +27,8 @@ export const Timeline = memo(function Timeline({
   onUpdateClip,
   onUpdateClips,
   onDuplicateClips,
+  onGroupClips,
+  onUngroupClips,
   onUpdateTrack,
   onDeleteTrack,
   onAddTrack,
@@ -51,10 +53,6 @@ export const Timeline = memo(function Timeline({
   onAddMediaAsset,
 }) {
   const [boxSelect, setBoxSelect] = useState(null); // { startX, startY, endX, endY } for lasso
-  // Per-track expand/collapse of sub-tracks (child clips under parents).
-  // Absent key = expanded. Child clips stay active at runtime when
-  // collapsed — this is purely a vertical-space visual.
-  const [collapsedTracks, setCollapsedTracks] = useState({});
   const playbackStore = usePlaybackStore();
   const lanesScrollRef = useRef(null);
   const lanesSurfaceRef = useRef(null);
@@ -65,102 +63,33 @@ export const Timeline = memo(function Timeline({
   const velocityRef = useRef(0);
   const smoothScrollAnimIdRef = useRef(null);
 
-  // ── Hierarchy lane layout ────────────────────────────────────────────────
-  // Pure per-track lane geometry comes from utils/timelineLayout.js
-  // (computeTrackLanes): roots on the main lane, every child clip on its OWN
-  // sub-lane row below its parent (nested sub-track model). Here we turn that
-  // into absolute surface coordinates + a clipId→{top,height} hit-test map.
+  // ── Track lane layout ──────────────────────────────────────────
+  // Pure flat track layout from utils/timelineLayout.js (computeTrackLanes):
+  // Each row is a standard track lane of TRACK_HEIGHT.
   const layout = useMemo(() => {
-    const trackRows = computeTrackLanes(tracks, clips, collapsedTracks);
+    const trackRows = computeTrackLanes(tracks, clips);
     const clipPositions = new Map(); // clipId -> { top, height }
     let surfaceY = 0;
 
     for (const row of trackRows) {
       row.y = surfaceY;
-      // Roots sit on the main lane; every child (any depth) gets its own
-      // lane row below it (only when the track's sub-lanes are expanded).
-      row.nodes.forEach((node) => {
-        clipPositions.set(node.clip.id, { top: surfaceY, height: TRACK_HEIGHT });
+      row.clips.forEach((clip) => {
+        clipPositions.set(clip.id, { top: surfaceY, height: TRACK_HEIGHT });
       });
-      row.parentBoxes = [];
-      if (row.expanded) {
-        let cursorY = surfaceY + TRACK_HEIGHT;
-        // Phase 1: place every child lane (DFS, same order as subLaneRows)
-        // and record each parent's vertical span (surface coords) on its
-        // node. Phase 2 walks pre-order so OUTER boxes are pushed before
-        // INNER ones — inner boxes then paint above their parent's box.
-        const placeLanes = (node) => {
-          if (node.children.length === 0) return null;
-          let firstTop = null;
-          let lastBottom = null;
-          for (const child of node.children) {
-            const top = cursorY;
-            const bottom = top + SUB_LANE_HEIGHT;
-            clipPositions.set(child.clip.id, { top, height: SUB_LANE_HEIGHT });
-            cursorY += SUB_LANE_HEIGHT;
-            if (firstTop === null) firstTop = top;
-            lastBottom = bottom;
-            const span = placeLanes(child);
-            if (span) lastBottom = span.lastBottom;
-          }
-          node.laneSpan = { firstTop, lastBottom };
-          return node.laneSpan;
-        };
-        row.nodes.forEach((node) => placeLanes(node));
-        const pushBoxes = (node) => {
-          if (!node.laneSpan) return;
-          row.parentBoxes.push({
-            parentClip: node.clip,
-            top: node.laneSpan.firstTop - surfaceY,
-            height: node.laneSpan.lastBottom - node.laneSpan.firstTop,
-          });
-          node.children.forEach(pushBoxes);
-        };
-        row.nodes.forEach((node) => pushBoxes(node));
-      }
       surfaceY += row.rowHeight;
     }
+
     return { trackRows, clipPositions, surfaceY };
-  }, [tracks, clips, collapsedTracks]);
+  }, [tracks, clips]);
 
   const timelineLanesHeight = Math.max(layout.surfaceY, 180);
 
-  // Tracks that contain at least one clip with (recursive) children — these
-  // get the expand/collapse sub-track toggle in their header.
-  const trackHasChildTracks = useMemo(() => {
-    const parentIds = new Set(clips.filter((c) => c.parentId).map((c) => c.parentId));
-    const parentSet = new Set(clips.filter((c) => parentIds.has(c.id)).map((c) => c.id));
-    let grew = true;
-    while (grew) {
-      grew = false;
-      for (const c of clips) {
-        if (c.parentId && parentSet.has(c.parentId) && !parentSet.has(c.id)) {
-          parentSet.add(c.id);
-          grew = true;
-        }
-      }
-    }
-    return new Set(clips.filter((c) => parentSet.has(c.id)).map((c) => c.trackId));
-  }, [clips]);
-
-  const toggleSubTracks = useCallback((trackId) => {
-    setCollapsedTracks((prev) => ({ ...prev, [trackId]: !prev[trackId] }));
-  }, []);
-
-  // Add a child clip under a parent clip (card "+" chip, sub-lane header
-  // "+", or double-clicking a sub-lane row). Reveals the parent's track if
-  // its sub-lanes were collapsed so the new lane is immediately visible.
-  const handleAddChildClip = useCallback((parentClip, { startTime } = {}) => {
+  // Add a child clip under a parent clip
+  const handleAddChildClip = useCallback((parentClip, { startTime, targetTrackId } = {}) => {
     if (!parentClip) return;
     const track = tracks.find((t) => t.id === parentClip.trackId);
     if (!track || track.locked) return;
-    setCollapsedTracks((prev) => {
-      if (prev[parentClip.trackId] === undefined) return prev;
-      const next = { ...prev };
-      delete next[parentClip.trackId];
-      return next;
-    });
-    onAddEmptyChildClip?.(parentClip.id, { startTime });
+    onAddEmptyChildClip?.(parentClip.id, { startTime, targetTrackId });
   }, [tracks, onAddEmptyChildClip]);
 
   const handleLanesScroll = () => {
@@ -598,7 +527,7 @@ export const Timeline = memo(function Timeline({
             title="Create New Clip at Playhead"
           >
             <Plus size={12} className="text-cyan" />
-            <span>+ Add Clip</span>
+            <span>Add Clip</span>
           </button>
           <button 
             className="add-track-action-btn" 
@@ -719,30 +648,22 @@ export const Timeline = memo(function Timeline({
                   <div className="track-header-sticky" style={{ height: row.rowHeight }}>
                     <TrackHeader
                       track={row.track}
+                      depth={0}
                       onUpdateTrack={onUpdateTrack}
                       onDeleteTrack={onDeleteTrack}
                       canDeleteTrack={tracks.length > 1}
                       onAddEmptyClip={onAddEmptyClip}
-                      onAddChildClip={handleAddChildClip}
-                      onReorderChild={onReorderChild}
                       isRecordingTarget={recordingTrackId === row.track.id}
                       isAnyTrackRecording={!!recordingTrackId}
                       onToggleRecordTrack={onToggleRecordTrack}
-                      hasChildTracks={trackHasChildTracks.has(row.track.id)}
-                      subTracksExpanded={row.expanded}
-                      onToggleSubTracks={() => toggleSubTracks(row.track.id)}
-                      subLaneRows={row.subLaneRows}
                     />
                   </div>
                   <TrackLane
                     track={row.track}
+                    depth={0}
                     tracks={tracks}
-                    clips={clips}
+                    clips={row.clips}
                     allClips={clips}
-                    laneNodes={row.nodes}
-                    subLaneRows={row.subLaneRows}
-                    parentBoxes={row.parentBoxes}
-                    subTracksExpanded={row.expanded}
                     rowHeight={row.rowHeight}
                     pixelsPerSecond={pixelsPerSecond}
                     selectedClipId={selectedClipId}
@@ -753,6 +674,8 @@ export const Timeline = memo(function Timeline({
                     onUpdateClip={onUpdateClip}
                     onUpdateClips={onUpdateClips}
                     onDuplicateClips={onDuplicateClips}
+                    onGroupClips={onGroupClips}
+                    onUngroupClips={onUngroupClips}
                     onReparentEntity={onReparentEntity}
                     onAttachScriptToEntity={onAttachScriptToEntity}
                     onAddEmptyClip={onAddEmptyClip}

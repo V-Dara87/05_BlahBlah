@@ -1732,6 +1732,32 @@
   background: rgba(56, 189, 248, 0.15);
   color: #38bdf8;
 }
+
+.clean-subtracks-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #c084fc;
+  background: rgba(192, 132, 252, 0.08);
+  border: 1px solid rgba(192, 132, 252, 0.3);
+  padding: 2px 7px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.clean-subtracks-action-btn:hover:not(:disabled) {
+  background: rgba(192, 132, 252, 0.2);
+  border-color: rgba(192, 132, 252, 0.6);
+  color: #e9d5ff;
+}
+
+.clean-subtracks-action-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
  
 .timeline-split-wrapper {
   flex: 1;
@@ -3759,6 +3785,23 @@
   border-bottom: 1px solid var(--unity-border);
 }
 
+/* Sub-track Header styling — distinct deep purple-tinted surface + left accent indicator */
+.track-header-row.is-sub-track .track-header-controls {
+  background: rgba(22, 19, 32, 0.96);
+  border-left: 3px solid rgba(168, 85, 247, 0.7);
+  border-bottom: 1px solid rgba(168, 85, 247, 0.16);
+}
+
+/* Sub-track Lane styling — distinct deeper canvas with subtle purple tint */
+.track-lane-row.is-sub-track-lane {
+  background: rgba(18, 16, 26, 0.75);
+  border-bottom: 1px solid rgba(168, 85, 247, 0.16);
+}
+
+.track-lane-row.is-sub-track-lane .track-grid-pattern {
+  background-image: linear-gradient(90deg, rgba(168, 85, 247, 0.035) 1px, transparent 1px);
+}
+
 .sub-lane-header {
   width: 180px;
   box-sizing: border-box;
@@ -3815,6 +3858,37 @@
 .sub-lane-reorder-btn:hover {
   background: rgba(148, 163, 184, 0.35);
   color: #fff;
+}
+
+/* Group parent box spanning from parent clip down across its child sub-tracks */
+.timeline-group-parent-box {
+  position: absolute;
+  z-index: 10;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 2px solid rgba(168, 85, 247, 0.72);
+  border-radius: 6px;
+  background: rgba(168, 85, 247, 0.035);
+  box-shadow: 0 0 10px rgba(168, 85, 247, 0.12);
+}
+
+.timeline-group-parent-box-label {
+  position: absolute;
+  top: -9px;
+  left: 8px;
+  font-size: 9px;
+  font-weight: 700;
+  color: #d8b4fe;
+  background: #1e1b4b;
+  border: 1px solid rgba(168, 85, 247, 0.5);
+  padding: 0 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+  pointer-events: none;
+  z-index: 11;
 }
 
 /* Bordered box around an expanded parent's child lanes — the visual group
@@ -3874,6 +3948,27 @@
   inset: 0;
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
   pointer-events: none;
+}
+
+/* Parent badge on child clips */
+.clip-parent-badge {
+  font-size: 9px;
+  color: #7dd3fc;
+  background: rgba(14, 165, 233, 0.15);
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  border-radius: 3px;
+  padding: 0 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 80px;
+  flex-shrink: 0;
+}
+
+/* Group/link badge on linked clips */
+.clip-group-badge {
+  font-size: 10px;
+  flex-shrink: 0;
 }
 
 .sub-track-toggle-btn {

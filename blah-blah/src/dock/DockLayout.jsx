@@ -14,8 +14,13 @@ import { useEditorContext } from './EditorContext';
 import 'dockview-react/dist/styles/dockview.css';
 import './dockview-unity-theme.css';
  
-const LAYOUT_STORAGE_KEY = 'blahblah-dock-layout-v1';
- 
+const LAYOUT_STORAGE_KEY = 'blahblah-dock-layout-v2';
+const LEGACY_STORAGE_KEY = 'blahblah-dock-layout-v1';
+
+// Empty fallback panel so unknown/removed panels from old saved layouts
+// never cause dockview-react to crash with undefined component.
+const FallbackPanel = () => null;
+
 const DOCK_COMPONENTS = {
   project: ProjectDockPanel,
   preview: PreviewDockPanel,
@@ -23,6 +28,8 @@ const DOCK_COMPONENTS = {
   timeline: TimelineDockPanel,
   dopesheet: DopesheetDockPanel,
   curveEditor: CurveEditorDockPanel,
+  // Fallbacks for removed tabs from previous builds
+  clips: FallbackPanel,
 };
  
 function buildDefaultLayout(api) {
@@ -98,6 +105,9 @@ function buildDefaultLayout(api) {
     const api = event.api;
     apiRef.current = api;
     setDockApi(api);
+
+    // Clean up legacy keys from previous builds
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
  
     let restored = false;
     try {
