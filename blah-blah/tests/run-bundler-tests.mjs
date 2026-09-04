@@ -644,12 +644,12 @@ const {
   disconnectMediaGainChain,
 } = await import('../src/utils/mediaAudio.js');
 
-await test('clampVolume clamps to [0, 4] with safe defaults', () => {
+await test('clampVolume clamps to [0, 100] with safe defaults', () => {
   assert.equal(clampVolume(1), 1);
   assert.equal(clampVolume(0), 0);
   assert.equal(clampVolume(-0.5), 0);
-  assert.equal(clampVolume(4), 4);
-  assert.equal(clampVolume(10), 4);
+  assert.equal(clampVolume(100), 100);
+  assert.equal(clampVolume(150), 100);
   assert.equal(clampVolume('2.5'), 2.5);
   assert.equal(clampVolume(NaN), 1);
   assert.equal(clampVolume(undefined), 1);

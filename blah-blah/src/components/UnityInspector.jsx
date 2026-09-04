@@ -638,7 +638,7 @@ export const UnityInspector = memo(function UnityInspector({
                     value={parseFloat((videoComp.volume ?? 0).toFixed(2))}
                     step={0.01}
                     min={0}
-                    max={4}
+                    max={100}
                     onChange={(v) => {
                       updateComponent('VideoRenderer', { volume: v });
                     }}
@@ -672,7 +672,7 @@ export const UnityInspector = memo(function UnityInspector({
                     value={parseFloat((audioComp.volume ?? 1).toFixed(2))}
                     step={0.01}
                     min={0}
-                    max={4}
+                    max={100}
                     onChange={(v) => {
                       updateComponent('AudioSource', { volume: v });
                     }}
