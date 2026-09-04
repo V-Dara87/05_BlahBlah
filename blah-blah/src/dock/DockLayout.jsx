@@ -141,7 +141,7 @@ function buildDefaultLayout(api) {
         <span>Reset Layout</span>
       </button>
       <DockviewReact
-        className="dockview-theme-unity"
+        className="dockview-theme-dark dockview-theme-unity"
         components={DOCK_COMPONENTS}
         onReady={handleReady}
       />
