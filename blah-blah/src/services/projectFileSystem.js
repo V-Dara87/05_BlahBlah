@@ -61,6 +61,10 @@ const toScriptFileName = (name) => `${(name || '').replace(/\.(js|jsx|ts|tsx|cs)
  
 import { isTauri, createTauriDirectoryHandle, joinPath } from './tauriFsAdapter';
 import { convertFileSrc } from '@tauri-apps/api/core';
+// Real media duration probing (metadata-only, same technique + fallback as
+// the import path) — reused here because reload rebuilds mediaAssets by
+// scanning media/ on disk and must not stamp a placeholder duration.
+import { probeMediaElementDuration, MEDIA_FALLBACK_DURATION } from './mediaImport';
 
 export function isFileSystemSupported() {
   return isTauri() || (typeof window !== 'undefined' && 'showDirectoryPicker' in window);
@@ -321,6 +325,11 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
           id: indexed ? indexed.id : `script-${entry.name.replace(/\.[^.]+$/, '')}`,
           name: entry.name,
           description: indexed ? indexed.description : undefined,
+          // Folder + sort metadata round-trip through scriptIndex (the
+          // code itself lives in the file, so it's the only place these
+          // panel-level fields can persist).
+          folder: indexed?.folder ?? null,
+          createdAt: indexed?.createdAt ?? undefined,
           code: code,
           lastModified: file.lastModified,
         });
@@ -369,12 +378,12 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
   // picked back up on load and tagged with their folder name).
   const loadedMedia = [];
   const readMediaEntry = async (entry, folderName) => {
-    if (entry.kind !== 'file') return;
+    if (entry.kind !== 'file') return null;
     const ext = entry.name.toLowerCase();
     const isVideo = ext.endsWith('.mp4') || ext.endsWith('.webm') || ext.endsWith('.mov');
     const isAudio = ext.endsWith('.mp3') || ext.endsWith('.wav') || ext.endsWith('.ogg') || ext.endsWith('.aac');
  
-    if (!isVideo && !isAudio) return;
+    if (!isVideo && !isAudio) return null;
 
     // Tauri: stream straight off disk through the asset protocol
     // (HTTP Range requests) instead of slurping the whole file into
@@ -400,32 +409,52 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
       size = file.size;
     }
 
-    loadedMedia.push({
+    // Re-derive the REAL duration with a metadata-only probe against the
+    // playable URL (blob: in the browser, convertFileSrc asset URL under
+    // Tauri) — same technique and fallback the import path uses. Without
+    // this, reloading a project would stamp a placeholder on every asset
+    // and silently discard the durations import probed correctly.
+    const probedDuration = await probeMediaElementDuration(url, isVideo);
+    const duration = probedDuration || MEDIA_FALLBACK_DURATION[isVideo ? 'video' : 'audio'];
+
+    return {
       id: `asset-${(folderName || '')}${entry.name.replace(/[^a-zA-Z0-9_-]/g, '_')}`,
       name: entry.name,
       type: isVideo ? 'video' : 'audio',
       url: url,
       size: size,
-      duration: 10,
+      duration,
       thumbnail: isVideo ? '🎬' : '🎵',
       // Absolute on-disk path (Tauri only) — lets the app re-stream or
       // reveal the file without re-importing it.
       ...(entry.path ? { path: entry.path } : {}),
       ...(folderName ? { folder: folderName } : {}),
-    });
+    };
   };
  
   try {
     const mediaDirHandle = await dirHandle.getDirectoryHandle('media', { create: true });
+    const mediaEntries = [];
     for await (const entry of mediaDirHandle.values()) {
       if (entry.kind === 'directory') {
         const subDirHandle = await mediaDirHandle.getDirectoryHandle(entry.name, { create: false });
         for await (const subEntry of subDirHandle.values()) {
-          await readMediaEntry(subEntry, entry.name);
+          mediaEntries.push({ entry: subEntry, folderName: entry.name });
         }
       } else {
-        await readMediaEntry(entry, null);
+        mediaEntries.push({ entry, folderName: null });
       }
+    }
+    // Probe durations in parallel (like importMediaFiles does with
+    // Promise.all) instead of serially — a folder of N media files would
+    // otherwise wait on N back-to-back metadata loads. Promise.all keeps
+    // the directory iteration order, so the media list doesn't shuffle
+    // between reloads.
+    const mediaAssets = await Promise.all(
+      mediaEntries.map(({ entry, folderName }) => readMediaEntry(entry, folderName))
+    );
+    for (const asset of mediaAssets) {
+      if (asset) loadedMedia.push(asset);
     }
   } catch (err) {
     console.warn('Could not read media directory:', err);
@@ -522,6 +551,8 @@ export async function saveProjectToDirectory(dirHandle, projectState) {
       name: toScriptFileName(s.name),
       id: s.id,
       description: s.description,
+      folder: s.folder || null,
+      createdAt: s.createdAt || null,
     })),
   };
  
@@ -579,22 +610,26 @@ export async function writeScriptFile(dirHandle, scriptName, scriptCode) {
  * Pass `subfolder` (e.g. "Recordings") to nest it inside media/<subfolder>/
  * instead of directly in media/ — used for mic recordings so they land
  * in their own folder on disk, matching the Media tab's folder grouping.
+ * Pass `targetName` to write the bytes under a DIFFERENT filename than
+ * the File's own name (used by asset replace, which overwrites the
+ * existing on-disk copy in place so paths stay stable).
  */
-export async function saveMediaFileToFolder(dirHandle, file, subfolder = null) {
+export async function saveMediaFileToFolder(dirHandle, file, subfolder = null, targetName = null) {
   if (!dirHandle) return;
   await verifyPermission(dirHandle, true);
   let mediaDirHandle = await dirHandle.getDirectoryHandle('media', { create: true });
   if (subfolder) {
     mediaDirHandle = await mediaDirHandle.getDirectoryHandle(subfolder, { create: true });
   }
-  const fileHandle = await mediaDirHandle.getFileHandle(file.name, { create: true });
+  const fileName = targetName || file.name;
+  const fileHandle = await mediaDirHandle.getFileHandle(fileName, { create: true });
   const writable = await fileHandle.createWritable();
   await writable.write(file);
   await writable.close();
 
   // Tauri: report the on-disk absolute path of the saved copy so callers
   // can stream it via convertFileSrc instead of keeping a blob in memory.
-  return mediaDirHandle?.path ? joinPath(mediaDirHandle.path, file.name) : null;
+  return mediaDirHandle?.path ? joinPath(mediaDirHandle.path, fileName) : null;
 }
  
 /**

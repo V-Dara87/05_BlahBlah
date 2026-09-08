@@ -45,13 +45,13 @@ export function useSharedLibrary() {
 
   /** Store a project prefab (any shape) into the shared library. */
   const addPrefab = useCallback(
-    (prefab) => addItem(makeSharedPrefabItem(prefab)),
+    (prefab) => addItem({ ...makeSharedPrefabItem(prefab), createdAt: Date.now() }),
     [addItem]
   );
 
   /** Store a project script into the shared library. */
   const addScript = useCallback(
-    (script) => addItem(makeSharedScriptItem(script)),
+    (script) => addItem({ ...makeSharedScriptItem(script), createdAt: Date.now() }),
     [addItem]
   );
 

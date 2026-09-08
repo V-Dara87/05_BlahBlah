@@ -17,6 +17,7 @@ import { TRACK_HEIGHT, computeTrackLanes } from '../../utils/timelineLayout';
 export const Timeline = memo(function Timeline({
   tracks,
   clips,
+  mediaAssets = [],
   totalDuration,
   pixelsPerSecond,
   selectedClipId,
@@ -649,6 +650,7 @@ export const Timeline = memo(function Timeline({
                     track={row.track}
                     depth={0}
                     tracks={tracks}
+                    mediaAssets={mediaAssets}
                     clips={row.clips}
                     allClips={clips}
                     rowHeight={row.rowHeight}

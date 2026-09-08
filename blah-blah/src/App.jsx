@@ -142,8 +142,10 @@ export function App() {
   const { playbackStoreRef, getPlaybackTime } = usePlaybackController();
 
   // Media library (out of undo scope by design — see hook header).
-  const { mediaAssets, setMediaAssets, handleAddMediaAsset, handleRemoveMediaAsset } =
-    useMediaAssets({ projectFolderHandle });
+  const {
+    mediaAssets, setMediaAssets, handleAddMediaAsset, handleRemoveMediaAsset,
+    handleMoveMediaAsset, handleReplaceMediaAsset,
+  } = useMediaAssets({ projectFolderHandle });
 
   // App-wide Shared Library — prefabs/scripts that persist OUTSIDE any
   // single project folder (IndexedDB/localStorage) so they're available in
@@ -173,7 +175,17 @@ export function App() {
       // imported twice.
       if (e.target?.closest?.('.track-lane-row')) return;
       e.preventDefault();
-      importMediaFiles({ files: e.dataTransfer.files, onAddMediaAsset: handleAddMediaAsset });
+      importMediaFiles({
+        files: e.dataTransfer.files,
+        onAddMediaAsset: handleAddMediaAsset,
+        mediaAssets,
+        // OS file drops happen outside the Project panel, so a lightweight
+        // alert is the only surface available here (the panel shows an
+        // inline notice for picker imports).
+        onDuplicatesDetected: (count) => {
+          alert(`${count} file(s) look like duplicates of existing media assets.`);
+        },
+      });
     };
 
     document.addEventListener('dragover', onDragOver);
@@ -182,7 +194,7 @@ export function App() {
       document.removeEventListener('dragover', onDragOver);
       document.removeEventListener('drop', onDrop);
     };
-  }, [handleAddMediaAsset]);
+  }, [handleAddMediaAsset, mediaAssets]);
 
   // Project document model + undo + load paths (the undo-scoped half).
   const {
@@ -195,7 +207,8 @@ export function App() {
     handleAddPrefabToTimeline, handleAddMediaToTimeline,
     handleDropItemOnTrack, handleAttachScriptToEntity,
     handleAddTrack, handleUpdateTrack, handleDeleteTrack,
-    handleSaveAsPrefab, handleRemovePrefab, handleCreateScript, handleRemoveScript, handleRenameScript, handleSaveScript,
+    handleSaveAsPrefab, handleMovePrefab, handleMoveScript,
+    handleRemovePrefab, handleCreateScript, handleRemoveScript, handleRenameScript, handleSaveScript,
     handleApplyProjectJson,
     handleProjectCreated,
     handleOpenProjectFolder, handleOpenRecentProject,
@@ -240,6 +253,7 @@ export function App() {
         duration: durationSec,
         size: blob.size,
         folder: 'Recordings',
+        createdAt: Date.now(),
       };
 
       await handleAddMediaAsset(asset, file);
@@ -601,6 +615,10 @@ export function App() {
           onToggleRecordTrack: handleToggleRecordTrack,
           onAddMediaAsset: handleAddMediaAsset,
           onRemoveMediaAsset: handleRemoveMediaAsset,
+          onMoveMediaAsset: handleMoveMediaAsset,
+          onReplaceMediaAsset: handleReplaceMediaAsset,
+          onMovePrefab: handleMovePrefab,
+          onMoveScript: handleMoveScript,
           onRemovePrefab: handleRemovePrefab,
           onRenamePrefab: handleRenamePrefab,
           onCreateScript: handleCreateScript,

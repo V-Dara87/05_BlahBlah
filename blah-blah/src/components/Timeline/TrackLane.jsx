@@ -15,6 +15,7 @@ export const TrackLane = memo(function TrackLane({
   track,
   depth = 0,
   tracks = [],
+  mediaAssets = [],
   clips = [],
   allClips = [],
   parentBoxes = [],
@@ -51,6 +52,7 @@ export const TrackLane = memo(function TrackLane({
       if (fileList.length > 0) {
         importMediaFiles({
           files: fileList,
+          mediaAssets,
           onAddMediaAsset: (asset, file) => {
             onAddMediaAsset(asset, file);
             onDropItemOnTrack({

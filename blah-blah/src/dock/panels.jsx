@@ -20,6 +20,7 @@ export const ProjectDockPanel = memo(function ProjectDockPanel() {
     onRenameMediaAsset, onRenamePrefab, onRenameScript,
     onCreateScript, onOpenScriptEditor,
     onAddPrefabToTimeline, onAddMediaToTimeline,
+    onMoveMediaAsset, onReplaceMediaAsset, onMovePrefab, onMoveScript,
     handleAddEmptyClip,
   } = useEditorContext();
  
@@ -45,6 +46,10 @@ export const ProjectDockPanel = memo(function ProjectDockPanel() {
       onOpenScriptEditor={onOpenScriptEditor}
       onAddPrefabToTimeline={onAddPrefabToTimeline}
       onAddMediaToTimeline={onAddMediaToTimeline}
+      onMoveMediaAsset={onMoveMediaAsset}
+      onReplaceMediaAsset={onReplaceMediaAsset}
+      onMovePrefab={onMovePrefab}
+      onMoveScript={onMoveScript}
       onAddEmptyClip={handleAddEmptyClip}
     />
   );
@@ -118,7 +123,7 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
  
 export const TimelineDockPanel = memo(function TimelineDockPanel() {
   const {
-    tracks, entities, calculatedDuration, pixelsPerSecond,
+    tracks, entities, mediaAssets, calculatedDuration, pixelsPerSecond,
     selectedEntityId, setSelectedEntityId, snappingEnabled,
     selectedIds, setSelectedIds,
     handleUpdateEntity, handleUpdateClips, handleDuplicateClips,
@@ -159,6 +164,7 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
     <Timeline
       tracks={tracks}
       clips={entities}
+      mediaAssets={mediaAssets}
       totalDuration={calculatedDuration}
       pixelsPerSecond={pixelsPerSecond}
       selectedClipId={selectedEntityId}

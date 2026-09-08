@@ -476,8 +476,24 @@ export function useProjectStore({
       name: `${entity.name}.prefab`,
       type: entity.type,
       components: snapshot.components || [],
+      // Folder tree: null = root prefabs folder. createdAt powers the
+      // "Date Added" sort option (falls back to 0 for legacy items).
+      folder: null,
+      createdAt: Date.now(),
     };
     setPrefabs(prev => [...prev, newPrefab]);
+  };
+
+  // Reassign a prefab's folder (null = root prefabs folder) — Project
+  // panel folder drag-and-drop + folder rename/delete.
+  const handleMovePrefab = (prefabId, targetFolderName) => {
+    setPrefabs(prev => prev.map(p => p.id === prefabId ? { ...p, folder: targetFolderName || null } : p));
+  };
+
+  // Reassign a script's folder (null = root scripts folder) — Project
+  // panel folder drag-and-drop + folder rename/delete.
+  const handleMoveScript = (scriptId, targetFolderName) => {
+    setScripts(prev => prev.map(s => s.id === scriptId ? { ...s, folder: targetFolderName || null } : s));
   };
 
   const handleRemovePrefab = (prefabId) => {
@@ -486,7 +502,13 @@ export function useProjectStore({
 
   // Create & Save Script
   const handleCreateScript = async (newScript) => {
-    setScripts(prev => [...prev, newScript]);
+    // Stamp folder (root) + createdAt (sort key) — callers may provide
+    // either, but the defaults keep new scripts consistent.
+    setScripts(prev => [...prev, {
+      ...newScript,
+      folder: newScript.folder ?? null,
+      createdAt: newScript.createdAt ?? Date.now(),
+    }]);
     if (projectFolderHandle) {
       await writeScriptFile(projectFolderHandle, newScript.name, newScript.code).catch(() => {});
     }
@@ -765,6 +787,8 @@ export function useProjectStore({
     handleDeleteTrack,
     // prefab / script operations
     handleSaveAsPrefab,
+    handleMovePrefab,
+    handleMoveScript,
     handleRemovePrefab,
     handleCreateScript,
     handleRemoveScript,
