@@ -30,8 +30,10 @@ export const SHORTCUT_ACTIONS = [
   { id: 'duplicateSelected', label: 'Duplicate Clip', group: 'Selection', default: 'Ctrl+D' },
  
   // Timeline editing
-  { id: 'splitSelected', label: 'Split Clip (Cut)', group: 'Timeline', default: 'C' },
+  { id: 'splitSelected', label: 'Split Clip (Cut)', group: 'Timeline', default: 'W' },
   { id: 'deleteSelected', label: 'Delete Clip', group: 'Timeline', default: 'Delete' },
+  { id: 'rippleDeleteBefore', label: 'Ripple Trim to Playhead (Before)', group: 'Timeline', default: 'Q' },
+  { id: 'rippleDeleteAfter', label: 'Ripple Trim to Playhead (After)', group: 'Timeline', default: 'E' },
   { id: 'toggleSnapping', label: 'Toggle Snapping', group: 'Timeline', default: 'N' },
   { id: 'zoomIn', label: 'Zoom In', group: 'Timeline', default: '=' },
   { id: 'zoomOut', label: 'Zoom Out', group: 'Timeline', default: '-' },

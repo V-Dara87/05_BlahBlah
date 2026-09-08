@@ -215,7 +215,7 @@ export function App() {
     setEntities, setPrefabs,
     undo, redo, canUndo, canRedo,
     handleUpdateEntity, handleUpdateClips, handleDuplicateClips,
-    handleDeleteEntity, handleSplitEntity,
+    handleDeleteEntity, handleRippleTrimToPlayhead, handleSplitEntity,
     handleAddEmptyClip,
     handleAddPrefabToTimeline, handleAddMediaToTimeline,
     handleDropItemOnTrack, handleAttachScriptToEntity,
@@ -537,6 +537,8 @@ export function App() {
             setSelectedEntityId(null);
           }
         }}
+        onRippleDeleteBefore={(anchorId) => handleRippleTrimToPlayhead(anchorId, 'before')}
+        onRippleDeleteAfter={(anchorId) => handleRippleTrimToPlayhead(anchorId, 'after')}
         onDuplicateSelected={() => {
           const ids = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
           if (ids.length > 0) {

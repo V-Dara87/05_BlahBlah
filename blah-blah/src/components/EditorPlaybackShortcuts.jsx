@@ -23,6 +23,8 @@ export function EditorPlaybackShortcuts({
   onSplitSelected,
   onDeleteSelected,
   onDeleteMultiple,
+  onRippleDeleteBefore,
+  onRippleDeleteAfter,
   onDuplicateSelected,
   onSelectAll,
   onClearSelection,
@@ -65,7 +67,7 @@ export function EditorPlaybackShortcuts({
       const bindings = bindingsRef.current;
       // Reverse-lookup: which action id (if any) is currently bound to
       // this exact combo. A handful of actions intentionally share a
-      // default binding (Split's factory default is a bare 'C'; nothing
+      // default binding (Split's factory default is a bare 'W'; nothing
       // else uses that by default), so this still finds at most one
       // *currently assigned* action per combo since Settings enforces
       // one binding per key when the user rebinds (see SettingsModal's
@@ -124,6 +126,24 @@ export function EditorPlaybackShortcuts({
             } else {
               onDeleteSelected();
             }
+          }
+          return;
+
+        // Ripple trim the selected clip to the playhead — Q cuts off
+        // everything in the clip before the playhead, E cuts off
+        // everything after. Acts on a single anchor clip, so it's a
+        // no-op with a multi-selection or no selection at all.
+        case 'rippleDeleteBefore':
+          if (selectedIds.length <= 1 && selectedEntityId) {
+            e.preventDefault();
+            onRippleDeleteBefore?.(selectedEntityId);
+          }
+          return;
+
+        case 'rippleDeleteAfter':
+          if (selectedIds.length <= 1 && selectedEntityId) {
+            e.preventDefault();
+            onRippleDeleteAfter?.(selectedEntityId);
           }
           return;
  
@@ -194,6 +214,8 @@ export function EditorPlaybackShortcuts({
     onSplitSelected,
     onDeleteSelected,
     onDeleteMultiple,
+    onRippleDeleteBefore,
+    onRippleDeleteAfter,
     onDuplicateSelected,
     onSelectAll,
     onClearSelection,

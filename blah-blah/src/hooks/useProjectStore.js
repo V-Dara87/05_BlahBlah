@@ -16,7 +16,7 @@ import {
 } from '../services/projectFileSystem';
 import { recordProjectCreated, recordProjectOpened } from '../services/recentProjects';
 import { precompileWithBundler, precompileAllProjectScripts, detectScriptKind, extractScriptProps } from '../engine/scriptRunner';
-
+ 
 /**
  * useProjectStore — project *content* state + every handler that edits it.
  *
@@ -75,36 +75,36 @@ export function useProjectStore({
     canRedo,
   } = useUndoableState({ entities: [], tracks: INITIAL_TRACKS, scripts: [], prefabs: [] });
   const { entities, tracks, scripts, prefabs } = projectHistoryState;
-
+ 
   const setEntities = useCallback((updater, options) => {
     setProjectHistoryState((prev) => ({
       ...prev,
       entities: typeof updater === 'function' ? updater(prev.entities) : updater,
     }), options);
   }, [setProjectHistoryState]);
-
+ 
   const setTracks = useCallback((updater, options) => {
     setProjectHistoryState((prev) => ({
       ...prev,
       tracks: typeof updater === 'function' ? updater(prev.tracks) : updater,
     }), options);
   }, [setProjectHistoryState]);
-
+ 
   const setScripts = useCallback((updater, options) => {
     setProjectHistoryState((prev) => ({
       ...prev,
       scripts: typeof updater === 'function' ? updater(prev.scripts) : updater,
     }), options);
   }, [setProjectHistoryState]);
-
+ 
   const setPrefabs = useCallback((updater, options) => {
     setProjectHistoryState((prev) => ({
       ...prev,
       prefabs: typeof updater === 'function' ? updater(prev.prefabs) : updater,
     }), options);
   }, [setProjectHistoryState]);
-
-
+ 
+ 
   // Update entity properties / components. Coalesced: this fires on every
   // intermediate value while dragging a clip or scrubbing an Inspector
   // number field, so we merge those into one undo step per gesture instead
@@ -119,13 +119,51 @@ export function useProjectStore({
     }
     setEntities(prev => prev.map(e => e.id === entityId ? { ...e, ...updates } : e), { coalesce: true });
   }, [setEntities, selectedEntityId]);
-
+ 
   // Delete entity.
   const handleDeleteEntity = useCallback((entityId) => {
     setEntities((prev) => removeEntitiesByIds(prev, [entityId]));
     if (selectedEntityId === entityId) setSelectedEntityId(null);
   }, [selectedEntityId]);
-
+ 
+  // Ripple trim the selected clip to the playhead — 'before' cuts off
+  // everything in the clip before the playhead (start moves up to the
+  // playhead, duration shrinks, mediaOffset advances so the remaining
+  // media content doesn't jump); 'after' cuts off everything after the
+  // playhead (duration shrinks to end at the playhead, start/mediaOffset
+  // untouched). No-op if the clip doesn't exist or the playhead isn't
+  // strictly inside the clip's range. Mirrors the offset math
+  // handleSplitEntity uses for its second half.
+  const handleRippleTrimToPlayhead = useCallback((entityId, direction) => {
+    const target = entities.find((e) => e.id === entityId);
+    if (!target) return;
+ 
+    const start = target.startTime;
+    const end = target.startTime + target.duration;
+    const playhead = getPlaybackTime();
+    if (playhead <= start + 0.001 || playhead >= end - 0.001) return;
+ 
+    if (direction === 'before') {
+      const trimmedAmount = playhead - start;
+      const newComponents = target.components?.map((c) => {
+        if (c.type === 'VideoRenderer' || c.type === 'AudioSource') {
+          const origOffset = c.mediaOffset || 0;
+          return { ...c, mediaOffset: origOffset + trimmedAmount };
+        }
+        return c;
+      }) || [];
+      setEntities((prev) => prev.map((e) => e.id === entityId
+        ? { ...e, startTime: playhead, duration: end - playhead, components: newComponents }
+        : e
+      ));
+    } else if (direction === 'after') {
+      setEntities((prev) => prev.map((e) => e.id === entityId
+        ? { ...e, duration: playhead - start }
+        : e
+      ));
+    }
+  }, [entities, getPlaybackTime, setEntities]);
+ 
   // Batch update multiple entities atomically
   const handleUpdateClips = useCallback((updatesList) => {
     if (!updatesList || updatesList.length === 0) return;
@@ -135,21 +173,21 @@ export function useProjectStore({
       return u ? { ...e, ...u } : e;
     }), { coalesce: true });
   }, [setEntities]);
-
+ 
   // Duplicate one or more entities. Each copy gets a fresh id, cloned
   // components, and is offset by the extent of the selection so copies land
   // right after the originals on their own tracks.
   const handleDuplicateClips = useCallback((clipIds) => {
     const ids = Array.isArray(clipIds) ? clipIds : [clipIds];
     if (ids.length === 0) return [];
-
+ 
     const targets = entities.filter((e) => ids.includes(e.id));
     if (targets.length === 0) return [];
-
+ 
     const minStart = Math.min(...targets.map((m) => m.startTime));
     const maxEnd = Math.max(...targets.map((m) => m.startTime + m.duration));
     const delta = maxEnd - minStart;
-
+ 
     const newClips = targets.map((target) => {
       // Strip any legacy group/parent fields from old saved projects —
       // duplicated clips are always independent flat clips.
@@ -164,7 +202,7 @@ export function useProjectStore({
           : [],
       };
     });
-
+ 
     setEntities(prev => [...prev, ...newClips]);
     const newIds = newClips.map(c => c.id);
     if (newIds.length > 0) {
@@ -172,7 +210,7 @@ export function useProjectStore({
     }
     return newIds;
   }, [entities, setEntities, setSelectedEntityId]);
-
+ 
   // Split entity (or entities) at playhead
   const handleSplitEntity = useCallback((entityIdOrIds) => {
     const ids = Array.isArray(entityIdOrIds)
@@ -181,23 +219,23 @@ export function useProjectStore({
         ? [entityIdOrIds]
         : selectedEntityId ? [selectedEntityId] : [];
     if (ids.length === 0) return;
-
+ 
     const splitPoint = getPlaybackTime();
     let anySplit = false;
     const toAdd = [];
     const updatedMap = new Map();
-
+ 
     ids.forEach(id => {
       const target = entities.find(e => e.id === id);
       if (!target) return;
       const start = target.startTime;
       const end = target.startTime + target.duration;
       if (splitPoint <= start + 0.1 || splitPoint >= end - 0.1) return;
-
+ 
       anySplit = true;
       const part1Dur = splitPoint - start;
       const part2Dur = end - splitPoint;
-
+ 
       const part2Components = target.components?.map(c => {
         if (c.type === 'VideoRenderer' || c.type === 'AudioSource') {
           const origOffset = c.mediaOffset || 0;
@@ -205,28 +243,28 @@ export function useProjectStore({
         }
         return JSON.parse(JSON.stringify(c));
       }) || [];
-
-      const part1 = { ...target, duration: part1Dur };
+ 
+      const part1 = { ...target, name: `${target.name}_001`, duration: part1Dur };
       const part2 = {
         ...target,
         id: `go-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-        name: `${target.name} (Part 2)`,
+        name: `${target.name}_002`,
         startTime: splitPoint,
         duration: part2Dur,
         components: part2Components,
       };
-
+ 
       updatedMap.set(target.id, part1);
       toAdd.push(part2);
     });
-
+ 
     if (!anySplit) return;
     setEntities(prev => prev.map(e => updatedMap.has(e.id) ? updatedMap.get(e.id) : e).concat(toAdd));
     if (toAdd.length > 0) {
       setSelectedEntityId(toAdd[0].id);
     }
   }, [entities, selectedEntityId, getPlaybackTime, setEntities, setSelectedEntityId]);
-
+ 
   // Create an Empty Clip with Transform & Shape / Renderer
   const handleAddEmptyClip = useCallback((targetTrackId = 'track-1', startTime) => {
     const playheadTime = getPlaybackTime();
@@ -250,11 +288,11 @@ export function useProjectStore({
         }
       ]
     });
-
+ 
     setEntities(prev => [...prev, newGO]);
     setSelectedEntityId(newGO.id);
   }, [getPlaybackTime]);
-
+ 
   // Attach a script to an entity (Add Component click, or dropping a script
   // card from the Project panel onto a timeline clip / the Inspector).
   const handleAttachScriptToEntity = useCallback((entityId, scriptId) => {
@@ -276,21 +314,21 @@ export function useProjectStore({
       : e
     ));
   }, [entities, scripts, setEntities]);
-
+ 
   // Remove a script from the project's script list (Project panel context
   // menu). In-memory only — scripts already attached to clips keep their
   // component but lose their runtime definition.
   const handleRemoveScript = useCallback((scriptId) => {
     setScripts(prev => prev.filter(s => s.id !== scriptId));
   }, [setScripts]);
-
+ 
   // Rename a script record (Project panel context menu). In-memory rename;
   // the on-disk file is written with the new name on the next save pass
   // through handleSaveScript.
   const handleRenameScript = useCallback((scriptId, newName) => {
     setScripts(prev => prev.map(s => s.id === scriptId ? { ...s, name: newName } : s));
   }, [setScripts]);
-
+ 
   // Add Prefab to Timeline. Handles BOTH prefab shapes:
   //  - Legacy flat prefabs (a `components` snapshot of one entity) — a
   //    single independent clip.
@@ -304,7 +342,7 @@ export function useProjectStore({
     const snapshots = Array.isArray(prefab.entities) && prefab.entities.length > 0
       ? prefab.entities
       : null;
-
+ 
     if (!snapshots) {
       const newGO = createGameObject({
         name: prefab.name.replace(/\.prefab(\.json)?$/i, ''),
@@ -318,18 +356,18 @@ export function useProjectStore({
       setSelectedEntityId(newGO.id);
       return;
     }
-
+ 
     const snapRoot = snapshots.find((e) => e.id === prefab.rootId) || snapshots[0];
     if (!snapRoot) return;
     const start = startTime ?? getPlaybackTime();
     const rootStart = snapRoot.startTime ?? 0;
     const trackIds = new Set((tracks || []).map((t) => t.id));
-
+ 
     const oldToNew = new Map();
     snapshots.forEach((snap) => {
       oldToNew.set(snap.id, `go-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`);
     });
-
+ 
     const newClips = snapshots.map((snap) => {
       const isSnapRoot = snap.id === snapRoot.id;
       const trackId = isSnapRoot
@@ -350,18 +388,18 @@ export function useProjectStore({
           : [],
       };
     });
-
+ 
     setEntities(prev => [...prev, ...newClips]);
     setSelectedEntityId(newClips[0]?.id || null);
   };
-
+ 
   // Add Media to Timeline. Every asset becomes ONE independent flat clip
   // on the target track (video keeps its own audio — no companion clip).
   const handleAddMediaToTimeline = (asset, targetTrackId = 'track-3', startTime = getPlaybackTime()) => {
     const clipName = asset.name.replace(/\.[^.]+$/, '');
     const duration = asset.duration || 8;
     const finalStartTime = startTime ?? getPlaybackTime();
-
+ 
     if (asset.type !== 'audio') {
       const videoGO = createGameObject({
         name: clipName,
@@ -385,7 +423,7 @@ export function useProjectStore({
       setSelectedEntityId(videoGO.id);
       return;
     }
-
+ 
     // Pure audio clips are a single entity
     const newGO = createGameObject({
       name: clipName,
@@ -408,7 +446,7 @@ export function useProjectStore({
     setEntities((prev) => [...prev, newGO]);
     setSelectedEntityId(newGO.id);
   };
-
+ 
   // Drag-and-Drop from Project Panel onto a Timeline Track. Accepts either
   // an itemId (looked up in the live lists) or the full itemData object
   // (used by OS-file drops, where the asset was just created in the same
@@ -464,7 +502,7 @@ export function useProjectStore({
       }
     }
   };
-
+ 
   // Save a GameObject as a Prefab — a single-entity snapshot (flat model:
   // no child hierarchy to carry along). Legacy group/parent fields from
   // old saved entities are stripped.
@@ -482,23 +520,23 @@ export function useProjectStore({
     };
     setPrefabs(prev => [...prev, newPrefab]);
   };
-
+ 
   // Reassign a prefab's folder (null = root prefabs folder) — Project
   // panel folder drag-and-drop + folder rename/delete.
   const handleMovePrefab = (prefabId, targetFolderName) => {
     setPrefabs(prev => prev.map(p => p.id === prefabId ? { ...p, folder: targetFolderName || null } : p));
   };
-
+ 
   // Reassign a script's folder (null = root scripts folder) — Project
   // panel folder drag-and-drop + folder rename/delete.
   const handleMoveScript = (scriptId, targetFolderName) => {
     setScripts(prev => prev.map(s => s.id === scriptId ? { ...s, folder: targetFolderName || null } : s));
   };
-
+ 
   const handleRemovePrefab = (prefabId) => {
     setPrefabs(prev => prev.filter(p => p.id !== prefabId));
   };
-
+ 
   // Create & Save Script
   const handleCreateScript = async (newScript) => {
     // Stamp folder (root) + createdAt (sort key) — callers may provide
@@ -517,7 +555,7 @@ export function useProjectStore({
       precompileWithBundler(newScript.code, projectFolderHandle).catch(() => {});
     }
   };
-
+ 
   const handleSaveScript = async (scriptId, updates) => {
     setScripts(prev => prev.map(s => s.id === scriptId ? { ...s, ...updates } : s));
     const scriptObj = scripts.find(s => s.id === scriptId);
@@ -528,7 +566,7 @@ export function useProjectStore({
       precompileWithBundler(code, projectFolderHandle).catch(() => {});
     }
   };
-
+ 
   // Apply JSON state to Project. Editing/pasting Project JSON is a single
   // deliberate action, so any entities/tracks/scripts/prefabs changes it
   // carries land as ONE combined undo step (a single Ctrl+Z reverts the
@@ -550,7 +588,7 @@ export function useProjectStore({
         height: Math.round(Number(projectJson.resolution.height)),
       });
     }
-
+ 
     const touchesHistoryState = projectJson.tracks || projectJson.scripts || projectJson.prefabs || projectJson.entities;
     if (touchesHistoryState) {
       setProjectHistoryState((prev) => ({
@@ -561,7 +599,7 @@ export function useProjectStore({
       }));
     }
   };
-
+ 
   // Handle Project Creation from New Project Modal — a brand new project
   // folder, so it gets a brand new (empty) undo history too.
   const handleProjectCreated = (result) => {
@@ -582,12 +620,12 @@ export function useProjectStore({
       console.warn('Could not record project in recent list:', err);
     });
   };
-
+ 
   // Shared by "Open Folder" (hub + in-editor header) — loads a directory
   // handle into the editor and records it as a known/recent project.
   const openProjectFromHandle = useCallback(async (dirHandle) => {
     const loaded = await loadProjectFromDirectory(dirHandle, INITIAL_TRACKS);
-
+ 
     setProjectFolderHandle(dirHandle);
     setProjectName(loaded.projectName);
     setResolution(loaded.resolution || DEFAULT_RESOLUTION);
@@ -603,17 +641,17 @@ export function useProjectStore({
     setSelectedEntityId(null);
     setSaveStatus('saved');
     setScreen('editor');
-
+ 
     // Real-import support: pre-bundle every script with import statements
     // up front, so by the time the user scrubs, the sync compile path's
     // cache is already warm (scripts without imports no-op instantly).
     precompileAllProjectScripts(loaded.scripts, dirHandle).catch(() => {});
-
+ 
     recordProjectOpened(dirHandle, loaded.projectName, null).catch((err) => {
       console.warn('Could not record project in recent list:', err);
     });
   }, [resetProjectHistoryState]);
-
+ 
   // Open & Load an existing Project Folder from Disk via the native picker
   // (used by the in-editor "Open" button, and by the Hub's "Open Folder"
   // action once it has a handle from its own picker call).
@@ -627,7 +665,7 @@ export function useProjectStore({
       }
     }
   }, [openProjectFromHandle]);
-
+ 
   // Reopen a project directly from a Hub "recent" entry — it already has a
   // stored dirHandle, so this just needs to re-confirm permission (browsers
   // don't persist FS Access permission grants across app restarts even
@@ -641,7 +679,7 @@ export function useProjectStore({
     }
     await openProjectFromHandle(entry.dirHandle);
   }, [openProjectFromHandle]);
-
+ 
   // Hot-Reload: Poll scripts/ directory for external edits in VS Code
   //
   // PERF/FREEZE FIX -- this previously listed `scripts` in its dependency
@@ -665,15 +703,15 @@ export function useProjectStore({
   useEffect(() => {
     scriptsRef.current = scripts;
   }, [scripts]);
-
+ 
   const isPollingScriptsRef = useRef(false);
   useEffect(() => {
     if (!projectFolderHandle) return;
-
+ 
     let disposed = false;
     let unwatchFn = null;
     let poller = null;
-
+ 
     // Shared by both the native watcher callback and the browser poll
     // fallback below — re-scan scripts/ and apply + precompile any diff.
     const refreshScripts = async () => {
@@ -691,7 +729,7 @@ export function useProjectStore({
         isPollingScriptsRef.current = false;
       }
     };
-
+ 
     // Hot-Reload — two backends, same refreshScripts core:
     //
     // 1. Tauri desktop: subscribe to OS file-system events on scripts/
@@ -713,7 +751,7 @@ export function useProjectStore({
         }, 2000);
       }
     });
-
+ 
     return () => {
       disposed = true;
       if (unwatchFn) {
@@ -722,7 +760,7 @@ export function useProjectStore({
       if (poller) clearInterval(poller);
     };
   }, [projectFolderHandle]);
-
+ 
   // Track management
   const handleAddTrack = () => {
     const nextNum = tracks.length + 1;
@@ -740,20 +778,20 @@ export function useProjectStore({
       },
     ]);
   };
-
+ 
   // Coalesced for the same reason as handleUpdateEntity — track volume
   // sliders etc. fire continuously while dragging.
   const handleUpdateTrack = (trackId, updates) => {
     setTracks(prev => prev.map(t => t.id === trackId ? { ...t, ...updates } : t), { coalesce: true });
   };
-
+ 
   // Delete track and all clips on it
   const handleDeleteTrack = useCallback((trackId) => {
     if (tracks.length <= 1) return;
     setTracks(prev => prev.filter(t => t.id !== trackId));
     setEntities(prev => prev.filter(e => e.trackId !== trackId));
   }, [tracks.length, setTracks, setEntities]);
-
+ 
   return {
     // data
     entities,
@@ -775,6 +813,7 @@ export function useProjectStore({
     handleUpdateClips,
     handleDuplicateClips,
     handleDeleteEntity,
+    handleRippleTrimToPlayhead,
     handleSplitEntity,
     handleAddEmptyClip,
     handleAddPrefabToTimeline,
@@ -801,4 +840,5 @@ export function useProjectStore({
     handleOpenRecentProject,
   };
 }
-
+ 
+ 
