@@ -40,7 +40,7 @@ export { computeActiveEntitiesAtTime } from './renderPipeline.js';
  */
 // React roots mounted into pooled containers (react-kind export).
 const reactRoots = new Map(); // container -> Root
-
+ 
 export function createCanvasContainerPool() {
   const root = document.createElement('div');
   root.style.position = 'fixed';
@@ -248,18 +248,14 @@ export function drawExportFrame({
     return idx === -1 ? 0 : idx + 1;
   };
  
-  // Stable sort (by track order, then hierarchy depth) so entities on the
-  // same track keep their original relative draw order and a parented
-  // entity always draws AFTER (in front of) its own ancestors — matching
-  // EntityRenderer.jsx's live-preview zIndex (trackZIndexOf + depth there
-  // too). Without the depth tiebreaker, a child sharing its parent's track
-  // could draw underneath the parent whenever the parent came later in the
-  // entity array.
+  // Stable sort by track order so entities on the same track keep their
+  // original relative draw order — matching EntityRenderer.jsx's
+  // live-preview zIndex (trackZIndexOf there too).
   const drawOrder = computed
     .map((item, originalIndex) => ({ item, originalIndex }))
     .sort((a, b) => {
-      const aKey = trackZIndexOf(a.item.entity.trackId) + (a.item.depth || 0);
-      const bKey = trackZIndexOf(b.item.entity.trackId) + (b.item.depth || 0);
+      const aKey = trackZIndexOf(a.item.entity.trackId);
+      const bKey = trackZIndexOf(b.item.entity.trackId);
       const diff = aKey - bKey;
       return diff !== 0 ? diff : a.originalIndex - b.originalIndex;
     })
@@ -310,6 +306,16 @@ export function drawExportFrame({
             frame: Math.round(localTime * fps),
             fps,
             props: comp.props || {},
+            // Fix: export was never passing the frame's real resolution
+            // here, so any canvas-kind script reading canvasWidth/
+            // canvasHeight (rather than declaring a fixed static-props
+            // override) saw 0 during export while getting the correct
+            // project resolution in live preview (see EntityRenderer.jsx,
+            // which passes this same pair). width/height here are the
+            // export canvas's true output resolution, already used two
+            // lines below for drawCanvasContainerContents.
+            canvasWidth: width,
+            canvasHeight: height,
           });
           drawCanvasContainerContents(ctx, container, transform, width, height);
         } else if (kind === 'react') {
@@ -476,7 +482,7 @@ function drawCanvasContainerContents(ctx, container, transform, width, height) {
   }
   ctx.restore();
 }
-
+ 
 /**
  * ReactRenderer export — mounts the compiled component into the pooled
  * offscreen container (the same DOM-mounting approach the live preview
@@ -516,7 +522,7 @@ function drawReactComponentContents({
     root = createRoot(container);
     reactRoots.set(container, root);
   }
-
+ 
   flushSync(() => {
     root.render(
       React.createElement(Component, {
@@ -527,10 +533,10 @@ function drawReactComponentContents({
       })
     );
   });
-
+ 
   const innerCanvas = container.querySelector('canvas');
   if (!innerCanvas) return; // DOM-only output — skipped (see scope note above)
-
+ 
   ctx.save();
   applyTransform(ctx, transform, width, height);
   try {
@@ -786,3 +792,4 @@ export async function encodeAudioTrack({ audioBuffer, muxer, sampleRate = 48000 
   await audioEncoder.flush();
   audioEncoder.close();
 }
+ 

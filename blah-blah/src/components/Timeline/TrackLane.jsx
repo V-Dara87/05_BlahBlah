@@ -5,20 +5,16 @@ import { importMediaFiles } from '../../services/mediaImport';
 
 /**
  * TrackLane — the time-area half of one timeline track row.
- * In the sub-track model, each TrackLane is a full, standard track lane:
- *   - Multiple clips (children or independent) comfortably coexist here!
- *   - Any parent clip's box/border effect is rendered across the parent's
- *     time window when a child clip on this track belongs to that parent.
+ * Each TrackLane is a full, standard track lane:
+ *   - Multiple clips comfortably coexist here.
  *   - Double-clicking empty space adds a clip at the clicked time.
  */
 export const TrackLane = memo(function TrackLane({
   track,
-  depth = 0,
   tracks = [],
   mediaAssets = [],
   clips = [],
   allClips = [],
-  parentBoxes = [],
   rowHeight = TRACK_HEIGHT,
   pixelsPerSecond,
   selectedClipId,
@@ -157,3 +153,4 @@ export const TrackLane = memo(function TrackLane({
     </div>
   );
 });
+

@@ -4,7 +4,7 @@ import { INITIAL_TRACKS, DEFAULT_RESOLUTION } from '../types';
 import {
   createGameObject,
   createDefaultTransform,
-  filterOutSubtrees,
+  removeEntitiesByIds,
 } from '../engine/ecs';
 import {
   pickProjectDirectory,
@@ -112,18 +112,17 @@ export function useProjectStore({
   const handleUpdateEntity = useCallback((entityId, updates) => {
     // Support _delete flag for context menu deletion
     if (updates._delete) {
-      // Hierarchy: deleting a clip deletes its whole subtree — children are
-      // authored in parent-local space, so they can't survive on their own.
-      setEntities((prev) => filterOutSubtrees(prev, [entityId]));
+      // Support _delete flag for context menu deletion.
+      setEntities((prev) => removeEntitiesByIds(prev, [entityId]));
       if (selectedEntityId === entityId) setSelectedEntityId(null);
       return;
     }
     setEntities(prev => prev.map(e => e.id === entityId ? { ...e, ...updates } : e), { coalesce: true });
   }, [setEntities, selectedEntityId]);
 
-  // Delete entity (+ its whole subtree — see the _delete path above).
+  // Delete entity.
   const handleDeleteEntity = useCallback((entityId) => {
-    setEntities((prev) => filterOutSubtrees(prev, [entityId]));
+    setEntities((prev) => removeEntitiesByIds(prev, [entityId]));
     if (selectedEntityId === entityId) setSelectedEntityId(null);
   }, [selectedEntityId]);
 
@@ -802,3 +801,4 @@ export function useProjectStore({
     handleOpenRecentProject,
   };
 }
+

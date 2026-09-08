@@ -208,11 +208,11 @@ export function createGameObject({
 // ─── Entity removal helper ──────────────────────────────────────────────────
 
 /**
- * Return a NEW entity array with the entities whose ids are in `rootIds`
+ * Return a NEW entity array with the entities whose ids are in `idsToRemove`
  * removed (kept as a named helper for the delete paths; each clip is an
  * independent timeline entity, so removal is a flat id filter).
  */
-export function filterOutSubtrees(entities, rootIds) {
-  const doomed = new Set(rootIds);
+export function removeEntitiesByIds(entities, idsToRemove) {
+  const doomed = new Set(idsToRemove);
   return (entities || []).filter((e) => !doomed.has(e.id));
 }

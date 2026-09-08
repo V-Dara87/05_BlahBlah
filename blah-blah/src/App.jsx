@@ -20,9 +20,10 @@ import { PlaybackStoreBridge } from './components/PlaybackStoreBridge';
 import { useAudioRecorder } from './hooks/useAudioRecorder';
 import { INITIAL_TRACKS, DEFAULT_PIXELS_PER_SECOND, DEFAULT_RESOLUTION } from './types';
 import { loadAudioSettings } from './services/audioSettings';
+import { loadKeybindSettings } from './services/keybindSettings';
 import { saveProjectToDirectory } from './services/projectFileSystem';
 import { precompileAllProjectScripts } from './engine/scriptRunner';
-import { filterOutSubtrees } from './engine/ecs';
+import { removeEntitiesByIds } from './engine/ecs';
 import { isTauri } from './services/tauriFsAdapter';
 import { importMediaFiles } from './services/mediaImport';
 import { openProjectInExplorer, openProjectInVsCode, openProjectInCursor } from './services/ideLauncher';
@@ -30,7 +31,7 @@ import { WindowControls } from './components/WindowControls';
 import { toggleWindowMaximize } from './services/windowChrome';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './App.css';
-
+ 
 /**
  * App — composition shell.
  *
@@ -61,31 +62,43 @@ export function App() {
   // Any successful create/open flips this to 'editor'.
   const [screen, setScreen] = useState('hub');
   const [projectName, setProjectName] = useState('new-project');
+  // Live keybind state for the menu bar's right-aligned shortcut hints
+  // (see menuBarConfig below) — Settings -> Keyboard Shortcuts dispatches
+  // 'blahblah:keybinds-changed' on every rebind (see keybindSettings.js),
+  // so a rebind is reflected in the menu immediately without a reload.
+  // EditorPlaybackShortcuts listens to the same event for the actual key
+  // handling; this is purely the display string shown next to each item.
+  const [keybinds, setKeybinds] = useState(() => loadKeybindSettings());
+  useEffect(() => {
+    const handleKeybindsChanged = (e) => setKeybinds(e.detail || loadKeybindSettings());
+    window.addEventListener('blahblah:keybinds-changed', handleKeybindsChanged);
+    return () => window.removeEventListener('blahblah:keybinds-changed', handleKeybindsChanged);
+  }, []);
   // Actual pixel dimensions the project renders/exports at (see
   // NewProjectModal's resolution picker + types.js RESOLUTION_PRESETS).
   // EntityRenderer's preview frame derives its aspect-ratio from this
   // instead of a hardcoded 16:9, so the Game preview always matches
   // whatever the project was created at.
   const [resolution, setResolution] = useState(DEFAULT_RESOLUTION);
-
+ 
   const [selectedEntityId, setSelectedEntityId] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]); // multi-select for timeline clips
   const [pixelsPerSecond, setPixelsPerSecond] = useState(DEFAULT_PIXELS_PER_SECOND);
   const [snappingEnabled, setSnappingEnabled] = useState(true);
   const [autoKeyEnabled, setAutoKeyEnabled] = useState(false);
-
+ 
   // Export range — in/out points on the timeline for selective rendering.
   // null means "export the whole project"; when set, only the range
   // [exportRange.in, exportRange.out] is rendered during export.
   const [exportRange, setExportRange] = useState(null);
-
+ 
   // Selected keyframe ID — shared between Dopesheet and Curve Editor
   const [selectedKeyId, setSelectedKeyId] = useState(null);
-
+ 
   // Dockview API ref — set by DockLayout on ready, used by focusDockPanel
   const dockApiRef = useRef(null);
   const setDockApi = useCallback((api) => { dockApiRef.current = api; }, []);
-
+ 
   /** Focus an existing dock panel by id, or add it as a new tab next to
    *  the dopesheet if it doesn't exist yet. */
   const focusDockPanel = useCallback((panelId) => {
@@ -107,20 +120,20 @@ export function App() {
       }
     }
   }, []);
-
+ 
   const handleZoomIn = () => {
     setPixelsPerSecond(prev => Math.min(prev + 15, 240));
   };
-
+ 
   const handleZoomOut = () => {
     setPixelsPerSecond(prev => Math.max(prev - 15, 15));
   };
-
+ 
   // Project Folder Handle & Disk Save State
   const [projectFolderHandle, setProjectFolderHandle] = useState(null);
   const [saveStatus, setSaveStatus] = useState('in-memory'); // 'saved' | 'saving' | 'in-memory'
   const isAutoSavingRef = useRef(false);
-
+ 
   // Modals
   const [isNewProjectOpen, setIsNewProjectOpen] = useState(false);
   const [isProjectJsonOpen, setIsProjectJsonOpen] = useState(false);
@@ -128,30 +141,30 @@ export function App() {
   const [editingScript, setEditingScript] = useState(null);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-
+ 
   // Voice Recording: which track (if any) is currently armed/recording,
   // and the selected input device (persisted via Settings modal).
   const [recordingTrackId, setRecordingTrackId] = useState(null);
   const [audioInputDeviceId, setAudioInputDeviceId] = useState(() => loadAudioSettings().inputDeviceId);
   const recordingStartTimeRef = useRef(0);
   const { startRecording, stopRecording } = useAudioRecorder({ inputDeviceId: audioInputDeviceId });
-
+ 
   // Playback: App owns no playback state (PlaybackProvider/playbackStore
   // do, so panels don't re-render every frame) — this hook just provides
   // the store ref bridge + synchronous playhead reader for handlers.
   const { playbackStoreRef, getPlaybackTime } = usePlaybackController();
-
+ 
   // Media library (out of undo scope by design — see hook header).
   const {
     mediaAssets, setMediaAssets, handleAddMediaAsset, handleRemoveMediaAsset,
     handleMoveMediaAsset, handleReplaceMediaAsset,
   } = useMediaAssets({ projectFolderHandle });
-
+ 
   // App-wide Shared Library — prefabs/scripts that persist OUTSIDE any
   // single project folder (IndexedDB/localStorage) so they're available in
   // every project. Undo-independent by nature (not part of the document).
   const sharedLibrary = useSharedLibrary();
-
+ 
   // OS file drag-and-drop coexistence (P2-1). The window runs with
   // dragDropEnabled: false because dockview's HTML5 DnD (tab/panel
   // movement) is what actually works in the webview then — that same flag
@@ -164,7 +177,7 @@ export function App() {
   // and pass straight through untouched.
   useEffect(() => {
     const isFileDrop = (e) => (e.dataTransfer?.files?.length ?? 0) > 0;
-
+ 
     const onDragOver = (e) => {
       if (isFileDrop(e)) e.preventDefault();
     };
@@ -187,7 +200,7 @@ export function App() {
         },
       });
     };
-
+ 
     document.addEventListener('dragover', onDragOver);
     document.addEventListener('drop', onDrop);
     return () => {
@@ -195,7 +208,7 @@ export function App() {
       document.removeEventListener('drop', onDrop);
     };
   }, [handleAddMediaAsset, mediaAssets]);
-
+ 
   // Project document model + undo + load paths (the undo-scoped half).
   const {
     entities, tracks, scripts, prefabs,
@@ -225,7 +238,7 @@ export function App() {
     mediaAssets,
     getPlaybackTime,
   });
-
+ 
   // Voice Recording — toggled from the per-track record button in
   // TrackHeader. Clicking record on a track arms that track (captures
   // from the Settings-selected input device); clicking again (or the
@@ -237,14 +250,14 @@ export function App() {
       const result = await stopRecording();
       setRecordingTrackId(null);
       if (!result || !result.blob || result.durationSec < 0.15) return;
-
+ 
       const { blob, durationSec, mimeType } = result;
       const ext = mimeType.includes('webm') ? 'webm' : 'wav';
       const takeNumber = mediaAssets.filter(m => m.folder === 'Recordings').length + 1;
       const fileName = `Recording_${String(takeNumber).padStart(3, '0')}.${ext}`;
       const url = URL.createObjectURL(blob);
       const file = new File([blob], fileName, { type: mimeType });
-
+ 
       const asset = {
         id: `asset-recording-${Date.now()}`,
         name: fileName,
@@ -255,29 +268,29 @@ export function App() {
         folder: 'Recordings',
         createdAt: Date.now(),
       };
-
+ 
       await handleAddMediaAsset(asset, file);
       handleAddMediaToTimeline(asset, trackId, recordingStartTimeRef.current);
       return;
     }
-
+ 
     if (recordingTrackId) return; // another track is already recording
-
+ 
     // Arm this track and start capturing at the current playhead position
     recordingStartTimeRef.current = getPlaybackTime();
     await startRecording();
     setRecordingTrackId(trackId);
   }, [recordingTrackId, getPlaybackTime, mediaAssets, startRecording, stopRecording]);
-
+ 
   const handleAudioSettingsChanged = useCallback((settings) => {
     setAudioInputDeviceId(settings.inputDeviceId);
   }, []);
-
+ 
   const handleOpenScriptEditor = (script) => {
     setEditingScript(script);
     setIsScriptEditorOpen(true);
   };
-
+ 
   // Project explorer renames (Project panel context menu). Media/prefab
   // renames are in-memory record renames; scripts rename the record too
   // (the on-disk file follows on the next editor save of that script).
@@ -287,7 +300,7 @@ export function App() {
   const handleRenamePrefab = useCallback((prefabId, name) => {
     setPrefabs((prev) => prev.map((p) => (p.id === prefabId ? { ...p, name } : p)));
   }, [setPrefabs]);
-
+ 
   // Shared-library actions (see hooks/useSharedLibrary.js). Share = copy a
   // project prefab/script into the app-wide library; import = bring a
   // shared item into THIS project (scripts must exist in the project to
@@ -305,7 +318,7 @@ export function App() {
     (id) => { sharedLibrary.removeSharedItem(id); },
     [sharedLibrary]
   );
-
+ 
   const handleImportSharedItem = useCallback(async (sharedItem) => {
     if (!sharedItem) return;
     const data = sharedItem.data || {};
@@ -326,7 +339,7 @@ export function App() {
       ]);
     }
   }, [handleCreateScript, setPrefabs]);
-
+ 
   // Calculate timeline duration based on entity placements
   // BUG FIX -- this used to return a fabricated `30` when there were no
   // clips at all, which useTimelinePlayback then treated as a completely
@@ -342,7 +355,7 @@ export function App() {
     const maxEnd = Math.max(...entities.map((e) => e.startTime + e.duration));
     return Math.max(30, Math.ceil(maxEnd + 5));
   }, [entities]);
-
+ 
   // Current project state object
   const projectState = useMemo(() => ({
     projectName,
@@ -356,7 +369,7 @@ export function App() {
     mediaAssets,
     entities
   }), [projectName, resolution, tracks, scripts, prefabs, mediaAssets, entities]);
-
+ 
   // Save Project to Disk manually
   const handleSaveProjectToDisk = useCallback(async () => {
     if (!projectFolderHandle) {
@@ -373,11 +386,11 @@ export function App() {
       setSaveStatus('in-memory');
     }
   }, [projectFolderHandle, projectState]);
-
+ 
   // Auto-Save Debounce to Disk
   useEffect(() => {
     if (!projectFolderHandle) return;
-
+ 
     const timer = setTimeout(async () => {
       if (isAutoSavingRef.current) return;
       isAutoSavingRef.current = true;
@@ -391,13 +404,13 @@ export function App() {
         isAutoSavingRef.current = false;
       }
     }, 800);
-
+ 
     return () => clearTimeout(timer);
   }, [projectFolderHandle, projectState]);
-
+ 
   // Global keyboard shortcuts live in EditorPlaybackShortcuts (inside
   // PlaybackProvider) so App never re-renders on every playback frame.
-
+ 
   // Menu bar configuration — Unity-style top menus.
   // Add new menus by appending to this array; MenuBar renders them
   // automatically. Each item can have: label, shortcut, icon, onClick,
@@ -408,7 +421,7 @@ export function App() {
       items: [
         { label: 'New Project', shortcut: 'Ctrl+N', icon: <FilePlus size={13} />, onClick: () => setIsNewProjectOpen(true) },
         { label: 'Open Project...', shortcut: 'Ctrl+O', icon: <FolderOpen size={13} />, onClick: handleOpenProjectFolder },
-        { label: 'Save Project', shortcut: 'Ctrl+S', icon: <Save size={13} />, onClick: handleSaveProjectToDisk, disabled: !projectFolderHandle },
+        { label: 'Save Project', shortcut: keybinds.saveProject, icon: <Save size={13} />, onClick: handleSaveProjectToDisk, disabled: !projectFolderHandle },
         { type: 'separator' },
         { label: 'Export Render...', shortcut: 'Ctrl+E', icon: <Download size={13} />, onClick: () => setIsExportOpen(true) },
         { type: 'separator' },
@@ -420,11 +433,11 @@ export function App() {
     {
       label: 'Edit',
       items: [
-        { label: 'Undo', shortcut: 'Ctrl+Z', icon: <Undo2 size={13} />, onClick: undo, disabled: !canUndo },
-        { label: 'Redo', shortcut: 'Ctrl+Shift+Z', icon: <Redo2 size={13} />, onClick: redo, disabled: !canRedo },
+        { label: 'Undo', shortcut: keybinds.undo, icon: <Undo2 size={13} />, onClick: undo, disabled: !canUndo },
+        { label: 'Redo', shortcut: keybinds.redo, icon: <Redo2 size={13} />, onClick: redo, disabled: !canRedo },
         { type: 'separator' },
-        { label: 'Split Clip', shortcut: 'S', icon: <Scissors size={13} />, onClick: () => selectedEntityId && handleSplitEntity(selectedEntityId), disabled: !selectedEntityId },
-        { label: 'Delete Clip', shortcut: 'Del', icon: <Trash2 size={13} />, onClick: () => selectedEntityId && handleDeleteEntity(selectedEntityId), disabled: !selectedEntityId, danger: true },
+        { label: 'Split Clip (Cut)', shortcut: keybinds.splitSelected, icon: <Scissors size={13} />, onClick: () => selectedEntityId && handleSplitEntity(selectedEntityId), disabled: !selectedEntityId },
+        { label: 'Delete Clip', shortcut: keybinds.deleteSelected, icon: <Trash2 size={13} />, onClick: () => selectedEntityId && handleDeleteEntity(selectedEntityId), disabled: !selectedEntityId, danger: true },
       ],
     },
     {
@@ -436,15 +449,15 @@ export function App() {
       ],
     },
   ], [
-    canUndo, canRedo, undo, redo, selectedEntityId,
+    canUndo, canRedo, undo, redo, selectedEntityId, keybinds,
     handleSplitEntity, handleDeleteEntity, handleOpenProjectFolder,
     handleSaveProjectToDisk,
     projectFolderHandle,
   ]);
-
+ 
   // window-controls chrome is environment-dependent but cheap to compute
   // per render; isTauri() reads a window flag synchronously.
-
+ 
   const framelessChrome = isTauri() && (
     <>
       {/* Drag fill: takes the whole remaining top-bar width so the window
@@ -459,7 +472,7 @@ export function App() {
       <WindowControls />
     </>
   );
-
+ 
   if (screen === 'hub') {
     return (
       <>
@@ -495,7 +508,7 @@ export function App() {
       </>
     );
   }
-
+ 
   return (
     <ErrorBoundary>
     <PlaybackProvider totalDuration={calculatedDuration}>
@@ -511,7 +524,7 @@ export function App() {
         onDeleteSelected={() => {
           const idsToDelete = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
           if (idsToDelete.length > 0) {
-            setEntities((prev) => filterOutSubtrees(prev, Array.from(new Set(idsToDelete))));
+            setEntities((prev) => removeEntitiesByIds(prev, Array.from(new Set(idsToDelete))));
             setSelectedIds([]);
             setSelectedEntityId(null);
           }
@@ -519,7 +532,7 @@ export function App() {
         onDeleteMultiple={() => {
           const idsToDelete = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
           if (idsToDelete.length > 0) {
-            setEntities((prev) => filterOutSubtrees(prev, Array.from(new Set(idsToDelete))));
+            setEntities((prev) => removeEntitiesByIds(prev, Array.from(new Set(idsToDelete))));
             setSelectedIds([]);
             setSelectedEntityId(null);
           }
@@ -558,7 +571,7 @@ export function App() {
           frameless desktop build the right end carries window controls
           and a drag region (see framelessChrome above). */}
       <MenuBar menus={menuBarConfig} trailing={framelessChrome} />
-
+ 
       {/* Top Navigation Bar */}
       <EditorHeader
         projectName={projectName}
@@ -585,7 +598,7 @@ export function App() {
         onOpenSettings={() => setIsSettingsOpen(true)}
         onGoToHub={() => setScreen('hub')}
       />
-
+ 
       {/* Unity-style dockable workspace: every panel below (Project,
           Game/Preview, Inspector, Timeline) can be dragged to any edge,
           split, or merged into tabs, same as Unity's editor windows.
@@ -643,7 +656,7 @@ export function App() {
       >
         <DockLayout />
       </EditorContext.Provider>
-
+ 
       {/* Modals */}
       <NewProjectModal
         isOpen={isNewProjectOpen}
@@ -651,21 +664,21 @@ export function App() {
         defaultTracks={INITIAL_TRACKS}
         onProjectCreated={handleProjectCreated}
       />
-
+ 
       <ProjectJsonModal
         isOpen={isProjectJsonOpen}
         onClose={() => setIsProjectJsonOpen(false)}
         projectState={projectState}
         onApplyProjectJson={handleApplyProjectJson}
       />
-
+ 
       <ScriptEditorModal
         isOpen={isScriptEditorOpen}
         onClose={() => setIsScriptEditorOpen(false)}
         script={editingScript}
         onSaveScript={handleSaveScript}
       />
-
+ 
       <ExportModal
         isOpen={isExportOpen}
         onClose={() => setIsExportOpen(false)}
@@ -682,7 +695,7 @@ export function App() {
           }
         }}
       />
-
+ 
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
@@ -693,5 +706,7 @@ export function App() {
     </ErrorBoundary>
   );
 }
-
+ 
 export default App;
+ 
+ 

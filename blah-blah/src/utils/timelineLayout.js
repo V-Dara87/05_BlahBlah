@@ -1,28 +1,12 @@
 /**
- * Pure timeline geometry for the FLAT TRACKS + CLIP GROUPING model.
+ * Pure timeline geometry for the FLAT TRACKS model.
  *
- * In this model:
- *   - Every track is a full, standard track row (height = TRACK_HEIGHT).
- *   - Multiple clips comfortably coexist on any track row.
- *   - No sub-tracks, no parent-child hierarchy, no clip grouping.
+ * Every track is a full, standard track row (height = TRACK_HEIGHT), and
+ * multiple clips comfortably coexist on any track row. No sub-tracks, no
+ * parent-child hierarchy, no clip grouping.
  */
 
 export const TRACK_HEIGHT = 64;      // Normal track height (px)
-export const SUB_LANE_HEIGHT = 64;   // Compatibility export
-export const SUB_LANE_INDENT = 0;    // Indent (px)
-
-/**
- * Compatibility export for track hierarchy flatten (returns 1:1 tracks as flat list).
- */
-export function flattenTrackHierarchy(tracks = []) {
-  return (tracks || []).map((track) => ({
-    track,
-    depth: 0,
-    hasSubTracks: false,
-    expanded: true,
-    subTrackCount: 0,
-  }));
-}
 
 /**
  * Computes track rows for the timeline.
@@ -30,19 +14,16 @@ export function flattenTrackHierarchy(tracks = []) {
  *
  * @param {Array} tracks  All project tracks
  * @param {Array} clips   All project clips/entities
- * @returns {Array<{ track, depth, hasSubTracks, expanded, clips, parentBoxes, rowHeight }>}
+ * @returns {Array<{ track, clips, rowHeight }>}
  */
 export function computeTrackLanes(tracks = [], clips = []) {
   return (tracks || []).map((track) => {
     const trackClips = (clips || []).filter((c) => c.trackId === track.id);
     return {
       track,
-      depth: 0,
-      hasSubTracks: false,
-      expanded: true,
       clips: trackClips,
-      parentBoxes: [],
       rowHeight: TRACK_HEIGHT,
     };
   });
 }
+

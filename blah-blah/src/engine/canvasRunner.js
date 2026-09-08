@@ -11,8 +11,8 @@ import { CANVAS_LIB_SOURCES } from './ecs';
  *
  *   export default class MyThing {
  *     static props = { speed: { type: 'number', default: 1, min: 0, max: 10 } };
- *     onMount({ container, props, libs }) {}
- *     onUpdate({ container, time, frame, props }) {}
+ *     onMount({ container, props, libs, canvasWidth, canvasHeight }) {}
+ *     onUpdate({ container, time, frame, props, canvasWidth, canvasHeight }) {}
  *     onUnmount() {}
  *   }
  *
@@ -25,6 +25,24 @@ import { CANVAS_LIB_SOURCES } from './ecs';
  * Reuses compileScriptModule/extractScriptProps from scriptRunner.js
  * unchanged — canvas-kind scripts don't need their own compile/props
  * pipeline.
+ *
+ * ─── canvasWidth / canvasHeight ────────────────────────────────────────
+ * The runner doesn't measure the DOM (`container.clientWidth`) for you —
+ * that's often 0 or a CSS-scaled preview size, not the project's real
+ * output resolution, which is why scripts used to have to guess. Instead:
+ *
+ *   - The caller (EntityRenderer.jsx) passes the PROJECT's resolution as
+ *     `canvasWidth`/`canvasHeight` on every call — this is the default.
+ *   - A script can override it per-instance by declaring `canvasWidth`
+ *     and/or `canvasHeight` in its own `static props` (e.g. `{ type:
+ *     'number', default: 512 }`). Once declared, that field is a normal
+ *     Inspector-editable/keyframeable prop, and its resolved value (from
+ *     `props`) wins over the project default for that entity.
+ *   - Either way, the effective numbers are handed to the script as
+ *     `canvasWidth`/`canvasHeight` in onMount/onUpdate/onSeek — this
+ *     function does NOT resize the container or canvas itself; the script
+ *     decides what to do with the numbers (size a <canvas>, set a
+ *     WebGLRenderer size, ignore them, etc.).
  */
  
 // Cache of loaded lib globals, keyed by lib name, so multiple CanvasRenderer
@@ -120,14 +138,34 @@ function attachLoader(libs) {
 // window or their script changes — and so multiple canvas-kind scripts on
 // one entity each get their own independent lifecycle.
 const mountedInstances = new Map();
-
+ 
 const mountKeyFor = (entityId, scriptId = '') => `${entityId}::${scriptId || ''}`;
-
+ 
+/**
+ * Resolves the effective canvas size for a script call: a script's own
+ * declared+resolved `canvasWidth`/`canvasHeight` prop wins (if present and
+ * a positive number), otherwise falls back to the project-default value
+ * passed in by the caller.
+ */
+function resolveCanvasSize(props, defaultWidth, defaultHeight) {
+  const w = Number(props?.canvasWidth);
+  const h = Number(props?.canvasHeight);
+  return {
+    canvasWidth: Number.isFinite(w) && w > 0 ? w : defaultWidth,
+    canvasHeight: Number.isFinite(h) && h > 0 ? h : defaultHeight,
+  };
+}
+ 
 /**
  * Mounts (if needed) and updates a CanvasRenderer component for one frame.
  * Call this every render tick for every active canvas-kind script;
  * call `unmountCanvasComponent(entityId, scriptId)` when the entity becomes
  * inactive or is removed.
+ *
+ * `canvasWidth`/`canvasHeight` should be the project's current output
+ * resolution (e.g. `resolution.width`/`resolution.height` from
+ * App.jsx/EntityRenderer) — used as the default a script receives unless
+ * it overrides via its own `static props`. See file header for details.
  */
 export function updateCanvasComponent({
   entityId,
@@ -138,22 +176,26 @@ export function updateCanvasComponent({
   frame = 0,
   fps = 30,
   props = {},
+  canvasWidth = 0,
+  canvasHeight = 0,
 }) {
   if (!scriptCode || !container) return;
-
+ 
   const mountKey = mountKeyFor(entityId, scriptId);
   let mounted = mountedInstances.get(mountKey);
-
+ 
   const compiled = compileScriptModule(scriptCode);
   if (!compiled) return; // compile error already recorded in scriptRunner's lastErrorCache
-
+ 
   const needsRemount = !mounted || mounted.scriptCode !== scriptCode || mounted.container !== container;
-
+ 
+  const { canvasWidth: effWidth, canvasHeight: effHeight } = resolveCanvasSize(props, canvasWidth, canvasHeight);
+ 
   if (needsRemount) {
     if (mounted) {
       safeCall(mounted.instance, 'onUnmount', { container: mounted.container });
     }
-
+ 
     let instance = null;
     try {
       if (typeof compiled === 'function' && compiled.prototype) {
@@ -165,13 +207,13 @@ export function updateCanvasComponent({
       console.warn('CanvasRenderer instantiation error:', err);
       return;
     }
-
+ 
     const libs = attachLoader(createLibsProxy());
-
+ 
     mounted = { instance, scriptCode, container, libs, lastLocalTime: null };
     mountedInstances.set(mountKey, mounted);
-
-    safeCall(instance, 'onMount', { container, props, libs });
+ 
+    safeCall(instance, 'onMount', { container, props, libs, canvasWidth: effWidth, canvasHeight: effHeight });
   }
  
   // Scrub/seek detection. onMount only fires once per (scriptCode,
@@ -193,7 +235,15 @@ export function updateCanvasComponent({
     mounted.lastLocalTime !== null && Math.abs(localTime - mounted.lastLocalTime) > scrubThreshold;
  
   if (isScrub) {
-    safeCall(mounted.instance, 'onSeek', { container, time: localTime, frame, fps, props });
+    safeCall(mounted.instance, 'onSeek', {
+      container,
+      time: localTime,
+      frame,
+      fps,
+      props,
+      canvasWidth: effWidth,
+      canvasHeight: effHeight,
+    });
   }
  
   mounted.lastLocalTime = localTime;
@@ -204,9 +254,11 @@ export function updateCanvasComponent({
     frame,
     fps,
     props,
+    canvasWidth: effWidth,
+    canvasHeight: effHeight,
   });
 }
-
+ 
 export function unmountCanvasComponent(entityId, scriptId = '') {
   const mountKey = mountKeyFor(entityId, scriptId);
   const mounted = mountedInstances.get(mountKey);
@@ -214,7 +266,7 @@ export function unmountCanvasComponent(entityId, scriptId = '') {
   safeCall(mounted.instance, 'onUnmount', { container: mounted.container });
   mountedInstances.delete(mountKey);
 }
-
+ 
 /**
  * Unmount every tracked instance whose mount key is not in the given set
  * of still-active keys (`entityId::scriptId` strings — pass the exact keys

@@ -103,31 +103,31 @@ export function EntityRenderer({
     height: 0,
     scale: 1,
   });
-
+ 
   const frameScale = frameDimensions.scale;
-
+ 
   useEffect(() => {
     const box = viewportBoxRef.current;
     if (!box) return;
-
+ 
     const resWidth = resolution?.width > 0 ? resolution.width : FALLBACK_RESOLUTION.width;
     const resHeight = resolution?.height > 0 ? resolution.height : FALLBACK_RESOLUTION.height;
-
+ 
     const updateDimensions = () => {
       // Available box area minus padding (16px on each side = 32px)
       const availW = Math.max(10, box.clientWidth - 32);
       const availH = Math.max(10, box.clientHeight - 32);
-
+ 
       // Strict aspect-ratio preserving fit
       const scale = Math.min(availW / resWidth, availH / resHeight);
       const width = Math.max(1, Math.round(resWidth * scale));
       const height = Math.max(1, Math.round(resHeight * scale));
-
+ 
       setFrameDimensions({ width, height, scale });
     };
-
+ 
     updateDimensions();
-
+ 
     const observer = new ResizeObserver(updateDimensions);
     observer.observe(box);
     return () => observer.disconnect();
@@ -145,7 +145,7 @@ export function EntityRenderer({
     window.addEventListener('blahblah:scripts-recompiled', handler);
     return () => window.removeEventListener('blahblah:scripts-recompiled', handler);
   }, []);
-
+ 
   // P0 perf fix -- computedEntities used to be rebuilt as a brand-new array
   // literal on every single render (regardless of whether entities, tracks,
   // scripts, or currentTime had actually changed), and that array sat in
@@ -189,17 +189,11 @@ export function EntityRenderer({
   // track not found in `tracks` (shouldn't normally happen) fall back to
   // the back-most layer rather than crashing or defaulting to front.
   //
-  // Hierarchy: computedEntities items carry a `depth` (chain depth, 0 =
-  // root) so a parented entity stacks just above its own ancestors — a
-  // child on the same track as its parent renders in front of it instead
-  // of being buried by it (deterministic: exportRunner.js sorts by the
-  // same trackZIndexOf + depth key). The bump is one per chain level, so
-  // track order still dominates across unrelated clips.
   const trackZIndexOf = (trackId) => {
     const idx = tracks.findIndex((t) => t.id === trackId);
     return idx === -1 ? 0 : idx + 1;
   };
-  const layerZIndexOf = (item) => trackZIndexOf(item.entity.trackId) + (item.depth || 0);
+  const layerZIndexOf = (item) => trackZIndexOf(item.entity.trackId);
  
   // Separate video clips (background layer) from overlay graphics/text/react/canvas.
   // Derived from computedEntities (already memoized above), so these only
@@ -382,12 +376,12 @@ export function EntityRenderer({
         const scriptDef = scripts.find((s) => s.id === comp.scriptId);
         if (!scriptDef || !scriptDef.code) continue;
         if (detectScriptKind(scriptDef.code) !== 'canvas') continue;
-
+ 
         const mountKey = `${entity.id}::${comp.scriptId}`;
         activeMountKeys.push(mountKey);
         const container = canvasContainerRefs.current[mountKey];
         if (!container) continue;
-
+ 
         updateCanvasComponent({
           entityId: entity.id,
           scriptId: comp.scriptId,
@@ -397,12 +391,17 @@ export function EntityRenderer({
           frame: Math.round(localTime * fps),
           fps,
           props: comp.props || {},
+          // Project's real output resolution — the default a canvas
+          // script receives as canvasWidth/canvasHeight unless it
+          // overrides via its own static props (see canvasRunner.js).
+          canvasWidth: resolution?.width > 0 ? resolution.width : FALLBACK_RESOLUTION.width,
+          canvasHeight: resolution?.height > 0 ? resolution.height : FALLBACK_RESOLUTION.height,
         });
       }
     });
-
+ 
     pruneCanvasComponents(activeMountKeys);
-  }, [computedEntities, scripts, currentTime, fps]);
+  }, [computedEntities, scripts, currentTime, fps, resolution?.width, resolution?.height]);
  
   // Clean up canvas and media elements when the whole EntityRenderer unmounts.
   useEffect(() => {
@@ -458,24 +457,10 @@ export function EntityRenderer({
     // actually captured the project-vs-screen scale difference.
     const scale = frameScale || 1;
  
-    // Hierarchy: for a parented entity the gizmo drags in WORLD space but
-    // writes LOCAL Transform x/y (the Transform component values ARE
-    // local). Without conversion a child under a rotated/scaled parent
-    // would move along the parent's rotated axes and at the parent's
-    // scale multiplier instead of following the cursor. The parent-chain
-    // frame is derivable from the leaf's world-vs-local poses:
-    //   parentRotation = worldRotation - ownRotation
-    //   parentChainScale = worldScale / ownScale   (scale of ancestors only)
-    // and the local delta is the world delta un-rotated by the parent's
-    // rotation and un-scaled by the ancestor scale. Roots (parentRotation
-    // 0, chainScale 1) reduce to plain world-space drag — the old math.
+    // Every entity is a flat timeline clip (no parent-child hierarchy), so
+    // the Transform IS the world pose and the gizmo drag is a plain
+    // world-space delta with no local-space conversion needed.
     const lx = localTransform || {};
-    const parentRotationDeg = (transform.rotation || 0) - (lx.rotation || 0);
-    const parentRad = (parentRotationDeg * Math.PI) / 180;
-    const chainSx = (transform.scaleX ?? 1) / ((lx.scaleX ?? 1) || 1);
-    const chainSy = (transform.scaleY ?? 1) / ((lx.scaleY ?? 1) || 1);
-    const cos = Math.cos(parentRad);
-    const sin = Math.sin(parentRad);
  
     gizmoDragRef.current = {
       mode: 'move',
@@ -485,10 +470,7 @@ export function EntityRenderer({
       startX: lx.x ?? transform.x,
       startY: lx.y ?? transform.y,
       scale,
-      toLocal: (dx, dy) => ({
-        x: (dx * cos + dy * sin) / (chainSx || 1),
-        y: (-dx * sin + dy * cos) / (chainSy || 1),
-      }),
+      toLocal: (dx, dy) => ({ x: dx, y: dy }),
     };
  
     const handlePointerMove = (moveEvent) => {
@@ -688,7 +670,7 @@ export function EntityRenderer({
             const isSelected = entity.id === selectedEntityId;
             const textComp = entity.components.find((c) => c.type === 'TextRenderer');
             const shapeComp = entity.components.find((c) => c.type === 'ShapeRenderer');
-
+ 
             // Script-driven visuals — every ScriptComponent renders by its
             // detected kind: 'react' components mount as inline React
             // elements; 'canvas' scripts get a container <div> driven
@@ -747,7 +729,7 @@ export function EntityRenderer({
                 >
                   {/* React-kind component renderer */}
                   {ReactComponentNodes}
-
+ 
                   {/* Canvas-kind mount targets. The actual drawing happens
                       imperatively inside engine/canvasRunner.js via
                       onMount/onUpdate against these <div>s; React only owns
@@ -763,6 +745,26 @@ export function EntityRenderer({
                       <div
                         key={mountKey}
                         className="canvas-render-container"
+                        // BUG FIX: this container previously had no explicit
+                        // size, so it shrank to its content's natural size.
+                        // A canvas-kind script's <canvas style="width:100%;
+                        // height:100%"> has nothing to resolve "100%"
+                        // against without an explicitly-sized parent, so
+                        // the browser falls back to the element's raw
+                        // pixel attributes with no scaling applied — the
+                        // canvas rendered smaller than the full frame even
+                        // when canvasWidth/canvasHeight correctly equaled
+                        // the project resolution and Transform.scale was 1.
+                        // Sizing this div to the project's real resolution
+                        // (the same numbers passed to the script as
+                        // canvasWidth/canvasHeight — see canvasRunner.js)
+                        // makes the canvas's 100%/100% resolve against the
+                        // true frame size, so Scale=1, Position=(0,0) now
+                        // means "fills the frame" as expected.
+                        style={{
+                          width: `${safeResWidth}px`,
+                          height: `${safeResHeight}px`,
+                        }}
                         ref={(el) => {
                           if (el) {
                             canvasContainerRefs.current[mountKey] = el;
@@ -893,5 +895,6 @@ export function EntityRenderer({
       </div>
     </section>
   );}
-
+ 
+ 
  

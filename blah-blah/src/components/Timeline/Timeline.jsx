@@ -8,10 +8,10 @@ import { PlayheadHandle, PlayheadLine } from './Playhead';
 import { usePlaybackStore } from '../../hooks/PlaybackContext';
 const HEADER_WIDTH = 180;
 
-// Vertical layout constants + pure lane geometry for the hierarchy timeline
+// Vertical layout constants + pure lane geometry for the flat timeline
 // live in utils/timelineLayout.js (shared with TrackLane / TrackHeader and
 // unit-tested). Re-exported here so existing importers stay unchanged.
-export { TRACK_HEIGHT, SUB_LANE_HEIGHT, SUB_LANE_INDENT } from '../../utils/timelineLayout';
+export { TRACK_HEIGHT } from '../../utils/timelineLayout';
 import { TRACK_HEIGHT, computeTrackLanes } from '../../utils/timelineLayout';
 
 export const Timeline = memo(function Timeline({
@@ -636,7 +636,6 @@ export const Timeline = memo(function Timeline({
                   <div className="track-header-sticky" style={{ height: row.rowHeight }}>
                     <TrackHeader
                       track={row.track}
-                      depth={0}
                       onUpdateTrack={onUpdateTrack}
                       onDeleteTrack={onDeleteTrack}
                       canDeleteTrack={tracks.length > 1}
@@ -648,7 +647,6 @@ export const Timeline = memo(function Timeline({
                   </div>
                   <TrackLane
                     track={row.track}
-                    depth={0}
                     tracks={tracks}
                     mediaAssets={mediaAssets}
                     clips={row.clips}
@@ -680,3 +678,4 @@ export const Timeline = memo(function Timeline({
     </section>
   );
 });
+

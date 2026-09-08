@@ -1598,7 +1598,7 @@ function ScriptPreview({ script }) {
   );
 }
 
-// Prefab breakdown: hierarchy-aware component summary of every snapshot.
+// Prefab breakdown: component summary of every snapshot.
 function PrefabPreview({ prefab }) {
   const snapshots = (Array.isArray(prefab?.entities) && prefab.entities.length > 0 ? prefab.entities : null);
   const roots = snapshots || (prefab ? [{ components: prefab.components || [], name: prefab.name }] : []);

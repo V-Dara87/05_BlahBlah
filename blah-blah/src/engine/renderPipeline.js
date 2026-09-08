@@ -48,8 +48,7 @@ function transformFromComponents(components) {
 /**
  * Resolve ONE entity's LOCAL transform (keyframes + motion scripts) at its
  * own local time. Pure per-entity work, shared by every entity that is
- * scene-active at `time` (including ancestors, which only contribute their
- * pose to children and render nothing themselves).
+ * scene-active at `time`.
  * Returns { entity: resolvedEntity, localTransform, localTime }.
  */
 function resolveEntityLocal({ entity, scripts, time, fps }) {
@@ -168,3 +167,4 @@ export function computeActiveEntitiesAtTime({ entities, tracks, scripts = [], ti
   }
   return output;
 }
+
