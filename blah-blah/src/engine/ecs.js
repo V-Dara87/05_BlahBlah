@@ -29,7 +29,7 @@ export function migrateProjectSchema(project, fromVersion, toVersion) {
 }
 
 /**
- * A saved project's schemaVersion, or 0 when it has none (projects saved
+ * A saved project's schemaVersion, or 0 when it has none  (projects saved
  * before schemaVersion was introduced — the 0 → 1 boundary). Non-numeric
  * values (e.g. a hand-typed string in a VS Code edit) also read as 0.
  */

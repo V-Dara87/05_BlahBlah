@@ -189,6 +189,13 @@ export async function createNewProjectFolder(parentDirHandle, projectName, defau
       jsx: 'react',
       allowJs: true,
       checkJs: false,
+      // Suppress ts(7031) "implicitly has an 'any' type" on destructured
+      // parameters. Users may opt in to checkJs: true for syntax checking
+      // without being flooded by implicit-any warnings on every onMount /
+      // onUpdate argument — the SDK's CanvasOnMountArgs / MotionOnStartArgs
+      // types document the shapes, but plain-JS scripts don't annotate
+      // their destructured params and that's fine by design.
+      noImplicitAny: false,
       // No `baseUrl` — TypeScript 7.0 deprecates and removes it, and
       // recent TS versions already warn on it. With
       // moduleResolution: 'Bundler', `paths` below still resolves

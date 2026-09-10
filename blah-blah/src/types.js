@@ -44,6 +44,7 @@ export const INITIAL_TRACKS = [
   }
 ];
  
+//Timeline Zoom Parameter
 export const DEFAULT_PIXELS_PER_SECOND = 40;
 export const MIN_PIXELS_PER_SECOND = 10;
 export const MAX_PIXELS_PER_SECOND = 160;
