@@ -23,6 +23,7 @@ export function computeTrackLanes(tracks = [], clips = []) {
       track,
       clips: trackClips,
       rowHeight: TRACK_HEIGHT,
+      depth: 0,
     };
   });
 }

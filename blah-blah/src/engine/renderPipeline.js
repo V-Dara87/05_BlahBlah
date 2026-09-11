@@ -46,6 +46,32 @@ function transformFromComponents(components) {
 }
 
 /**
+ * 2D affine composition of a parent world transform and a child local transform.
+ * Composes translation (scaled and rotated by parent), rotation, scale, and opacity.
+ */
+export function composeTransform2D(parentWorld, childLocal) {
+  const rad = ((parentWorld.rotation || 0) * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const pScaleX = parentWorld.scaleX ?? 1;
+  const pScaleY = parentWorld.scaleY ?? 1;
+  const cX = childLocal.x || 0;
+  const cY = childLocal.y || 0;
+  const sx = cX * pScaleX;
+  const sy = cY * pScaleY;
+
+  return {
+    ...childLocal,
+    x: (parentWorld.x || 0) + (sx * cos - sy * sin),
+    y: (parentWorld.y || 0) + (sx * sin + sy * cos),
+    rotation: (parentWorld.rotation || 0) + (childLocal.rotation || 0),
+    scaleX: pScaleX * (childLocal.scaleX ?? 1),
+    scaleY: pScaleY * (childLocal.scaleY ?? 1),
+    opacity: (parentWorld.opacity ?? 1) * (childLocal.opacity ?? 1),
+  };
+}
+
+/**
  * Resolve ONE entity's LOCAL transform (keyframes + motion scripts) at its
  * own local time. Pure per-entity work, shared by every entity that is
  * scene-active at `time`.
@@ -118,51 +144,106 @@ function resolveEntityLocal({ entity, scripts, time, fps }) {
 }
 
 /**
- * Same filtering + transform logic as EntityRenderer.jsx's former
- * `computedEntities` useMemo, as a plain function driven by an explicit
- * `time` instead of component state.
+ * Filter and resolve entities visible at `time`.
  *
- * Returns [{ entity, transform, localTransform, localTime, depth }] for
- * every entity actually visible at `time`:
- *   - the entity's own clip window must contain `time`, its track must be
- *     visible/unlocked, and it must be active.
+ * Visibility contract:
+ *   - The entity itself must be active, within its clip window [startTime, startTime + duration),
+ *     and on an unlocked, visible track.
+ *   - Parent-Scoped Visibility: If `entity.parentId` is set, all ancestors must ALSO be active
+ *     at `time` (active flag, track visible/unlocked, and within their respective clip windows).
  *
- * `transform` is the entity's world pose — callers (preview AND export)
- * must render with this. With no hierarchy it equals `localTransform`
- * (the pose after keyframes + motion scripts). `depth` is always 0
- * (flat model, kept for caller compatibility).
+ * Transform contract:
+ *   - `localTransform` is the entity's own pose after keyframes + motion scripts.
+ *   - `transform` is the world pose, composed hierarchically from parent world transform + local transform.
+ *   - `depth` represents the hierarchy depth (0 for root, 1 for child, etc.).
  *
  * @param {{ entities: any[], tracks: any[], scripts?: any[], time: number, fps?: number }} args
  */
 export function computeActiveEntitiesAtTime({ entities, tracks, scripts = [], time, fps = 30 }) {
-  const activeEntities = entities.filter((entity) => {
-    if (!entity.active) return false;
-    if (time < entity.startTime || time >= entity.startTime + entity.duration) {
-      return false;
-    }
-    const track = tracks.find((t) => t.id === entity.trackId);
+  const entityMap = new Map((entities || []).map((e) => [e.id, e]));
+  const trackMap = new Map((tracks || []).map((t) => [t.id, t]));
+
+  const isSelfActive = (e) => {
+    if (!e || e.active === false) return false;
+    if (time < e.startTime || time >= e.startTime + e.duration) return false;
+    const track = trackMap.get(e.trackId);
     if (track && (!track.visible || track.locked)) return false;
     return true;
-  });
+  };
 
+  const isEntityVisible = (e) => {
+    const visited = new Set();
+    let curr = e;
+    while (curr) {
+      if (visited.has(curr.id)) break; // Cycle guard
+      visited.add(curr.id);
+      if (!isSelfActive(curr)) return false;
+      if (!curr.parentId) break;
+      curr = entityMap.get(curr.parentId);
+      if (!curr) break; // Orphaned child whose parent doesn't exist
+    }
+    return true;
+  };
+
+  const activeEntities = (entities || []).filter(isEntityVisible);
   if (activeEntities.length === 0) return [];
 
-  // Resolve each scene-active entity inside its own clip window at its own
-  // local time. The local pose IS the world pose (flat model).
+  // Resolve local transforms for all scene-active entities
+  const localMap = new Map();
+  for (const entity of activeEntities) {
+    localMap.set(
+      entity.id,
+      resolveEntityLocal({
+        entity,
+        scripts,
+        time,
+        fps,
+      })
+    );
+  }
+
+  // Compose world transforms hierarchically
+  const worldMap = new Map();
+  const depthMap = new Map();
+
+  function resolveWorld(entityId, visited = new Set()) {
+    if (worldMap.has(entityId)) return worldMap.get(entityId);
+    const local = localMap.get(entityId);
+    if (!local) return null;
+    if (visited.has(entityId)) {
+      // Break circular cycle
+      worldMap.set(entityId, local.localTransform);
+      depthMap.set(entityId, 0);
+      return local.localTransform;
+    }
+    visited.add(entityId);
+
+    const parentId = local.entity.parentId;
+    if (!parentId || !localMap.has(parentId)) {
+      worldMap.set(entityId, local.localTransform);
+      depthMap.set(entityId, 0);
+      return local.localTransform;
+    }
+
+    const parentWorld = resolveWorld(parentId, visited);
+    const worldTransform = composeTransform2D(parentWorld, local.localTransform);
+    const parentDepth = depthMap.get(parentId) || 0;
+    worldMap.set(entityId, worldTransform);
+    depthMap.set(entityId, parentDepth + 1);
+    return worldTransform;
+  }
+
   const output = [];
   for (const entity of activeEntities) {
-    const { entity: resolvedEntity, localTransform, localTime } = resolveEntityLocal({
-      entity,
-      scripts,
-      time,
-      fps,
-    });
+    const local = localMap.get(entity.id);
+    const worldTransform = resolveWorld(entity.id);
+    const depth = depthMap.get(entity.id) || 0;
     output.push({
-      entity: resolvedEntity,
-      transform: localTransform,
-      localTransform,
-      localTime,
-      depth: 0,
+      entity: local.entity,
+      transform: worldTransform,
+      localTransform: local.localTransform,
+      localTime: local.localTime,
+      depth,
     });
   }
   return output;

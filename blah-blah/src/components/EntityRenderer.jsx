@@ -463,7 +463,23 @@ export function EntityRenderer({
     // the Transform IS the world pose and the gizmo drag is a plain
     // world-space delta with no local-space conversion needed.
     const lx = localTransform || {};
- 
+    let toLocal = (dx, dy) => ({ x: dx, y: dy });
+    if (entity.parentId) {
+      const parentItem = computedEntities.find((c) => c.entity.id === entity.parentId);
+      if (parentItem?.transform) {
+        const pt = parentItem.transform;
+        const parentRotRad = -((pt.rotation || 0) * Math.PI) / 180;
+        const pScaleX = pt.scaleX || 1;
+        const pScaleY = pt.scaleY || 1;
+        const cos = Math.cos(parentRotRad);
+        const sin = Math.sin(parentRotRad);
+        toLocal = (dx, dy) => ({
+          x: (dx * cos - dy * sin) / pScaleX,
+          y: (dx * sin + dy * cos) / pScaleY,
+        });
+      }
+    }
+
     gizmoDragRef.current = {
       mode: 'move',
       entityId: entity.id,
@@ -472,7 +488,7 @@ export function EntityRenderer({
       startX: lx.x ?? transform.x,
       startY: lx.y ?? transform.y,
       scale,
-      toLocal: (dx, dy) => ({ x: dx, y: dy }),
+      toLocal,
     };
  
     const handlePointerMove = (moveEvent) => {
@@ -492,7 +508,7 @@ export function EntityRenderer({
     window.addEventListener('pointerup', handlePointerUp);
   };
  
-  const handleRotateGizmoPointerDown = (e, entity, transform) => {
+  const handleRotateGizmoPointerDown = (e, entity, transform, localTransform) => {
     if (!onUpdateEntity) return;
     e.stopPropagation();
     e.preventDefault();
@@ -517,7 +533,7 @@ export function EntityRenderer({
       pivotX,
       pivotY,
       startAngle,
-      startRotation: transform.rotation || 0,
+      startRotation: (localTransform ? localTransform.rotation : transform.rotation) || 0,
     };
  
     const handlePointerMove = (moveEvent) => {
@@ -832,7 +848,7 @@ export function EntityRenderer({
                     <div
                       className="gizmo-rotate-handle"
                       title="Drag to rotate (hold Shift to snap to 15°)"
-                      onPointerDown={(e) => handleRotateGizmoPointerDown(e, entity, transform)}
+                      onPointerDown={(e) => handleRotateGizmoPointerDown(e, entity, transform, localTransform)}
                     />
                   </>
                 )}

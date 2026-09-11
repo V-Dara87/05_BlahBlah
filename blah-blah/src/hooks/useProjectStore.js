@@ -112,19 +112,28 @@ export function useProjectStore({
   const handleUpdateEntity = useCallback((entityId, updates) => {
     // Support _delete flag for context menu deletion
     if (updates._delete) {
-      // Support _delete flag for context menu deletion.
-      setEntities((prev) => removeEntitiesByIds(prev, [entityId]));
-      if (selectedEntityId === entityId) setSelectedEntityId(null);
+      setEntities((prev) => {
+        const next = removeEntitiesByIds(prev, [entityId]);
+        if (selectedEntityId && !next.some((e) => e.id === selectedEntityId)) {
+          setSelectedEntityId(null);
+        }
+        return next;
+      });
       return;
     }
     setEntities(prev => prev.map(e => e.id === entityId ? { ...e, ...updates } : e), { coalesce: true });
-  }, [setEntities, selectedEntityId]);
+  }, [setEntities, selectedEntityId, setSelectedEntityId]);
  
   // Delete entity.
   const handleDeleteEntity = useCallback((entityId) => {
-    setEntities((prev) => removeEntitiesByIds(prev, [entityId]));
-    if (selectedEntityId === entityId) setSelectedEntityId(null);
-  }, [selectedEntityId]);
+    setEntities((prev) => {
+      const next = removeEntitiesByIds(prev, [entityId]);
+      if (selectedEntityId && !next.some((e) => e.id === selectedEntityId)) {
+        setSelectedEntityId(null);
+      }
+      return next;
+    });
+  }, [setEntities, selectedEntityId, setSelectedEntityId]);
  
   // Ripple trim the selected clip to the playhead — 'before' cuts off
   // everything in the clip before the playhead (start moves up to the
@@ -188,13 +197,21 @@ export function useProjectStore({
     const maxEnd = Math.max(...targets.map((m) => m.startTime + m.duration));
     const delta = maxEnd - minStart;
  
+    // Map old target ids to new generated ids
+    const idMap = new Map();
+    targets.forEach((t) => {
+      idMap.set(t.id, `go-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`);
+    });
+
     const newClips = targets.map((target) => {
-      // Strip any legacy group/parent fields from old saved projects —
-      // duplicated clips are always independent flat clips.
-      const { linkGroupId: _linkGroupId, parentId: _parentId, ...rest } = target;
+      const { linkGroupId: _linkGroupId, ...rest } = target;
+      // If the parent was also duplicated in this batch, link to the new parent copy;
+      // otherwise, make the duplicated clip independent.
+      const mappedParentId = target.parentId && idMap.has(target.parentId) ? idMap.get(target.parentId) : null;
       return {
         ...rest,
-        id: `go-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        id: idMap.get(target.id),
+        parentId: mappedParentId,
         name: `${target.name} (Copy)`,
         startTime: target.startTime + delta,
         components: target.components

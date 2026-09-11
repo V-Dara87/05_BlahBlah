@@ -1,4 +1,4 @@
-import { useState, memo } from 'react';
+import { useState, memo, useMemo } from 'react';
 import { 
   Sliders, 
   Plus, 
@@ -125,6 +125,7 @@ function InspectorCardHeader({
  
 export const UnityInspector = memo(function UnityInspector({
   selectedEntity,
+  entities = [],
   tracks = [],
   scripts = [],
   onUpdateEntity,
@@ -149,7 +150,43 @@ export const UnityInspector = memo(function UnityInspector({
   const [savedPrefab, setSavedPrefab] = useState(false);
   const [dragCompType, setDragCompType] = useState(null); // component `type` (or scriptId for scripts) currently being dragged
   const [dragOverCompType, setDragOverCompType] = useState(null);
- 
+
+  const eligibleParentEntities = useMemo(() => {
+    if (!entities || !selectedEntity) return [];
+    const isDescendant = (candidateId, ancestorId) => {
+      const visited = new Set();
+      let curr = entities.find((e) => e.id === candidateId);
+      while (curr?.parentId) {
+        if (curr.parentId === ancestorId) return true;
+        if (visited.has(curr.parentId)) break;
+        visited.add(curr.parentId);
+        curr = entities.find((e) => e.id === curr.parentId);
+      }
+      return false;
+    };
+
+    const getDepth = (entity) => {
+      let d = 0;
+      const visited = new Set();
+      let curr = entity;
+      while (curr?.parentId) {
+        if (visited.has(curr.parentId)) break;
+        visited.add(curr.parentId);
+        curr = entities.find((e) => e.id === curr.parentId);
+        d++;
+      }
+      return d;
+    };
+
+    return entities
+      .filter((e) => e.id !== selectedEntity.id && !isDescendant(e.id, selectedEntity.id))
+      .map((e) => ({
+        id: e.id,
+        name: e.name,
+        indent: '  '.repeat(getDepth(e)),
+      }));
+  }, [entities, selectedEntity]);
+
   if (!selectedEntity) {
     return (
       <aside className="inspector-sidebar empty">
@@ -437,7 +474,7 @@ export const UnityInspector = memo(function UnityInspector({
   const toggleCompCategory = (name) => {
     setOpenCompCategories(prev => ({ ...prev, [name]: !prev[name] }));
   };
- 
+
   return (
     <aside
       className={`inspector-sidebar${isScriptDragOver ? ' script-drop-zone' : ''}`}
@@ -468,6 +505,22 @@ export const UnityInspector = memo(function UnityInspector({
           >
             {tracks.map((t) => (
               <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="inspector-header-field">
+          <label className="field-label-sm">Parent (Hierarchy)</label>
+          <select
+            className="inspector-track-select"
+            value={selectedEntity.parentId || ''}
+            onChange={(e) => onUpdateEntity(selectedEntity.id, { parentId: e.target.value || null })}
+          >
+            <option value="">None (Root)</option>
+            {eligibleParentEntities.map((ent) => (
+              <option key={ent.id} value={ent.id}>
+                {ent.indent ? `${ent.indent}└─ ` : ''}{ent.name}
+              </option>
             ))}
           </select>
         </div>

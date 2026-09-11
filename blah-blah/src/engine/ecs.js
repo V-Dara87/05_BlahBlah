@@ -184,17 +184,19 @@ export function createGameObject({
   type = 'video',
   components = [],
   src = '',
-  color = '#6366f1'
+  color = '#6366f1',
+  parentId = null,
 }) {
   const hasTransform = components.some(c => c.type === 'Transform');
   const finalComponents = hasTransform ? [...components] : [createDefaultTransform(), ...components];
- 
+
   return {
     id: `go-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
     name,
     tag: 'Untagged',
     layer: 'Default',
     active: true,
+    parentId: parentId || null,
     trackId,
     startTime,
     duration,
@@ -209,10 +211,20 @@ export function createGameObject({
 
 /**
  * Return a NEW entity array with the entities whose ids are in `idsToRemove`
- * removed (kept as a named helper for the delete paths; each clip is an
- * independent timeline entity, so removal is a flat id filter).
+ * removed. If any removed entity has children (entities with `parentId` pointing
+ * to a doomed entity), they are cascadingly deleted as well to any depth.
  */
 export function removeEntitiesByIds(entities, idsToRemove) {
   const doomed = new Set(idsToRemove);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const e of entities || []) {
+      if (!doomed.has(e.id) && e.parentId && doomed.has(e.parentId)) {
+        doomed.add(e.id);
+        changed = true;
+      }
+    }
+  }
   return (entities || []).filter((e) => !doomed.has(e.id));
 }

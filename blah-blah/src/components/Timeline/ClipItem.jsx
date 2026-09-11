@@ -1,8 +1,22 @@
 import { useRef, useMemo, memo, useState } from 'react';
-import { Film, Music, Type, Square, FileCode } from 'lucide-react';
+import { Film, Music, Type, Square, FileCode, Link2, X } from 'lucide-react';
 import { WaveformCanvas } from '../WaveformCanvas';
 import { isScriptComponent } from '../../engine/ecs';
 import { dragHasItemKind, ITEM_KIND_SCRIPT } from '../../utils/dragData';
+
+/** Return true if candidateChild is a descendant of ancestorId (cycle guard). */
+function isDescendantOf(candidateChildId, ancestorId, allClips) {
+  if (!candidateChildId || !ancestorId || candidateChildId === ancestorId) return false;
+  const visited = new Set();
+  let curr = allClips.find((c) => c.id === candidateChildId);
+  while (curr?.parentId) {
+    if (curr.parentId === ancestorId) return true;
+    if (visited.has(curr.parentId)) break;
+    visited.add(curr.parentId);
+    curr = allClips.find((c) => c.id === curr.parentId);
+  }
+  return false;
+}
 
 export const ClipItem = memo(function ClipItem({
   clip,
@@ -53,6 +67,115 @@ export const ClipItem = memo(function ClipItem({
 
   const isSelectedMulti = selectedIds.includes(clip.id);
   const isSelectedCard = isSelected !== undefined ? isSelected : selectedClipId === clip.id;
+  const [isPickwhipActive, setIsPickwhipActive] = useState(false);
+
+  // Active selection set across timeline
+  const activeSelectedSet = useMemo(() => {
+    const s = new Set(selectedIds);
+    if (selectedClipId) s.add(selectedClipId);
+    return s;
+  }, [selectedIds, selectedClipId]);
+
+  // Is this clip a child of an active selected clip?
+  const isChildOfSelected = clip.parentId ? activeSelectedSet.has(clip.parentId) : false;
+
+  // Is this clip a parent of an active selected clip?
+  const isParentOfSelected = useMemo(() => {
+    return allClips.some((c) => activeSelectedSet.has(c.id) && c.parentId === clip.id);
+  }, [allClips, activeSelectedSet, clip.id]);
+
+  // Ancestry chain for breadcrumb
+  const ancestryChain = useMemo(() => {
+    const chain = [];
+    const visited = new Set();
+    let curr = clip;
+    while (curr?.parentId) {
+      if (visited.has(curr.parentId)) break;
+      visited.add(curr.parentId);
+      const parent = allClips.find((c) => c.id === curr.parentId);
+      if (!parent) break;
+      chain.unshift(parent);
+      curr = parent;
+    }
+    return chain;
+  }, [clip, allClips]);
+
+  const directParent = ancestryChain.length > 0 ? ancestryChain[ancestryChain.length - 1] : null;
+
+  const handlePickwhipPointerDown = (e) => {
+    if (isLocked) return;
+    e.stopPropagation();
+    e.preventDefault();
+    setIsPickwhipActive(true);
+
+    let currentTargetEl = null;
+
+    // Create a floating badge following cursor
+    const badge = document.createElement('div');
+    badge.className = 'pickwhip-drag-ghost';
+    badge.textContent = `🔗 Link "${clip.name}" to...`;
+    document.body.appendChild(badge);
+
+    const updateBadgePos = (ev) => {
+      badge.style.left = `${ev.clientX + 14}px`;
+      badge.style.top = `${ev.clientY + 14}px`;
+    };
+    updateBadgePos(e);
+
+    const handlePointerMove = (moveEv) => {
+      updateBadgePos(moveEv);
+
+      const els = document.elementsFromPoint(moveEv.clientX, moveEv.clientY);
+      let foundCard = null;
+      for (const el of els) {
+        const card = el.closest && el.closest('.timeline-clip-card');
+        if (card && card.getAttribute('data-clip-id') !== clip.id) {
+          foundCard = card;
+          break;
+        }
+      }
+
+      if (currentTargetEl && currentTargetEl !== foundCard) {
+        currentTargetEl.classList.remove('link-drop-target');
+        currentTargetEl = null;
+      }
+
+      if (foundCard) {
+        const targetId = foundCard.getAttribute('data-clip-id');
+        const isCycle = isDescendantOf(targetId, clip.id, allClips);
+        if (!isCycle) {
+          currentTargetEl = foundCard;
+          currentTargetEl.classList.add('link-drop-target');
+          const targetClip = allClips.find((c) => c.id === targetId);
+          badge.textContent = `🔗 Link "${clip.name}" to "${targetClip?.name || 'Clip'}"`;
+          badge.classList.add('valid');
+        } else {
+          badge.textContent = `⚠️ Cannot link to descendant (Circular)`;
+          badge.classList.remove('valid');
+        }
+      } else {
+        badge.textContent = `🔗 Drag onto another clip to link (or drop here to cancel)`;
+        badge.classList.remove('valid');
+      }
+    };
+
+    const handlePointerUp = () => {
+      setIsPickwhipActive(false);
+      badge.remove();
+      if (currentTargetEl) {
+        currentTargetEl.classList.remove('link-drop-target');
+        const targetId = currentTargetEl.getAttribute('data-clip-id');
+        if (targetId && targetId !== clip.id && !isDescendantOf(targetId, clip.id, allClips)) {
+          onUpdateClip(clip.id, { parentId: targetId });
+        }
+      }
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+  };
 
   const handleBodyPointerDown = (e) => {
     if (e.button !== 0) return;
@@ -106,6 +229,18 @@ export const ClipItem = memo(function ClipItem({
     // created copies on alt-drag).
     const allSelectedIds = new Set(isAltDuplicate ? dupIds : (isSelectedMulti ? selectedIds : [clip.id]));
     const moveIds = new Set(allSelectedIds);
+
+    // Expand moveIds to include all recursive children so children move together with their parent
+    let expanded = true;
+    while (expanded) {
+      expanded = false;
+      for (const c of allClips) {
+        if (!moveIds.has(c.id) && c.parentId && moveIds.has(c.parentId)) {
+          moveIds.add(c.id);
+          expanded = true;
+        }
+      }
+    }
 
     // Snapshot original positions and track indices of all clips being moved
     const moveOriginals = allClips
@@ -394,6 +529,35 @@ export const ClipItem = memo(function ClipItem({
     }
 
     if (!isLocked) {
+      // Unlink Parent button if clip currently has a parent
+      if (clip.parentId) {
+        const unlinkBtn = document.createElement('button');
+        unlinkBtn.textContent = '🔗 Unlink Parent';
+        unlinkBtn.className = 'ctx-menu-item';
+        unlinkBtn.onclick = () => {
+          onUpdateClip(clip.id, { parentId: null });
+          menu.remove();
+        };
+        menu.appendChild(unlinkBtn);
+      }
+
+      // Quick-link options for up to 6 eligible candidate clips
+      const eligibleParents = allClips.filter(
+        (c) => c.id !== clip.id && c.id !== clip.parentId && !isDescendantOf(c.id, clip.id, allClips)
+      );
+      if (eligibleParents.length > 0 && eligibleParents.length <= 6) {
+        eligibleParents.forEach((p) => {
+          const parentBtn = document.createElement('button');
+          parentBtn.textContent = `🔗 Set Parent: ${p.name}`;
+          parentBtn.className = 'ctx-menu-item';
+          parentBtn.onclick = () => {
+            onUpdateClip(clip.id, { parentId: p.id });
+            menu.remove();
+          };
+          menu.appendChild(parentBtn);
+        });
+      }
+
       const deleteBtn = document.createElement('button');
       deleteBtn.textContent = '🗑 Delete';
       deleteBtn.className = 'ctx-menu-item danger';
@@ -430,7 +594,7 @@ export const ClipItem = memo(function ClipItem({
   return (
     <div
       data-clip-id={clip.id}
-      className={`timeline-clip-card ${clipCategory} ${isSelectedCard || isSelectedMulti ? 'selected' : ''} ${isLocked ? 'is-locked' : ''} ${compact ? 'compact' : ''} ${isScriptDragOver ? 'script-drop-target' : ''}`}
+      className={`timeline-clip-card ${clipCategory} ${isSelectedCard || isSelectedMulti ? 'selected' : ''} ${isChildOfSelected ? 'is-linked-child' : ''} ${isParentOfSelected ? 'is-linked-parent' : ''} ${clip.parentId ? 'is-child' : ''} ${isLocked ? 'is-locked' : ''} ${compact ? 'compact' : ''} ${isScriptDragOver ? 'script-drop-target' : ''}`}
       style={{
         left: `${leftPx}px`,
         width: `${widthPx}px`,
@@ -440,7 +604,7 @@ export const ClipItem = memo(function ClipItem({
       onDragOver={handleScriptDragOver}
       onDragLeave={() => setIsScriptDragOver(false)}
       onDrop={handleScriptDrop}
-      title={`${clip.name} (${clip.duration.toFixed(1)}s)${isLocked ? ' 🔒 Locked' : ''}`}
+      title={`${clip.name} (${clip.duration.toFixed(1)}s)${directParent ? ` [Parent: ${directParent.name}]` : ''}${isLocked ? ' 🔒 Locked' : ''}`}
     >
       {/* Left Trim Handle */}
       {!isLocked && (
@@ -479,6 +643,50 @@ export const ClipItem = memo(function ClipItem({
             <Square size={12} className="type-icon" />
           )}
           <span className="clip-title-text">{clip.name}</span>
+
+          {/* Pickwhip Drag-to-Parent Handle */}
+          {!isLocked && (
+            <button
+              type="button"
+              className={`clip-pickwhip-btn ${isPickwhipActive ? 'active' : ''}`}
+              title="Drag to another clip to link as child (Pickwhip)"
+              onPointerDown={handlePickwhipPointerDown}
+            >
+              <Link2 size={10} />
+            </button>
+          )}
+
+          {/* Linked Parent Badge */}
+          {directParent && (
+            <span
+              className="clip-parent-tag"
+              title={
+                ancestryChain.length > 1
+                  ? `Parent Chain: ${ancestryChain.map((p) => p.name).join(' > ')} (Click to select parent)`
+                  : `Parent: ${directParent.name} (Click to select parent)`
+              }
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onSelectClip) onSelectClip(directParent.id);
+              }}
+            >
+              <Link2 size={9} />
+              <span className="parent-tag-name">{directParent.name}</span>
+              {!isLocked && (
+                <button
+                  type="button"
+                  className="parent-tag-unlink"
+                  title="Unlink parent"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onUpdateClip(clip.id, { parentId: null });
+                  }}
+                >
+                  <X size={8} />
+                </button>
+              )}
+            </span>
+          )}
 
           {hasScript && (
             <span className="script-tag" title="Attached script">
