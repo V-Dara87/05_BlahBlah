@@ -389,6 +389,28 @@ export class MotionTweenContext {
   }
 }
 
+// ─── Reference Types ─────────────────────────────────────────────────────────
+
+export class EntityRef {
+  id = null;
+  name = null;
+  startTime = 0;
+  duration = 0;
+  parentId = null;
+  exists() { return false; }
+  getTransform() { return null; }
+  getComponent(type) { return null; }
+}
+
+export class AssetRef {
+  id = null;
+  name = null;
+  src = null;
+  type = null;
+  duration = null;
+  exists() { return false; }
+}
+
 export default {
   MotionScript,
   CanvasComponent,
@@ -399,5 +421,7 @@ export default {
   interpolate,
   spring,
   MotionTweenContext,
+  EntityRef,
+  AssetRef,
 };
 

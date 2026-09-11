@@ -61,6 +61,7 @@ export const PreviewDockPanel = memo(function PreviewDockPanel() {
     selectedEntityId, setSelectedEntityId,
     handleUpdateEntity, resolution,
     fps = 30,
+    mediaAssets,
   } = useEditorContext();
  
   const currentTime = useCurrentTime();
@@ -85,6 +86,7 @@ export const PreviewDockPanel = memo(function PreviewDockPanel() {
       onToggleLoop={() => store.toggleLoop()}
       resolution={resolution}
       fps={fps}
+      mediaAssets={mediaAssets}
     />
   );
 });
@@ -96,6 +98,7 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
     onOpenScriptEditor, handleSaveAsPrefab,
     handleAttachScriptToEntity,
     autoKeyEnabled, setAutoKeyEnabled,
+    mediaAssets,
   } = useEditorContext();
 
   const currentTime = useCurrentTime();
@@ -116,6 +119,7 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
         currentTime={currentTime}
         autoKeyEnabled={autoKeyEnabled}
         setAutoKeyEnabled={setAutoKeyEnabled}
+        mediaAssets={mediaAssets}
       />
     </div>
   );

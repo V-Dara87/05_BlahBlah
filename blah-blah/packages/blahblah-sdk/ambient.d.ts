@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Ambient module declarations for external npm packages in BlahBlah scripts.
  *
  * BlahBlah resolves and bundles any bare specifier (e.g. 'canvas-confetti',
@@ -8,3 +8,7 @@
  * ("Cannot find module ...") errors while preserving full editor flexibility.
  */
 declare module '*';
+
+// Ambient global types for BlahBlah script reference fields
+declare type EntityRef = import('./index.d.ts').EntityRef;
+declare type AssetRef = import('./index.d.ts').AssetRef;

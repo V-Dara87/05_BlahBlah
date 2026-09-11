@@ -12,6 +12,7 @@ import {
   interpolate, 
   spring 
 } from './motionTween.js';
+import { resolveScriptProps } from './referenceTypes.js';
  
 /**
  * Cache for compiled JavaScript/JSX modules to ensure 60fps performance without recompiling.
@@ -553,10 +554,12 @@ export function extractScriptProps(code) {
         if (schemaObj && typeof schemaObj === 'object') {
           Object.entries(schemaObj).forEach(([name, def]) => {
             if (typeof def === 'object' && def !== null) {
+              // Reference types: entity / asset — no default value (slot starts empty)
+              const isRef = def.type === 'entity' || def.type === 'asset';
               fields.push({
                 name,
                 type: def.type || (typeof def.default === 'number' ? 'number' : typeof def.default === 'boolean' ? 'boolean' : 'string'),
-                defaultVal: def.default ?? (def.type === 'number' ? 0 : def.type === 'boolean' ? false : ''),
+                defaultVal: isRef ? null : (def.default ?? (def.type === 'number' ? 0 : def.type === 'boolean' ? false : '')),
                 min: def.min,
                 max: def.max,
                 step: def.step,
@@ -580,8 +583,11 @@ export function extractScriptProps(code) {
       }
     }
  
-    // 2. Regex fallback for inline public fields: `public float x = 10;` or `propName: { type: 'number', default: 10 }`
+    // 2. Regex fallback for inline public fields.
+    // For reference types (entity/asset) there is no `default:` clause, so
+    // we also handle the no-default form: `name: { type: 'entity', label: '…' }`
     if (fields.length === 0) {
+      // With-default form: propName: { type: 'number', default: 10 }
       const fieldRegex = /(?:public\s+)?([A-Za-z0-9_]+)\s*:\s*\{\s*type:\s*['"]([A-Za-z0-9_]+)['"]\s*,\s*default:\s*([^,}]+)/g;
       let m;
       while ((m = fieldRegex.exec(code)) !== null) {
@@ -591,6 +597,13 @@ export function extractScriptProps(code) {
         if (type === 'number') defaultVal = parseFloat(defaultVal) || 0;
         if (type === 'boolean') defaultVal = defaultVal === 'true';
         fields.push({ name, type, defaultVal, label: name });
+      }
+      // No-default form for reference types: propName: { type: 'entity' } or type: 'asset'
+      if (fields.length === 0) {
+        const refRegex = /([A-Za-z0-9_]+)\s*:\s*\{\s*type:\s*['"](entity|asset)['"]/g;
+        while ((m = refRegex.exec(code)) !== null) {
+          fields.push({ name: m[1], type: m[2], defaultVal: null, label: m[1] });
+        }
       }
     }
   } catch (err) {
@@ -788,6 +801,8 @@ export function executeScriptComponent({
   publicValues = {},
   frame = 0,
   fps = 30,
+  allEntities = [],
+  allAssets = [],
 }) {
   if (!scriptCode) return transform;
  
@@ -813,7 +828,8 @@ export function executeScriptComponent({
       opacity: transform.opacity ?? 1,
     };
  
-    const scriptProps = { ...publicValues };
+    const schema = extractScriptProps(scriptCode);
+    const scriptProps = resolveScriptProps(publicValues, schema, allEntities, allAssets);
  
     // Instantiate class or run object methods
     let instance = null;

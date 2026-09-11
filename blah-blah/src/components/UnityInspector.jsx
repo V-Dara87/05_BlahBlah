@@ -134,7 +134,8 @@ export const UnityInspector = memo(function UnityInspector({
   onSaveAsPrefab,
   currentTime = 0,
   autoKeyEnabled = false,
-  setAutoKeyEnabled
+  setAutoKeyEnabled,
+  mediaAssets = [],
 }) {
   const [openFoldouts, setOpenFoldouts] = useState({
     Transform: true,
@@ -910,6 +911,8 @@ export const UnityInspector = memo(function UnityInspector({
                     selectedEntity={selectedEntity}
                     currentTime={currentTime}
                     onUpdateEntity={onUpdateEntity}
+                    entities={entities}
+                    mediaAssets={mediaAssets}
                   />
                 </div>
               )}

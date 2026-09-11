@@ -319,3 +319,63 @@ export class MotionTweenContext {
   evaluate(localTime: number, baseTransform: Record<string, any>): Record<string, any>;
 }
 
+// ─── Reference Types ─────────────────────────────────────────────────────────
+
+export interface EntityRefTransform {
+  x: number;
+  y: number;
+  rotation: number;
+  scaleX: number;
+  scaleY: number;
+  opacity: number;
+  speed: number;
+}
+
+/**
+ * A reference to another clip/entity on the BlahBlah timeline.
+ * Obtained when a script prop is declared with `type: 'entity'`.
+ */
+export interface EntityRef {
+  /** The entity's unique ID string. */
+  readonly id: string | null;
+  /** The entity's display name on the timeline. */
+  readonly name: string | null;
+  /** Seconds at which the clip starts on the timeline. */
+  readonly startTime: number;
+  /** Duration of the clip in seconds. */
+  readonly duration: number;
+  /** Parent entity ID, or null. */
+  readonly parentId: string | null;
+  /** Returns true when the referenced entity exists in the current project. */
+  exists(): boolean;
+  /**
+   * Returns the entity's raw local Transform values.
+   * @returns {EntityRefTransform | null}
+   */
+  getTransform(): EntityRefTransform | null;
+  /**
+   * Returns the first component of the given type attached to the entity, or null.
+   * Common types: 'VideoRenderer', 'AudioSource', 'TextRenderer', 'ShapeRenderer'
+   */
+  getComponent(type: string): Record<string, any> | null;
+}
+
+/**
+ * A reference to a media asset (video, audio, or image) in the BlahBlah project.
+ * Obtained when a script prop is declared with `type: 'asset'`.
+ */
+export interface AssetRef {
+  /** The asset's unique ID string. */
+  readonly id: string | null;
+  /** The filename / display name of the asset. */
+  readonly name: string | null;
+  /** URL or path to the actual media file. */
+  readonly src: string | null;
+  /** Media type: 'video', 'audio', or 'image'. */
+  readonly type: 'video' | 'audio' | 'image' | null;
+  /** Duration in seconds (video/audio), or null for images. */
+  readonly duration: number | null;
+  /** Returns true when the asset exists in the current project. */
+  exists(): boolean;
+}
+

@@ -2,6 +2,7 @@ import { DragNumber } from '../DragNumber';
 import { trackKeyFor, getFieldKeyframes, setKeyframe, removeKeyframe, setKeyframeEasing, setKeyframeCurve, CURVE_PRESETS } from '../../engine/keyframes';
 import { EasingTrigger } from '../EasingPicker';
 import { Easing } from '../../engine/motionTween';
+import { EntityRefSlot, AssetRefSlot } from './RefSlot';
 
 /**
  * P0 #3 — Unified Inspector field rendering.
@@ -21,7 +22,7 @@ import { Easing } from '../../engine/motionTween';
  * type (ReactRenderer / ScriptComponent / CanvasRenderer — all now the
  * single ScriptComponent type).
  */
-export function InspectorField({ field, value, onChange, trackKey, fieldName, selectedEntity, currentTime, onUpdateEntity }) {
+export function InspectorField({ field, value, onChange, trackKey, fieldName, selectedEntity, currentTime, onUpdateEntity, entities = [], mediaAssets = [] }) {
   const currentVal = value !== undefined ? value : field.defaultVal;
 
   // Keyframe handling
@@ -56,6 +57,23 @@ export function InspectorField({ field, value, onChange, trackKey, fieldName, se
 
   const fieldInput = (() => {
     switch (field.type) {
+      case 'entity':
+        // Reference types are never keyframed — the slot IS the full control.
+        return (
+          <EntityRefSlot
+            value={currentVal || null}
+            onChange={onChange}
+            entities={entities}
+          />
+        );
+      case 'asset':
+        return (
+          <AssetRefSlot
+            value={currentVal || null}
+            onChange={onChange}
+            mediaAssets={mediaAssets}
+          />
+        );
       case 'number':
         return (
           <DragNumber
@@ -193,7 +211,7 @@ export function InspectorField({ field, value, onChange, trackKey, fieldName, se
  * track to fill inside the outer .inspector-row it was accidentally
  * nested in.
  */
-export function InspectorFieldList({ fields, values, onFieldChange, emptyHint, bare = false, trackKey, selectedEntity, currentTime, onUpdateEntity }) {
+export function InspectorFieldList({ fields, values, onFieldChange, emptyHint, bare = false, trackKey, selectedEntity, currentTime, onUpdateEntity, entities = [], mediaAssets = [] }) {
   if (!fields || fields.length === 0) {
     return emptyHint ? <p className="hint-text-sm">{emptyHint}</p> : null;
   }
@@ -210,6 +228,8 @@ export function InspectorFieldList({ fields, values, onFieldChange, emptyHint, b
         selectedEntity={selectedEntity}
         currentTime={currentTime}
         onUpdateEntity={onUpdateEntity}
+        entities={entities}
+        mediaAssets={mediaAssets}
       />
     ));
   }
@@ -226,6 +246,8 @@ export function InspectorFieldList({ fields, values, onFieldChange, emptyHint, b
         selectedEntity={selectedEntity}
         currentTime={currentTime}
         onUpdateEntity={onUpdateEntity}
+        entities={entities}
+        mediaAssets={mediaAssets}
       />
     </div>
   ));

@@ -2,7 +2,7 @@ import { useRef, useMemo, memo, useState } from 'react';
 import { Film, Music, Type, Square, FileCode, Link2, X } from 'lucide-react';
 import { WaveformCanvas } from '../WaveformCanvas';
 import { isScriptComponent } from '../../engine/ecs';
-import { dragHasItemKind, ITEM_KIND_SCRIPT } from '../../utils/dragData';
+import { dragHasItemKind, ITEM_KIND_SCRIPT, setDragPayload, ITEM_KIND_ENTITY } from '../../utils/dragData';
 
 /** Return true if candidateChild is a descendant of ancestorId (cycle guard). */
 function isDescendantOf(candidateChildId, ancestorId, allClips) {
@@ -650,15 +650,25 @@ export const ClipItem = memo(function ClipItem({
         )}
 
         <div className="clip-top-row">
-          {hasVideo ? (
-            <Film size={12} className="type-icon" />
-          ) : hasAudio ? (
-            <Music size={12} className="type-icon" />
-          ) : hasText ? (
-            <Type size={12} className="type-icon" />
-          ) : (
-            <Square size={12} className="type-icon" />
-          )}
+          <span
+            draggable
+            onDragStart={(e) => {
+              e.stopPropagation();
+              setDragPayload(e.dataTransfer, ITEM_KIND_ENTITY, { id: clip.id, name: clip.name });
+            }}
+            style={{ display: 'inline-flex', cursor: 'grab' }}
+            title="Drag to reference in Inspector"
+          >
+            {hasVideo ? (
+              <Film size={12} className="type-icon" />
+            ) : hasAudio ? (
+              <Music size={12} className="type-icon" />
+            ) : hasText ? (
+              <Type size={12} className="type-icon" />
+            ) : (
+              <Square size={12} className="type-icon" />
+            )}
+          </span>
           <span className="clip-title-text">{clip.name}</span>
 
           {/* Pickwhip Drag-to-Parent Handle */}

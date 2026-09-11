@@ -12,7 +12,8 @@ import {
   Layers
 } from 'lucide-react';
 import { formatSimpleTime } from '../utils/timeFormat';
-import { getCompiledReactComponent, detectScriptKind } from '../engine/scriptRunner';
+import { getCompiledReactComponent, detectScriptKind, extractScriptProps } from '../engine/scriptRunner';
+import { resolveScriptProps } from '../engine/referenceTypes';
 import { updateCanvasComponent, unmountCanvasComponent, pruneCanvasComponents } from '../engine/canvasRunner';
 import { isScriptComponent } from '../engine/ecs';
 import { computeActiveEntitiesAtTime } from '../engine/renderPipeline';
@@ -66,6 +67,8 @@ export function EntityRenderer({
   // computeActiveEntitiesAtTime, so motion-script `frame`/`fps` args match
   // between preview and export. App.jsx's projectState carries fps: 30.
   fps = 30,
+  // All media assets — used to resolve 'asset'-type reference props in scripts.
+  mediaAssets = [],
 }) {
   const containerRef = useRef(null);
   const viewportBoxRef = useRef(null);
@@ -166,7 +169,7 @@ export function EntityRenderer({
   // memoization is a React-specific concern; the logic inside is the
   // shared pure function.
   const computedEntities = useMemo(() => {
-    return computeActiveEntitiesAtTime({ entities, tracks, scripts, time: currentTime, fps });
+    return computeActiveEntitiesAtTime({ entities, tracks, scripts, time: currentTime, fps, allAssets: mediaAssets });
     // NOTE -- clip-duration vs. tween-duration boundary: a non-looping
     // tween correctly clamps to 1 and settles once localTime passes the
     // tween's own duration, but the active-entity check only knows about
@@ -175,7 +178,7 @@ export function EntityRenderer({
     // instead of landing on its final frame — documented authoring trap,
     // intentionally not "fixed" here.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scriptsRecompiledTick intentionally re-runs the memo when the module-level compile cache warms (the bundler fills it asynchronously, outside React state).
-  }, [entities, tracks, scripts, currentTime, fps, scriptsRecompiledTick]);
+  }, [entities, tracks, scripts, currentTime, fps, scriptsRecompiledTick, mediaAssets]);
  
   // Track-order -> stacking order. Previously every overlay entity got the
   // same flat zIndex (15, or 30 if selected) regardless of which track it
@@ -391,6 +394,8 @@ export function EntityRenderer({
           frame: Math.round(localTime * fps),
           fps,
           props: comp.props || {},
+          allEntities: entities,
+          allAssets: mediaAssets,
           duration: entity.duration ?? 5,
           startTime: entity.startTime ?? 0,
           // Project's real output resolution — the default a canvas
@@ -403,7 +408,7 @@ export function EntityRenderer({
     });
  
     pruneCanvasComponents(activeMountKeys);
-  }, [computedEntities, scripts, currentTime, fps, resolution?.width, resolution?.height]);
+  }, [computedEntities, scripts, currentTime, fps, resolution?.width, resolution?.height, entities, mediaAssets]);
  
   // Clean up canvas and media elements when the whole EntityRenderer unmounts.
   useEffect(() => {
@@ -706,10 +711,13 @@ export function EntityRenderer({
               const CompiledComponent = getCompiledReactComponent(scriptDef.code);
               if (!CompiledComponent) continue;
               const localTime = currentTime - entity.startTime;
+              // Resolve entity/asset reference props before rendering
+              const schema = extractScriptProps(scriptDef.code);
+              const resolvedProps = resolveScriptProps(comp.props || {}, schema, entities, mediaAssets);
               ReactComponentNodes.push(
                 <CompiledComponent
                   key={comp.scriptId}
-                  {...(comp.props || {})}
+                  {...resolvedProps}
                   frame={Math.round(localTime * fps)}
                   time={localTime}
                   duration={entity.duration}

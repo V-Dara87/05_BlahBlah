@@ -14,6 +14,7 @@ export const DRAG_PAYLOAD_MIME = 'application/json';
 export const ITEM_KIND_MEDIA = 'media';
 export const ITEM_KIND_PREFAB = 'prefab';
 export const ITEM_KIND_SCRIPT = 'script';
+export const ITEM_KIND_ENTITY = 'entity';
 
 // Per-kind marker MIME. dragover handlers can only see dataTransfer.types
 // (custom-type payload values are readable on drop only), so the kind goes

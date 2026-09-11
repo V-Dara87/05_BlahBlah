@@ -78,7 +78,7 @@ export function composeTransform2D(parentWorld, childLocal) {
  * scene-active at `time`.
  * Returns { entity: resolvedEntity, localTransform, localTime }.
  */
-function resolveEntityLocal({ entity, scripts, time, fps }) {
+function resolveEntityLocal({ entity, scripts, time, fps, allEntities = [], allAssets = [] }) {
   // GUI keyframing — resolve any Dopesheet keyframes at the current
   // local time BEFORE reading components. resolveKeyframedComponents is
   // a pure function of localTime (same determinism contract as
@@ -130,6 +130,8 @@ function resolveEntityLocal({ entity, scripts, time, fps }) {
         localTime: scriptLocalTime,
         clipDuration: entity.duration,
         publicValues: scriptComp.props || {},
+        allEntities,
+        allAssets,
         frame: Math.round(scriptLocalTime * fps),
         fps,
       });
@@ -160,7 +162,7 @@ function resolveEntityLocal({ entity, scripts, time, fps }) {
  *
  * @param {{ entities: any[], tracks: any[], scripts?: any[], time: number, fps?: number }} args
  */
-export function computeActiveEntitiesAtTime({ entities, tracks, scripts = [], time, fps = 30 }) {
+export function computeActiveEntitiesAtTime({ entities, tracks, scripts = [], time, fps = 30, allAssets = [] }) {
   const entityMap = new Map((entities || []).map((e) => [e.id, e]));
   const trackMap = new Map((tracks || []).map((t) => [t.id, t]));
 
@@ -199,6 +201,8 @@ export function computeActiveEntitiesAtTime({ entities, tracks, scripts = [], ti
         scripts,
         time,
         fps,
+        allEntities: entities,
+        allAssets,
       })
     );
   }

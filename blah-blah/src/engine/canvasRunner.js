@@ -1,5 +1,6 @@
-import { compileScriptModule, getScriptError } from './scriptRunner';
+import { compileScriptModule, getScriptError, extractScriptProps } from './scriptRunner';
 import { CANVAS_LIB_SOURCES } from './ecs';
+import { resolveScriptProps } from './referenceTypes';
  
 /**
  * P0 #2 — canvas-kind script lifecycle runner.
@@ -180,6 +181,8 @@ export function updateCanvasComponent({
   canvasHeight = 0,
   duration = 5,
   startTime = 0,
+  allEntities = [],
+  allAssets = [],
 }) {
   if (!scriptCode || !container) return;
  
@@ -190,8 +193,11 @@ export function updateCanvasComponent({
   if (!compiled) return; // compile error already recorded in scriptRunner's lastErrorCache
  
   const needsRemount = !mounted || mounted.scriptCode !== scriptCode || mounted.container !== container;
+
+  const schema = extractScriptProps(scriptCode);
+  const effProps = resolveScriptProps(props, schema, allEntities, allAssets);
  
-  const { canvasWidth: effWidth, canvasHeight: effHeight } = resolveCanvasSize(props, canvasWidth, canvasHeight);
+  const { canvasWidth: effWidth, canvasHeight: effHeight } = resolveCanvasSize(effProps, canvasWidth, canvasHeight);
 
   // Clip timing metadata for animation convenience
   const effDuration = Number.isFinite(duration) && duration > 0 ? duration : 5;
@@ -235,7 +241,7 @@ export function updateCanvasComponent({
  
     safeCall(instance, 'onMount', {
       container,
-      props,
+      props: effProps,
       libs,
       canvasWidth: effWidth,
       canvasHeight: effHeight,
@@ -267,7 +273,7 @@ export function updateCanvasComponent({
       time: localTime,
       frame,
       fps,
-      props,
+      props: effProps,
       canvasWidth: effWidth,
       canvasHeight: effHeight,
       ...timingArgs,
@@ -281,7 +287,7 @@ export function updateCanvasComponent({
     time: localTime,
     frame,
     fps,
-    props,
+    props: effProps,
     canvasWidth: effWidth,
     canvasHeight: effHeight,
     ...timingArgs,
