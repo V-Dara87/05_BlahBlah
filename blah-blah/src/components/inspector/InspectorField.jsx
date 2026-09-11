@@ -171,8 +171,8 @@ export function InspectorField({ field, value, onChange, trackKey, fieldName, se
     onUpdateEntity(selectedEntity.id, { keyframes });
   };
 
-  // Only show keyframe button if keyframing props are provided
-  if (selectedEntity && trackKey && fieldName) {
+  // Only show keyframe button if keyframing props are provided (exclude reference types)
+  if (selectedEntity && trackKey && fieldName && field.type !== 'entity' && field.type !== 'asset') {
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flex: 1 }}>
         {fieldInput}
