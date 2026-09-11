@@ -20,7 +20,9 @@ import {
   Search,
   FolderOpen,
   Folder,
-  Film
+  Film,
+  Lock,
+  Unlock,
 } from 'lucide-react';
 import { extractScriptProps, getScriptError, detectScriptKind, isScriptBundlePending } from '../engine/scriptRunner';
 import { DragNumber } from './DragNumber';
@@ -136,6 +138,8 @@ export const UnityInspector = memo(function UnityInspector({
   autoKeyEnabled = false,
   setAutoKeyEnabled,
   mediaAssets = [],
+  isLocked = false,
+  onToggleLock,
 }) {
   const [openFoldouts, setOpenFoldouts] = useState({
     Transform: true,
@@ -488,7 +492,20 @@ export const UnityInspector = memo(function UnityInspector({
       {/* GameObject Name & Track */}
       <div className="inspector-header-box">
         <div className="inspector-header-field">
-          <label className="field-label-sm">GameObject Name</label>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '2px' }}>
+            <label className="field-label-sm">GameObject Name</label>
+            {onToggleLock && (
+              <button
+                type="button"
+                className={`inspector-lock-btn${isLocked ? ' locked' : ''}`}
+                onClick={onToggleLock}
+                title={isLocked ? 'Inspector Locked: stays pinned to this entity' : 'Lock Inspector: pin this entity'}
+              >
+                {isLocked ? <Lock size={11} /> : <Unlock size={11} />}
+                <span>{isLocked ? 'Locked' : 'Lock'}</span>
+              </button>
+            )}
+          </div>
           <input
             type="text"
             className="inspector-name-input"

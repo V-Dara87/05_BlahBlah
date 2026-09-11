@@ -95,30 +95,46 @@
   flex-direction: column;
 }
  
-/* Reset-layout affordance, floats top-right above the dock area */
-.dock-reset-btn {
-  position: absolute;
-  top: 4px;
-  right: 8px;
-  z-index: 60;
+
+/* Header action buttons on each dock group header */
+.dock-header-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--unity-text-muted);
-  background: var(--unity-subtle);
-  border: 1px solid var(--unity-border-light);
-  padding: 3px 8px;
-  border-radius: 4px;
-  cursor: pointer;
-  opacity: 0.55;
-  transition: opacity 0.15s, background 0.15s;
+  gap: 2px;
+  padding: 0 4px;
+  height: 100%;
 }
- 
-.dock-reset-btn:hover {
-  opacity: 1;
-  background: var(--unity-hover);
+
+.dock-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: var(--unity-text-dim);
+  cursor: pointer;
+  transition: color 0.12s, background-color 0.12s;
+}
+
+.dock-action-btn:hover {
+  background-color: var(--unity-subtle);
   color: #fff;
+}
+
+.dock-action-btn.dock-close-btn:hover {
+  background-color: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+}
+
+/* Floating panel enhancements */
+.dockview-theme-unity .dv-floating-group {
+  border: 1px solid var(--unity-border-light);
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7);
 }
  

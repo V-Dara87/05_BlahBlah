@@ -4,7 +4,7 @@ import { usePlaybackController } from './hooks/usePlaybackController';
 import { useMediaAssets } from './hooks/useMediaAssets';
 import { useSharedLibrary } from './hooks/useSharedLibrary';
 import { MenuBar } from './components/MenuBar';
-import { FilePlus, FolderOpen, Save, Download, Undo2, Redo2, Scissors, Trash2, Code, MousePointer2, Settings } from 'lucide-react';
+import { FilePlus, FolderOpen, Save, Download, Undo2, Redo2, Scissors, Trash2, Code, MousePointer2, Settings, Sliders, PlaySquare, Clock, Layers, Activity, Copy, ExternalLink, Maximize2, RotateCcw } from 'lucide-react';
 import { ProjectJsonModal } from './components/ProjectJsonModal';
 import { ScriptEditorModal } from './components/ScriptEditorModal';
 import { ExportModal } from './components/ExportModal';
@@ -98,7 +98,80 @@ export function App() {
   // Dockview API ref — set by DockLayout on ready, used by focusDockPanel
   const dockApiRef = useRef(null);
   const setDockApi = useCallback((api) => { dockApiRef.current = api; }, []);
- 
+
+  const resetLayoutRef = useRef(null);
+  const setResetLayout = useCallback((fn) => { resetLayoutRef.current = fn; }, []);
+  const handleResetLayout = useCallback(() => {
+    resetLayoutRef.current?.();
+  }, []);
+
+  const openOrFocusPanel = useCallback((componentName, defaultTitle) => {
+    const api = dockApiRef.current;
+    if (!api) return;
+    const existing = api.panels.find((p) => p.component === componentName);
+    if (existing) {
+      existing.api.setActive();
+    } else {
+      const refPanel = api.panels[0];
+      api.addPanel({
+        id: `${componentName}-${Date.now()}`,
+        component: componentName,
+        title: defaultTitle,
+        position: refPanel ? { direction: 'within', referencePanel: refPanel } : undefined,
+      });
+    }
+  }, []);
+
+  const addNewPanelInstance = useCallback((componentName, defaultTitle) => {
+    const api = dockApiRef.current;
+    if (!api) return;
+    const count = api.panels.filter((p) => p.component === componentName).length;
+    const title = count > 0 ? `${defaultTitle} (${count + 1})` : defaultTitle;
+    const refPanel = api.panels.find((p) => p.component === componentName) || api.panels[0];
+    api.addPanel({
+      id: `${componentName}-${Date.now()}`,
+      component: componentName,
+      title,
+      position: refPanel ? { direction: 'within', referencePanel: refPanel } : undefined,
+    });
+  }, []);
+
+  const popoutActivePanel = useCallback(() => {
+    const api = dockApiRef.current;
+    if (!api) return;
+    const panel = api.activePanel || api.panels[0];
+    if (panel) {
+      api.addPopoutGroup(panel.group);
+    }
+  }, []);
+
+  const floatActivePanel = useCallback(() => {
+    const api = dockApiRef.current;
+    if (!api) return;
+    const panel = api.activePanel || api.panels[0];
+    if (panel) {
+      api.addFloatingGroup(panel.group);
+    }
+  }, []);
+
+  // Global hotkeys for Popout (Alt+P) and Float (Alt+F)
+  useEffect(() => {
+    const handleKey = (e) => {
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || e.target.isContentEditable) {
+        return;
+      }
+      if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'p' || e.key === 'P')) {
+        e.preventDefault();
+        popoutActivePanel();
+      } else if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault();
+        floatActivePanel();
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [popoutActivePanel, floatActivePanel]);
+
   /** Focus an existing dock panel by id, or add it as a new tab next to
    *  the dopesheet if it doesn't exist yet. */
   const focusDockPanel = useCallback((panelId) => {
@@ -106,7 +179,7 @@ export function App() {
     if (!api) return;
     const existing = api.getPanel(panelId);
     if (existing) {
-      api.activePanel = existing;
+      existing.api.setActive();
     } else {
       // Add new tab next to dopesheet (or timeline if dopesheet missing)
       const refPanel = api.getPanel('dopesheet') || api.getPanel('timeline');
@@ -449,11 +522,31 @@ export function App() {
         { label: 'Settings', icon: <Settings size={13} />, onClick: () => setIsSettingsOpen(true) },
       ],
     },
+    {
+      label: 'Window',
+      items: [
+        { label: 'Inspector', icon: <Sliders size={13} />, onClick: () => openOrFocusPanel('inspector', 'Inspector') },
+        { label: 'Game / Preview', icon: <PlaySquare size={13} />, onClick: () => openOrFocusPanel('preview', 'Game') },
+        { label: 'Project', icon: <FolderOpen size={13} />, onClick: () => openOrFocusPanel('project', 'Project') },
+        { label: 'Timeline', icon: <Clock size={13} />, onClick: () => openOrFocusPanel('timeline', 'Timeline') },
+        { label: 'Dopesheet', icon: <Layers size={13} />, onClick: () => openOrFocusPanel('dopesheet', 'Dopesheet') },
+        { label: 'Curves', icon: <Activity size={13} />, onClick: () => openOrFocusPanel('curveEditor', 'Curves') },
+        { type: 'separator' },
+        { label: 'New Inspector Tab', icon: <Copy size={13} />, onClick: () => addNewPanelInstance('inspector', 'Inspector') },
+        { label: 'New Preview Tab', icon: <Copy size={13} />, onClick: () => addNewPanelInstance('preview', 'Game') },
+        { type: 'separator' },
+        { label: 'Popout Active Window', shortcut: 'Alt+P', icon: <ExternalLink size={13} />, onClick: popoutActivePanel },
+        { label: 'Float Active Window', shortcut: 'Alt+F', icon: <Maximize2 size={13} />, onClick: floatActivePanel },
+        { type: 'separator' },
+        { label: 'Reset Layout', icon: <RotateCcw size={13} />, onClick: handleResetLayout },
+      ],
+    },
   ], [
     canUndo, canRedo, undo, redo, selectedEntityId, keybinds,
     handleSplitEntity, handleDeleteEntity, handleOpenProjectFolder,
     handleSaveProjectToDisk,
     projectFolderHandle,
+    openOrFocusPanel, addNewPanelInstance, popoutActivePanel, floatActivePanel, handleResetLayout,
   ]);
  
   // window-controls chrome is environment-dependent but cheap to compute
@@ -656,6 +749,7 @@ export function App() {
           onZoomOut: handleZoomOut,
           exportRange, setExportRange,
           setDockApi,
+          setResetLayout,
           focusDockPanel,
         }}
       >

@@ -1,5 +1,5 @@
  
-import { memo, useRef, useCallback, useMemo } from 'react';
+import { memo, useState, useRef, useCallback, useMemo } from 'react';
 import { ProjectPanel } from '../components/ProjectPanel';
 import { EntityRenderer } from '../components/EntityRenderer';
 import { UnityInspector } from '../components/UnityInspector';
@@ -101,8 +101,30 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
     mediaAssets,
   } = useEditorContext();
 
+  const [isLocked, setIsLocked] = useState(false);
+  const [lockedEntityId, setLockedEntityId] = useState(null);
+
+  // If locked entity was deleted, fall back to unlocked
+  const activeEntityId = (isLocked && lockedEntityId && entities.some(e => e.id === lockedEntityId))
+    ? lockedEntityId
+    : selectedEntityId;
+
+  const handleToggleLock = useCallback(() => {
+    setIsLocked((prev) => {
+      if (!prev) {
+        if (selectedEntityId) {
+          setLockedEntityId(selectedEntityId);
+          return true;
+        }
+        return false;
+      }
+      setLockedEntityId(null);
+      return false;
+    });
+  }, [selectedEntityId]);
+
   const currentTime = useCurrentTime();
-  const selectedEntity = entities.find((e) => e.id === selectedEntityId);
+  const selectedEntity = entities.find((e) => e.id === activeEntityId);
 
   return (
     <div className="dock-panel-root">
@@ -120,6 +142,8 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
         autoKeyEnabled={autoKeyEnabled}
         setAutoKeyEnabled={setAutoKeyEnabled}
         mediaAssets={mediaAssets}
+        isLocked={isLocked}
+        onToggleLock={handleToggleLock}
       />
     </div>
   );

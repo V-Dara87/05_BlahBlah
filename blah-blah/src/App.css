@@ -1252,6 +1252,35 @@
   font-weight: 600;
   color: var(--unity-text-muted);
 }
+
+.inspector-lock-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: transparent;
+  border: 1px solid var(--unity-border-light);
+  border-radius: 3px;
+  color: var(--unity-text-dim);
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 1px 5px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.inspector-lock-btn:hover {
+  background: var(--unity-subtle);
+  color: #fff;
+  border-color: var(--unity-border);
+}
+
+.inspector-lock-btn.locked {
+  background: rgba(56, 189, 248, 0.15);
+  border-color: rgba(56, 189, 248, 0.5);
+  color: #38bdf8;
+}
  
 .inspector-name-input, .inspector-track-select {
   background: var(--unity-dark);

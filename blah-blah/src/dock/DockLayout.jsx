@@ -1,7 +1,7 @@
  
-import { useCallback, useRef, memo } from 'react';
+import { useCallback, useRef, memo, useEffect } from 'react';
 import { DockviewReact } from 'dockview-react';
-import { RotateCcw } from 'lucide-react';
+import { ExternalLink, Layers, Maximize2, Minimize2, X } from 'lucide-react';
 import {
   ProjectDockPanel,
   PreviewDockPanel,
@@ -87,9 +87,83 @@ function buildDefaultLayout(api) {
     title: 'Curves',
     position: { direction: 'within', referencePanel: dopesheetPanel },
   });
-}export const DockLayout = memo(function DockLayout() {
+}const DockHeaderActions = memo(function DockHeaderActions({
+  api,
+  containerApi,
+  group,
+  activePanel,
+  location,
+}) {
+  const isPopout = location?.type === 'popout';
+  const isFloating = location?.type === 'floating';
+
+  const handlePopout = useCallback(() => {
+    containerApi.addPopoutGroup(group);
+  }, [containerApi, group]);
+
+  const handleFloat = useCallback(() => {
+    containerApi.addFloatingGroup(group);
+  }, [containerApi, group]);
+
+  const handleMaximize = useCallback(() => {
+    if (api.isMaximized()) {
+      api.exitMaximized();
+    } else {
+      api.maximize();
+    }
+  }, [api]);
+
+  const handleClose = useCallback(() => {
+    if (activePanel) {
+      activePanel.api.close();
+    } else {
+      api.close();
+    }
+  }, [activePanel, api]);
+
+  return (
+    <div className="dock-header-actions">
+      {!isPopout && (
+        <button
+          className="dock-action-btn"
+          onClick={handlePopout}
+          title="Pop out to separate window (dual monitor)"
+        >
+          <ExternalLink size={12} />
+        </button>
+      )}
+      {!isFloating && !isPopout && (
+        <button
+          className="dock-action-btn"
+          onClick={handleFloat}
+          title="Float panel"
+        >
+          <Layers size={12} />
+        </button>
+      )}
+      {!isPopout && (
+        <button
+          className="dock-action-btn"
+          onClick={handleMaximize}
+          title={api.isMaximized() ? 'Restore panel size' : 'Maximize panel'}
+        >
+          {api.isMaximized() ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+        </button>
+      )}
+      <button
+        className="dock-action-btn dock-close-btn"
+        onClick={handleClose}
+        title="Close tab"
+      >
+        <X size={12} />
+      </button>
+    </div>
+  );
+});
+
+export const DockLayout = memo(function DockLayout() {
   const apiRef = useRef(null);
-  const { setDockApi } = useEditorContext();
+  const { setDockApi, setResetLayout } = useEditorContext();
 
   const persistLayout = useCallback(() => {
     if (!apiRef.current) return;
@@ -139,7 +213,7 @@ function buildDefaultLayout(api) {
     }
  
     api.onDidLayoutChange(() => persistLayout());
-  }, [persistLayout]);
+  }, [persistLayout, setDockApi]);
  
   const handleResetLayout = useCallback(() => {
     if (!apiRef.current) return;
@@ -147,20 +221,28 @@ function buildDefaultLayout(api) {
     apiRef.current.clear();
     buildDefaultLayout(apiRef.current);
   }, []);
+
+  useEffect(() => {
+    setResetLayout?.(handleResetLayout);
+  }, [handleResetLayout, setResetLayout]);
+
+  const getTabContextMenuItems = useCallback(() => [
+    'popout',
+    'float',
+    'maximize',
+    'separator',
+    'close',
+    'closeOthers',
+    'closeAll',
+  ], []);
  
   return (
     <div className="dock-root">
-      <button
-        className="dock-reset-btn"
-        onClick={handleResetLayout}
-        title="Reset panel layout to default"
-      >
-        <RotateCcw size={12} />
-        <span>Reset Layout</span>
-      </button>
       <DockviewReact
         className="dockview-theme-dark dockview-theme-unity"
         components={DOCK_COMPONENTS}
+        rightHeaderActionsComponent={DockHeaderActions}
+        getTabContextMenuItems={getTabContextMenuItems}
         onReady={handleReady}
       />
     </div>
