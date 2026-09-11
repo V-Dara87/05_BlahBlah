@@ -2,9 +2,9 @@
  * Entity Component System (ECS) & Prefab models for blahblah
  * Modern JavaScript & React Component Architecture
  */
-
+ 
 import { CURRENT_SCHEMA_VERSION } from '../types.js';
-
+ 
 // ─── Project schema versioning ───────────────────────────────────────────────
 //
 // project.json carries a top-level `schemaVersion` (see CURRENT_SCHEMA_VERSION
@@ -12,7 +12,7 @@ import { CURRENT_SCHEMA_VERSION } from '../types.js';
 // load-time version gate is a pure, Node-importable function the same way
 // migrateEntities is — projectFileSystem.js can't be imported by the Node
 // test harness because of its Vite `?raw` SDK import.
-
+ 
 /**
  * Schema-level migration placeholder. project.json loads run this AFTER the
  * version gate and BEFORE per-entity component migration, so future
@@ -27,7 +27,7 @@ export function migrateProjectSchema(project, fromVersion, toVersion) {
   void toVersion;
   return project;
 }
-
+ 
 /**
  * A saved project's schemaVersion, or 0 when it has none  (projects saved
  * before schemaVersion was introduced — the 0 → 1 boundary). Non-numeric
@@ -36,7 +36,7 @@ export function migrateProjectSchema(project, fromVersion, toVersion) {
 export function readProjectSchemaVersion(project) {
   return Number.isFinite(project?.schemaVersion) ? project.schemaVersion : 0;
 }
-
+ 
 /**
  * Version gate: warn (without blocking the load) when a project was saved
  * by a NEWER build than this one understands. Returns true when it warned.
@@ -81,7 +81,7 @@ export function createRendererComponent(type, config = {}) {
     ...config,
   };
 }
-
+ 
 export const RENDERER_REGISTRY = {
   TextRenderer: createRendererComponent('TextRenderer', { kind: 'dom', label: 'Text Component' }),
   ShapeRenderer: createRendererComponent('ShapeRenderer', { kind: 'dom', label: 'Shape Component' }),
@@ -89,25 +89,27 @@ export const RENDERER_REGISTRY = {
   AudioSource: createRendererComponent('AudioSource', { kind: 'dom', label: 'Audio Component' }),
   TransitionComponent: createRendererComponent('TransitionComponent', { kind: 'gl', label: 'GL Transition' }),
 };
-
+ 
 export function createTransitionComponent(config = {}) {
   return {
     type: 'TransitionComponent',
-    enabled: true,
+    enabled: config.enabled ?? true,
+    ...config,
     transitionIn: {
       enabled: config.transitionIn?.enabled ?? true,
       preset: config.transitionIn?.preset ?? 'glitchMemories',
       duration: config.transitionIn?.duration ?? 0.8,
+      params: config.transitionIn?.params ?? {},
     },
     transitionOut: {
       enabled: config.transitionOut?.enabled ?? false,
       preset: config.transitionOut?.preset ?? 'crossZoom',
       duration: config.transitionOut?.duration ?? 0.8,
+      params: config.transitionOut?.params ?? {},
     },
-    ...config,
   };
 }
-
+ 
 /**
  * True for any component that drives a script: motion scripts
  * (onStart/onUpdate against a transform), React components (a function
@@ -120,7 +122,7 @@ export function createTransitionComponent(config = {}) {
  */
 export const isScriptComponent = (c) =>
   c?.type === 'ScriptComponent' || c?.type === 'MonoBehaviour';
-
+ 
 /**
  * Migrate a saved project's entities (and prefab component lists) to the
  * unified model: ReactRenderer/CanvasRenderer/MonoBehaviour components
@@ -152,9 +154,9 @@ export function migrateEntities(entities) {
       }
       return c;
     });
-
+ 
     if (!componentsChanged) return entity;
-
+ 
     let keyframes = entity.keyframes;
     if (keyframes && Object.keys(trackKeyMap).length > 0) {
       const next = {};
@@ -166,21 +168,6 @@ export function migrateEntities(entities) {
     return { ...entity, components, keyframes };
   });
 }
- 
-/**
- * Libraries injected into CanvasRenderer scripts as `libs.<Name>`.
- * Loaded lazily (see engine/canvasLibs.js) from CDN globals the first time
- * a CanvasRenderer component actually needs one, so most projects never
- * pay the cost of unused libraries.
- *
- * NOTE: not every library supports seeking to an arbitrary time cleanly
- * (some GSAP/Three.js patterns keep their own internal clock) — verify
- * seek-to-time behavior per library before assuming scrubbing looks correct.
- */
-export const CANVAS_LIB_SOURCES = {
-  THREE: 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js',
-  gsap: 'https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js',
-};
  
 export function createDefaultTransform(overrides = {}) {
   return {
@@ -208,7 +195,7 @@ export function createGameObject({
 }) {
   const hasTransform = components.some(c => c.type === 'Transform');
   const finalComponents = hasTransform ? [...components] : [createDefaultTransform(), ...components];
-
+ 
   return {
     id: `go-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
     name,
@@ -225,9 +212,9 @@ export function createGameObject({
     components: finalComponents,
   };
 }
-
+ 
 // ─── Entity removal helper ──────────────────────────────────────────────────
-
+ 
 /**
  * Return a NEW entity array with the entities whose ids are in `idsToRemove`
  * removed. If any removed entity has children (entities with `parentId` pointing
@@ -247,3 +234,5 @@ export function removeEntitiesByIds(entities, idsToRemove) {
   }
   return (entities || []).filter((e) => !doomed.has(e.id));
 }
+ 
+ 

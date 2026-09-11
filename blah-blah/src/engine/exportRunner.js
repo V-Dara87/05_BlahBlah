@@ -286,6 +286,7 @@ export function drawExportFrame({
               progress: transitionState.progress,
               presetId: transitionState.presetId,
               customGlsl: transitionState.customGlsl,
+              params: transitionState.params,
               width: video.videoWidth || width,
               height: video.videoHeight || height,
             });

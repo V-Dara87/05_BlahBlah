@@ -1,13 +1,16 @@
-import { useState, memo } from 'react';
+import { useState, memo, useMemo } from 'react';
 import { ClipItem } from './ClipItem';
-import { TRACK_HEIGHT } from '../../utils/timelineLayout';
+import { TRACK_HEIGHT, computeClipSubLanes, getTickIntervalSeconds } from '../../utils/timelineLayout';
 import { importMediaFiles } from '../../services/mediaImport';
-
+ 
 /**
  * TrackLane — the time-area half of one timeline track row.
  * Each TrackLane is a full, standard track lane:
  *   - Multiple clips comfortably coexist here.
- *   - Double-clicking empty space adds a clip at the clicked time.
+ *   - Left-click empty space seeks the playhead there (handled by the
+ *     parent Timeline's lane pointer-down, not here) — this lane no
+ *     longer creates or deletes clips via mouse clicks; use the "+C"
+ *     button on the track header, or drag media in, to add clips.
  */
 export const TrackLane = memo(function TrackLane({
   track,
@@ -26,7 +29,6 @@ export const TrackLane = memo(function TrackLane({
   onUpdateClips,
   onDuplicateClips,
   onAttachScriptToEntity,
-  onAddEmptyClip,
   onDropItemOnTrack,
   onAddMediaAsset,
   onSplitVideoAndAudio,
@@ -36,11 +38,23 @@ export const TrackLane = memo(function TrackLane({
 }) {
   const [isDragOver, setIsDragOver] = useState(false);
   const fullClipList = allClips.length > 0 ? allClips : clips;
-
+ 
+  // DaVinci-style compression: clips that overlap in time on this track
+  // split the row height evenly between them (sub-lanes) instead of
+  // drawing on top of one another. A clip with nothing overlapping it
+  // gets laneCount 1 and fills the whole row, same as before.
+  const subLanes = useMemo(() => computeClipSubLanes(clips), [clips]);
+ 
+  // Background grid spacing follows the same zoom-dependent interval as
+  // the ruler's major ticks above it (see getTickIntervalSeconds), so
+  // the lines running through the track lane always line up with the
+  // ruler instead of staying a fixed 40px regardless of zoom.
+  const gridSpacingPx = getTickIntervalSeconds(pixelsPerSecond) * pixelsPerSecond;
+ 
   const spawnFromDrop = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const dropTime = Math.max(0, (e.clientX - rect.left) / pixelsPerSecond);
-
+ 
     const files = e.dataTransfer?.files;
     if (files && files.length > 0 && onAddMediaAsset && onDropItemOnTrack) {
       const fileList = Array.from(files).filter(
@@ -64,7 +78,7 @@ export const TrackLane = memo(function TrackLane({
         return true;
       }
     }
-
+ 
     // In-app drag (Project panel media/prefab/script, shared library).
     try {
       const dataStr = e.dataTransfer.getData('application/json');
@@ -84,18 +98,18 @@ export const TrackLane = memo(function TrackLane({
       return false;
     }
   };
-
+ 
   const handleDragOver = (e) => {
     if (track.locked) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     setIsDragOver(true);
   };
-
+ 
   const handleDragLeave = () => {
     setIsDragOver(false);
   };
-
+ 
   const handleDrop = (e) => {
     if (track.locked) return;
     setIsDragOver(false);
@@ -103,15 +117,7 @@ export const TrackLane = memo(function TrackLane({
     e.stopPropagation();
     spawnFromDrop(e);
   };
-
-  const handleMainLaneDoubleClick = (e) => {
-    if (track.locked) return;
-    if (e.target.closest('.timeline-clip-card')) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const clickTime = Math.max(0, (e.clientX - rect.left) / pixelsPerSecond);
-    if (onAddEmptyClip) onAddEmptyClip(track.id, clickTime);
-  };
-
+ 
   const sharedProps = {
     allClips: fullClipList,
     tracks,
@@ -119,6 +125,7 @@ export const TrackLane = memo(function TrackLane({
     pixelsPerSecond,
     selectedClipId,
     selectedIds,
+    rowHeight,
     onSelectClip,
     onToggleSelect,
     onRangeSelect,
@@ -130,7 +137,7 @@ export const TrackLane = memo(function TrackLane({
     snappingPoints,
     snappingEnabled,
   };
-
+ 
   return (
     <div
       data-track-id={track.id}
@@ -139,20 +146,28 @@ export const TrackLane = memo(function TrackLane({
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      title={track.locked ? `${track.name} is locked` : "Double-click empty track space to add a clip here"}
+      title={track.locked ? `${track.name} is locked` : undefined}
     >
-      <div className="track-grid-pattern" />
-
+      <div className="track-grid-pattern" style={{ backgroundSize: `${gridSpacingPx}px 100%` }} />
+ 
       <div
         className="timeline-lane-main"
-        style={{ height: TRACK_HEIGHT }}
-        onDoubleClick={handleMainLaneDoubleClick}
+        style={{ height: rowHeight }}
       >
-        {clips.map((clip) => (
-          <ClipItem key={clip.id} clip={clip} {...sharedProps} />
-        ))}
+        {clips.map((clip) => {
+          const lane = subLanes.get(clip.id) || { laneIndex: 0, laneCount: 1 };
+          return (
+            <ClipItem
+              key={clip.id}
+              clip={clip}
+              laneIndex={lane.laneIndex}
+              laneCount={lane.laneCount}
+              {...sharedProps}
+            />
+          );
+        })}
       </div>
     </div>
   );
 });
-
+ 

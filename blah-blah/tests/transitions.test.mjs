@@ -17,26 +17,35 @@ test('GL Transitions catalog is properly loaded', () => {
   const glitch = getTransitionPreset('glitchMemories');
   assert.equal(glitch.id, 'glitchMemories');
   assert.ok(glitch.glsl.includes('vec4 transition'));
+  assert.ok(glitch.paramsTypes.intensity, 'GlitchMemories has intensity parameter type');
+  assert.equal(glitch.defaultParams.intensity, 1.0);
 
   const zoom = getTransitionPreset('crossZoom');
   assert.equal(zoom.id, 'crossZoom');
+  assert.equal(zoom.paramsTypes.strength, 'float');
+  assert.equal(zoom.defaultParams.strength, 0.4);
 
   const unknown = getTransitionPreset('doesNotExist');
   assert.ok(unknown, 'Falls back safely to default preset');
 });
 
-test('createTransitionComponent initializes with valid defaults', () => {
+test('createTransitionComponent initializes with valid defaults and params', () => {
   assert.ok(RENDERER_REGISTRY.TransitionComponent, 'TransitionComponent is registered in RENDERER_REGISTRY');
-  const comp = createTransitionComponent();
+  const comp = createTransitionComponent({
+    transitionIn: {
+      params: { intensity: 1.5 },
+    },
+  });
   assert.equal(comp.type, 'TransitionComponent');
   assert.equal(comp.enabled, true);
   assert.equal(comp.transitionIn.enabled, true);
   assert.equal(comp.transitionIn.preset, 'glitchMemories');
   assert.equal(comp.transitionIn.duration, 0.8);
+  assert.equal(comp.transitionIn.params.intensity, 1.5);
   assert.equal(comp.transitionOut.enabled, false);
 });
 
-test('computeActiveEntitiesAtTime resolves transitionState during transition window', () => {
+test('computeActiveEntitiesAtTime resolves transitionState and custom params during transition window', () => {
   const tracks = [{ id: 'track-1', visible: true, locked: false }];
   const entity = {
     id: 'e1',
@@ -47,30 +56,42 @@ test('computeActiveEntitiesAtTime resolves transitionState during transition win
     components: [
       { type: 'Transform', x: 0, y: 0, scaleX: 1, scaleY: 1, opacity: 1 },
       createTransitionComponent({
-        transitionIn: { enabled: true, preset: 'glitchMemories', duration: 1.0 },
-        transitionOut: { enabled: true, preset: 'crossZoom', duration: 1.0 },
+        transitionIn: {
+          enabled: true,
+          preset: 'glitchMemories',
+          duration: 1.0,
+          params: { intensity: 2.5 },
+        },
+        transitionOut: {
+          enabled: true,
+          preset: 'crossZoom',
+          duration: 1.0,
+          params: { strength: 0.9 },
+        },
       }),
     ],
   };
 
-  // 1. At t=2.5s (0.5s into clip): transitionIn is active at progress 0.5
+  // 1. At t=2.5s (0.5s into clip): transitionIn is active at progress 0.5 with intensity=2.5
   const midIn = computeActiveEntitiesAtTime({ entities: [entity], tracks, time: 2.5, fps: 30 });
   assert.equal(midIn.length, 1);
   assert.ok(midIn[0].transitionState, 'transitionState should be active');
   assert.equal(midIn[0].transitionState.type, 'in');
   assert.equal(midIn[0].transitionState.presetId, 'glitchMemories');
   assert.ok(Math.abs(midIn[0].transitionState.progress - 0.5) < 0.001);
+  assert.equal(midIn[0].transitionState.params?.intensity, 2.5);
 
   // 2. At t=4.0s (2.0s into clip): middle of clip, no transition
   const midClip = computeActiveEntitiesAtTime({ entities: [entity], tracks, time: 4.0, fps: 30 });
   assert.equal(midClip.length, 1);
   assert.equal(midClip[0].transitionState, null, 'No transition should be active mid-clip');
 
-  // 3. At t=6.5s (4.5s into clip, 0.5s before end at 7.0s): transitionOut is active at progress 0.5
+  // 3. At t=6.5s (4.5s into clip, 0.5s before end at 7.0s): transitionOut is active at progress 0.5 with strength=0.9
   const midOut = computeActiveEntitiesAtTime({ entities: [entity], tracks, time: 6.5, fps: 30 });
   assert.equal(midOut.length, 1);
   assert.ok(midOut[0].transitionState, 'transitionState should be active for out');
   assert.equal(midOut[0].transitionState.type, 'out');
   assert.equal(midOut[0].transitionState.presetId, 'crossZoom');
   assert.ok(Math.abs(midOut[0].transitionState.progress - 0.5) < 0.001);
+  assert.equal(midOut[0].transitionState.params?.strength, 0.9);
 });

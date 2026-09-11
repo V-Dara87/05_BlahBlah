@@ -3,7 +3,7 @@ import { Film, Music, Type, Square, FileCode, Link2, X } from 'lucide-react';
 import { WaveformCanvas } from '../WaveformCanvas';
 import { isScriptComponent } from '../../engine/ecs';
 import { dragHasItemKind, ITEM_KIND_SCRIPT, setDragPayload, ITEM_KIND_ENTITY } from '../../utils/dragData';
-
+ 
 /** Return true if candidateChild is a descendant of ancestorId (cycle guard). */
 function isDescendantOf(candidateChildId, ancestorId, allClips) {
   if (!candidateChildId || !ancestorId || candidateChildId === ancestorId) return false;
@@ -17,7 +17,15 @@ function isDescendantOf(candidateChildId, ancestorId, allClips) {
   }
   return false;
 }
-
+ 
+// Fallback clip card height for the rare case rowHeight isn't known yet
+// (matches the old .timeline-clip-card CSS default). Once a rowHeight is
+// available the card always sizes off of it instead — see availableHeight
+// below — so the card (and its waveform) actually track a resized track,
+// and split evenly into sub-lanes when clips overlap in time.
+const DEFAULT_CLIP_HEIGHT = 54;
+const CLIP_VERTICAL_MARGIN = 10; // 5px top + 5px bottom, matching the CSS `top: 5px` convention
+ 
 export const ClipItem = memo(function ClipItem({
   clip,
   allClips = [],
@@ -28,6 +36,9 @@ export const ClipItem = memo(function ClipItem({
   isSelected,
   selectedIds = [],
   compact = false,
+  rowHeight,
+  laneIndex = 0,
+  laneCount = 1,
   onSelectClip,
   onToggleSelect,
   onRangeSelect,
@@ -42,19 +53,38 @@ export const ClipItem = memo(function ClipItem({
   const isDraggingRef = useRef(false);
   const draggedMovedRef = useRef(false);
   const [isScriptDragOver, setIsScriptDragOver] = useState(false);
-
+ 
   const leftPx = clip.startTime * pixelsPerSecond;
   const widthPx = Math.max(16, clip.duration * pixelsPerSecond);
-
+ 
+  // Full available height for the track row (minus the standard top/bottom
+  // margin), before any sub-lane splitting. Tracks the track's own
+  // rowHeight once it's been resized taller than the standard row — a
+  // track left at default height keeps the original fixed CSS height, so
+  // nothing shifts for projects that never touch the resize handle.
+  const availableHeight = rowHeight ? Math.max(24, rowHeight - CLIP_VERTICAL_MARGIN) : DEFAULT_CLIP_HEIGHT;
+ 
+  // DaVinci-style compression: when this clip overlaps others in time,
+  // laneCount > 1 and the row is split evenly between the concurrent
+  // clips (half/half for 2 overlapping, thirds for 3, etc.) — each clip
+  // gets its own sub-lane instead of stacking fully on top of one
+  // another. A clip with nothing overlapping (laneCount 1) fills the
+  // whole row exactly as before, so plain single-clip tracks are
+  // unaffected.
+  const safeLaneCount = Math.max(1, laneCount);
+  const safeLaneIndex = Math.min(Math.max(0, laneIndex), safeLaneCount - 1);
+  const cardHeight = Math.max(16, availableHeight / safeLaneCount);
+  const cardTop = CLIP_VERTICAL_MARGIN / 2 + safeLaneIndex * cardHeight;
+ 
   // Detect components
   const hasScript = clip.components?.some((c) => isScriptComponent(c) && c.enabled !== false);
   const hasText = clip.components?.some((c) => c.type === 'TextRenderer');
   const hasShape = clip.components?.some((c) => c.type === 'ShapeRenderer');
   const hasVideo = clip.components?.some((c) => c.type === 'VideoRenderer') || clip.type === 'video';
   const hasAudio = clip.components?.some((c) => c.type === 'AudioSource') || clip.type === 'audio';
-
+ 
   const clipCategory = hasVideo ? 'video' : hasAudio ? 'audio' : hasText ? 'text' : hasShape ? 'shape' : 'prefab';
-
+ 
   const getSnappedTime = (rawTime) => {
     if (!snappingEnabled || snappingPoints.length === 0) return rawTime;
     const snapThresholdSec = 10 / pixelsPerSecond;
@@ -65,26 +95,26 @@ export const ClipItem = memo(function ClipItem({
     }
     return rawTime;
   };
-
+ 
   const isSelectedMulti = selectedIds.includes(clip.id);
   const isSelectedCard = isSelected !== undefined ? isSelected : selectedClipId === clip.id;
   const [isPickwhipActive, setIsPickwhipActive] = useState(false);
-
+ 
   // Active selection set across timeline
   const activeSelectedSet = useMemo(() => {
     const s = new Set(selectedIds);
     if (selectedClipId) s.add(selectedClipId);
     return s;
   }, [selectedIds, selectedClipId]);
-
+ 
   // Is this clip a child of an active selected clip?
   const isChildOfSelected = clip.parentId ? activeSelectedSet.has(clip.parentId) : false;
-
+ 
   // Is this clip a parent of an active selected clip?
   const isParentOfSelected = useMemo(() => {
     return allClips.some((c) => activeSelectedSet.has(c.id) && c.parentId === clip.id);
   }, [allClips, activeSelectedSet, clip.id]);
-
+ 
   // Ancestry chain for breadcrumb
   const ancestryChain = useMemo(() => {
     const chain = [];
@@ -100,32 +130,32 @@ export const ClipItem = memo(function ClipItem({
     }
     return chain;
   }, [clip, allClips]);
-
+ 
   const directParent = ancestryChain.length > 0 ? ancestryChain[ancestryChain.length - 1] : null;
-
+ 
   const handlePickwhipPointerDown = (e) => {
     if (isLocked) return;
     e.stopPropagation();
     e.preventDefault();
     setIsPickwhipActive(true);
-
+ 
     let currentTargetEl = null;
-
+ 
     // Create a floating badge following cursor
     const badge = document.createElement('div');
     badge.className = 'pickwhip-drag-ghost';
     badge.textContent = `🔗 Link "${clip.name}" to...`;
     document.body.appendChild(badge);
-
+ 
     const updateBadgePos = (ev) => {
       badge.style.left = `${ev.clientX + 14}px`;
       badge.style.top = `${ev.clientY + 14}px`;
     };
     updateBadgePos(e);
-
+ 
     const handlePointerMove = (moveEv) => {
       updateBadgePos(moveEv);
-
+ 
       const els = document.elementsFromPoint(moveEv.clientX, moveEv.clientY);
       let foundCard = null;
       for (const el of els) {
@@ -135,12 +165,12 @@ export const ClipItem = memo(function ClipItem({
           break;
         }
       }
-
+ 
       if (currentTargetEl && currentTargetEl !== foundCard) {
         currentTargetEl.classList.remove('link-drop-target');
         currentTargetEl = null;
       }
-
+ 
       if (foundCard) {
         const targetId = foundCard.getAttribute('data-clip-id');
         const isCycle = isDescendantOf(targetId, clip.id, allClips);
@@ -159,7 +189,7 @@ export const ClipItem = memo(function ClipItem({
         badge.classList.remove('valid');
       }
     };
-
+ 
     const handlePointerUp = () => {
       setIsPickwhipActive(false);
       badge.remove();
@@ -173,15 +203,15 @@ export const ClipItem = memo(function ClipItem({
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
-
+ 
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
   };
-
+ 
   const handleBodyPointerDown = (e) => {
     if (e.button !== 0) return;
     e.stopPropagation();
-
+ 
     // Multi-select modifiers
     if (e.shiftKey && onRangeSelect) {
       onRangeSelect(clip.id);
@@ -191,7 +221,7 @@ export const ClipItem = memo(function ClipItem({
       onToggleSelect(clip.id);
       return;
     }
-
+ 
     // ── Alt/Option + drag = duplicate ─────────────────────────────────────
     // The copy is created immediately and parked exactly on top of the
     // original, then dragged like a normal move. On release without an
@@ -212,25 +242,25 @@ export const ClipItem = memo(function ClipItem({
         onUpdateClips(parkUpdates);
       }
     }
-
+ 
     // If this clip is part of a multi-selection, keep the multi-selection
     // active (alt-drag always starts from just the pointer-down clip).
     if (!isAltDuplicate && !isSelectedMulti) {
       onSelectClip(clip.id);
     }
-
+ 
     if (isLocked) return;
-
+ 
     isDraggingRef.current = true;
     draggedMovedRef.current = false;
     const startX = e.clientX;
     const origStartTime = clip.startTime;
-
+ 
     // Determine which clips to move: the current selection (or the freshly
     // created copies on alt-drag).
     const allSelectedIds = new Set(isAltDuplicate ? dupIds : (isSelectedMulti ? selectedIds : [clip.id]));
     const moveIds = new Set(allSelectedIds);
-
+ 
     // Expand moveIds to include all recursive children so children move together with their parent
     let expanded = true;
     while (expanded) {
@@ -242,7 +272,7 @@ export const ClipItem = memo(function ClipItem({
         }
       }
     }
-
+ 
     // Snapshot original positions and track indices of all clips being moved
     const moveOriginals = allClips
       .filter((c) => moveIds.has(c.id))
@@ -253,19 +283,19 @@ export const ClipItem = memo(function ClipItem({
         trackIdx: tracks.findIndex((t) => t.id === c.trackId),
         duration: c.duration,
       }));
-
+ 
     const minStartTime = Math.min(...moveOriginals.map((mo) => mo.origStartTime));
     const origTrackIdx = tracks.findIndex((t) => t.id === clip.trackId);
-
+ 
     const handlePointerMove = (moveEvent) => {
       if (!isDraggingRef.current) return;
       const deltaPx = moveEvent.clientX - startX;
       const deltaTime = deltaPx / pixelsPerSecond;
-
+ 
       if (Math.abs(deltaPx) > 4 || Math.abs(moveEvent.clientY - e.clientY) > 4) {
         draggedMovedRef.current = true;
       }
-
+ 
       // Auto-scroll when dragging near timeline edges
       const scrollEl = document.querySelector('.lanes-wrapper');
       if (scrollEl) {
@@ -278,20 +308,20 @@ export const ClipItem = memo(function ClipItem({
           scrollEl.scrollLeft += scrollSpeed;
         }
       }
-
+ 
       // Clamp deltaTime so NO clip goes below 0
       const clampedDeltaTime = Math.max(-minStartTime, deltaTime);
       let rawNewStart = origStartTime + clampedDeltaTime;
-
+ 
       let finalNewStart = getSnappedTime(rawNewStart);
       const rightEdge = rawNewStart + clip.duration;
       const snappedRight = getSnappedTime(rightEdge);
       if (snappedRight !== rightEdge) {
         finalNewStart = Math.max(0, snappedRight - clip.duration);
       }
-
+ 
       const timeDelta = Math.max(-minStartTime, finalNewStart - origStartTime);
-
+ 
       // Check vertical position to detect target track
       const elementsUnderPointer = document.elementsFromPoint(moveEvent.clientX, moveEvent.clientY);
       let targetTrackIdx = origTrackIdx;
@@ -306,14 +336,14 @@ export const ClipItem = memo(function ClipItem({
           break;
         }
       }
-
+ 
       const trackDelta = (targetTrackIdx >= 0 && origTrackIdx >= 0) ? (targetTrackIdx - origTrackIdx) : 0;
       // Verify all clips stay within valid tracks and don't land on locked tracks
       const canShiftTracks = moveOriginals.every((mo) => {
         const newIdx = mo.trackIdx + trackDelta;
         return newIdx >= 0 && newIdx < tracks.length && !tracks[newIdx]?.locked;
       });
-
+ 
       // Prepare batch updates for all moving clips
       const batchUpdates = moveOriginals.map((mo) => {
         const newStart = Math.max(0, mo.origStartTime + timeDelta);
@@ -325,18 +355,18 @@ export const ClipItem = memo(function ClipItem({
           updates: { startTime: newStart, trackId: newTrackId },
         };
       });
-
+ 
       if (onUpdateClips) {
         onUpdateClips(batchUpdates);
       } else {
         batchUpdates.forEach((u) => onUpdateClip(u.id, u.updates));
       }
     };
-
+ 
     const handlePointerUp = () => {
       isDraggingRef.current = false;
       const didDrag = draggedMovedRef.current;
-
+ 
       if (isAltDuplicate) {
         // Cleanup a click-with-Alt that never became a drag: the copies
         // parked on top of the originals are removed again.
@@ -344,24 +374,24 @@ export const ClipItem = memo(function ClipItem({
           dupIds.forEach((id) => onUpdateClip(id, { _delete: true }));
         }
       }
-
+ 
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
-
+ 
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
   };
-
+ 
   const handleLeftTrimPointerDown = (e) => {
     if (isLocked) return;
     e.stopPropagation();
     onSelectClip(clip.id);
-
+ 
     const startX = e.clientX;
     const origStartTime = clip.startTime;
     const origDuration = clip.duration;
-
+ 
     const handlePointerMove = (moveEvent) => {
       // Auto-scroll when trimming near edges
       const scrollEl = document.querySelector('.lanes-wrapper');
@@ -375,16 +405,16 @@ export const ClipItem = memo(function ClipItem({
           scrollEl.scrollLeft += scrollSpeed;
         }
       }
-
+ 
       const deltaPx = moveEvent.clientX - startX;
       const deltaTime = deltaPx / pixelsPerSecond;
-
+ 
       let newStartTime = Math.max(0, origStartTime + deltaTime);
       newStartTime = getSnappedTime(newStartTime);
-
+ 
       const appliedDeltaTime = newStartTime - origStartTime;
       const newDuration = origDuration - appliedDeltaTime;
-
+ 
       if (newDuration >= 0.2) {
         // Adjust mediaOffset for VideoRenderer / AudioSource components
         const updatedComps = clip.components?.map((c) => {
@@ -397,7 +427,7 @@ export const ClipItem = memo(function ClipItem({
           }
           return c;
         });
-
+ 
         onUpdateClip(clip.id, {
           startTime: newStartTime,
           duration: newDuration,
@@ -405,25 +435,25 @@ export const ClipItem = memo(function ClipItem({
         });
       }
     };
-
+ 
     const handlePointerUp = () => {
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
-
+ 
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
   };
-
+ 
   const handleRightTrimPointerDown = (e) => {
     if (isLocked) return;
     e.stopPropagation();
     onSelectClip(clip.id);
-
+ 
     const startX = e.clientX;
     const origDuration = clip.duration;
     const origStartTime = clip.startTime;
-
+ 
     const handlePointerMove = (moveEvent) => {
       // Auto-scroll when trimming near edges
       const scrollEl = document.querySelector('.lanes-wrapper');
@@ -437,38 +467,38 @@ export const ClipItem = memo(function ClipItem({
           scrollEl.scrollLeft += scrollSpeed;
         }
       }
-
+ 
       const deltaPx = moveEvent.clientX - startX;
       const deltaTime = deltaPx / pixelsPerSecond;
       let rawNewDuration = Math.max(0.2, origDuration + deltaTime);
-
+ 
       const targetEnd = origStartTime + rawNewDuration;
       const snappedEnd = getSnappedTime(targetEnd);
       if (snappedEnd !== targetEnd) {
         rawNewDuration = Math.max(0.2, snappedEnd - origStartTime);
       }
-
+ 
       onUpdateClip(clip.id, { duration: rawNewDuration });
     };
-
+ 
     const handlePointerUp = () => {
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
-
+ 
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
   };
-
+ 
   // Extract audio URL for waveform display (AudioSource or VideoRenderer src)
   const audioUrl = useMemo(() => {
     if (clip.src) return clip.src;
     const audioComp = clip.components?.find((c) => c.type === 'AudioSource' || c.type === 'VideoRenderer');
     return audioComp?.src || null;
   }, [clip.src, clip.components]);
-
+ 
   const showWaveform = hasAudio && audioUrl && widthPx > 30; // only audio clips get waveforms
-
+ 
   // ── Script assignment drag & drop (Project panel script → this clip) ────
   const handleScriptDragOver = (e) => {
     if (isLocked || !onAttachScriptToEntity) return;
@@ -478,7 +508,7 @@ export const ClipItem = memo(function ClipItem({
     e.dataTransfer.dropEffect = 'copy';
     if (!isScriptDragOver) setIsScriptDragOver(true);
   };
-
+ 
   const handleScriptDrop = (e) => {
     if (isLocked || !onAttachScriptToEntity) return;
     const dataStr = e.dataTransfer?.getData('application/json');
@@ -496,26 +526,26 @@ export const ClipItem = memo(function ClipItem({
     onAttachScriptToEntity(clip.id, data.itemData.id);
     if (onSelectClip) onSelectClip(clip.id);
   };
-
+ 
   const handleContextMenu = (e) => {
     e.preventDefault();
     e.stopPropagation();
-
+ 
     // Ensure this clip is selected
     if (!isSelectedCard && !isSelectedMulti) {
       onSelectClip(clip.id);
     }
-
+ 
     const existing = document.querySelector('.clip-context-menu');
     if (existing) existing.remove();
-
+ 
     const menu = document.createElement('div');
     menu.className = 'clip-context-menu';
     menu.style.left = `${e.clientX}px`;
     menu.style.top = `${e.clientY}px`;
-
+ 
     const activeTargetIds = isSelectedMulti ? selectedIds : [clip.id];
-
+ 
     // Duplicate button
     if (onDuplicateClips && !isLocked) {
       const dupBtn = document.createElement('button');
@@ -528,7 +558,7 @@ export const ClipItem = memo(function ClipItem({
       };
       menu.appendChild(dupBtn);
     }
-
+ 
     if (!isLocked) {
       // Split Video & Audio option (for video clips that don't already have an audio child)
       const isVideo = clip.type === 'video' || clip.components?.some((c) => c.type === 'VideoRenderer');
@@ -545,7 +575,7 @@ export const ClipItem = memo(function ClipItem({
         };
         menu.appendChild(splitAudioBtn);
       }
-
+ 
       // Unlink Parent button if clip currently has a parent
       if (clip.parentId) {
         const unlinkBtn = document.createElement('button');
@@ -557,7 +587,7 @@ export const ClipItem = memo(function ClipItem({
         };
         menu.appendChild(unlinkBtn);
       }
-
+ 
       // Quick-link options for up to 6 eligible candidate clips
       const eligibleParents = allClips.filter(
         (c) => c.id !== clip.id && c.id !== clip.parentId && !isDescendantOf(c.id, clip.id, allClips)
@@ -574,19 +604,8 @@ export const ClipItem = memo(function ClipItem({
           menu.appendChild(parentBtn);
         });
       }
-
-      const deleteBtn = document.createElement('button');
-      deleteBtn.textContent = '🗑 Delete';
-      deleteBtn.className = 'ctx-menu-item danger';
-      deleteBtn.onclick = () => {
-        onSelectClip(null);
-        // Delete the selected clips (the _delete store path).
-        activeTargetIds.forEach((id) => onUpdateClip(id, { _delete: true }));
-        menu.remove();
-      };
-      menu.appendChild(deleteBtn);
     }
-
+ 
     document.body.appendChild(menu);
     const closeMenu = (ev) => {
       if (!menu.contains(ev.target)) {
@@ -607,14 +626,16 @@ export const ClipItem = memo(function ClipItem({
       document.addEventListener('keydown', onKey);
     });
   };
-
+ 
   return (
     <div
       data-clip-id={clip.id}
       className={`timeline-clip-card ${clipCategory} ${isSelectedCard || isSelectedMulti ? 'selected' : ''} ${isChildOfSelected ? 'is-linked-child' : ''} ${isParentOfSelected ? 'is-linked-parent' : ''} ${clip.parentId ? 'is-child' : ''} ${isLocked ? 'is-locked' : ''} ${compact ? 'compact' : ''} ${isScriptDragOver ? 'script-drop-target' : ''}`}
       style={{
         left: `${leftPx}px`,
+        top: `${cardTop}px`,
         width: `${widthPx}px`,
+        height: `${cardHeight}px`,
       }}
       onPointerDown={handleBodyPointerDown}
       onContextMenu={handleContextMenu}
@@ -631,7 +652,7 @@ export const ClipItem = memo(function ClipItem({
           title="Trim Left (In-Point)"
         />
       )}
-
+ 
       {/* Clip Content */}
       <div className="clip-content-box">
         {/* Waveform overlay for audio/video clips */}
@@ -640,15 +661,13 @@ export const ClipItem = memo(function ClipItem({
             <WaveformCanvas
               url={audioUrl}
               width={widthPx - 8}
-              height={48}
-              color={hasAudio ? 'rgba(139, 92, 246, 0.5)' : 'rgba(56, 189, 248, 0.35)'}
-              barWidth={2}
-              barGap={1}
+              height={cardHeight - 6}
+              color={hasAudio ? 'rgba(139, 92, 246, 0.55)' : 'rgba(56, 189, 248, 0.4)'}
               mirror
             />
           </div>
         )}
-
+ 
         <div className="clip-top-row">
           <span
             draggable
@@ -670,7 +689,7 @@ export const ClipItem = memo(function ClipItem({
             )}
           </span>
           <span className="clip-title-text">{clip.name}</span>
-
+ 
           {/* Pickwhip Drag-to-Parent Handle */}
           {!isLocked && (
             <button
@@ -682,7 +701,7 @@ export const ClipItem = memo(function ClipItem({
               <Link2 size={10} />
             </button>
           )}
-
+ 
           {/* Linked Parent Badge */}
           {directParent && (
             <span
@@ -714,17 +733,17 @@ export const ClipItem = memo(function ClipItem({
               )}
             </span>
           )}
-
+ 
           {hasScript && (
             <span className="script-tag" title="Attached script">
               <FileCode size={9} /> Script
             </span>
           )}
         </div>
-
+ 
         <span className="clip-time-text">{clip.duration.toFixed(1)}s</span>
       </div>
-
+ 
       {/* Right Trim Handle */}
       {!isLocked && (
         <div
@@ -736,3 +755,5 @@ export const ClipItem = memo(function ClipItem({
     </div>
   );
 });
+ 
+ 

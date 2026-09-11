@@ -98,13 +98,13 @@ export function App() {
   // Dockview API ref — set by DockLayout on ready, used by focusDockPanel
   const dockApiRef = useRef(null);
   const setDockApi = useCallback((api) => { dockApiRef.current = api; }, []);
-
+ 
   const resetLayoutRef = useRef(null);
   const setResetLayout = useCallback((fn) => { resetLayoutRef.current = fn; }, []);
   const handleResetLayout = useCallback(() => {
     resetLayoutRef.current?.();
   }, []);
-
+ 
   const openOrFocusPanel = useCallback((componentName, defaultTitle) => {
     const api = dockApiRef.current;
     if (!api) return;
@@ -121,7 +121,7 @@ export function App() {
       });
     }
   }, []);
-
+ 
   const addNewPanelInstance = useCallback((componentName, defaultTitle) => {
     const api = dockApiRef.current;
     if (!api) return;
@@ -135,7 +135,7 @@ export function App() {
       position: refPanel ? { direction: 'within', referencePanel: refPanel } : undefined,
     });
   }, []);
-
+ 
   const popoutActivePanel = useCallback(() => {
     const api = dockApiRef.current;
     if (!api) return;
@@ -144,7 +144,7 @@ export function App() {
       api.addPopoutGroup(panel.group);
     }
   }, []);
-
+ 
   const floatActivePanel = useCallback(() => {
     const api = dockApiRef.current;
     if (!api) return;
@@ -153,7 +153,7 @@ export function App() {
       api.addFloatingGroup(panel.group);
     }
   }, []);
-
+ 
   // Global hotkeys for Popout (Alt+P) and Float (Alt+F)
   useEffect(() => {
     const handleKey = (e) => {
@@ -171,7 +171,7 @@ export function App() {
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
   }, [popoutActivePanel, floatActivePanel]);
-
+ 
   /** Focus an existing dock panel by id, or add it as a new tab next to
    *  the dopesheet if it doesn't exist yet. */
   const focusDockPanel = useCallback((panelId) => {
@@ -199,7 +199,7 @@ export function App() {
   };
  
   const handleZoomOut = () => {
-    setPixelsPerSecond(prev => Math.max(prev - 15, 15));
+    setPixelsPerSecond(prev => Math.max(prev - 15, 4));
   };
  
   // Project Folder Handle & Disk Save State
@@ -807,5 +807,6 @@ export function App() {
 }
  
 export default App;
+ 
  
  

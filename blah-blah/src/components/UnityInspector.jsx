@@ -161,6 +161,7 @@ export const UnityInspector = memo(function UnityInspector({
   const [showPickerModal, setShowPickerModal] = useState(false);
   const [pickerSlot, setPickerSlot] = useState('in');
   const [pickerCallback, setPickerCallback] = useState(null);
+  const [pickerInitialParams, setPickerInitialParams] = useState(null);
 
   const eligibleParentEntities = useMemo(() => {
     if (!entities || !selectedEntity) return [];
@@ -871,9 +872,10 @@ export const UnityInspector = memo(function UnityInspector({
                 component={transitionComp}
                 onChange={(updates) => updateComponent('TransitionComponent', updates)}
                 onRemove={() => removeComponent('TransitionComponent')}
-                onOpenPicker={(slot, onApply) => {
+                onOpenPicker={(slot, onApply, currentParams) => {
                   setPickerSlot(slot);
                   setPickerCallback(() => onApply);
+                  setPickerInitialParams(currentParams);
                   setShowPickerModal(true);
                 }}
               />
@@ -1122,17 +1124,18 @@ export const UnityInspector = memo(function UnityInspector({
         onClose={() => setShowPickerModal(false)}
         targetSlot={pickerSlot}
         currentPresetId={pickerSlot === 'out' ? transitionComp?.transitionOut?.preset : transitionComp?.transitionIn?.preset}
-        onApplyPreset={(presetId, slot) => {
+        initialParams={pickerInitialParams || (pickerSlot === 'out' ? transitionComp?.transitionOut?.params : transitionComp?.transitionIn?.params)}
+        onApplyPreset={(presetId, slot, params) => {
           if (pickerCallback) {
-            pickerCallback(presetId);
+            pickerCallback(presetId, params);
           } else if (transitionComp) {
             if (slot === 'out') {
               updateComponent('TransitionComponent', {
-                transitionOut: { ...transitionComp.transitionOut, preset: presetId, enabled: true },
+                transitionOut: { ...transitionComp.transitionOut, preset: presetId, params, enabled: true },
               });
             } else {
               updateComponent('TransitionComponent', {
-                transitionIn: { ...transitionComp.transitionIn, preset: presetId, enabled: true },
+                transitionIn: { ...transitionComp.transitionIn, preset: presetId, params, enabled: true },
               });
             }
           }

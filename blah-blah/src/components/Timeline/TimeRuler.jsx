@@ -1,6 +1,7 @@
 import { useRef, memo } from 'react';
 import { formatTimecode } from '../../utils/timeFormat';
-
+import { getTickIntervalSeconds } from '../../utils/timelineLayout';
+ 
 export const TimeRuler = memo(function TimeRuler({
   totalDuration,
   pixelsPerSecond,
@@ -12,7 +13,7 @@ export const TimeRuler = memo(function TimeRuler({
 }) {
   const rulerRef = useRef(null);
   const HEADER_WIDTH = 180;
-
+ 
   const getSnappedTime = (rawTime) => {
     if (!snappingEnabled || !snappingPoints || snappingPoints.length === 0) return rawTime;
     const snapThresholdSec = 8 / pixelsPerSecond;
@@ -23,19 +24,19 @@ export const TimeRuler = memo(function TimeRuler({
     }
     return rawTime;
   };
-
+ 
   const handlePointerDown = (e) => {
     if (!rulerRef.current) return;
     if (e.button !== 0) return;
     e.preventDefault();
-
+ 
     const rect = rulerRef.current.getBoundingClientRect();
     // rect.left already accounts for horizontal scroll inside ruler-wrapper
     const offsetX = e.clientX - rect.left - HEADER_WIDTH;
     const rawTime = Math.max(0, offsetX / pixelsPerSecond);
     const snappedTime = getSnappedTime(rawTime);
     onSeek(snappedTime);
-
+ 
     const handlePointerMove = (moveEvent) => {
       if (!rulerRef.current) return;
       // Auto-scroll when scrubbing near edges
@@ -50,34 +51,30 @@ export const TimeRuler = memo(function TimeRuler({
           lanesWrapper.scrollLeft += scrollSpeed;
         }
       }
-
+ 
       const curRect = rulerRef.current.getBoundingClientRect();
       const moveOffsetX = moveEvent.clientX - curRect.left - HEADER_WIDTH;
       const scrubRaw = Math.max(0, moveOffsetX / pixelsPerSecond);
       const scrubSnapped = getSnappedTime(scrubRaw);
       onSeek(scrubSnapped);
     };
-
+ 
     const handlePointerUp = () => {
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
-
+ 
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
   };
-
-  // Determine tick interval based on zoom level
-  let tickInterval = 5; // seconds
-  if (pixelsPerSecond >= 100) tickInterval = 0.5;
-  else if (pixelsPerSecond >= 60) tickInterval = 1;
-  else if (pixelsPerSecond >= 30) tickInterval = 2;
-  else if (pixelsPerSecond >= 15) tickInterval = 5;
-  else tickInterval = 10;
-
+ 
+  // Determine tick interval based on zoom level — shared with TrackLane's
+  // background grid via getTickIntervalSeconds so both stay in sync.
+  const tickInterval = getTickIntervalSeconds(pixelsPerSecond);
+ 
   const totalWidth = propTotalWidth || Math.max(totalDuration * pixelsPerSecond + 400, 1600);
   const numTicks = Math.ceil((totalWidth) / (tickInterval * pixelsPerSecond)) + 4;
-
+ 
   return (
     <div
       className="time-ruler"
@@ -111,12 +108,12 @@ export const TimeRuler = memo(function TimeRuler({
           </div>
         </>
       )}
-
+ 
       {Array.from({ length: numTicks }).map((_, i) => {
         const timeSec = i * tickInterval;
         const leftPos = HEADER_WIDTH + timeSec * pixelsPerSecond;
         const isMajor = i % 2 === 0;
-
+ 
         return (
           <div
             key={i}
@@ -133,3 +130,5 @@ export const TimeRuler = memo(function TimeRuler({
     </div>
   );
 });
+ 
+ 

@@ -1,90 +1,147 @@
 import { useRef, useEffect, useState, memo } from 'react';
 import { getWaveformPeaks } from '../utils/audioWaveform';
-
+ 
 /**
- * WaveformCanvas — renders an audio waveform from peak data on a canvas.
+ * WaveformCanvas — renders a true signed-envelope audio waveform (DaVinci
+ * Resolve / Audition style: a smooth filled shape following min/max sample
+ * extremes, with an inner RMS "loudness" fill), not the old discrete
+ * abs-peak bar strip.
+ *
+ * Resolution scales with BOTH pixel width and render height: a taller
+ * track (user-resized) requests more buckets per pixel so the envelope
+ * keeps resolving finer detail instead of just stretching the same low-res
+ * shape vertically. This mirrors how DAWs reveal more waveform detail as
+ * you expand a track.
  *
  * Props:
  *   url        — audio source URL to decode
  *   width      — canvas width in px
- *   height     — canvas height in px
- *   color      — waveform fill color (default: currentColor)
- *   barWidth   — width of each peak bar (default: 2)
- *   barGap     — gap between bars (default: 1)
+ *   height     — canvas height in px (drives both draw scale AND how many
+ *                peak buckets are requested — see `detailForHeight` below)
+ *   color      — envelope fill color (default: currentColor)
+ *   rmsColor   — inner RMS fill color; defaults to a brighter version of `color`
  *   mirror     — if true, renders mirrored (top + bottom) like most DAWs
  */
+ 
+// How many envelope buckets to request per pixel of canvas width, as a
+// function of the clip's rendered height. A short/collapsed track (the
+// default ~48px clip height) only needs ~1 bucket/px — any finer and the
+// shape looks identical but costs more CPU. A track the user has resized
+// tall gets progressively more buckets/px, so expanding a track keeps
+// revealing real sample-level detail instead of just scaling up the same
+// coarse shape (the "make it very detailed like DaVinci Resolve" ask).
+function detailForHeight(height) {
+  if (height <= 56) return 1; // compact/default clip height
+  if (height <= 90) return 1.5;
+  if (height <= 140) return 2.5;
+  if (height <= 220) return 4;
+  return 6; // fully expanded track — maximum envelope resolution
+}
+ 
 export const WaveformCanvas = memo(function WaveformCanvas({
   url,
   width = 200,
   height = 40,
-  color = 'rgba(56, 189, 248, 0.6)',
-  barWidth = 2,
-  barGap = 1,
+  color = 'rgba(56, 189, 248, 0.7)',
+  rmsColor,
   mirror = true,
 }) {
   const canvasRef = useRef(null);
-  const [peaks, setPeaks] = useState(null);
-
-  // Decode audio and get peaks
+  const [envelope, setEnvelope] = useState(null);
+ 
+  // Buckets requested scales with width AND the height-derived detail
+  // multiplier, then snapped to a coarse grid so small height/width
+  // jitter (e.g. a ResizeObserver firing during a drag) doesn't spam the
+  // decoder with a new cache key on every pixel.
+  const detail = detailForHeight(height);
+  const rawBuckets = Math.max(20, Math.round(width * detail));
+  const numPeaks = Math.ceil(rawBuckets / 20) * 20;
+ 
+  // Decode audio and get the min/max/rms envelope at this resolution.
   useEffect(() => {
     if (!url) {
-      setPeaks(null);
+      setEnvelope(null);
       return;
     }
     let cancelled = false;
-    const numPeaks = Math.max(20, Math.floor(width / (barWidth + barGap)));
-    getWaveformPeaks(url, numPeaks).then((p) => {
-      if (!cancelled) setPeaks(p);
+    getWaveformPeaks(url, numPeaks).then((env) => {
+      if (!cancelled) setEnvelope(env);
     });
     return () => { cancelled = true; };
-  }, [url, width, barWidth, barGap]);
-
-  // Draw waveform on canvas
+  }, [url, numPeaks]);
+ 
+  // Draw the filled envelope on canvas.
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !peaks || peaks.length === 0) return;
-
+    if (!canvas) return;
     const ctx = canvas.getContext('2d');
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
-    ctx.scale(dpr, dpr);
-
-    // Clear
+    canvas.width = Math.max(1, width * dpr);
+    canvas.height = Math.max(1, height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
-
+ 
+    const { mins, maxs, rms } = envelope || {};
+    if (!mins || mins.length === 0) return;
+ 
+    const n = mins.length;
     const midY = mirror ? height / 2 : height;
-    const maxBarH = mirror ? height / 2 - 1 : height - 2;
-    const step = barWidth + barGap;
-
-    // Find max peak for normalization
-    let maxPeak = 0;
-    for (let i = 0; i < peaks.length; i++) {
-      if (peaks[i] > maxPeak) maxPeak = peaks[i];
+    const maxAmpH = mirror ? height / 2 - 1 : height - 2;
+    const stepX = width / n;
+ 
+    // Outer envelope: true min/max shape, filled as one closed path (top
+    // edge = max samples left→right, bottom edge = min samples right→left)
+    // rather than per-bucket bars — this is what gives the smooth
+    // continuous "wave" look instead of a strip of ticks.
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const x = i * stepX;
+      const y = mirror ? midY - maxs[i] * maxAmpH : height - 1 - maxs[i] * maxAmpH;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
     }
-    if (maxPeak === 0) maxPeak = 1;
-
+    for (let i = n - 1; i >= 0; i--) {
+      const x = i * stepX;
+      const y = mirror ? midY - mins[i] * maxAmpH : height - 1;
+      ctx.lineTo(x, y);
+    }
+    ctx.closePath();
     ctx.fillStyle = color;
-
-    for (let i = 0; i < peaks.length; i++) {
-      const x = i * step;
-      if (x > width) break;
-
-      const normalized = peaks[i] / maxPeak;
-      const barH = Math.max(1, normalized * maxBarH);
-
-      if (mirror) {
-        // Top half (up from center)
-        ctx.fillRect(x, midY - barH, barWidth, barH);
-        // Bottom half (down from center)
-        ctx.fillRect(x, midY, barWidth, barH);
-      } else {
-        // Bottom-aligned
-        ctx.fillRect(x, height - barH - 1, barWidth, barH);
+    ctx.fill();
+ 
+    // Inner RMS fill: a slimmer, brighter shape tracking perceived
+    // loudness rather than raw peak, layered on top of the outer envelope.
+    // This is the "detail" DaVinci-style waveforms add at larger sizes —
+    // busy/loud sections read as visually denser than quiet passages even
+    // when their outer peaks are similar. Only draw it once there's enough
+    // vertical room for it to read as a distinct layer.
+    if (rms && rms.length === n && maxAmpH > 6) {
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const x = i * stepX;
+        const y = mirror ? midY - rms[i] * maxAmpH : height - 1 - rms[i] * maxAmpH;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
       }
+      for (let i = n - 1; i >= 0; i--) {
+        const x = i * stepX;
+        const y = mirror ? midY + rms[i] * maxAmpH : height - 1;
+        ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.fillStyle = rmsColor || brighten(color);
+      ctx.fill();
     }
-  }, [peaks, width, height, color, barWidth, barGap, mirror]);
-
+ 
+    // Center line — standard DAW convention, only worth drawing once the
+    // track is tall enough that a 1px line in the middle actually reads as
+    // a reference line instead of just noise through the waveform.
+    if (mirror && maxAmpH > 10) {
+      ctx.fillStyle = 'rgba(255,255,255,0.12)';
+      ctx.fillRect(0, midY - 0.5, width, 1);
+    }
+  }, [envelope, width, height, color, rmsColor, mirror]);
+ 
   return (
     <canvas
       ref={canvasRef}
@@ -92,3 +149,14 @@ export const WaveformCanvas = memo(function WaveformCanvas({
     />
   );
 });
+ 
+/** Brightens an rgba(...)/rgb(...) color string for the inner RMS fill; falls back to the input unchanged for other formats (hex, named colors, currentColor). */
+function brighten(colorStr) {
+  const m = /rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+))?\)/.exec(colorStr);
+  if (!m) return colorStr;
+  const [, r, g, b, a] = m;
+  const boost = (v) => Math.min(255, Math.round(Number(v) * 1.0 + (255 - Number(v)) * 0.35));
+  const alpha = a !== undefined ? Math.min(1, Number(a) + 0.25) : 0.9;
+  return `rgba(${boost(r)}, ${boost(g)}, ${boost(b)}, ${alpha})`;
+}
+ 

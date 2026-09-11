@@ -485,7 +485,7 @@ export function EntityRenderer({
         });
       }
     }
-
+ 
     gizmoDragRef.current = {
       mode: 'move',
       entityId: entity.id,
@@ -693,12 +693,26 @@ export function EntityRenderer({
                             const isOut = transitionState.type === 'out';
                             const renderer = getSharedGLTransitionRenderer();
                             if (renderer) {
+                              // Render at the VIDEO's own native resolution
+                              // (not the project's safeResWidth/Height) so
+                              // the GL pass doesn't stretch the frame to a
+                              // different aspect ratio than the plain
+                              // <video> element uses. object-fit: contain
+                              // below then letterboxes it identically to
+                              // .active-video-element, so nothing visibly
+                              // shifts the instant a transition starts.
+                              const nativeW = vid.videoWidth || safeResWidth;
+                              const nativeH = vid.videoHeight || safeResHeight;
+                              if (el.width !== nativeW) el.width = nativeW;
+                              if (el.height !== nativeH) el.height = nativeH;
+ 
                               const rendered = renderer.render({
                                 from: isOut ? vid : null,
                                 to: isOut ? null : vid,
                                 progress: transitionState.progress,
                                 presetId: transitionState.presetId,
                                 customGlsl: transitionState.customGlsl,
+                                params: transitionState.params,
                                 width: el.width,
                                 height: el.height,
                               });
@@ -720,6 +734,10 @@ export function EntityRenderer({
                         left: 0,
                         width: '100%',
                         height: '100%',
+                        // Matches .active-video-element's object-fit so the
+                        // transition frame is letterboxed/centered exactly
+                        // like the video it's temporarily replacing.
+                        objectFit: 'contain',
                         pointerEvents: 'none',
                       }}
                     />
@@ -770,7 +788,7 @@ export function EntityRenderer({
             const transitionFactor = item.transitionState
               ? (item.transitionState.type === 'in' ? item.transitionState.progress : (1 - item.transitionState.progress))
               : 1;
-
+ 
             return (
               <div
                 key={entity.id}

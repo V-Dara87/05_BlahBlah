@@ -271,6 +271,7 @@ export function computeActiveEntitiesAtTime({ entities, tracks, scripts = [], ti
           progress: inProgress !== null ? inProgress : outProgress,
           presetId: inProgress !== null ? (transitionIn.preset || 'glitchMemories') : (transitionOut.preset || 'crossZoom'),
           customGlsl: inProgress !== null ? transitionIn.customGlsl : transitionOut.customGlsl,
+          params: inProgress !== null ? transitionIn.params : transitionOut.params,
           inProgress,
           outProgress,
         };

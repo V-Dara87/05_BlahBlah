@@ -7,7 +7,7 @@
 
 import rawTransitions from 'gl-transitions';
 
-// ─── Curated Featured Presets ───────────────────────────────────────────────
+// ─── Curated Featured Presets with Full Odin Parameters ────────────────────
 
 export const FEATURED_TRANSITIONS = [
   {
@@ -15,13 +15,24 @@ export const FEATURED_TRANSITIONS = [
     name: 'Glitch Memories',
     category: 'Glitch & Sci-Fi',
     description: 'Cyberpunk chromatic aberration and digital scanline tear',
+    paramsTypes: {
+      intensity: 'float',
+      scanlines: 'float',
+    },
+    defaultParams: {
+      intensity: 1.0,
+      scanlines: 20.0,
+    },
     glsl: `
+uniform float intensity; // = 1.0
+uniform float scanlines; // = 20.0
+
 vec4 transition(vec2 uv) {
   vec2 p = uv;
   vec2 block = floor(p * vec2(16.0, 16.0));
   vec2 uv_noise = block / vec2(16.0, 16.0);
   float d = sin(progress * 3.14159265);
-  float shift = (sin(uv_noise.y * 100.0 + progress * 20.0) * 0.05) * d;
+  float shift = (sin(uv_noise.y * 100.0 + progress * scanlines) * 0.05 * intensity) * d;
   vec4 fromColor = vec4(
     getFromColor(p + vec2(shift, 0.0)).r,
     getFromColor(p).g,
@@ -43,10 +54,17 @@ vec4 transition(vec2 uv) {
     name: 'Cross Zoom',
     category: 'Warp & Zoom',
     description: 'Dynamic high-speed whip zoom-through',
+    paramsTypes: {
+      strength: 'float',
+    },
+    defaultParams: {
+      strength: 0.4,
+    },
     glsl: `
+uniform float strength; // = 0.4
+
 vec4 transition(vec2 uv) {
   vec2 center = vec2(0.5, 0.5);
-  float strength = 0.4;
   vec2 toCenter = center - uv;
   vec2 offset = toCenter * (progress * (1.0 - progress) * strength);
   vec4 c1 = getFromColor(uv + offset * (1.0 - progress));
@@ -60,9 +78,20 @@ vec4 transition(vec2 uv) {
     name: 'Dreamy',
     category: 'Distortion & Fluid',
     description: 'Dreamy optical chromatic wave distortion',
+    paramsTypes: {
+      waveStrength: 'float',
+      frequency: 'float',
+    },
+    defaultParams: {
+      waveStrength: 0.03,
+      frequency: 20.0,
+    },
     glsl: `
+uniform float waveStrength; // = 0.03
+uniform float frequency; // = 20.0
+
 vec4 transition(vec2 uv) {
-  float wave = sin(uv.y * 20.0 + progress * 6.28318) * 0.03 * sin(progress * 3.14159265);
+  float wave = sin(uv.y * frequency + progress * 6.28318) * waveStrength * sin(progress * 3.14159265);
   vec2 p = uv + vec2(wave, 0.0);
   return mix(getFromColor(p), getToColor(p), progress);
 }
@@ -73,11 +102,22 @@ vec4 transition(vec2 uv) {
     name: 'Water Ripple',
     category: 'Distortion & Fluid',
     description: 'Liquid concentric ripple shockwave',
+    paramsTypes: {
+      frequency: 'float',
+      amplitude: 'float',
+    },
+    defaultParams: {
+      frequency: 30.0,
+      amplitude: 0.03,
+    },
     glsl: `
+uniform float frequency; // = 30.0
+uniform float amplitude; // = 0.03
+
 vec4 transition(vec2 uv) {
   vec2 p = uv - vec2(0.5);
   float dist = length(p);
-  float wave = sin(dist * 30.0 - progress * 15.0) * 0.03 * (1.0 - progress);
+  float wave = sin(dist * frequency - progress * 15.0) * amplitude * (1.0 - progress);
   vec2 offset = p * wave;
   return mix(getFromColor(uv + offset), getToColor(uv - offset), progress);
 }
@@ -88,10 +128,19 @@ vec4 transition(vec2 uv) {
     name: 'Directional Wipe',
     category: 'Wipes',
     description: 'Linear angled wipe with soft feathered edge',
+    paramsTypes: {
+      direction: 'vec2',
+      smoothness: 'float',
+    },
+    defaultParams: {
+      direction: [1.0, 0.0],
+      smoothness: 0.15,
+    },
     glsl: `
+uniform vec2 direction; // = vec2(1.0, 0.0)
+uniform float smoothness; // = 0.15
+
 vec4 transition(vec2 uv) {
-  vec2 direction = vec2(1.0, 0.0);
-  float smoothness = 0.15;
   float p = progress * (1.0 + smoothness);
   float edge = dot(uv, direction);
   float m = smoothstep(p - smoothness, p, edge);
@@ -104,11 +153,19 @@ vec4 transition(vec2 uv) {
     name: 'Circle Iris',
     category: 'Wipes',
     description: 'Cinematic circular iris expansion',
+    paramsTypes: {
+      smoothness: 'float',
+    },
+    defaultParams: {
+      smoothness: 0.02,
+    },
     glsl: `
+uniform float smoothness; // = 0.02
+
 vec4 transition(vec2 uv) {
   float dist = distance(uv, vec2(0.5, 0.5));
   float radius = 0.7071 * progress;
-  float edge = smoothstep(radius - 0.02, radius, dist);
+  float edge = smoothstep(radius - smoothness, radius, dist);
   return mix(getToColor(uv), getFromColor(uv), edge);
 }
 `,
@@ -118,14 +175,24 @@ vec4 transition(vec2 uv) {
     name: 'Doom Melt',
     category: 'Retro & Stylized',
     description: 'Classic 90s DOOM vertical melting screen dissolve',
+    paramsTypes: {
+      barCount: 'float',
+      dripScale: 'float',
+    },
+    defaultParams: {
+      barCount: 32.0,
+      dripScale: 0.45,
+    },
     glsl: `
+uniform float barCount; // = 32.0
+uniform float dripScale; // = 0.45
+
 float rand(vec2 co) {
   return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453);
 }
 vec4 transition(vec2 uv) {
-  float barCount = 32.0;
   float barIndex = floor(uv.x * barCount);
-  float drip = rand(vec2(barIndex, 0.0)) * 0.45;
+  float drip = rand(vec2(barIndex, 0.0)) * dripScale;
   float drop = max(0.0, (progress * 1.5 - drip));
   vec2 p = uv + vec2(0.0, drop * drop * 1.6);
   if (p.y > 1.0) {
@@ -140,10 +207,18 @@ vec4 transition(vec2 uv) {
     name: 'Pixelize',
     category: 'Retro & Stylized',
     description: 'Retro 8-bit mosaic pixelation dissolve',
+    paramsTypes: {
+      squaresMin: 'float',
+    },
+    defaultParams: {
+      squaresMin: 35.0,
+    },
     glsl: `
+uniform float squaresMin; // = 35.0
+
 vec4 transition(vec2 uv) {
   float d = min(progress, 1.0 - progress);
-  float factor = max(1.0, floor((1.0 - d) * 35.0));
+  float factor = max(1.0, floor((1.0 - d) * squaresMin));
   vec2 p = floor(uv * factor) / factor;
   return mix(getFromColor(p), getToColor(p), progress);
 }
@@ -154,15 +229,24 @@ vec4 transition(vec2 uv) {
     name: 'Swirl Vortex',
     category: 'Distortion & Fluid',
     description: 'Rotating vortex distortion wave',
+    paramsTypes: {
+      radius: 'float',
+      angle: 'float',
+    },
+    defaultParams: {
+      radius: 0.8,
+      angle: 6.28318,
+    },
     glsl: `
+uniform float radius; // = 0.8
+uniform float angle; // = 6.28318
+
 vec4 transition(vec2 uv) {
-  float Radius = 0.8;
-  float Angle = 3.14159265 * 2.0;
   vec2 p = uv - vec2(0.5);
   float dist = length(p);
-  if (dist < Radius) {
-    float percent = (Radius - dist) / Radius;
-    float theta = percent * percent * Angle * (1.0 - progress) * progress * 3.5;
+  if (dist < radius) {
+    float percent = (radius - dist) / radius;
+    float theta = percent * percent * angle * (1.0 - progress) * progress * 3.5;
     float s = sin(theta);
     float c = cos(theta);
     p = vec2(dot(p, vec2(c, -s)), dot(p, vec2(s, c)));
@@ -177,13 +261,24 @@ vec4 transition(vec2 uv) {
     name: 'Film Burn',
     category: 'Retro & Stylized',
     description: 'Warm vintage light leak flare dissolve',
+    paramsTypes: {
+      intensity: 'float',
+      burnColor: 'vec3',
+    },
+    defaultParams: {
+      intensity: 2.2,
+      burnColor: [1.0, 0.55, 0.15],
+    },
     glsl: `
+uniform float intensity; // = 2.2
+uniform vec3 burnColor; // = vec3(1.0, 0.55, 0.15)
+
 vec4 transition(vec2 uv) {
   vec4 a = getFromColor(uv);
   vec4 b = getToColor(uv);
   float t = sin(progress * 3.14159265);
-  vec3 burnColor = vec3(1.0, 0.55, 0.15) * (t * 2.2);
-  vec3 res = mix(a.rgb, b.rgb, progress) + burnColor * (1.0 - distance(uv, vec2(0.5)));
+  vec3 flare = burnColor * (t * intensity);
+  vec3 res = mix(a.rgb, b.rgb, progress) + flare * (1.0 - distance(uv, vec2(0.5)));
   return vec4(res, mix(a.a, b.a, progress));
 }
 `,
@@ -193,13 +288,21 @@ vec4 transition(vec2 uv) {
     name: 'Wind Streak',
     category: 'Wipes',
     description: 'Horizontal wind particle streak wipe',
+    paramsTypes: {
+      size: 'float',
+    },
+    defaultParams: {
+      size: 0.4,
+    },
     glsl: `
+uniform float size; // = 0.4
+
 float rand(vec2 co) {
   return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453);
 }
 vec4 transition(vec2 uv) {
   float r = rand(vec2(0.0, uv.y));
-  float m = smoothstep(0.0, -0.4, uv.x * 0.6 + 0.4 * r - (progress * 1.4));
+  float m = smoothstep(0.0, -size, uv.x * 0.6 + size * r - (progress * (1.0 + size)));
   return mix(getFromColor(uv), getToColor(uv), m);
 }
 `,
@@ -209,6 +312,8 @@ vec4 transition(vec2 uv) {
     name: 'Crossfade',
     category: 'Basic',
     description: 'Clean dissolve blend between visuals',
+    paramsTypes: {},
+    defaultParams: {},
     glsl: `
 vec4 transition(vec2 uv) {
   return mix(getFromColor(uv), getToColor(uv), progress);
@@ -232,7 +337,8 @@ export const ALL_GL_TRANSITIONS = (() => {
           category: 'Library',
           description: `By ${t.author || 'gl-transitions'}`,
           glsl: t.glsl,
-          defaultParams: t.defaultParams,
+          paramsTypes: t.paramsTypes || {},
+          defaultParams: t.defaultParams || {},
         });
       }
     });
@@ -243,6 +349,7 @@ export const ALL_GL_TRANSITIONS = (() => {
 
 export const GL_CATEGORIES = [
   'All',
+  'Featured',
   'Glitch & Sci-Fi',
   'Warp & Zoom',
   'Distortion & Fluid',
@@ -272,7 +379,13 @@ void main() {
 }
 `;
 
-function createFragmentShaderSource(transitionGlsl) {
+function createFragmentShaderSource(transitionGlsl, paramsTypes = {}) {
+  // Ensure every parameter uniform in paramsTypes is declared in fragment shader if not already present
+  const paramDecls = Object.entries(paramsTypes || {})
+    .filter(([name]) => !new RegExp(`\\b${name}\\b`).test(transitionGlsl))
+    .map(([name, type]) => `uniform ${type} ${name};`)
+    .join('\n');
+
   return `
 precision highp float;
 varying vec2 uv;
@@ -297,12 +410,55 @@ vec4 getToColor(vec2 p) {
   return texture2D(to, p);
 }
 
+${paramDecls ? paramDecls + '\n' : ''}
 ${transitionGlsl}
 
 void main() {
   gl_FragColor = transition(uv);
 }
 `;
+}
+
+function setUniformValue(gl, loc, type, val, defaultVal) {
+  if (!loc) return;
+  const v = val !== undefined ? val : defaultVal;
+  if (v === undefined) return;
+
+  switch (type) {
+    case 'float':
+      gl.uniform1f(loc, typeof v === 'number' ? v : parseFloat(v) || 0);
+      break;
+    case 'int':
+      gl.uniform1i(loc, typeof v === 'number' ? Math.round(v) : parseInt(v, 10) || 0);
+      break;
+    case 'bool':
+      gl.uniform1i(loc, v ? 1 : 0);
+      break;
+    case 'vec2':
+      if (Array.isArray(v)) {
+        gl.uniform2f(loc, v[0] ?? 0, v[1] ?? 0);
+      } else if (typeof v === 'object' && v !== null) {
+        gl.uniform2f(loc, v.x ?? 0, v.y ?? 0);
+      }
+      break;
+    case 'ivec2':
+      if (Array.isArray(v)) {
+        gl.uniform2i(loc, Math.round(v[0] ?? 0), Math.round(v[1] ?? 0));
+      } else if (typeof v === 'object' && v !== null) {
+        gl.uniform2i(loc, Math.round(v.x ?? 0), Math.round(v.y ?? 0));
+      }
+      break;
+    case 'vec3':
+      if (Array.isArray(v)) {
+        gl.uniform3f(loc, v[0] ?? 0, v[1] ?? 0, v[2] ?? 0);
+      }
+      break;
+    case 'vec4':
+      if (Array.isArray(v)) {
+        gl.uniform4f(loc, v[0] ?? 0, v[1] ?? 0, v[2] ?? 0, v[3] ?? 1.0);
+      }
+      break;
+  }
 }
 
 export class GLTransitionRenderer {
@@ -355,7 +511,7 @@ export class GLTransitionRenderer {
     this.programCache = new Map();
   }
 
-  getProgram(glslCode) {
+  getProgram(glslCode, paramsTypes = {}) {
     if (this.programCache.has(glslCode)) {
       return this.programCache.get(glslCode);
     }
@@ -370,7 +526,7 @@ export class GLTransitionRenderer {
     }
 
     const fs = gl.createShader(gl.FRAGMENT_SHADER);
-    gl.shaderSource(fs, createFragmentShaderSource(glslCode));
+    gl.shaderSource(fs, createFragmentShaderSource(glslCode, paramsTypes));
     gl.compileShader(fs);
     if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) {
       console.error('Fragment shader compilation error:', gl.getShaderInfoLog(fs));
@@ -387,6 +543,15 @@ export class GLTransitionRenderer {
       return null;
     }
 
+    // Discover locations of parameters in paramsTypes
+    const paramLocations = {};
+    for (const [name, type] of Object.entries(paramsTypes || {})) {
+      const loc = gl.getUniformLocation(program, name);
+      if (loc !== null) {
+        paramLocations[name] = { loc, type };
+      }
+    }
+
     const compiled = {
       program,
       positionAttr: gl.getAttribLocation(program, 'position'),
@@ -396,6 +561,7 @@ export class GLTransitionRenderer {
       ratioUniform: gl.getUniformLocation(program, 'ratio'),
       fromRUniform: gl.getUniformLocation(program, '_fromR'),
       toRUniform: gl.getUniformLocation(program, '_toR'),
+      paramLocations,
     };
 
     this.programCache.set(glslCode, compiled);
@@ -415,7 +581,7 @@ export class GLTransitionRenderer {
     }
   }
 
-  render({ from, to, progress = 0, presetId = 'crossfade', customGlsl, width, height }) {
+  render({ from, to, progress = 0, presetId = 'crossfade', customGlsl, width, height, params = {} }) {
     if (!this.gl) return this.canvas;
     const gl = this.gl;
 
@@ -431,7 +597,9 @@ export class GLTransitionRenderer {
 
     const preset = getTransitionPreset(presetId);
     const glsl = customGlsl || preset.glsl;
-    const compiled = this.getProgram(glsl);
+    const paramsTypes = preset.paramsTypes || {};
+    const defaultParams = preset.defaultParams || {};
+    const compiled = this.getProgram(glsl, paramsTypes);
 
     if (!compiled) return this.canvas;
 
@@ -450,6 +618,11 @@ export class GLTransitionRenderer {
     gl.uniform1f(compiled.ratioUniform, ratio);
     if (compiled.fromRUniform) gl.uniform1f(compiled.fromRUniform, ratio);
     if (compiled.toRUniform) gl.uniform1f(compiled.toRUniform, ratio);
+
+    // Dynamic parameter uniforms binding
+    for (const [name, info] of Object.entries(compiled.paramLocations || {})) {
+      setUniformValue(gl, info.loc, info.type, params[name], defaultParams[name]);
+    }
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
     gl.enableVertexAttribArray(compiled.positionAttr);
@@ -473,41 +646,77 @@ export function getSharedGLTransitionRenderer() {
 
 function createPreviewTextures() {
   const fromCanvas = document.createElement('canvas');
-  fromCanvas.width = 120;
-  fromCanvas.height = 70;
+  fromCanvas.width = 160;
+  fromCanvas.height = 90;
   const ctxA = fromCanvas.getContext('2d');
-  ctxA.fillStyle = '#0f172a';
-  ctxA.fillRect(0, 0, 120, 70);
-  ctxA.fillStyle = '#0284c7';
+  // Gradient background for Clip A
+  const gradA = ctxA.createLinearGradient(0, 0, 160, 90);
+  gradA.addColorStop(0, '#0f172a');
+  gradA.addColorStop(1, '#0369a1');
+  ctxA.fillStyle = gradA;
+  ctxA.fillRect(0, 0, 160, 90);
+  ctxA.fillStyle = '#38bdf8';
   ctxA.beginPath();
-  ctxA.arc(60, 35, 24, 0, Math.PI * 2);
+  ctxA.arc(80, 45, 26, 0, Math.PI * 2);
   ctxA.fill();
   ctxA.fillStyle = '#ffffff';
-  ctxA.font = 'bold 11px sans-serif';
+  ctxA.font = 'bold 12px sans-serif';
   ctxA.textAlign = 'center';
   ctxA.textBaseline = 'middle';
-  ctxA.fillText('CLIP A', 60, 35);
+  ctxA.fillText('CLIP A', 80, 45);
 
   const toCanvas = document.createElement('canvas');
-  toCanvas.width = 120;
-  toCanvas.height = 70;
+  toCanvas.width = 160;
+  toCanvas.height = 90;
   const ctxB = toCanvas.getContext('2d');
-  ctxB.fillStyle = '#4c0519';
-  ctxB.fillRect(0, 0, 120, 70);
-  ctxB.fillStyle = '#e11d48';
-  ctxB.fillRect(25, 12, 70, 46);
+  // Gradient background for Clip B
+  const gradB = ctxB.createLinearGradient(0, 0, 160, 90);
+  gradB.addColorStop(0, '#4c0519');
+  gradB.addColorStop(1, '#be123c');
+  ctxB.fillStyle = gradB;
+  ctxB.fillRect(0, 0, 160, 90);
+  ctxB.fillStyle = '#fb7185';
+  ctxB.fillRect(35, 18, 90, 54);
   ctxB.fillStyle = '#ffffff';
-  ctxB.font = 'bold 11px sans-serif';
+  ctxB.font = 'bold 12px sans-serif';
   ctxB.textAlign = 'center';
   ctxB.textBaseline = 'middle';
-  ctxB.fillText('CLIP B', 60, 35);
+  ctxB.fillText('CLIP B', 80, 45);
 
   return { fromCanvas, toCanvas };
 }
 
 let cachedPreviewTextures = null;
 
-export function startTransitionPreviewLoop(targetCanvas, presetId) {
+export function renderTransitionFrame(targetCanvas, presetId, progress = 0.5, params = {}) {
+  if (!targetCanvas) return;
+  if (!cachedPreviewTextures && typeof window !== 'undefined') {
+    cachedPreviewTextures = createPreviewTextures();
+  }
+  if (!cachedPreviewTextures) return;
+
+  const { fromCanvas, toCanvas } = cachedPreviewTextures;
+  const renderer = getSharedGLTransitionRenderer();
+  if (!renderer) return;
+
+  const rendered = renderer.render({
+    from: fromCanvas,
+    to: toCanvas,
+    progress: Math.max(0, Math.min(1, progress)),
+    presetId,
+    params,
+    width: targetCanvas.width,
+    height: targetCanvas.height,
+  });
+
+  const ctx = targetCanvas.getContext('2d');
+  if (ctx && rendered) {
+    ctx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+    ctx.drawImage(rendered, 0, 0, targetCanvas.width, targetCanvas.height);
+  }
+}
+
+export function startTransitionPreviewLoop(targetCanvas, presetId, getParams = null) {
   if (!cachedPreviewTextures && typeof window !== 'undefined') {
     cachedPreviewTextures = createPreviewTextures();
   }
@@ -519,7 +728,7 @@ export function startTransitionPreviewLoop(targetCanvas, presetId) {
 
   const ctx = targetCanvas.getContext('2d');
   let animId = null;
-  const cycleDuration = 2200;
+  const cycleDuration = 2400;
 
   const tick = (time) => {
     const cycle = (time % cycleDuration) / cycleDuration;
@@ -532,11 +741,14 @@ export function startTransitionPreviewLoop(targetCanvas, presetId) {
       progress = 1;
     }
 
+    const currentParams = typeof getParams === 'function' ? getParams() : (getParams || {});
+
     const rendered = renderer.render({
       from: fromCanvas,
       to: toCanvas,
       progress,
       presetId,
+      params: currentParams,
       width: targetCanvas.width,
       height: targetCanvas.height,
     });
