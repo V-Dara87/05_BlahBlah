@@ -5,6 +5,7 @@ import { getCompiledReactComponent, detectScriptKind } from './scriptRunner.js';
 import { updateCanvasComponent, unmountCanvasComponent } from './canvasRunner.js';
 import { computeActiveEntitiesAtTime } from './renderPipeline.js';
 import { isScriptComponent } from './ecs.js';
+import { getSharedGLTransitionRenderer } from './glTransitions.js';
  
 /**
  * P1 #11 — export-time equivalent of EntityRenderer.jsx's live preview.
@@ -261,7 +262,7 @@ export function drawExportFrame({
     })
     .map(({ item }) => item);
  
-  for (const { entity, transform, localTime } of drawOrder) {
+  for (const { entity, transform, localTime, transitionState } of drawOrder) {
     const isVideo = entity.type === 'video' || entity.components.some((c) => c.type === 'VideoRenderer');
     const isAudio = entity.type === 'audio' || entity.components.some((c) => c.type === 'AudioSource');
     if (isAudio) continue;
@@ -273,7 +274,28 @@ export function drawExportFrame({
         if (!src) continue;
         const video = videoFrameProvider.getVideoElement(entity.id);
         if (!video) continue;
-        drawTransformedMedia(ctx, video, transform, width, height);
+
+        let mediaToDraw = video;
+        if (transitionState) {
+          const isOut = transitionState.type === 'out';
+          const renderer = getSharedGLTransitionRenderer();
+          if (renderer) {
+            const glCanvas = renderer.render({
+              from: isOut ? video : null,
+              to: isOut ? null : video,
+              progress: transitionState.progress,
+              presetId: transitionState.presetId,
+              customGlsl: transitionState.customGlsl,
+              width: video.videoWidth || width,
+              height: video.videoHeight || height,
+            });
+            if (glCanvas) {
+              mediaToDraw = glCanvas;
+            }
+          }
+        }
+
+        drawTransformedMedia(ctx, mediaToDraw, transform, width, height);
         continue;
       }
  

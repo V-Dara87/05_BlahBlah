@@ -28,8 +28,10 @@ import { extractScriptProps, getScriptError, detectScriptKind, isScriptBundlePen
 import { DragNumber } from './DragNumber';
 import { InspectorFieldList, TRANSFORM_FIELD_GROUPS } from './inspector/InspectorField';
 import { getFieldKeyframes, setKeyframe, evaluateField } from '../engine/keyframes';
-import { isScriptComponent } from '../engine/ecs';
+import { isScriptComponent, createTransitionComponent } from '../engine/ecs';
 import { readDragPayload, dragHasItemKind, ITEM_KIND_SCRIPT } from '../utils/dragData';
+import { TransitionInspector } from './inspector/TransitionInspector';
+import { TransitionPickerModal } from './TransitionPickerModal';
 
 // Per-kind display metadata for script cards (icon + color + label). The
 // kind comes from detectScriptKind at runtime — there is ONE component type
@@ -38,6 +40,7 @@ const SCRIPT_KIND_META = {
   react: { icon: Sparkles, className: 'text-cyan', label: 'React Component' },
   canvas: { icon: Boxes, className: 'text-violet', label: 'Canvas Component' },
   motion: { icon: FileCode, className: 'text-emerald', label: 'Motion Script' },
+  shader: { icon: Sparkles, className: 'text-amber', label: 'GL Transition' },
 };
 const scriptKindMeta = (kind) => SCRIPT_KIND_META[kind] || SCRIPT_KIND_META.motion;
  
@@ -155,6 +158,9 @@ export const UnityInspector = memo(function UnityInspector({
   const [savedPrefab, setSavedPrefab] = useState(false);
   const [dragCompType, setDragCompType] = useState(null); // component `type` (or scriptId for scripts) currently being dragged
   const [dragOverCompType, setDragOverCompType] = useState(null);
+  const [showPickerModal, setShowPickerModal] = useState(false);
+  const [pickerSlot, setPickerSlot] = useState('in');
+  const [pickerCallback, setPickerCallback] = useState(null);
 
   const eligibleParentEntities = useMemo(() => {
     if (!entities || !selectedEntity) return [];
@@ -253,6 +259,7 @@ export const UnityInspector = memo(function UnityInspector({
   const shapeComp = selectedEntity.components.find(c => c.type === 'ShapeRenderer');
   const videoComp = selectedEntity.components.find(c => c.type === 'VideoRenderer');
   const audioComp = selectedEntity.components.find(c => c.type === 'AudioSource');
+  const transitionComp = selectedEntity.components.find(c => c.type === 'TransitionComponent');
   const scriptComps = selectedEntity.components.filter(isScriptComponent);
  
   const updateTransform = (updates) => {
@@ -407,6 +414,8 @@ export const UnityInspector = memo(function UnityInspector({
       newComp = { type: 'VideoRenderer', src: '', volume: 0, speed: 1, mediaOffset: 0 };
     } else if (type === 'AudioSource') {
       newComp = { type: 'AudioSource', src: '', volume: 1, speed: 1, mediaOffset: 0 };
+    } else if (type === 'TransitionComponent') {
+      newComp = createTransitionComponent();
     } else if (type === 'ScriptComponent' && scriptId) {
       // ONE script component type — the runtime dispatches per the
       // script's detected kind (motion / react / canvas).
@@ -471,9 +480,10 @@ export const UnityInspector = memo(function UnityInspector({
     { type: 'ShapeRenderer', icon: <Square size={12} className="text-cyan" />, label: 'Shape Component', present: !!shapeComp },
     { type: 'VideoRenderer', icon: <Film size={12} className="text-indigo" />, label: 'Video Component', present: !!videoComp },
     { type: 'AudioSource', icon: <Volume2 size={12} className="text-emerald" />, label: 'Audio Component', present: !!audioComp },
+    { type: 'TransitionComponent', icon: <Sparkles size={12} className="text-amber" />, label: 'GL Transition', present: !!transitionComp },
   ].filter((it) => matchesSearch(it.label) || matchesSearch(it.type));
 
-  const scriptKinds = ['motion', 'react', 'canvas'];
+  const scriptKinds = ['motion', 'react', 'canvas', 'shader'];
   const scriptsByKind = (kind) => allScripts.filter((s) => s.kind === kind && matchesSearch(s.name));
 
   const toggleCompCategory = (name) => {
@@ -836,6 +846,41 @@ export const UnityInspector = memo(function UnityInspector({
           </div>
         )}
  
+        {/* ========== GL TRANSITION COMPONENT ========== */}
+        {transitionComp && (
+          <div className="inspector-card">
+            <InspectorCardHeader
+              icon={<Sparkles size={13} className="text-amber" />}
+              title="GL Transition"
+              isOpen={openFoldouts.Transition !== false}
+              onToggle={() => toggleFoldout('Transition')}
+              draggable
+              isDragOver={dragOverCompType === 'TransitionComponent'}
+              onDragStart={handleCardDragStart('TransitionComponent')}
+              onDragOver={handleCardDragOver('TransitionComponent')}
+              onDrop={handleCardDrop('TransitionComponent')}
+              onDragEnd={handleCardDragEnd}
+              actions={
+                <button className="del-btn-sm" onClick={() => removeComponent('TransitionComponent')}>
+                  <Trash2 size={11} />
+                </button>
+              }
+            />
+            {openFoldouts.Transition !== false && (
+              <TransitionInspector
+                component={transitionComp}
+                onChange={(updates) => updateComponent('TransitionComponent', updates)}
+                onRemove={() => removeComponent('TransitionComponent')}
+                onOpenPicker={(slot, onApply) => {
+                  setPickerSlot(slot);
+                  setPickerCallback(() => onApply);
+                  setShowPickerModal(true);
+                }}
+              />
+            )}
+          </div>
+        )}
+
         {/* ========== SCRIPTS (motion / React / Canvas — one component type) ========== */}
         {scriptComps.map((scriptComp) => {
           const scriptDef = scripts.find(s => s.id === scriptComp.scriptId);
@@ -1071,6 +1116,28 @@ export const UnityInspector = memo(function UnityInspector({
           <span>Delete Clip</span>
         </button>
       </div>
+
+      <TransitionPickerModal
+        isOpen={showPickerModal}
+        onClose={() => setShowPickerModal(false)}
+        targetSlot={pickerSlot}
+        currentPresetId={pickerSlot === 'out' ? transitionComp?.transitionOut?.preset : transitionComp?.transitionIn?.preset}
+        onApplyPreset={(presetId, slot) => {
+          if (pickerCallback) {
+            pickerCallback(presetId);
+          } else if (transitionComp) {
+            if (slot === 'out') {
+              updateComponent('TransitionComponent', {
+                transitionOut: { ...transitionComp.transitionOut, preset: presetId, enabled: true },
+              });
+            } else {
+              updateComponent('TransitionComponent', {
+                transitionIn: { ...transitionComp.transitionIn, preset: presetId, enabled: true },
+              });
+            }
+          }
+        }}
+      />
     </aside>
   );
 });

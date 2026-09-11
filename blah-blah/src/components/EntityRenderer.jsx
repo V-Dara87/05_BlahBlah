@@ -17,6 +17,7 @@ import { resolveScriptProps } from '../engine/referenceTypes';
 import { updateCanvasComponent, unmountCanvasComponent, pruneCanvasComponents } from '../engine/canvasRunner';
 import { isScriptComponent } from '../engine/ecs';
 import { computeActiveEntitiesAtTime } from '../engine/renderPipeline';
+import { getSharedGLTransitionRenderer } from '../engine/glTransitions';
 import {
   setMediaElementVolume,
   setMediaElementRate,
@@ -624,7 +625,7 @@ export function EntityRenderer({
           >
           {/* 1. Background Video Layer */}
           {activeVideoItems.map((item) => {
-            const { entity, transform } = item;
+            const { entity, transform, transitionState } = item;
             const isSelected = entity.id === selectedEntityId;
             const videoComp = entity.components.find((c) => c.type === 'VideoRenderer') || { src: entity.src };
             const vidSrc = videoComp.src || entity.src;
@@ -675,6 +676,7 @@ export function EntityRenderer({
                     crossOrigin="anonymous"
                     muted={(videoComp.volume ?? 0) === 0}
                     playsInline
+                    style={transitionState ? { visibility: 'hidden' } : undefined}
                     onLoadedMetadata={(e) => {
                       const localTime =
                         (currentTime - entity.startTime) * rawClipSpeed + (videoComp.mediaOffset || 0);
@@ -682,6 +684,46 @@ export function EntityRenderer({
                       if (isPlaying) e.target.play().catch(() => {});
                     }}
                   />
+                  {transitionState && (
+                    <canvas
+                      ref={(el) => {
+                        if (el) {
+                          const vid = videoRefs.current[entity.id];
+                          if (vid) {
+                            const isOut = transitionState.type === 'out';
+                            const renderer = getSharedGLTransitionRenderer();
+                            if (renderer) {
+                              const rendered = renderer.render({
+                                from: isOut ? vid : null,
+                                to: isOut ? null : vid,
+                                progress: transitionState.progress,
+                                presetId: transitionState.presetId,
+                                customGlsl: transitionState.customGlsl,
+                                width: el.width,
+                                height: el.height,
+                              });
+                              const c2d = el.getContext('2d');
+                              if (c2d && rendered) {
+                                c2d.clearRect(0, 0, el.width, el.height);
+                                c2d.drawImage(rendered, 0, 0, el.width, el.height);
+                              }
+                            }
+                          }
+                        }
+                      }}
+                      width={safeResWidth}
+                      height={safeResHeight}
+                      className="active-transition-canvas"
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        height: '100%',
+                        pointerEvents: 'none',
+                      }}
+                    />
+                  )}
                 </EntityErrorBoundary>
               </div>
             );
@@ -725,13 +767,17 @@ export function EntityRenderer({
               );
             }
  
+            const transitionFactor = item.transitionState
+              ? (item.transitionState.type === 'in' ? item.transitionState.progress : (1 - item.transitionState.progress))
+              : 1;
+
             return (
               <div
                 key={entity.id}
                 className={`preview-render-layer ${isSelected ? 'selected' : ''} ${onUpdateEntity ? 'gizmo-draggable' : ''}`}
                 style={{
                   transform: `translate(calc(-50% + ${transform.x}px), calc(-50% + ${transform.y}px)) rotate(${transform.rotation}deg) scale(${transform.scaleX}, ${transform.scaleY})`,
-                  opacity: transform.opacity,
+                  opacity: (transform.opacity ?? 1) * transitionFactor,
                   zIndex: (isSelected ? 1000 : 0) + 100 + layerZIndexOf(item),
                   willChange: 'transform, opacity',
                 }}

@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "oxlint",
-    "test": "node tests/run-bundler-tests.mjs && node tests/parent-child.test.mjs",
+    "test": "node tests/run-bundler-tests.mjs && node tests/parent-child.test.mjs && node tests/transitions.test.mjs",
     "test:timeline": "node tests/run-timeline-layout-tests.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
@@ -19,6 +19,7 @@
     "@tauri-apps/plugin-opener": "^2.5.5",
     "dockview-react": "^8.2.0",
     "esbuild-wasm": "^0.28.2",
+    "gl-transitions": "^1.71.0",
     "lucide-react": "^1.37.0",
     "mp4-muxer": "^5.2.2",
     "react": "^19.2.8",

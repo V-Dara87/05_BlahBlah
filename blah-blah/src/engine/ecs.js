@@ -87,7 +87,26 @@ export const RENDERER_REGISTRY = {
   ShapeRenderer: createRendererComponent('ShapeRenderer', { kind: 'dom', label: 'Shape Component' }),
   VideoRenderer: createRendererComponent('VideoRenderer', { kind: 'dom', label: 'Video Component' }),
   AudioSource: createRendererComponent('AudioSource', { kind: 'dom', label: 'Audio Component' }),
+  TransitionComponent: createRendererComponent('TransitionComponent', { kind: 'gl', label: 'GL Transition' }),
 };
+
+export function createTransitionComponent(config = {}) {
+  return {
+    type: 'TransitionComponent',
+    enabled: true,
+    transitionIn: {
+      enabled: config.transitionIn?.enabled ?? true,
+      preset: config.transitionIn?.preset ?? 'glitchMemories',
+      duration: config.transitionIn?.duration ?? 0.8,
+    },
+    transitionOut: {
+      enabled: config.transitionOut?.enabled ?? false,
+      preset: config.transitionOut?.preset ?? 'crossZoom',
+      duration: config.transitionOut?.duration ?? 0.8,
+    },
+    ...config,
+  };
+}
 
 /**
  * True for any component that drives a script: motion scripts

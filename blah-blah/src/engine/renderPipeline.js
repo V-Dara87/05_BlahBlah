@@ -243,12 +243,47 @@ export function computeActiveEntitiesAtTime({ entities, tracks, scripts = [], ti
     const local = localMap.get(entity.id);
     const worldTransform = resolveWorld(entity.id);
     const depth = depthMap.get(entity.id) || 0;
+
+    // Transition State resolution (TransitionComponent)
+    const transComp = local.entity.components?.find((c) => c.type === 'TransitionComponent' && c.enabled !== false);
+    let transitionState = null;
+    if (transComp) {
+      const { transitionIn, transitionOut } = transComp;
+      const lt = local.localTime;
+      const dur = local.entity.duration || 1;
+
+      let inProgress = null;
+      if (transitionIn?.enabled && transitionIn.duration > 0 && lt >= 0 && lt < transitionIn.duration) {
+        inProgress = Math.max(0, Math.min(1, lt / transitionIn.duration));
+      }
+
+      let outProgress = null;
+      if (transitionOut?.enabled && transitionOut.duration > 0) {
+        const outStart = Math.max(0, dur - transitionOut.duration);
+        if (lt >= outStart && lt <= dur) {
+          outProgress = Math.max(0, Math.min(1, (lt - outStart) / transitionOut.duration));
+        }
+      }
+
+      if (inProgress !== null || outProgress !== null) {
+        transitionState = {
+          type: inProgress !== null ? 'in' : 'out',
+          progress: inProgress !== null ? inProgress : outProgress,
+          presetId: inProgress !== null ? (transitionIn.preset || 'glitchMemories') : (transitionOut.preset || 'crossZoom'),
+          customGlsl: inProgress !== null ? transitionIn.customGlsl : transitionOut.customGlsl,
+          inProgress,
+          outProgress,
+        };
+      }
+    }
+
     output.push({
       entity: local.entity,
       transform: worldTransform,
       localTransform: local.localTransform,
       localTime: local.localTime,
       depth,
+      transitionState,
     });
   }
   return output;

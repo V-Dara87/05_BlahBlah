@@ -670,7 +670,11 @@ export function detectScriptKind(code) {
     /return\s*h\s*\(\s*['"]/.test(code);
   const isClass = /\bclass\s+[A-Za-z0-9_]+/.test(code);
  
-  if (hasOnMount || hasOnUnmount || (hasContainerArg && !hasTransformArg)) {
+  const isShader = /\bvec4\s+transition\s*\(|\bgl_FragColor\b/.test(code);
+
+  if (isShader) {
+    kind = 'shader';
+  } else if (hasOnMount || hasOnUnmount || (hasContainerArg && !hasTransformArg)) {
     // CanvasRenderer contract: onMount({ container, props, libs }) / onUpdate({ container, ... }) / onUnmount(...)
     kind = 'canvas';
   } else if (hasOnStartOrOnUpdate && (hasTransformArg || !returnsJsx) && isClass) {
