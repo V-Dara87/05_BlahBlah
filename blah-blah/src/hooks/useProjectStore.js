@@ -121,7 +121,70 @@ export function useProjectStore({
       });
       return;
     }
-    setEntities(prev => prev.map(e => e.id === entityId ? { ...e, ...updates } : e), { coalesce: true });
+    setEntities((prev) => {
+      const target = prev.find((e) => e.id === entityId);
+      if (!target) return prev;
+
+      // Check if speed has changed on target
+      const oldTransform = target.components?.find((c) => c.type === 'Transform');
+      const newTransform = updates.components?.find((c) => c.type === 'Transform');
+      const oldSpeed = Number(oldTransform?.speed ?? 1) || 1;
+      const newSpeed = updates.speed !== undefined
+        ? (Number(updates.speed) || 1)
+        : (newTransform && newTransform.speed !== undefined ? (Number(newTransform.speed) || 1) : oldSpeed);
+
+      if (newSpeed > 0 && oldSpeed > 0 && newSpeed !== oldSpeed) {
+        const speedRatio = oldSpeed / newSpeed;
+
+        // If updates does not specify duration, scale target duration by speedRatio
+        const targetUpdates = updates.duration !== undefined
+          ? updates
+          : { ...updates, duration: Math.max(0.2, (target.duration || 0) * speedRatio) };
+
+        // Find all descendants of target
+        const descendantIds = new Set();
+        let queue = [target.id];
+        while (queue.length > 0) {
+          const pId = queue.shift();
+          for (const e of prev) {
+            if (e.parentId === pId && !descendantIds.has(e.id)) {
+              descendantIds.add(e.id);
+              queue.push(e.id);
+            }
+          }
+        }
+
+        if (descendantIds.size > 0) {
+          return prev.map((e) => {
+            if (e.id === entityId) {
+              return { ...e, ...targetUpdates };
+            }
+            if (descendantIds.has(e.id)) {
+              const relStart = e.startTime - target.startTime;
+              const newStart = target.startTime + relStart * speedRatio;
+              const newDuration = Math.max(0.2, (e.duration || 0) * speedRatio);
+              const updatedComps = (e.components || []).map((c) =>
+                c.type === 'Transform' ? { ...c, speed: newSpeed } : c
+              );
+              if (!e.components?.some((c) => c.type === 'Transform')) {
+                updatedComps.unshift({ type: 'Transform', speed: newSpeed });
+              }
+              return {
+                ...e,
+                startTime: newStart,
+                duration: newDuration,
+                components: updatedComps,
+              };
+            }
+            return e;
+          });
+        }
+
+        return prev.map((e) => (e.id === entityId ? { ...e, ...targetUpdates } : e));
+      }
+
+      return prev.map((e) => (e.id === entityId ? { ...e, ...updates } : e));
+    }, { coalesce: true });
   }, [setEntities, selectedEntityId, setSelectedEntityId]);
  
   // Delete entity.

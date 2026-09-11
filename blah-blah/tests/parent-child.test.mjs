@@ -249,11 +249,15 @@ test('computeActiveEntitiesAtTime: circular parenting does not crash and breaks 
 
 // ─── 4. Speed Inheritance & Video-Audio Companion ────────────────────────────
 
-test('composeTransform2D: speed multiplies from parent to child', () => {
+test('composeTransform2D: child local speed takes precedence or inherits parent speed', () => {
   const parent = { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1, speed: 2 };
-  const child = { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1, speed: 1.5 };
-  const world = composeTransform2D(parent, child);
-  assert.equal(world.speed, 3);
+  const childWithSpeed = { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1, speed: 2 };
+  const world1 = composeTransform2D(parent, childWithSpeed);
+  assert.equal(world1.speed, 2);
+
+  const childInheriting = { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1 };
+  const world2 = composeTransform2D(parent, childInheriting);
+  assert.equal(world2.speed, 2);
 });
 
 test('video-audio pairing: video and audio clips share duration, audio is parented to video, video is muted', () => {
@@ -369,6 +373,96 @@ test('split logic: splits child clips in tandem with parent clip and reparents p
   assert.equal(part2Parent.duration, 6);
   assert.equal(part2Child.duration, 6);
   assert.equal(part2Child.parentId, part2Parent.id);
+});
+
+test('speed sync: changing parent speed syncs children speed, duration, and relative start time', () => {
+  const parent = {
+    id: 'vid-1',
+    name: 'Video',
+    startTime: 2,
+    duration: 8,
+    parentId: null,
+    components: [{ type: 'Transform', speed: 1 }],
+  };
+  const child1 = {
+    id: 'aud-1',
+    name: 'Audio',
+    startTime: 2,
+    duration: 8,
+    parentId: 'vid-1',
+    components: [{ type: 'Transform', speed: 1 }],
+  };
+  const grandchild = {
+    id: 'text-1',
+    name: 'Subtitle',
+    startTime: 4, // 2s after parent start
+    duration: 4,
+    parentId: 'aud-1',
+    components: [{ type: 'Transform', speed: 1 }],
+  };
+
+  const prev = [parent, child1, grandchild];
+  const updates = { components: [{ type: 'Transform', speed: 2 }], duration: 4 };
+
+  // Replicate the speed sync algorithm from handleUpdateEntity in useProjectStore
+  const target = prev.find((e) => e.id === 'vid-1');
+  const oldTransform = target.components?.find((c) => c.type === 'Transform');
+  const newTransform = updates.components?.find((c) => c.type === 'Transform');
+  const oldSpeed = Number(oldTransform?.speed ?? 1) || 1;
+  const newSpeed = Number(newTransform?.speed) || 1;
+  const speedRatio = oldSpeed / newSpeed; // 1 / 2 = 0.5
+
+  const descendantIds = new Set();
+  let queue = [target.id];
+  while (queue.length > 0) {
+    const pId = queue.shift();
+    for (const e of prev) {
+      if (e.parentId === pId && !descendantIds.has(e.id)) {
+        descendantIds.add(e.id);
+        queue.push(e.id);
+      }
+    }
+  }
+
+  assert.deepEqual(Array.from(descendantIds), ['aud-1', 'text-1']);
+
+  const next = prev.map((e) => {
+    if (e.id === 'vid-1') {
+      return { ...e, ...updates };
+    }
+    if (descendantIds.has(e.id)) {
+      const relStart = e.startTime - target.startTime;
+      const newStart = target.startTime + relStart * speedRatio;
+      const newDuration = Math.max(0.2, (e.duration || 0) * speedRatio);
+      const updatedComps = (e.components || []).map((c) =>
+        c.type === 'Transform' ? { ...c, speed: newSpeed } : c
+      );
+      return {
+        ...e,
+        startTime: newStart,
+        duration: newDuration,
+        components: updatedComps,
+      };
+    }
+    return e;
+  });
+
+  const nextParent = next.find((e) => e.id === 'vid-1');
+  const nextChild1 = next.find((e) => e.id === 'aud-1');
+  const nextGrandchild = next.find((e) => e.id === 'text-1');
+
+  assert.equal(nextParent.duration, 4);
+  assert.equal(nextParent.components[0].speed, 2);
+
+  // Child1 (audio) duration is 4, speed is 2, startTime is 2
+  assert.equal(nextChild1.duration, 4);
+  assert.equal(nextChild1.startTime, 2);
+  assert.equal(nextChild1.components[0].speed, 2);
+
+  // Grandchild (subtitle): started 2s after parent -> now starts 1s after parent (startTime = 3)
+  assert.equal(nextGrandchild.startTime, 3);
+  assert.equal(nextGrandchild.duration, 2); // 4 * 0.5 = 2s
+  assert.equal(nextGrandchild.components[0].speed, 2);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

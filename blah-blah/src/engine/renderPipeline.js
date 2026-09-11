@@ -68,7 +68,7 @@ export function composeTransform2D(parentWorld, childLocal) {
     scaleX: pScaleX * (childLocal.scaleX ?? 1),
     scaleY: pScaleY * (childLocal.scaleY ?? 1),
     opacity: (parentWorld.opacity ?? 1) * (childLocal.opacity ?? 1),
-    speed: (parentWorld.speed ?? 1) * (childLocal.speed ?? 1),
+    speed: childLocal.speed !== undefined ? childLocal.speed : (parentWorld.speed ?? 1),
   };
 }
 

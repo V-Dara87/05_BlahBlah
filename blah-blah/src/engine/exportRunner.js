@@ -667,7 +667,11 @@ export async function mixdownAudio({
     // the static value. Volume goes through an (offline) GainNode below,
     // which — unlike HTMLMediaElement.volume — accepts boosts above 1.0
     // unchanged, so loud clips export loud.
-    const transformSpeed = entity.components?.find((c) => c.type === 'Transform')?.speed ?? 1;
+    const localTransformSpeed = entity.components?.find((c) => c.type === 'Transform')?.speed;
+    const parentTransformSpeed = entity.parentId
+      ? entities?.find((e) => e.id === entity.parentId)?.components?.find((c) => c.type === 'Transform')?.speed
+      : undefined;
+    const transformSpeed = localTransformSpeed ?? parentTransformSpeed ?? 1;
     const speed = (comp.speed || 1) * transformSpeed;
     const mediaOffset = comp.mediaOffset || 0;
     const volume = comp.volume ?? 1;
