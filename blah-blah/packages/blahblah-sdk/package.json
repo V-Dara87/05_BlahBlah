@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "description": "Type declarations for the blahblah motion-script runtime API (no runtime code)",
   "types": "index.d.ts",
-  "files": ["index.d.ts"]
+  "type": "module",
+  "main": "index.js",
+  "files": ["index.d.ts", "index.js", "ambient.d.ts"]
 }
  

@@ -22,6 +22,16 @@ import {
 // in `packages/blahblah-sdk/index.d.ts` — no separate file to keep in
 // sync by hand.
 import blahblahSdkDts from '../../packages/blahblah-sdk/index.d.ts?raw';
+// Raw text of the SDK's runtime (the actual MotionScript/CanvasComponent
+// classes `extends` resolves against at edit-time if an editor peeks past
+// the .d.ts — e.g. "Go to Definition"). Vendored alongside index.d.ts for
+// the same reason: scriptBundler.js resolves `@blahblah/sdk` to its OWN
+// bundled copy of this file at RUN time (never reads this per-project
+// copy), so this file is purely an editor-side convenience, same as the
+// .d.ts. Both are written from the same source of truth
+// (packages/blahblah-sdk/) so they can't drift from each other.
+import blahblahSdkSource from '../../packages/blahblah-sdk/index.js?raw';
+import blahblahSdkAmbientDts from '../../packages/blahblah-sdk/ambient.d.ts?raw';
  
 /**
  * Basic shape validation for a `resolution` object read back from disk --
@@ -65,6 +75,83 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 // the import path) — reused here because reload rebuilds mediaAssets by
 // scanning media/ on disk and must not stamp a placeholder duration.
 import { probeMediaElementDuration, MEDIA_FALLBACK_DURATION } from './mediaImport';
+
+/**
+ * Write (or overwrite) the vendored `@blahblah/sdk` copy — index.d.ts +
+ * index.js — plus scripts/jsconfig.json into a project's scripts/ folder.
+ * Shared by createNewProjectFolder (brand-new projects) and
+ * loadProjectFromDirectory (existing projects opened before this SDK
+ * existed, or before jsconfig.json existed) so both paths get the same
+ * up-to-date SDK copy instead of only new projects getting one. Safe to
+ * call on every load: it always overwrites with the current bundled
+ * source, so a stale per-project copy from an older blahblah version
+ * self-heals the next time the project is opened.
+ */
+async function writeSdkFiles(scriptsDirHandle) {
+  const blahblahDirHandle = await scriptsDirHandle.getDirectoryHandle('.blahblah', { create: true });
+  const sdkDirHandle = await blahblahDirHandle.getDirectoryHandle('sdk', { create: true });
+
+  const sdkDtsHandle = await sdkDirHandle.getFileHandle('index.d.ts', { create: true });
+  const sdkDtsWritable = await sdkDtsHandle.createWritable();
+  await sdkDtsWritable.write(blahblahSdkDts);
+  await sdkDtsWritable.close();
+
+  const sdkJsHandle = await sdkDirHandle.getFileHandle('index.js', { create: true });
+  const sdkJsWritable = await sdkJsHandle.createWritable();
+  await sdkJsWritable.write(blahblahSdkSource);
+  await sdkJsWritable.close();
+
+  const sdkAmbientDtsHandle = await sdkDirHandle.getFileHandle('ambient.d.ts', { create: true });
+  const sdkAmbientDtsWritable = await sdkAmbientDtsHandle.createWritable();
+  await sdkAmbientDtsWritable.write(blahblahSdkAmbientDts);
+  await sdkAmbientDtsWritable.close();
+
+  // Only create jsconfig.json if the project doesn't already have one —
+  // unlike the SDK files above, this one may have been hand-edited by the
+  // user (compilerOptions tweaks, added paths, etc.) and blindly
+  // overwriting it on every load would silently discard those edits.
+  let hasJsconfig = true;
+  try {
+    await scriptsDirHandle.getFileHandle('jsconfig.json', { create: false });
+  } catch {
+    hasJsconfig = false;
+  }
+  if (!hasJsconfig) {
+    const jsconfig = {
+      compilerOptions: {
+        target: 'ES2020',
+        module: 'ESNext',
+        moduleResolution: 'Bundler',
+        jsx: 'react',
+        allowJs: true,
+        checkJs: true,
+        // baseUrl + ignoreDeprecations: paths requires baseUrl to resolve
+        // @blahblah/sdk. baseUrl is deprecated in TS 6.0+ but still works;
+        // ignoreDeprecations silences the deprecation warning VS Code shows.
+        baseUrl: '.',
+        ignoreDeprecations: '6.0',
+        // paths must be inside compilerOptions — placing it at the top level
+        // of jsconfig is silently ignored by TypeScript, which is why
+        // "@blahblah/sdk" showed "Cannot find module" even with baseUrl set.
+        paths: {
+          '@blahblah/sdk': ['./.blahblah/sdk'],
+        },
+        // Disable strict checks that produce noise in plain-JS scripts:
+        // implicit-any fires on every destructured parameter that has no
+        // type annotation, and strictNullChecks fires on normal canvas/DOM
+        // patterns. Both are off by default in jsconfig — only real errors
+        // (undefined names, wrong property access, etc.) stay visible.
+        noImplicitAny: false,
+        strictNullChecks: false,
+      },
+      include: ['**/*', '.blahblah/**/*'],
+    };
+    const jsconfigHandle = await scriptsDirHandle.getFileHandle('jsconfig.json', { create: true });
+    const jsconfigWritable = await jsconfigHandle.createWritable();
+    await jsconfigWritable.write(JSON.stringify(jsconfig, null, 2));
+    await jsconfigWritable.close();
+  }
+}
 
 export function isFileSystemSupported() {
   return isTauri() || (typeof window !== 'undefined' && 'showDirectoryPicker' in window);
@@ -159,61 +246,17 @@ export async function createNewProjectFolder(parentDirHandle, projectName, defau
   await projectDirHandle.getDirectoryHandle('prefabs', { create: true });
   await projectDirHandle.getDirectoryHandle('media', { create: true });
 
-  // Vendor a copy of the SDK's type declarations into the project itself
-  // (scripts/.blahblah/sdk/index.d.ts) instead of pointing jsconfig at
-  // `../packages/blahblah-sdk`. That relative path only worked if the
+  // Vendor a copy of the SDK (index.d.ts + index.js) and scripts/
+  // jsconfig.json into the project itself, instead of pointing jsconfig
+  // at `../packages/blahblah-sdk`. That relative path only worked if the
   // project folder happened to be created next to this repo's
   // `packages/` folder, but `pickProjectDirectory()` lets the user
   // choose ANY location on disk via the native folder picker — for
   // most users the relative path pointed at nothing and type
-  // resolution silently failed. A self-contained per-project copy
-  // works no matter where the project lives, at the cost of the copy
-  // going stale if the SDK's types change later (acceptable: it's a
-  // types-only convenience file, not something scripts depend on at
-  // runtime — see index.d.ts's own header comment).
-  const blahblahDirHandle = await scriptsDirHandle.getDirectoryHandle('.blahblah', { create: true });
-  const sdkDirHandle = await blahblahDirHandle.getDirectoryHandle('sdk', { create: true });
-  const sdkDtsHandle = await sdkDirHandle.getFileHandle('index.d.ts', { create: true });
-  const sdkDtsWritable = await sdkDtsHandle.createWritable();
-  await sdkDtsWritable.write(blahblahSdkDts);
-  await sdkDtsWritable.close();
-
-  // Write scripts/jsconfig.json so VS Code (or any editor) recognizes the
-  // scripts/ folder as a JS project with working module resolution and
-  // autocomplete for relative imports between script files.
-  const jsconfig = {
-    compilerOptions: {
-      target: 'ES2020',
-      module: 'ESNext',
-      moduleResolution: 'Bundler',
-      jsx: 'react',
-      allowJs: true,
-      checkJs: false,
-      // Suppress ts(7031) "implicitly has an 'any' type" on destructured
-      // parameters. Users may opt in to checkJs: true for syntax checking
-      // without being flooded by implicit-any warnings on every onMount /
-      // onUpdate argument — the SDK's CanvasOnMountArgs / MotionOnStartArgs
-      // types document the shapes, but plain-JS scripts don't annotate
-      // their destructured params and that's fine by design.
-      noImplicitAny: false,
-      // No `baseUrl` — TypeScript 7.0 deprecates and removes it, and
-      // recent TS versions already warn on it. With
-      // moduleResolution: 'Bundler', `paths` below still resolves
-      // relative to this jsconfig.json's own folder without baseUrl.
-    },
-    include: ['**/*'],
-    paths: {
-      // Points at the self-contained copy written above, not at the
-      // (possibly nonexistent, from this project folder's perspective)
-      // repo-relative packages/blahblah-sdk.
-      '@blahblah/sdk': ['./.blahblah/sdk'],
-    },
-  };
-
-  const jsconfigHandle = await scriptsDirHandle.getFileHandle('jsconfig.json', { create: true });
-  const jsconfigWritable = await jsconfigHandle.createWritable();
-  await jsconfigWritable.write(JSON.stringify(jsconfig, null, 2));
-  await jsconfigWritable.close();
+  // resolution silently failed. A self-contained per-project copy works
+  // no matter where the project lives. See writeSdkFiles for why this is
+  // shared with loadProjectFromDirectory rather than being new-project-only.
+  await writeSdkFiles(scriptsDirHandle);
  
   const projectResolution = sanitizeResolution(resolution);
  
@@ -318,6 +361,17 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
   const loadedScripts = [];
   try {
     const scriptsDirHandle = await dirHandle.getDirectoryHandle('scripts', { create: true });
+    // Self-heal projects created/opened before @blahblah/sdk existed (or
+    // whose vendored copy predates a newer SDK): (re)write index.d.ts +
+    // index.js unconditionally, and add jsconfig.json only if missing —
+    // same helper createNewProjectFolder uses, see writeSdkFiles for the
+    // overwrite-vs-preserve rationale. Best-effort: a permission issue or
+    // read-only mount here shouldn't block the project from loading.
+    try {
+      await writeSdkFiles(scriptsDirHandle);
+    } catch (err) {
+      console.warn('Could not write/update @blahblah/sdk files in scripts/:', err);
+    }
     for await (const entry of scriptsDirHandle.values()) {
       if (entry.kind === 'file' && isScriptFile(entry.name)) {
         const file = await entry.getFile();

@@ -7,6 +7,11 @@
  *
  * Resolution rules (all handled in the plugin, so `resolveDir` is
  * irrelevant and every path is namespaced):
+ *   - `@blahblah/sdk` (+ any subpath under it)         -> virtual module,
+ *     served from this file's own bundled copy of packages/blahblah-sdk's
+ *     runtime (see BLAHBLAH_SDK_SOURCE below) — never hits esm.sh or the
+ *     project's scripts/ folder, so it works offline and identically no
+ *     matter where the project lives on disk.
  *   - bare specifiers (`three`, `gsap@^3`, `animejs`)  -> packageResolver
  *     (esm.sh fetch once, IndexedDB cache forever; offline after first use)
  *   - relative specifiers (`./helpers.js`)             -> project scripts/
@@ -33,6 +38,13 @@ import {
   resolvePackageImport,
   resolveEsmShChunk,
 } from './packageResolver.js';
+// Raw text of the SDK's runtime — bundled at build time via Vite's `?raw`
+// import so the bundler's virtual module always matches whatever is
+// actually in packages/blahblah-sdk/index.js, same rationale as
+// projectFileSystem.js's `?raw` import of index.d.ts (no separate copy to
+// keep in sync by hand). This is the RUNTIME (behavior); index.d.ts is the
+// separate types-only file projectFileSystem.js vendors into each project.
+import blahblahSdkSource from '../../packages/blahblah-sdk/index.js?raw';
 
 const NODE_BUILTINS = new Set([
   'assert', 'async_hooks', 'buffer', 'child_process', 'cluster', 'console',
@@ -47,6 +59,16 @@ const NODE_BUILTINS = new Set([
 export function isNodeBuiltin(spec) {
   if (spec.startsWith('node:')) return true;
   return NODE_BUILTINS.has(spec);
+}
+
+/**
+ * Whether a specifier refers to the SDK's virtual module — `@blahblah/sdk`
+ * itself, or any subpath under it (e.g. a hypothetical `@blahblah/sdk/foo`).
+ * Matched before the bare-specifier / esm.sh checks below so it never
+ * falls through to packageResolver or a network fetch.
+ */
+export function isBlahblahSdkSpecifier(spec) {
+  return spec === '@blahblah/sdk' || spec.startsWith('@blahblah/sdk/');
 }
 
 /**
@@ -127,6 +149,10 @@ export function createImportPlugin(dirHandle) {
       build.onResolve({ filter: /.*/ }, (args) => {
         const { path } = args;
 
+        if (isBlahblahSdkSpecifier(path)) {
+          return { path, namespace: 'blahblah-sdk' };
+        }
+
         const reactKind = reactFamilyKind(path);
         if (reactKind) {
           return { path, namespace: 'blahblah-react', pluginData: { kind: reactKind } };
@@ -152,6 +178,16 @@ export function createImportPlugin(dirHandle) {
         // eval-time error rather than a silent wrong render).
         return null;
       });
+
+      // @blahblah/sdk resolves to the SDK's own source (vendored via
+      // Vite's `?raw` import above) — never esm.sh, never the project's
+      // scripts/ folder — so `import { CanvasComponent } from
+      // '@blahblah/sdk'` works offline and identically regardless of
+      // where the project directory lives on disk.
+      build.onLoad({ filter: /.*/, namespace: 'blahblah-sdk' }, () => ({
+        loader: 'js',
+        contents: blahblahSdkSource,
+      }));
 
       build.onLoad({ filter: /.*/, namespace: 'blahblah-react' }, (args) => ({
         loader: 'js',

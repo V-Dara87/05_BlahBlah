@@ -349,13 +349,45 @@ export const ProjectPanel = memo(function ProjectPanel({
       id: `script-${Date.now()}`,
       name: 'NewScript.jsx',
       description: 'Blank JavaScript Motion script',
-      code: `export default class NewScript {
+      code: `import { CanvasComponent } from '@blahblah/sdk';
+
+export default class NewScript extends CanvasComponent {
   static props = {};
 
-  onUpdate({ transform, time }) {
-    // Animate transform.x / transform.y / transform.rotation /
-    // transform.scaleX / transform.scaleY / transform.opacity here.
-    transform.x = Math.sin(time * 2) * 50; // placeholder — replace with your own motion
+  onMount({ container, canvasWidth, canvasHeight }) {
+    this.canvas = document.createElement('canvas');
+    this.canvas.width = canvasWidth || 800;
+    this.canvas.height = canvasHeight || 600;
+    this.canvas.style.width = '100%';
+    this.canvas.style.height = '100%';
+    this.canvas.style.display = 'block';
+    container.appendChild(this.canvas);
+    this.ctx = this.canvas.getContext('2d');
+  }
+
+  onUpdate({ time, canvasWidth, canvasHeight }) {
+    if (!this.ctx) return;
+    if (this.canvas.width !== canvasWidth || this.canvas.height !== canvasHeight) {
+      this.canvas.width = canvasWidth;
+      this.canvas.height = canvasHeight;
+    }
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    // Draw here — this.ctx is a CanvasRenderingContext2D.
+    // Example placeholder motion:
+    const x = this.canvas.width / 2 + Math.sin(time * 2) * 50;
+    const y = this.canvas.height / 2;
+    this.ctx.fillStyle = '#ffffff';
+    this.ctx.beginPath();
+    this.ctx.arc(x, y, 8, 0, Math.PI * 2);
+    this.ctx.fill();
+  }
+
+  onUnmount({ container }) {
+    if (this.canvas?.parentNode === container) {
+      container.removeChild(this.canvas);
+    }
+    this.canvas = null;
+    this.ctx = null;
   }
 }`
     };

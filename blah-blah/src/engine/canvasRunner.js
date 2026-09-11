@@ -178,6 +178,8 @@ export function updateCanvasComponent({
   props = {},
   canvasWidth = 0,
   canvasHeight = 0,
+  duration = 5,
+  startTime = 0,
 }) {
   if (!scriptCode || !container) return;
  
@@ -190,6 +192,24 @@ export function updateCanvasComponent({
   const needsRemount = !mounted || mounted.scriptCode !== scriptCode || mounted.container !== container;
  
   const { canvasWidth: effWidth, canvasHeight: effHeight } = resolveCanvasSize(props, canvasWidth, canvasHeight);
+
+  // Clip timing metadata for animation convenience
+  const effDuration = Number.isFinite(duration) && duration > 0 ? duration : 5;
+  const effStartTime = Number.isFinite(startTime) ? startTime : 0;
+  const effEndTime = effStartTime + effDuration;
+  const effectiveFps = fps || 30;
+  const totalFrames = Math.max(1, Math.round(effDuration * effectiveFps));
+  const progress = effDuration > 0 ? Math.max(0, Math.min(1, localTime / effDuration)) : 0;
+  const timeLeft = Math.max(0, effDuration - localTime);
+
+  const timingArgs = {
+    duration: effDuration,
+    totalFrames,
+    progress,
+    startTime: effStartTime,
+    endTime: effEndTime,
+    timeLeft,
+  };
  
   if (needsRemount) {
     if (mounted) {
@@ -213,7 +233,14 @@ export function updateCanvasComponent({
     mounted = { instance, scriptCode, container, libs, lastLocalTime: null };
     mountedInstances.set(mountKey, mounted);
  
-    safeCall(instance, 'onMount', { container, props, libs, canvasWidth: effWidth, canvasHeight: effHeight });
+    safeCall(instance, 'onMount', {
+      container,
+      props,
+      libs,
+      canvasWidth: effWidth,
+      canvasHeight: effHeight,
+      ...timingArgs,
+    });
   }
  
   // Scrub/seek detection. onMount only fires once per (scriptCode,
@@ -243,6 +270,7 @@ export function updateCanvasComponent({
       props,
       canvasWidth: effWidth,
       canvasHeight: effHeight,
+      ...timingArgs,
     });
   }
  
@@ -256,6 +284,7 @@ export function updateCanvasComponent({
     props,
     canvasWidth: effWidth,
     canvasHeight: effHeight,
+    ...timingArgs,
   });
 }
  

@@ -391,6 +391,8 @@ export function EntityRenderer({
           frame: Math.round(localTime * fps),
           fps,
           props: comp.props || {},
+          duration: entity.duration ?? 5,
+          startTime: entity.startTime ?? 0,
           // Project's real output resolution — the default a canvas
           // script receives as canvasWidth/canvasHeight unless it
           // overrides via its own static props (see canvasRunner.js).

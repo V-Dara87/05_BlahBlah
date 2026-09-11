@@ -306,14 +306,8 @@ export function drawExportFrame({
             frame: Math.round(localTime * fps),
             fps,
             props: comp.props || {},
-            // Fix: export was never passing the frame's real resolution
-            // here, so any canvas-kind script reading canvasWidth/
-            // canvasHeight (rather than declaring a fixed static-props
-            // override) saw 0 during export while getting the correct
-            // project resolution in live preview (see EntityRenderer.jsx,
-            // which passes this same pair). width/height here are the
-            // export canvas's true output resolution, already used two
-            // lines below for drawCanvasContainerContents.
+            duration: entity.duration ?? 5,
+            startTime: entity.startTime ?? 0,
             canvasWidth: width,
             canvasHeight: height,
           });
