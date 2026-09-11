@@ -35,6 +35,7 @@ export const ClipItem = memo(function ClipItem({
   onUpdateClips,
   onDuplicateClips,
   onAttachScriptToEntity,
+  onSplitVideoAndAudio,
   snappingPoints = [],
   snappingEnabled = true,
 }) {
@@ -529,6 +530,22 @@ export const ClipItem = memo(function ClipItem({
     }
 
     if (!isLocked) {
+      // Split Video & Audio option (for video clips that don't already have an audio child)
+      const isVideo = clip.type === 'video' || clip.components?.some((c) => c.type === 'VideoRenderer');
+      const hasAudioChild = allClips.some(
+        (c) => c.parentId === clip.id && (c.type === 'audio' || c.components?.some((comp) => comp.type === 'AudioSource'))
+      );
+      if (isVideo && !hasAudioChild && onSplitVideoAndAudio) {
+        const splitAudioBtn = document.createElement('button');
+        splitAudioBtn.textContent = '🎵 Split Video & Audio';
+        splitAudioBtn.className = 'ctx-menu-item';
+        splitAudioBtn.onclick = () => {
+          onSplitVideoAndAudio(clip.id);
+          menu.remove();
+        };
+        menu.appendChild(splitAudioBtn);
+      }
+
       // Unlink Parent button if clip currently has a parent
       if (clip.parentId) {
         const unlinkBtn = document.createElement('button');

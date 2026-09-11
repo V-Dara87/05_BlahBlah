@@ -230,17 +230,32 @@ export function useProjectStore({
  
   // Split entity (or entities) at playhead
   const handleSplitEntity = useCallback((entityIdOrIds) => {
-    const ids = Array.isArray(entityIdOrIds)
+    const rawIds = Array.isArray(entityIdOrIds)
       ? entityIdOrIds
       : entityIdOrIds
         ? [entityIdOrIds]
         : selectedEntityId ? [selectedEntityId] : [];
-    if (ids.length === 0) return;
- 
+    if (rawIds.length === 0) return;
+
+    // Expand to include any child clips whose parent is being split
+    const splitSet = new Set(rawIds);
+    let expanded = true;
+    while (expanded) {
+      expanded = false;
+      for (const e of entities) {
+        if (!splitSet.has(e.id) && e.parentId && splitSet.has(e.parentId)) {
+          splitSet.add(e.id);
+          expanded = true;
+        }
+      }
+    }
+    const ids = Array.from(splitSet);
+
     const splitPoint = getPlaybackTime();
     let anySplit = false;
     const toAdd = [];
     const updatedMap = new Map();
+    const parentPart2Map = new Map();
  
     ids.forEach(id => {
       const target = entities.find(e => e.id === id);
@@ -262,9 +277,11 @@ export function useProjectStore({
       }) || [];
  
       const part1 = { ...target, name: `${target.name}_001`, duration: part1Dur };
+      const newId = `go-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+      parentPart2Map.set(target.id, newId);
       const part2 = {
         ...target,
-        id: `go-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        id: newId,
         name: `${target.name}_002`,
         startTime: splitPoint,
         duration: part2Dur,
@@ -274,7 +291,14 @@ export function useProjectStore({
       updatedMap.set(target.id, part1);
       toAdd.push(part2);
     });
- 
+
+    // Fix up parentId on newly created part2 items if their parent was also split
+    toAdd.forEach((item) => {
+      if (item.parentId && parentPart2Map.has(item.parentId)) {
+        item.parentId = parentPart2Map.get(item.parentId);
+      }
+    });
+
     if (!anySplit) return;
     setEntities(prev => prev.map(e => updatedMap.has(e.id) ? updatedMap.get(e.id) : e).concat(toAdd));
     if (toAdd.length > 0) {
@@ -410,14 +434,35 @@ export function useProjectStore({
     setSelectedEntityId(newClips[0]?.id || null);
   };
  
-  // Add Media to Timeline. Every asset becomes ONE independent flat clip
-  // on the target track (video keeps its own audio — no companion clip).
+  // Add Media to Timeline. When placing a video asset, split into Video and Audio clips,
+  // where the Audio clip is always parented to the Video clip.
   const handleAddMediaToTimeline = (asset, targetTrackId = 'track-3', startTime = getPlaybackTime()) => {
     const clipName = asset.name.replace(/\.[^.]+$/, '');
     const duration = asset.duration || 8;
     const finalStartTime = startTime ?? getPlaybackTime();
- 
+
     if (asset.type !== 'audio') {
+      const targetIdx = tracks.findIndex((t) => t.id === targetTrackId);
+      let audioTrackId = targetTrackId;
+      let newTracks = null;
+      if (targetIdx >= 0 && targetIdx + 1 < tracks.length) {
+        audioTrackId = tracks[targetIdx + 1].id;
+      } else if (targetIdx >= 0) {
+        const newTrackNum = tracks.length + 1;
+        const extraTrack = {
+          id: `track-${newTrackNum}`,
+          name: `Track ${newTrackNum}`,
+          type: 'layer',
+          parentTrackId: null,
+          muted: false,
+          locked: false,
+          visible: true,
+          volume: 1.0,
+        };
+        audioTrackId = extraTrack.id;
+        newTracks = [...tracks, extraTrack];
+      }
+
       const videoGO = createGameObject({
         name: clipName,
         trackId: targetTrackId,
@@ -430,17 +475,46 @@ export function useProjectStore({
           {
             type: 'VideoRenderer',
             src: asset.url,
+            volume: 0, // Video sound is owned by the child AudioSource clip
+            speed: 1,
+            mediaOffset: 0,
+          },
+        ],
+      });
+
+      const audioGO = createGameObject({
+        name: `${clipName} (Audio)`,
+        trackId: audioTrackId,
+        startTime: finalStartTime,
+        duration,
+        type: 'audio',
+        src: asset.url,
+        parentId: videoGO.id, // Audio is ALWAYS child of video
+        components: [
+          createDefaultTransform({ x: 0, y: 0 }),
+          {
+            type: 'AudioSource',
+            src: asset.url,
             volume: 1,
             speed: 1,
             mediaOffset: 0,
           },
         ],
       });
-      setEntities((prev) => [...prev, videoGO]);
+
+      if (newTracks) {
+        setProjectHistoryState((prev) => ({
+          ...prev,
+          tracks: newTracks,
+          entities: [...prev.entities, videoGO, audioGO],
+        }));
+      } else {
+        setEntities((prev) => [...prev, videoGO, audioGO]);
+      }
       setSelectedEntityId(videoGO.id);
       return;
     }
- 
+
     // Pure audio clips are a single entity
     const newGO = createGameObject({
       name: clipName,
@@ -463,6 +537,78 @@ export function useProjectStore({
     setEntities((prev) => [...prev, newGO]);
     setSelectedEntityId(newGO.id);
   };
+
+  // Explicitly split an existing video clip into Video and Audio clips (with Audio as child)
+  const handleSplitVideoAndAudio = useCallback((videoEntityId) => {
+    const video = entities.find((e) => e.id === videoEntityId);
+    if (!video) return;
+
+    const videoComp = video.components?.find((c) => c.type === 'VideoRenderer');
+    const src = videoComp?.src || video.src;
+    if (!src) return;
+
+    const existingAudioChild = entities.find(
+      (e) => e.parentId === video.id && (e.type === 'audio' || e.components?.some((c) => c.type === 'AudioSource'))
+    );
+    if (existingAudioChild) return;
+
+    const targetIdx = tracks.findIndex((t) => t.id === video.trackId);
+    let audioTrackId = video.trackId;
+    let newTracks = null;
+    if (targetIdx >= 0 && targetIdx + 1 < tracks.length) {
+      audioTrackId = tracks[targetIdx + 1].id;
+    } else if (targetIdx >= 0) {
+      const newTrackNum = tracks.length + 1;
+      const extraTrack = {
+        id: `track-${newTrackNum}`,
+        name: `Track ${newTrackNum}`,
+        type: 'layer',
+        parentTrackId: null,
+        muted: false,
+        locked: false,
+        visible: true,
+        volume: 1.0,
+      };
+      audioTrackId = extraTrack.id;
+      newTracks = [...tracks, extraTrack];
+    }
+
+    const audioGO = createGameObject({
+      name: `${video.name} (Audio)`,
+      trackId: audioTrackId,
+      startTime: video.startTime,
+      duration: video.duration,
+      type: 'audio',
+      src,
+      parentId: video.id,
+      components: [
+        createDefaultTransform({ x: 0, y: 0 }),
+        {
+          type: 'AudioSource',
+          src,
+          volume: 1,
+          speed: videoComp?.speed || 1,
+          mediaOffset: videoComp?.mediaOffset || 0,
+        },
+      ],
+    });
+
+    const updatedVideoComponents = (video.components || []).map((c) =>
+      c.type === 'VideoRenderer' ? { ...c, volume: 0 } : c
+    );
+
+    if (newTracks) {
+      setProjectHistoryState((prev) => ({
+        ...prev,
+        tracks: newTracks,
+        entities: prev.entities.map((e) => (e.id === video.id ? { ...e, components: updatedVideoComponents } : e)).concat(audioGO),
+      }));
+    } else {
+      setEntities((prev) =>
+        prev.map((e) => (e.id === video.id ? { ...e, components: updatedVideoComponents } : e)).concat(audioGO)
+      );
+    }
+  }, [entities, tracks, setEntities, setProjectHistoryState]);
  
   // Drag-and-Drop from Project Panel onto a Timeline Track. Accepts either
   // an itemId (looked up in the live lists) or the full itemData object
@@ -835,6 +981,7 @@ export function useProjectStore({
     handleAddEmptyClip,
     handleAddPrefabToTimeline,
     handleAddMediaToTimeline,
+    handleSplitVideoAndAudio,
     handleDropItemOnTrack,
     handleAttachScriptToEntity,
     handleAddTrack,

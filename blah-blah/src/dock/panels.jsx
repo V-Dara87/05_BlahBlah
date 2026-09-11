@@ -134,6 +134,7 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
     recordingTrackId, onToggleRecordTrack,
     onZoomIn, onZoomOut, setPixelsPerSecond,
     exportRange, setExportRange,
+    onSplitVideoAndAudio,
   } = useEditorContext();
 
   const store = usePlaybackStore();
@@ -182,6 +183,7 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
       onDropItemOnTrack={handleDropItemOnTrack}
       onAttachScriptToEntity={handleAttachScriptToEntity}
       onAddMediaAsset={onAddMediaAsset}
+      onSplitVideoAndAudio={onSplitVideoAndAudio}
       onToggleRecordTrack={onToggleRecordTrack}
       onZoomIn={onZoomIn}
       onZoomOut={onZoomOut}

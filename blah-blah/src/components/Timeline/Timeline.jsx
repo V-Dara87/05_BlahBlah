@@ -47,6 +47,7 @@ export const Timeline = memo(function Timeline({
   setSelectedEntityId,
   onAttachScriptToEntity,
   onAddMediaAsset,
+  onSplitVideoAndAudio,
 }) {
   const [boxSelect, setBoxSelect] = useState(null); // { startX, startY, endX, endY } for lasso
   const playbackStore = usePlaybackStore();
@@ -665,6 +666,7 @@ export const Timeline = memo(function Timeline({
                     onAddEmptyClip={onAddEmptyClip}
                     onDropItemOnTrack={onDropItemOnTrack}
                     onAddMediaAsset={onAddMediaAsset}
+                    onSplitVideoAndAudio={onSplitVideoAndAudio}
                     snappingPoints={snappingPoints}
                     snappingEnabled={snappingEnabled}
                     totalWidth={totalWidth}

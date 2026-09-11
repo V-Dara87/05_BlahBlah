@@ -29,6 +29,7 @@ export const TrackLane = memo(function TrackLane({
   onAddEmptyClip,
   onDropItemOnTrack,
   onAddMediaAsset,
+  onSplitVideoAndAudio,
   snappingPoints,
   snappingEnabled,
   totalWidth,
@@ -125,6 +126,7 @@ export const TrackLane = memo(function TrackLane({
     onUpdateClips,
     onDuplicateClips,
     onAttachScriptToEntity,
+    onSplitVideoAndAudio,
     snappingPoints,
     snappingEnabled,
   };

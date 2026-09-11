@@ -218,6 +218,7 @@ export function App() {
     handleDeleteEntity, handleRippleTrimToPlayhead, handleSplitEntity,
     handleAddEmptyClip,
     handleAddPrefabToTimeline, handleAddMediaToTimeline,
+    handleSplitVideoAndAudio,
     handleDropItemOnTrack, handleAttachScriptToEntity,
     handleAddTrack, handleUpdateTrack, handleDeleteTrack,
     handleSaveAsPrefab, handleMovePrefab, handleMoveScript,
@@ -643,6 +644,8 @@ export function App() {
           onOpenScriptEditor: handleOpenScriptEditor,
           onAddPrefabToTimeline: handleAddPrefabToTimeline,
           onAddMediaToTimeline: handleAddMediaToTimeline,
+          handleSplitVideoAndAudio,
+          onSplitVideoAndAudio: handleSplitVideoAndAudio,
           // App-wide Shared Library (project-panel "shared" folder)
           sharedLibraryItems: sharedLibrary.items,
           onSharePrefab: handleSharePrefab,

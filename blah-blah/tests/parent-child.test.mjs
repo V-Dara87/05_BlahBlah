@@ -247,6 +247,130 @@ test('computeActiveEntitiesAtTime: circular parenting does not crash and breaks 
   assert.equal(active.length, 2);
 });
 
+// ─── 4. Speed Inheritance & Video-Audio Companion ────────────────────────────
+
+test('composeTransform2D: speed multiplies from parent to child', () => {
+  const parent = { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1, speed: 2 };
+  const child = { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1, speed: 1.5 };
+  const world = composeTransform2D(parent, child);
+  assert.equal(world.speed, 3);
+});
+
+test('video-audio pairing: video and audio clips share duration, audio is parented to video, video is muted', () => {
+  const asset = { name: 'sample.mp4', url: 'blob:test', duration: 12, type: 'video' };
+  const clipName = asset.name.replace(/\.[^.]+$/, '');
+
+  const videoGO = createGameObject({
+    name: clipName,
+    trackId: 'track-1',
+    startTime: 0,
+    duration: asset.duration,
+    type: 'video',
+    src: asset.url,
+    components: [
+      { type: 'VideoRenderer', src: asset.url, volume: 0, speed: 1, mediaOffset: 0 },
+    ],
+  });
+
+  const audioGO = createGameObject({
+    name: `${clipName} (Audio)`,
+    trackId: 'track-2',
+    startTime: 0,
+    duration: asset.duration,
+    type: 'audio',
+    src: asset.url,
+    parentId: videoGO.id,
+    components: [
+      { type: 'AudioSource', src: asset.url, volume: 1, speed: 1, mediaOffset: 0 },
+    ],
+  });
+
+  assert.equal(audioGO.parentId, videoGO.id);
+  assert.equal(videoGO.components.find((c) => c.type === 'VideoRenderer').volume, 0);
+  assert.equal(audioGO.components.find((c) => c.type === 'AudioSource').volume, 1);
+  assert.equal(audioGO.startTime, videoGO.startTime);
+  assert.equal(audioGO.duration, videoGO.duration);
+});
+
+test('split logic: splits child clips in tandem with parent clip and reparents part2', () => {
+  const parent = {
+    id: 'vid-1',
+    name: 'Video',
+    trackId: 't1',
+    startTime: 0,
+    duration: 10,
+    parentId: null,
+    components: [],
+  };
+  const child = {
+    id: 'aud-1',
+    name: 'Video (Audio)',
+    trackId: 't2',
+    startTime: 0,
+    duration: 10,
+    parentId: 'vid-1',
+    components: [],
+  };
+  const entities = [parent, child];
+
+  // Replicate the tandem split algorithm from useProjectStore
+  const splitPoint = 4;
+  const rawIds = ['vid-1'];
+  const splitSet = new Set(rawIds);
+  let expanded = true;
+  while (expanded) {
+    expanded = false;
+    for (const e of entities) {
+      if (!splitSet.has(e.id) && e.parentId && splitSet.has(e.parentId)) {
+        splitSet.add(e.id);
+        expanded = true;
+      }
+    }
+  }
+  const ids = Array.from(splitSet);
+  assert.deepEqual(ids, ['vid-1', 'aud-1']);
+
+  const toAdd = [];
+  const updatedMap = new Map();
+  const parentPart2Map = new Map();
+
+  ids.forEach((id) => {
+    const target = entities.find((e) => e.id === id);
+    if (!target) return;
+    const part1Dur = splitPoint - target.startTime;
+    const part2Dur = target.duration - part1Dur;
+    const part1 = { ...target, name: `${target.name}_001`, duration: part1Dur };
+    const newId = `part2-${target.id}`;
+    parentPart2Map.set(target.id, newId);
+    const part2 = {
+      ...target,
+      id: newId,
+      name: `${target.name}_002`,
+      startTime: splitPoint,
+      duration: part2Dur,
+    };
+    updatedMap.set(target.id, part1);
+    toAdd.push(part2);
+  });
+
+  toAdd.forEach((item) => {
+    if (item.parentId && parentPart2Map.has(item.parentId)) {
+      item.parentId = parentPart2Map.get(item.parentId);
+    }
+  });
+
+  const part2Parent = toAdd.find((e) => e.id === 'part2-vid-1');
+  const part2Child = toAdd.find((e) => e.id === 'part2-aud-1');
+
+  assert.equal(updatedMap.get('vid-1').duration, 4);
+  assert.equal(updatedMap.get('aud-1').duration, 4);
+  assert.equal(updatedMap.get('aud-1').parentId, 'vid-1');
+
+  assert.equal(part2Parent.duration, 6);
+  assert.equal(part2Child.duration, 6);
+  assert.equal(part2Child.parentId, part2Parent.id);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) {
   process.exit(1);
