@@ -4,7 +4,8 @@ import './dopesheet.css';
 import {
   ChevronDown, ChevronRight, Sliders, Type, Square, FileCode,
   ArrowRightToLine, Move, SlidersHorizontal, Repeat, Filter,
-  ChevronsLeft, ChevronsRight, SkipBack, SkipForward, ZoomIn, ZoomOut, Spline
+  ChevronsLeft, ChevronsRight, SkipBack, SkipForward, ZoomIn, ZoomOut, Spline,
+  Undo2, Redo2, Scissors, Trash2, Copy, Magnet,
 } from 'lucide-react';
 import { TRANSFORM_FIELD_GROUPS } from '../inspector/InspectorField';
 import { extractScriptProps, detectScriptKind } from '../../engine/scriptRunner';
@@ -14,6 +15,7 @@ import {
 import { formatTimecode } from '../../utils/timeFormat';
 import { useEditorContext } from '../../dock/EditorContext';
 import { isScriptComponent } from '../../engine/ecs';
+import { loadKeybindSettings } from '../../services/keybindSettings';
  
 /**
  * Dopesheet — GUI keyframing panel (roadmap P1 #6).
@@ -77,9 +79,23 @@ export const Dopesheet = memo(function Dopesheet({
   onUpdateEntity,
   selectedKeyId: selectedKeyIdProp,
   onSelectedKeyChange,
+  // Timeline-parity shortcuts — same actions EditorPlaybackShortcuts.jsx
+  // wires globally, surfaced here too as toolbar buttons so the Dopesheet
+  // doesn't require switching tabs back to Timeline to split/delete/undo
+  // while keyframing. See DopesheetDockPanel in dock/panels.jsx for what
+  // feeds these from EditorContext.
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
+  onSplitSelected,
+  onDeleteSelected,
+  onDuplicateSelected,
+  onToggleSnapping,
+  snappingEnabled,
 }) {
   const { focusDockPanel } = useEditorContext();
-
+ 
   // Use shared state if provided, fall back to local state
   const [localSelectedKeyId, setLocalSelectedKeyId] = useState(null);
   const selectedKeyId = selectedKeyIdProp !== undefined ? selectedKeyIdProp : localSelectedKeyId;
@@ -88,12 +104,40 @@ export const Dopesheet = memo(function Dopesheet({
   const rulerRef = useRef(null);
   const [pixelsPerSecond, setPixelsPerSecond] = useState(PIXELS_PER_SECOND);
   const [collapsedGroups, setCollapsedGroups] = useState({});
+  // Live keybind labels for the new toolbar buttons' tooltips — same
+  // source of truth App.jsx's menu and EditorPlaybackShortcuts read from.
+  // Read once on mount; a live rebind mid-session updating this tooltip
+  // instantly isn't essential (menu bar already re-reads on the
+  // 'blahblah:keybinds-changed' event if a user wants to check the
+  // current binding there).
+  const keybinds = useMemo(() => loadKeybindSettings(), []);
   const [shiftMode, setShiftMode] = useState(false);
   const [showOnlyKeyframed, setShowOnlyKeyframed] = useState(false);
   const [snapToKeyframe, setSnapToKeyframe] = useState(false);
-
+ 
   const localTime = selectedEntity ? Math.max(0, currentTime - selectedEntity.startTime) : 0;
   const clipDuration = selectedEntity?.duration ?? totalDuration;
+  // View mode — 'entity' (default) shows only the selected clip's own
+  // active window, exactly as before. 'timeline' shows the whole
+  // project's duration instead, with the entity's active span drawn as
+  // a highlighted band rather than clamping everything to it — useful
+  // for lining keyframes up against other clips/events elsewhere on the
+  // timeline while still editing this entity's own keyframes (which
+  // stay in local clip-time in storage regardless of which view is
+  // showing — see getFieldKeyframes/setKeyframe/moveKeyframe below,
+  // none of that changes with viewMode).
+  const [viewMode, setViewMode] = useState('entity');
+  const isTimelineView = viewMode === 'timeline';
+  // Offset ADDED to local clip-time before converting to on-screen x, and
+  // the total span drawn. Entity mode: local time 0 already IS the left
+  // edge, so offset 0 / span clipDuration (unchanged from before).
+  // Timeline mode: the ruler now spans the whole project from absolute 0,
+  // and a keyframe stored at local time t actually sits at absolute time
+  // startTime + t — so local time 0 (entity start) must land at
+  // x = startTime * pps, i.e. offset by +startTime — and the span is the
+  // full project length.
+  const viewOffset = isTimelineView ? (selectedEntity?.startTime ?? 0) : 0;
+  const viewSpan = isTimelineView ? totalDuration : clipDuration;
  
   // handleDragKey / handleRulerScrub start a pointermove loop that runs for
   // many ticks against the SAME `selectedEntity` object captured when the
@@ -137,8 +181,12 @@ export const Dopesheet = memo(function Dopesheet({
     setCollapsedGroups((prev) => ({ ...prev, [trackKey]: !prev[trackKey] }));
   };
  
-  const timeToX = useCallback((t) => t * pixelsPerSecond, [pixelsPerSecond]);
-  const xToTime = useCallback((x) => Math.max(0, x / pixelsPerSecond), [pixelsPerSecond]);
+  // Screen-space conversions apply viewOffset so keyframe positions shift
+  // right by startTime in timeline view without changing how they're
+  // stored (all keyframe times passed in/out here are still plain local
+  // clip-time — see the header comment above for why that never changes).
+  const timeToX = useCallback((t) => (t + viewOffset) * pixelsPerSecond, [pixelsPerSecond, viewOffset]);
+  const xToTime = useCallback((x) => (x / pixelsPerSecond) - viewOffset, [pixelsPerSecond, viewOffset]);
   const snapToFrame = (t) => Math.round(t * 30) / 30; // 30fps snap, matches project default fps elsewhere in the engine
  
   // Get all keyframe times across all tracks for snapping
@@ -174,15 +222,52 @@ export const Dopesheet = memo(function Dopesheet({
     return 2; // Show 2s intervals when zoomed out
   }, [pixelsPerSecond]);
  
-  const laneWidth = Math.max(clipDuration * pixelsPerSecond + 200, 600);
-  const numTicks = Math.ceil(clipDuration / tickInterval) + 1;
+  const laneWidth = Math.max(viewSpan * pixelsPerSecond + 200, 600);
+  const numTicks = Math.ceil(viewSpan / tickInterval) + 1;
+  // Playhead x position — timeToX expects LOCAL clip-time (t + viewOffset,
+  // where viewOffset is 0 in entity mode and -startTime in timeline mode;
+  // see viewOffset above). localTime IS local clip-time already, so it's
+  // correct as-is for entity mode, but for timeline mode we want the
+  // playhead positioned by ABSOLUTE project time instead — feeding
+  // localTime through the same viewOffset math there would double-count
+  // the startTime subtraction. currentTime (absolute) fed through with
+  // viewOffset=0 conceptually (i.e. just currentTime * pixelsPerSecond)
+  // is what timeline mode actually wants, so compute it directly rather
+  // than forcing it through timeToX's local-time contract.
+  const playheadX = isTimelineView ? currentTime * pixelsPerSecond : timeToX(localTime);
  
   const handleRulerScrub = useCallback((e) => {
     if (!rulerRef.current || !selectedEntity) return;
     const rect = rulerRef.current.getBoundingClientRect();
     const scrollLeft = lanesScrollRef.current?.scrollLeft || 0;
     const localX = e.clientX - rect.left + scrollLeft;
-    let t = snapToFrame(xToTime(localX));
+    // Clamp range depends on view mode: entity view clamps to the clip's
+    // own [0, clipDuration] in LOCAL time (unchanged from before —
+    // scrubbing past the lane's padded draw area, laneWidth's +200px of
+    // dead space past the real clip end, used to let the playhead run
+    // out past where the clip actually stops with nothing on screen
+    // showing it had left valid range; the out-of-range overlay marks
+    // that dead zone, this keeps the playhead out of it). Timeline view
+    // clamps to the whole project's [0, totalDuration] in ABSOLUTE time
+    // instead, since the ruler now represents the full timeline, not
+    // just this one clip's span.
+    if (isTimelineView) {
+      let absT = Math.min(totalDuration, Math.max(0, snapToFrame(xToTime(localX))));
+      onSeek(absT);
+      const onMove = (moveEvent) => {
+        const mx = moveEvent.clientX - rect.left + (lanesScrollRef.current?.scrollLeft || 0);
+        let mAbsT = Math.min(totalDuration, Math.max(0, snapToFrame(xToTime(mx))));
+        onSeek(mAbsT);
+      };
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+      };
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      return;
+    }
+    let t = Math.min(clipDuration, snapToFrame(xToTime(localX)));
     t = snapToNearestKeyframe(t);
     onSeek(selectedEntity.startTime + t);
  
@@ -190,7 +275,7 @@ export const Dopesheet = memo(function Dopesheet({
       const entity = selectedEntityRef.current;
       if (!entity) return;
       const mx = moveEvent.clientX - rect.left + (lanesScrollRef.current?.scrollLeft || 0);
-      let mt = snapToFrame(xToTime(mx));
+      let mt = Math.min(clipDuration, snapToFrame(xToTime(mx)));
       mt = snapToNearestKeyframe(mt);
       onSeek(entity.startTime + mt);
     };
@@ -200,7 +285,7 @@ export const Dopesheet = memo(function Dopesheet({
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
-  }, [selectedEntity, xToTime, onSeek, snapToNearestKeyframe]);
+  }, [selectedEntity, xToTime, onSeek, snapToNearestKeyframe, clipDuration, isTimelineView, totalDuration]);
  
   const handleAddKeyAtPlayhead = (trackKey, fieldName, defaultVal) => {
     if (!selectedEntity) return;
@@ -317,27 +402,112 @@ export const Dopesheet = memo(function Dopesheet({
             <SlidersHorizontal size={12} />
             <span>Snap</span>
           </button>
-
+ 
         </div>
  
         <div className="dopesheet-toolbar-divider" />
  
+        {/* View range toggle — Entity (default) shows only this clip's own
+            active window, clamped precisely to its start/end. Timeline
+            shows the whole project instead, with this clip's active span
+            drawn as a highlighted band so you can see keyframes relative
+            to other clips/events on the timeline while still editing this
+            entity's keyframes. */}
+        <div className="dopesheet-toolbar-group">
+          <button
+            className={`dopesheet-tool-btn ${!isTimelineView ? 'active' : ''}`}
+            title="Show only this clip's active window"
+            onClick={() => setViewMode('entity')}
+          >
+            <span>Entity</span>
+          </button>
+          <button
+            className={`dopesheet-tool-btn ${isTimelineView ? 'active' : ''}`}
+            title="Show the whole project timeline"
+            onClick={() => setViewMode('timeline')}
+          >
+            <span>Timeline</span>
+          </button>
+        </div>
+ 
+        <div className="dopesheet-toolbar-divider" />
+ 
+        {/* Timeline-parity shortcuts — Undo/Redo, Split/Delete/Duplicate,
+            Toggle Snapping. Mirrors the same actions available from the
+            Timeline toolbar / File+Edit menus / EditorPlaybackShortcuts'
+            global keybinds, so those don't require switching tabs. */}
+        <div className="dopesheet-toolbar-group">
+          <button
+            className="dopesheet-tool-btn-icon"
+            title={`Undo (${keybinds.undo})`}
+            onClick={onUndo}
+            disabled={!canUndo}
+          >
+            <Undo2 size={13} />
+          </button>
+          <button
+            className="dopesheet-tool-btn-icon"
+            title={`Redo (${keybinds.redo})`}
+            onClick={onRedo}
+            disabled={!canRedo}
+          >
+            <Redo2 size={13} />
+          </button>
+        </div>
+ 
+        <div className="dopesheet-toolbar-group">
+          <button
+            className="dopesheet-tool-btn-icon"
+            title={`Split Clip (${keybinds.splitSelected})`}
+            onClick={onSplitSelected}
+            disabled={!selectedEntity}
+          >
+            <Scissors size={13} />
+          </button>
+          <button
+            className="dopesheet-tool-btn-icon"
+            title={`Delete Clip (${keybinds.deleteSelected})`}
+            onClick={onDeleteSelected}
+            disabled={!selectedEntity}
+          >
+            <Trash2 size={13} />
+          </button>
+          <button
+            className="dopesheet-tool-btn-icon"
+            title={`Duplicate Clip (${keybinds.duplicateSelected})`}
+            onClick={onDuplicateSelected}
+            disabled={!selectedEntity}
+          >
+            <Copy size={13} />
+          </button>
+        </div>
+ 
+        <div className="dopesheet-toolbar-group">
+          <button
+            className={`dopesheet-tool-btn-icon ${snappingEnabled ? 'active' : ''}`}
+            title={`Toggle Snapping (${keybinds.toggleSnapping})`}
+            onClick={onToggleSnapping}
+          >
+            <Magnet size={13} />
+          </button>
+        </div>
+ 
         <div className="dopesheet-field-box current">
           <label>Current</label>
-          <input readOnly value={localTime.toFixed(2)} />
+          <input readOnly value={(isTimelineView ? currentTime : localTime).toFixed(2)} />
         </div>
         <div className="dopesheet-field-box">
           <label>End</label>
-          <input readOnly value={clipDuration.toFixed(2)} />
+          <input readOnly value={viewSpan.toFixed(2)} />
         </div>
  
         <div className="dopesheet-toolbar-spacer" />
  
         <div className="dopesheet-toolbar-group">
-          <button className="dopesheet-tool-btn-icon" title="Zoom out" onClick={() => setPixelsPerSecond(Math.max(MIN_PPS, pixelsPerSecond - 15))}>
+          <button className="dopesheet-tool-btn-icon" title={`Zoom out (${keybinds.zoomOut})`} onClick={() => setPixelsPerSecond(Math.max(MIN_PPS, pixelsPerSecond - 15))}>
             <ZoomOut size={13} />
           </button>
-          <button className="dopesheet-tool-btn-icon" title="Zoom in" onClick={() => setPixelsPerSecond(Math.min(MAX_PPS, pixelsPerSecond + 15))}>
+          <button className="dopesheet-tool-btn-icon" title={`Zoom in (${keybinds.zoomIn})`} onClick={() => setPixelsPerSecond(Math.min(MAX_PPS, pixelsPerSecond + 15))}>
             <ZoomIn size={13} />
           </button>
         </div>
@@ -365,7 +535,7 @@ export const Dopesheet = memo(function Dopesheet({
           <Spline size={12} />
           <span>Curves</span>
         </button>
-
+ 
         <button className="dopesheet-tool-btn-icon" title="Toggle loop playback">
           <Repeat size={13} />
         </button>
@@ -430,6 +600,16 @@ export const Dopesheet = memo(function Dopesheet({
             onPointerDown={handleRulerScrub}
           >
             <div style={{ position: 'relative', width: `${laneWidth}px`, marginLeft: -(lanesScrollRef.current?.scrollLeft || 0) }}>
+              {/* Ruler tick times are in the CURRENT view's own time base:
+                  local clip-time (0..clipDuration) in entity mode, or
+                  absolute project time (0..totalDuration) in timeline
+                  mode. Ticks are positioned with raw `time * pixelsPerSecond`
+                  (not timeToX) because in entity mode that's identical to
+                  timeToX with viewOffset=0 anyway, and in timeline mode the
+                  tick's own "time" IS already the absolute x-axis value the
+                  ruler should read at that pixel — it shouldn't additionally
+                  get shifted by viewOffset the way a stored local-clip-time
+                  keyframe does. */}
               {Array.from({ length: numTicks }).map((_, i) => {
                 const time = i * tickInterval;
                 return (
@@ -437,8 +617,41 @@ export const Dopesheet = memo(function Dopesheet({
                     <span className="tick-label">{time.toFixed(tickInterval < 1 ? 1 : 0)}s</span>
                   </div>
                 );
-              }).filter((_, i) => (i * tickInterval) <= clipDuration)}
-              <PlayheadLine x={timeToX(localTime)} height={24} handle />
+              }).filter((_, i) => (i * tickInterval) <= viewSpan)}
+              {isTimelineView ? (
+                <>
+                  {/* Timeline view: the entity's own active window is
+                      highlighted as a band instead of everything outside
+                      it being shaded dead space — the whole project is
+                      valid range here, this clip just isn't active
+                      everywhere in it. */}
+                  <div
+                    className="dopesheet-entity-active-band"
+                    style={{
+                      left: `${selectedEntity.startTime * pixelsPerSecond}px`,
+                      width: `${clipDuration * pixelsPerSecond}px`,
+                    }}
+                  />
+                  <div className="dopesheet-clip-end-line" style={{ left: `${selectedEntity.startTime * pixelsPerSecond}px` }} />
+                  <div className="dopesheet-clip-end-line" style={{ left: `${(selectedEntity.startTime + clipDuration) * pixelsPerSecond}px` }} />
+                </>
+              ) : (
+                <>
+                  {/* Entity view: out-of-range shading — laneWidth pads
+                      clipDuration*pixelsPerSecond with +200px of extra draw
+                      space (see laneWidth above) so the lane doesn't
+                      visually dead-end right at the last tick. Without this
+                      overlay that padding looked identical to valid in-clip
+                      space, so scrubbing/reading the ruler past the clip's
+                      real end gave no indication anything had changed. */}
+                  <div
+                    className="dopesheet-out-of-range"
+                    style={{ left: `${timeToX(clipDuration)}px`, width: `${Math.max(0, laneWidth - timeToX(clipDuration))}px` }}
+                  />
+                  <div className="dopesheet-clip-end-line" style={{ left: `${timeToX(clipDuration)}px` }} />
+                </>
+              )}
+              <PlayheadLine x={playheadX} height={24} handle />
             </div>
           </div>
  
@@ -499,7 +712,27 @@ export const Dopesheet = memo(function Dopesheet({
                   </div>
                 );
               })}
-              <PlayheadLine x={timeToX(localTime)} height="100%" />
+              {isTimelineView ? (
+                <div
+                  className="dopesheet-entity-active-band"
+                  style={{
+                    left: `${selectedEntity.startTime * pixelsPerSecond}px`,
+                    width: `${clipDuration * pixelsPerSecond}px`,
+                    top: 0,
+                    bottom: 0,
+                    height: 'auto',
+                  }}
+                />
+              ) : (
+                <>
+                  <div
+                    className="dopesheet-out-of-range"
+                    style={{ left: `${timeToX(clipDuration)}px`, width: `${Math.max(0, laneWidth - timeToX(clipDuration))}px`, top: 0, bottom: 0, height: 'auto' }}
+                  />
+                  <div className="dopesheet-clip-end-line" style={{ left: `${timeToX(clipDuration)}px`, top: 0, bottom: 0, height: 'auto' }} />
+                </>
+              )}
+              <PlayheadLine x={playheadX} height="100%" />
             </div>
           </div>
         </div>

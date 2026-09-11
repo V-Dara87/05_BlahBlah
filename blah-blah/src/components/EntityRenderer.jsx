@@ -1,5 +1,5 @@
  
-import { useRef, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { useRef, useEffect, useLayoutEffect, useMemo, useState, Fragment } from 'react';
 import {
   Play,
   Pause,
@@ -9,7 +9,8 @@ import {
   ChevronRight,
   Repeat,
   Maximize,
-  Layers
+  Crop,
+  Expand
 } from 'lucide-react';
 import { formatSimpleTime } from '../utils/timeFormat';
 import { getCompiledReactComponent, detectScriptKind, extractScriptProps } from '../engine/scriptRunner';
@@ -110,6 +111,41 @@ export function EntityRenderer({
  
   const frameScale = frameDimensions.scale;
  
+  // Extended mode -- 'normal' clips entity content to the frame border,
+  // exactly like the exported video will. 'extended' lets content past
+  // the border stay visible (overflow: visible on the frame instead of
+  // hidden), so you can see and work with entities positioned or
+  // animating from outside the visible canvas -- e.g. a clip sliding in
+  // from off-screen -- without it being invisibly clipped while you're
+  // setting it up. Purely a viewing aid; export always clips to the real
+  // resolution regardless of this setting.
+  const [previewMode, setPreviewMode] = useState('normal');
+ 
+  // Extended-mode pan/zoom -- lets you navigate the space around the
+  // frame (Alt + right-mouse drag to pan, Ctrl + scroll to zoom) instead
+  // of the fixed 1:1 fit-to-box view. Screen-space px offset + a
+  // multiplier on top of frameScale; both reset whenever extended mode
+  // is turned off so leaving it always lands back on the true,
+  // un-panned/zoomed frame.
+  const [viewTransform, setViewTransform] = useState({ panX: 0, panY: 0, zoom: 1 });
+  const viewTransformRef = useRef(viewTransform);
+  viewTransformRef.current = viewTransform;
+  const [isPanning, setIsPanning] = useState(false);
+  const isAltRightPanningRef = useRef(false);
+  const panStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+ 
+  useEffect(() => {
+    if (previewMode !== 'extended') {
+      setViewTransform({ panX: 0, panY: 0, zoom: 1 });
+    }
+  }, [previewMode]);
+ 
+  // Kept as a ref (not just a local closure) so the pointerdown re-measure
+  // effect further down can force a fresh updateDimensions() call right
+  // before any drag starts -- see that effect's comment for why this is
+  // needed on top of the ResizeObserver below.
+  const updateDimensionsRef = useRef(null);
+ 
   useEffect(() => {
     const box = viewportBoxRef.current;
     if (!box) return;
@@ -130,12 +166,150 @@ export function EntityRenderer({
       setFrameDimensions({ width, height, scale });
     };
  
+    updateDimensionsRef.current = updateDimensions;
     updateDimensions();
  
     const observer = new ResizeObserver(updateDimensions);
     observer.observe(box);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      updateDimensionsRef.current = null;
+    };
   }, [resolution?.width, resolution?.height]);
+ 
+  // dockview keeps every dock tab's content permanently mounted and just
+  // hides the inactive ones (not unmount/remount) -- see dock/DockLayout.jsx.
+  // Some hide/show mechanics (visibility toggling, off-screen positioning,
+  // or a display:none <-> display:flex flip that happens to land back on
+  // the *same* pixel size the box already had) don't reliably fire
+  // ResizeObserver either while hidden or the instant they become visible
+  // again. If the outer window was resized at all while this preview panel
+  // was the inactive "View"/"Game" tab, `frameScale` can silently go stale
+  // until *something* else happens to trigger a resize callback -- and
+  // every gizmo drag divides by that same stale frameScale (see
+  // handleMoveGizmoPointerDown / handleScaleGizmoPointerDown /
+  // handleRotateGizmoPointerDown's getScale()), so a drag right after
+  // switching back to this tab could track the cursor at the wrong rate or
+  // even divide by a near-zero leftover scale from while the panel was
+  // hidden at 0x0. Forcing one fresh measurement on the very first
+  // pointerdown inside the viewport -- before React has even run the
+  // gizmo's own pointerdown handler -- guarantees frameScale is correct
+  // for that drag regardless of what dockview did while this tab was
+  // inactive. Capture phase so it always runs first, and it's a pure
+  // synchronous re-measure + setState, not a listener that blocks or
+  // interferes with the actual drag handlers that fire right after it.
+  useEffect(() => {
+    const box = viewportBoxRef.current;
+    if (!box) return;
+    const handlePointerDownCapture = () => {
+      updateDimensionsRef.current?.();
+    };
+    box.addEventListener('pointerdown', handlePointerDownCapture, { capture: true });
+    return () => box.removeEventListener('pointerdown', handlePointerDownCapture, { capture: true });
+  }, []);
+ 
+  // Extended-mode navigation -- scroll to zoom, hold right-mouse and drag
+  // to pan. Native listeners (not onWheel/onContextMenu React props)
+  // because zoom needs `{ passive: false }` to preventDefault the browser's
+  // own page-scroll, and pan needs to preventDefault the context menu for
+  // the duration of a right-drag without suppressing normal right-clicks
+  // elsewhere. Both are no-ops outside extended mode.
+  useEffect(() => {
+    const box = viewportBoxRef.current;
+    const frame = canvasFrameRef.current;
+    if (!box) return;
+ 
+    const handleWheel = (e) => {
+      if (previewMode !== 'extended') return;
+      e.preventDefault();
+      if (!frame) return;
+ 
+      const frameRect = frame.getBoundingClientRect();
+      // Zoom centers on the mouse position when it's over the frame; if
+      // the mouse is out in the surrounding pan space (outside the
+      // frame's own bounds -- normal in extended mode, since content can
+      // now render past the frame edge), center on the frame's own
+      // center instead of an arbitrary/undefined point.
+      const overFrame =
+        e.clientX >= frameRect.left && e.clientX <= frameRect.right &&
+        e.clientY >= frameRect.top && e.clientY <= frameRect.bottom;
+      const pointerX = overFrame ? e.clientX : frameRect.left + frameRect.width / 2;
+      const pointerY = overFrame ? e.clientY : frameRect.top + frameRect.height / 2;
+ 
+      setViewTransform((prev) => {
+        const zoomFactor = Math.exp(-e.deltaY * 0.0015);
+        const nextZoom = Math.min(8, Math.max(0.1, prev.zoom * zoomFactor));
+        // .preview-entities-layer sits at the frame's top-left (top:0;
+        // left:0 inside .preview-canvas-frame) and is transformed as
+        // `translate(pan) scale(s)` with transformOrigin top-left, so a
+        // point that's `localX` px into the *untransformed* layer lands
+        // on screen at: frameRect.left + pan + localX * s. Solving that
+        // for localX using the CURRENT (prev) transform gives the layer
+        // point currently sitting under the mouse; keeping that same
+        // point under the mouse after zoom means solving the same
+        // equation for the NEW pan with the NEW scale, holding localX
+        // fixed.
+        const prevScale = frameScale * prev.zoom || 1;
+        const localX = (pointerX - frameRect.left - prev.panX) / prevScale;
+        const localY = (pointerY - frameRect.top - prev.panY) / prevScale;
+        const nextScale = frameScale * nextZoom;
+        return {
+          zoom: nextZoom,
+          panX: pointerX - frameRect.left - localX * nextScale,
+          panY: pointerY - frameRect.top - localY * nextScale,
+        };
+      });
+    };
+ 
+    const handleContextMenu = (e) => {
+      if (previewMode === 'extended') e.preventDefault();
+    };
+ 
+    const handlePointerDown = (e) => {
+      if (previewMode !== 'extended' || e.button !== 2) return;
+      e.preventDefault();
+      isAltRightPanningRef.current = true;
+      setIsPanning(true);
+      panStartRef.current = {
+        x: e.clientX,
+        y: e.clientY,
+        panX: viewTransformRef.current.panX,
+        panY: viewTransformRef.current.panY,
+      };
+      box.setPointerCapture?.(e.pointerId);
+    };
+ 
+    const handlePointerMove = (e) => {
+      if (!isAltRightPanningRef.current) return;
+      const dx = e.clientX - panStartRef.current.x;
+      const dy = e.clientY - panStartRef.current.y;
+      setViewTransform((prev) => ({
+        ...prev,
+        panX: panStartRef.current.panX + dx,
+        panY: panStartRef.current.panY + dy,
+      }));
+    };
+ 
+    const handlePointerUp = (e) => {
+      if (!isAltRightPanningRef.current) return;
+      isAltRightPanningRef.current = false;
+      setIsPanning(false);
+      box.releasePointerCapture?.(e.pointerId);
+    };
+ 
+    box.addEventListener('wheel', handleWheel, { passive: false });
+    box.addEventListener('contextmenu', handleContextMenu);
+    box.addEventListener('pointerdown', handlePointerDown);
+    box.addEventListener('pointermove', handlePointerMove);
+    box.addEventListener('pointerup', handlePointerUp);
+    return () => {
+      box.removeEventListener('wheel', handleWheel);
+      box.removeEventListener('contextmenu', handleContextMenu);
+      box.removeEventListener('pointerdown', handlePointerDown);
+      box.removeEventListener('pointermove', handlePointerMove);
+      box.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [previewMode]);
  
   // Real `import` support: scripts with import statements are compiled
   // ASYNC by the bundler (engine/scriptBundler.js) and fill a module-level
@@ -463,7 +637,19 @@ export function EntityRenderer({
     // the same element two ways and is always ~1 regardless of how much
     // smaller the frame renders than the real resolution -- that never
     // actually captured the project-vs-screen scale difference.
-    const scale = frameScale || 1;
+    //
+    // Extended mode additionally scales the layer by viewTransform.zoom
+    // (see the transform on .preview-entities-layer), so the drag's
+    // screen-to-project conversion has to include that too -- otherwise,
+    // zoomed out, a small on-screen mouse move would still only divide by
+    // the un-zoomed frameScale and undershoot massively, so the dragged
+    // object visibly lags behind the cursor instead of sticking to it.
+    // Zoomed in, the inverse: it would overshoot. Read zoom live off the
+    // ref (not the closed-over `viewTransform`) so a zoom change mid-drag
+    // is picked up on the very next pointermove rather than needing a new
+    // drag to start.
+    const getScale = () =>
+      (frameScale || 1) * (previewMode === 'extended' ? (viewTransformRef.current.zoom || 1) : 1);
  
     // Every entity is a flat timeline clip (no parent-child hierarchy), so
     // the Transform IS the world pose and the gizmo drag is a plain
@@ -493,15 +679,15 @@ export function EntityRenderer({
       startClientY: e.clientY,
       startX: lx.x ?? transform.x,
       startY: lx.y ?? transform.y,
-      scale,
       toLocal,
     };
  
     const handlePointerMove = (moveEvent) => {
       const drag = gizmoDragRef.current;
       if (!drag || drag.mode !== 'move') return;
-      const dx = (moveEvent.clientX - drag.startClientX) / (drag.scale || 1);
-      const dy = (moveEvent.clientY - drag.startClientY) / (drag.scale || 1);
+      const scale = getScale();
+      const dx = (moveEvent.clientX - drag.startClientX) / (scale || 1);
+      const dy = (moveEvent.clientY - drag.startClientY) / (scale || 1);
       const local = drag.toLocal(dx, dy);
       updateSelectedTransform(drag.entityId, { x: drag.startX + local.x, y: drag.startY + local.y });
     };
@@ -523,13 +709,30 @@ export function EntityRenderer({
     const frameEl = canvasFrameRef.current;
     if (!frameEl) return;
     const frameRect = frameEl.getBoundingClientRect();
-    // Rotation pivot is the entity's own center on screen: frame origin
-    // (top-left) + frame center + the entity's current logical x/y scaled
-    // to screen px via frameScale (mirrors the preview-entities-layer
-    // scale(frameScale) wrapper used to render it).
-    const scale = frameScale || 1;
-    const pivotX = frameRect.left + frameRect.width / 2 + transform.x * scale;
-    const pivotY = frameRect.top + frameRect.height / 2 + transform.y * scale;
+    // Rotation pivot is the entity's own center on screen. In normal
+    // mode the entities layer is centered in the frame at scale
+    // frameScale, so screen center = frame center + entity pos * scale.
+    // In extended mode the layer is instead pinned to the frame's
+    // top-left and offset/scaled by pan/zoom (see the transform on
+    // .preview-entities-layer + the zoom-to-cursor math in the wheel
+    // handler above), so the pivot has to go through that same mapping
+    // instead of assuming frame-centered placement -- otherwise a
+    // panned/zoomed rotate grabs the wrong pivot and the clip visibly
+    // swings from the wrong point.
+    let pivotX;
+    let pivotY;
+    if (previewMode === 'extended') {
+      const vt = viewTransformRef.current;
+      const scale = (frameScale || 1) * (vt.zoom || 1);
+      const originX = safeResWidth / 2 + transform.x;
+      const originY = safeResHeight / 2 + transform.y;
+      pivotX = frameRect.left + vt.panX + originX * scale;
+      pivotY = frameRect.top + vt.panY + originY * scale;
+    } else {
+      const scale = frameScale || 1;
+      pivotX = frameRect.left + frameRect.width / 2 + transform.x * scale;
+      pivotY = frameRect.top + frameRect.height / 2 + transform.y * scale;
+    }
  
     const startAngle = Math.atan2(e.clientY - pivotY, e.clientX - pivotX) * (180 / Math.PI);
  
@@ -561,6 +764,111 @@ export function EntityRenderer({
     window.addEventListener('pointerup', handlePointerUp);
   };
  
+  // `corner` is one of 'tl' | 'tr' | 'bl' | 'br' -- which of the clip's 4
+  // corners this drag started from. Each corner has its own "outward"
+  // direction (top-left grows by moving up-left, bottom-right grows by
+  // moving down-right, etc.), so the sign of the local-space delta applied
+  // to scaleX/scaleY is flipped per corner below. Defaults to 'br' so any
+  // existing caller that doesn't pass a corner keeps the original
+  // bottom-right-only behavior.
+  // `baseSizeOverride` — optional `{ baseWidth, baseHeight }`, used by
+  // video clips (see activeVideoItems.map above): video has no authored
+  // width/height component (it fills the frame via object-fit: contain at
+  // its native aspect ratio), so "the box this entity renders at Scale=1"
+  // isn't `entity.components.find((c) => c.width)` the way it is for a
+  // shape/text entity — it's the project's own resolution instead. When
+  // omitted, falls back to the original component-width/height lookup
+  // unchanged, so shape/text/script entities behave exactly as before.
+  const handleScaleGizmoPointerDown = (e, entity, transform, localTransform, corner = 'br', baseSizeOverride = null) => {
+    if (!onUpdateEntity) return;
+    e.stopPropagation();
+    e.preventDefault();
+    onSelectEntity(entity.id);
+ 
+    const lx = localTransform || {};
+    const startScaleX = lx.scaleX ?? transform.scaleX ?? 1;
+    const startScaleY = lx.scaleY ?? transform.scaleY ?? 1;
+    // Same screen-px -> project-px factor as the move gizmo (frameScale,
+    // plus the extended-mode zoom multiplier) -- read live off the ref
+    // each move so a zoom mid-drag is picked up immediately, same as the
+    // move gizmo above.
+    const getScale = () =>
+      (frameScale || 1) * (previewMode === 'extended' ? (viewTransformRef.current.zoom || 1) : 1);
+    // Drag direction needs to be measured in the entity's own rotated
+    // local space, not raw screen axes -- otherwise dragging "outward"
+    // along a rotated clip's actual corner would scale the wrong axis.
+    const rotRad = ((transform.rotation || 0) * Math.PI) / 180;
+    const cos = Math.cos(rotRad);
+    const sin = Math.sin(rotRad);
+    const toLocal = (dx, dy) => ({
+      x: dx * cos + dy * sin,
+      y: -dx * sin + dy * cos,
+    });
+ 
+    // Sign flip per corner: left-side corners (tl/bl) grow scaleX when
+    // dragged toward negative local X (leftward/outward from center), so
+    // their local.x contribution is negated relative to the right-side
+    // corners (tr/br), which grow scaleX moving toward positive local X.
+    // Same idea vertically: top corners (tl/tr) grow scaleY moving toward
+    // negative local Y (upward/outward), bottom corners (bl/br) grow
+    // scaleY moving toward positive local Y.
+    const signX = corner === 'tl' || corner === 'bl' ? -1 : 1;
+    const signY = corner === 'tl' || corner === 'tr' ? -1 : 1;
+ 
+    gizmoDragRef.current = {
+      mode: 'scale',
+      entityId: entity.id,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startScaleX,
+      startScaleY,
+      toLocal,
+      signX,
+      signY,
+    };
+ 
+    const handlePointerMove = (moveEvent) => {
+      const drag = gizmoDragRef.current;
+      if (!drag || drag.mode !== 'scale') return;
+      const scale = getScale();
+      const dxScreen = (moveEvent.clientX - drag.startClientX) / (scale || 1);
+      const dyScreen = (moveEvent.clientY - drag.startClientY) / (scale || 1);
+      const local = drag.toLocal(dxScreen, dyScreen);
+      // Handle sits at one corner of a 1x1-scale box half as wide/tall as
+      // the rendered size, so moving that corner's handle by `local.x`
+      // project-px away from center changes scale by `local.x /
+      // (halfWidth)` -- using the entity's rendered box size at scale 1
+      // (width/height component values) keeps the drag 1:1 with the
+      // corner under the cursor. `signX`/`signY` account for which corner
+      // was grabbed, so every corner grows the clip when dragged away
+      // from its own center and shrinks it when dragged toward center,
+      // the same way the original bottom-right-only handle always did.
+      const baseWidth = baseSizeOverride?.baseWidth || (entity.components.find((c) => c.width))?.width || 180;
+      const baseHeight = baseSizeOverride?.baseHeight || (entity.components.find((c) => c.height))?.height || 180;
+      let nextScaleX = drag.startScaleX + (drag.signX * local.x) / (baseWidth / 2);
+      let nextScaleY = drag.startScaleY + (drag.signY * local.y) / (baseHeight / 2);
+      // Shift keeps the aspect ratio locked to whatever it was at drag
+      // start, matching the rotate gizmo's Shift convention elsewhere.
+      if (moveEvent.shiftKey) {
+        const uniform = Math.max(nextScaleX / drag.startScaleX, nextScaleY / drag.startScaleY);
+        nextScaleX = drag.startScaleX * uniform;
+        nextScaleY = drag.startScaleY * uniform;
+      }
+      // Keep at least a sliver visible/draggable-back-from instead of
+      // collapsing through zero or flipping sign underneath the cursor.
+      nextScaleX = Math.max(0.02, nextScaleX);
+      nextScaleY = Math.max(0.02, nextScaleY);
+      updateSelectedTransform(drag.entityId, { scaleX: nextScaleX, scaleY: nextScaleY });
+    };
+    const handlePointerUp = () => {
+      gizmoDragRef.current = null;
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+  };
+ 
   const toggleFullscreen = () => {
     if (!containerRef.current) return;
     if (!document.fullscreenElement) {
@@ -582,6 +890,11 @@ export function EntityRenderer({
       <div
         className="preview-viewport-box"
         ref={viewportBoxRef}
+        style={
+          previewMode === 'extended'
+            ? { overflow: 'visible', cursor: isPanning ? 'grabbing' : undefined }
+            : undefined
+        }
         onClick={(e) => {
           if (e.target === e.currentTarget) onSelectEntity(null);
         }}
@@ -589,21 +902,15 @@ export function EntityRenderer({
         {/* Strictly preserves project aspect ratio — width and height are dynamically
             fitted to the available viewport box without distortion or stretching. */}
         <div
-          className="preview-canvas-frame"
+          className={`preview-canvas-frame ${previewMode === 'extended' ? 'preview-canvas-frame--extended' : ''}`}
           ref={canvasFrameRef}
           style={{
             width: frameDimensions.width > 0 ? `${frameDimensions.width}px` : undefined,
             height: frameDimensions.height > 0 ? `${frameDimensions.height}px` : undefined,
             aspectRatio: `${safeResWidth} / ${safeResHeight}`,
+            overflow: previewMode === 'extended' ? 'visible' : 'hidden',
           }}
         >
-          {/* Resolution badge -- confirms at a glance that the preview is
-              actually locked to the project's resolution, not just a fixed
-              16:9 default. */}
-          <div className="preview-resolution-badge">
-            {safeResWidth}×{safeResHeight}
-          </div>
- 
           {/* Resolution-space entity layer -- fixed to the project's real
               pixel dimensions so every entity's x/y/width/height/etc. below
               are literal project pixels (identical meaning to what
@@ -619,13 +926,50 @@ export function EntityRenderer({
               left: 0,
               width: `${safeResWidth}px`,
               height: `${safeResHeight}px`,
-              transform: `scale(${frameScale})`,
+              transform:
+                previewMode === 'extended'
+                  ? `translate(${viewTransform.panX}px, ${viewTransform.panY}px) scale(${frameScale * viewTransform.zoom})`
+                  : `scale(${frameScale})`,
               transformOrigin: 'top left',
+              // Current combined on-screen scale (frameScale, plus the
+              // extended-mode zoom multiplier) as a CSS var -- the
+              // selection outline and rotate gizmo below counter-scale
+              // against this (see App.css) so they stay a constant,
+              // visible on-screen size instead of shrinking toward
+              // invisible right along with the content when zoomed out.
+              '--view-scale': previewMode === 'extended' ? frameScale * viewTransform.zoom : frameScale,
             }}
           >
+          {/* Extended-mode frame-bounds outline -- a child of the entity
+              layer (not the outer static .preview-canvas-frame box) so it
+              pans/zooms together with the entities instead of staying
+              pinned in place while the content underneath it moves. Sized
+              to the exact project-pixel resolution, so it always marks the
+              real, exported frame edge regardless of current pan/zoom. */}
+          {previewMode === 'extended' && (
+            <div
+              className="preview-frame-bounds-outline"
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: `${safeResWidth}px`,
+                height: `${safeResHeight}px`,
+                // Counter-scale the border so its ON-SCREEN thickness
+                // stays constant (targetPx) regardless of zoom -- this
+                // div lives inside .preview-entities-layer and gets
+                // scaled down with everything else by
+                // `frameScale * viewTransform.zoom`, so a fixed
+                // border-width in px here would shrink toward
+                // invisible sub-pixel width at low zoom. Dividing by
+                // the current combined scale cancels that out.
+                borderWidth: `${2 / (frameScale * viewTransform.zoom || 1)}px`,
+              }}
+            />
+          )}
           {/* 1. Background Video Layer */}
           {activeVideoItems.map((item) => {
-            const { entity, transform, transitionState } = item;
+            const { entity, transform, localTransform, transitionState } = item;
             const isSelected = entity.id === selectedEntityId;
             const videoComp = entity.components.find((c) => c.type === 'VideoRenderer') || { src: entity.src };
             const vidSrc = videoComp.src || entity.src;
@@ -635,11 +979,24 @@ export function EntityRenderer({
             const rawClipSpeed =
               (videoComp.speed || 1) *
               ((entity.components || []).find((c) => c.type === 'Transform')?.speed ?? 1);
+            // Video has no authored width/height component (it fills the
+            // frame via object-fit: contain at its own native aspect
+            // ratio, unknown until the <video> element's metadata loads) —
+            // so unlike a shape/text entity, there's no per-entity "base
+            // size" for the scale gizmo to work from. The project's own
+            // resolution is the base box instead: Scale=1 already means
+            // "fills the frame" for video (see .active-video-element +
+            // .video-layer-container below), so dragging a corner by half
+            // the frame's width/height should move scaleX/scaleY by 1.0,
+            // exactly the same relationship handleScaleGizmoPointerDown
+            // already uses for shapes via their own width/height.
+            const baseWidth = safeResWidth;
+            const baseHeight = safeResHeight;
  
             return (
+              <Fragment key={entity.id}>
               <div
-                key={entity.id}
-                className={`video-layer-container ${isSelected ? 'selected' : ''}`}
+                className={`video-layer-container ${isSelected ? 'selected' : ''} ${onUpdateEntity ? 'gizmo-draggable' : ''}`}
                 style={{
                   transform: `translate(${transform.x}px, ${transform.y}px) rotate(${transform.rotation}deg) scale(${transform.scaleX}, ${transform.scaleY})`,
                   opacity: transform.opacity,
@@ -655,6 +1012,15 @@ export function EntityRenderer({
                 onClick={(e) => {
                   e.stopPropagation();
                   onSelectEntity(entity.id);
+                }}
+                onPointerDown={(e) => {
+                  // Same first-click-selects / second-press-drags-moves
+                  // convention as the overlay layer's gizmo-draggable
+                  // clips below — a video clip only becomes directly
+                  // draggable once it's already the selected entity.
+                  if (isSelected && onUpdateEntity) {
+                    handleMoveGizmoPointerDown(e, entity, transform, localTransform);
+                  }
                 }}
               >
                 <EntityErrorBoundary entityName={entity.name} resetKey={vidSrc}>
@@ -744,6 +1110,81 @@ export function EntityRenderer({
                   )}
                 </EntityErrorBoundary>
               </div>
+ 
+              {/* Selection outline + rotate/scale gizmo for the selected
+                  video clip — same .preview-selection-gizmo overlay the
+                  overlay-items layer uses below, and for the same reason:
+                  it's a SIBLING of .video-layer-container, not a child, so
+                  it never inherits that container's own `scale(scaleX,
+                  scaleY)`. .video-layer-container itself is a full-frame
+                  (100%/100%) flex box that centers the <video> inside it,
+                  so translate(x, y) on IT moves that whole box and its
+                  centered content together, landing the video's on-screen
+                  center at frame-center + (x, y) — same final point the
+                  overlay layer's entities land at via calc(-50% + x).
+                  This gizmo div, though, is sized to the entity's actual
+                  rendered box (not 100%/100%) and anchored via CSS at
+                  frame-center (top:50%/left:50%, see
+                  .preview-selection-gizmo below), so it needs that same
+                  `calc(-50% + x)` self-centering term the overlay gizmo
+                  uses — without it, the box's top-left corner (not its
+                  center) lands on frame-center + (x, y), which is the bug
+                  a screenshot caught: the outline sat offset down-right of
+                  the actual video instead of surrounding it. Sized to the
+                  project's own resolution (baseWidth/baseHeight =
+                  safeResWidth/Height above) since a video clip's "base
+                  size" at Scale=1 is the whole frame, not a per-entity
+                  authored width/height. */}
+              {isSelected && onUpdateEntity && (
+                <div
+                  className="preview-selection-gizmo"
+                  style={{
+                    // Same self-centering `-50%` term the overlay-items
+                    // gizmo uses (see below): .preview-selection-gizmo is
+                    // anchored via CSS at top:50%/left:50% of the parent
+                    // (frame center), so translate(x, y) ALONE lands this
+                    // box's own TOP-LEFT corner at frame-center + (x, y) —
+                    // the box then extends further down-right from there
+                    // instead of being centered on that point. Subtracting
+                    // half its own width/height first (`calc(-50% + x)`)
+                    // is what actually centers the box itself on
+                    // frame-center + (x, y), matching where the video's
+                    // own on-screen center really is.
+                    transform: `translate(calc(-50% + ${transform.x}px), calc(-50% + ${transform.y}px)) rotate(${transform.rotation}deg)`,
+                    width: `${baseWidth * (transform.scaleX || 1)}px`,
+                    height: `${baseHeight * (transform.scaleY || 1)}px`,
+                    zIndex: 1000 + 100 + layerZIndexOf(item),
+                  }}
+                >
+                  <div className="gizmo-rotate-stem" />
+                  <div
+                    className="gizmo-rotate-handle"
+                    title="Drag to rotate (hold Shift to snap to 15°)"
+                    onPointerDown={(e) => handleRotateGizmoPointerDown(e, entity, transform, localTransform)}
+                  />
+                  <div
+                    className="gizmo-scale-handle gizmo-scale-handle-tl"
+                    title="Drag to scale (hold Shift to keep aspect ratio)"
+                    onPointerDown={(e) => handleScaleGizmoPointerDown(e, entity, transform, localTransform, 'tl', { baseWidth, baseHeight })}
+                  />
+                  <div
+                    className="gizmo-scale-handle gizmo-scale-handle-tr"
+                    title="Drag to scale (hold Shift to keep aspect ratio)"
+                    onPointerDown={(e) => handleScaleGizmoPointerDown(e, entity, transform, localTransform, 'tr', { baseWidth, baseHeight })}
+                  />
+                  <div
+                    className="gizmo-scale-handle gizmo-scale-handle-bl"
+                    title="Drag to scale (hold Shift to keep aspect ratio)"
+                    onPointerDown={(e) => handleScaleGizmoPointerDown(e, entity, transform, localTransform, 'bl', { baseWidth, baseHeight })}
+                  />
+                  <div
+                    className="gizmo-scale-handle gizmo-scale-handle-br"
+                    title="Drag to scale (hold Shift to keep aspect ratio)"
+                    onPointerDown={(e) => handleScaleGizmoPointerDown(e, entity, transform, localTransform, 'br', { baseWidth, baseHeight })}
+                  />
+                </div>
+              )}
+              </Fragment>
             );
           })}
  
@@ -753,6 +1194,13 @@ export function EntityRenderer({
             const isSelected = entity.id === selectedEntityId;
             const textComp = entity.components.find((c) => c.type === 'TextRenderer');
             const shapeComp = entity.components.find((c) => c.type === 'ShapeRenderer');
+            // Rendered box size at scale 1 -- shared by the scale-gizmo drag
+            // math (handleScaleGizmoPointerDown) and, for the selected
+            // entity, the selection-gizmo overlay below, so both agree on
+            // what "the clip's own size" means. Same lookup both places
+            // previously duplicated separately.
+            const baseWidth = (entity.components.find((c) => c.width))?.width || 180;
+            const baseHeight = (entity.components.find((c) => c.height))?.height || 180;
  
             // Script-driven visuals — every ScriptComponent renders by its
             // detected kind: 'react' components mount as inline React
@@ -790,9 +1238,9 @@ export function EntityRenderer({
               : 1;
  
             return (
+              <Fragment key={entity.id}>
               <div
-                key={entity.id}
-                className={`preview-render-layer ${isSelected ? 'selected' : ''} ${onUpdateEntity ? 'gizmo-draggable' : ''}`}
+                className={`preview-render-layer ${onUpdateEntity ? 'gizmo-draggable' : ''} ${isSelected && onUpdateEntity ? 'selected' : ''}`}
                 style={{
                   transform: `translate(calc(-50% + ${transform.x}px), calc(-50% + ${transform.y}px)) rotate(${transform.rotation}deg) scale(${transform.scaleX}, ${transform.scaleY})`,
                   opacity: (transform.opacity ?? 1) * transitionFactor,
@@ -910,34 +1358,78 @@ export function EntityRenderer({
                     </div>
                   )}
                 </EntityErrorBoundary>
- 
-                {/* Rotate handle — small circle above the clip, drag to
-                    rotate around the clip's own center. Only shown on the
-                    selected clip so unselected clips stay uncluttered. */}
-                {isSelected && onUpdateEntity && (
-                  <>
-                    <div className="gizmo-rotate-stem" />
-                    <div
-                      className="gizmo-rotate-handle"
-                      title="Drag to rotate (hold Shift to snap to 15°)"
-                      onPointerDown={(e) => handleRotateGizmoPointerDown(e, entity, transform, localTransform)}
-                    />
-                  </>
-                )}
               </div>
+ 
+              {/* Selection outline + rotate/scale gizmo handles — a SIBLING
+                  of .preview-render-layer above, not a child of it. The
+                  content div carries `scale(transform.scaleX,
+                  transform.scaleY)` (the entity's own Scale), and this
+                  overlay deliberately does NOT inherit that: it's
+                  positioned with the same translate+rotate but sized
+                  explicitly to the entity's actual on-screen box
+                  (baseWidth/baseHeight * scaleX/scaleY, in project px), so
+                  border thickness and handle size only ever need to
+                  counter-scale against view zoom (--view-scale) — dividing
+                  by the entity's own scale is no longer needed anywhere,
+                  because this element was never scaled by it in the first
+                  place. Kept in the same z-index band as the content div
+                  (right after it, translate(-50%,-50%) centered the same
+                  way) so it still visually tracks the clip 1:1. */}
+              {isSelected && onUpdateEntity && (
+                <div
+                  key={`${entity.id}-gizmo`}
+                  className="preview-selection-gizmo"
+                  style={{
+                    transform: `translate(calc(-50% + ${transform.x}px), calc(-50% + ${transform.y}px)) rotate(${transform.rotation}deg)`,
+                    width: `${baseWidth * (transform.scaleX || 1)}px`,
+                    height: `${baseHeight * (transform.scaleY || 1)}px`,
+                    zIndex: 1000 + 100 + layerZIndexOf(item),
+                  }}
+                >
+                  {/* Rotate handle — small circle above the clip, drag to
+                      rotate around the clip's own center. */}
+                  <div className="gizmo-rotate-stem" />
+                  <div
+                    className="gizmo-rotate-handle"
+                    title="Drag to rotate (hold Shift to snap to 15°)"
+                    onPointerDown={(e) => handleRotateGizmoPointerDown(e, entity, transform, localTransform)}
+                  />
+ 
+                  {/* Scale handles — one small square at each of the clip's
+                      4 corners, drag any of them to resize from that
+                      corner. Hold Shift to lock the aspect ratio the clip
+                      had at drag start. Each corner tells
+                      handleScaleGizmoPointerDown which direction is
+                      "outward" for it, so dragging the top-left corner
+                      up-left grows the clip the same way dragging the
+                      bottom-right corner down-right always did. */}
+                  <div
+                    className="gizmo-scale-handle gizmo-scale-handle-tl"
+                    title="Drag to scale (hold Shift to keep aspect ratio)"
+                    onPointerDown={(e) => handleScaleGizmoPointerDown(e, entity, transform, localTransform, 'tl')}
+                  />
+                  <div
+                    className="gizmo-scale-handle gizmo-scale-handle-tr"
+                    title="Drag to scale (hold Shift to keep aspect ratio)"
+                    onPointerDown={(e) => handleScaleGizmoPointerDown(e, entity, transform, localTransform, 'tr')}
+                  />
+                  <div
+                    className="gizmo-scale-handle gizmo-scale-handle-bl"
+                    title="Drag to scale (hold Shift to keep aspect ratio)"
+                    onPointerDown={(e) => handleScaleGizmoPointerDown(e, entity, transform, localTransform, 'bl')}
+                  />
+                  <div
+                    className="gizmo-scale-handle gizmo-scale-handle-br"
+                    title="Drag to scale (hold Shift to keep aspect ratio)"
+                    onPointerDown={(e) => handleScaleGizmoPointerDown(e, entity, transform, localTransform, 'br')}
+                  />
+                </div>
+              )}
+              </Fragment>
             );
           })}
           </div>
  
-          {computedEntities.length === 0 && (
-            <div className="preview-empty-screen">
-              <Layers size={42} className="text-dim" />
-              <p className="empty-text">Playhead at {formatSimpleTime(currentTime)}</p>
-              <span className="empty-sub">
-                No active clips at current time. Press Play (Space) or scrub the timeline below.
-              </span>
-            </div>
-          )}
         </div>
       </div>
  
@@ -978,6 +1470,17 @@ export function EntityRenderer({
         </div>
  
         <div className="transport-options">
+          <button
+            className={`ctrl-icon-btn ${previewMode === 'extended' ? 'active' : ''}`}
+            title={
+              previewMode === 'extended'
+                ? 'Extended Preview: content outside the frame stays visible. Scroll to zoom, hold Right-mouse to pan. Click for Normal (clips to frame).'
+                : 'Normal Preview: clips to frame, like export. Click for Extended (shows content outside the frame, with pan/zoom).'
+            }
+            onClick={() => setPreviewMode((m) => (m === 'extended' ? 'normal' : 'extended'))}
+          >
+            {previewMode === 'extended' ? <Expand size={15} /> : <Crop size={15} />}
+          </button>
           <button className="ctrl-icon-btn" title="Fullscreen" onClick={toggleFullscreen}>
             <Maximize size={15} />
           </button>

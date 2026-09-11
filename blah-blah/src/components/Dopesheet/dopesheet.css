@@ -83,6 +83,35 @@
   margin: 0 2px;
 }
  
+.dopesheet-tool-btn-icon:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+ 
+.dopesheet-tool-btn-icon:disabled:hover {
+  background: none;
+  color: var(--unity-text-muted);
+}
+ 
+/* Small key-hint badge appended to a toolbar button's tooltip is done via
+   the title attribute (no markup needed), but a couple of buttons show
+   the binding inline next to the icon -- e.g. Undo/Redo, Split/Delete --
+   since those are frequent enough in a keyframing workflow to be worth
+   a persistent visual reminder rather than only a hover tooltip. */
+.dopesheet-tool-btn-icon .kb-hint {
+  position: absolute;
+  bottom: -1px;
+  right: -1px;
+  font-size: 7px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--unity-text-dim);
+  background: var(--unity-darkest);
+  border-radius: 2px;
+  padding: 0 1px;
+  pointer-events: none;
+}
+ 
 .dopesheet-toolbar-spacer {
   flex: 1;
 }
@@ -312,16 +341,74 @@
   opacity: 0.6;
 }
  
-/* ---------- Keyframe diamonds ---------- */
+/* ---------- Clip-end boundary ---------- */
+/* laneWidth pads clipDuration*pixelsPerSecond with +200px of extra draw
+   space (see Dopesheet.jsx's laneWidth) so the lane doesn't visually
+   dead-end right at the last tick -- but with nothing marking that
+   padding as dead space, it read as more valid clip, and both scrubbing
+   and reading the ruler past the real clip end looked identical to
+   being inside it. These two elements mark that boundary precisely:
+   a hard vertical line at clipDuration, and a dimmed scrim over
+   everything past it, on both the ruler and the lanes. */
+.dopesheet-clip-end-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--unity-accent-red, #ef4444);
+  opacity: 0.7;
+  z-index: 3;
+  pointer-events: none;
+}
+ 
+.dopesheet-out-of-range {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(0, 0, 0, 0.35),
+    rgba(0, 0, 0, 0.35) 6px,
+    rgba(0, 0, 0, 0.5) 6px,
+    rgba(0, 0, 0, 0.5) 12px
+  );
+  z-index: 1;
+  pointer-events: none;
+}
+ 
+/* Timeline view: the selected entity's active window, highlighted against
+   the rest of the (now fully valid, unshaded) project timeline -- the
+   inverse of .dopesheet-out-of-range's "shade what's invalid" approach,
+   since in this view nothing IS invalid, this clip is just one span of
+   activity within the larger timeline. */
+.dopesheet-entity-active-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--dopesheet-teal-dim);
+  border-left: 1px solid var(--dopesheet-teal-dim-line);
+  border-right: 1px solid var(--dopesheet-teal-dim-line);
+  z-index: 1;
+  pointer-events: none;
+}
+ 
+/* ---------- Keyframe markers (Spine 2D-style keymark) ---------- */
+/* Spine's Dopesheet keymark isn't a rotated square -- it's a flattened
+   hexagon ("bowtie", pointed left/right, flat top/bottom). clip-path
+   draws that shape exactly. `border` doesn't render correctly against a
+   clipped element, so the outline is faked with drop-shadow (which
+   respects the clip silhouette) instead of box-shadow (which would
+   still draw a square ring around the original box). */
  
 .dopesheet-keyframe {
   position: absolute;
   top: 50%;
-  width: 9px;
+  width: 11px;
   height: 9px;
-  transform: translate(-50%, -50%) rotate(45deg);
+  transform: translate(-50%, -50%);
   background: var(--dopesheet-teal-bright);
-  border: 1px solid var(--unity-darkest);
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+  filter: drop-shadow(0 0 0 1px var(--unity-darkest));
   cursor: grab;
   z-index: 2;
 }
@@ -332,16 +419,16 @@
  
 .dopesheet-keyframe.selected {
   background: var(--unity-accent-amber);
-  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.35);
+  filter: drop-shadow(0 0 0 1px var(--unity-darkest)) drop-shadow(0 0 3px rgba(245, 158, 11, 0.85));
 }
  
 .dopesheet-keyframe:active {
   cursor: grabbing;
 }
  
-/* Summary diamond on the component group lane (union of all child fields) */
+/* Summary keymark on the component group lane (union of all child fields) */
 .dopesheet-keyframe.group-summary {
-  width: 8px;
+  width: 10px;
   height: 8px;
   opacity: 0.85;
 }

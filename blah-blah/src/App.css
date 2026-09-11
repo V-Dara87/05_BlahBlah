@@ -991,25 +991,44 @@
   border-radius: 6px;
 }
  
-/* Small always-on-top badge confirming the preview's current resolution —
-   sits in the frame's own top-left corner so it stays put regardless of
-   aspect ratio (unlike a viewport-relative corner, which would drift off
-   a narrow vertical frame). */
-.preview-resolution-badge {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  z-index: 40;
-  padding: 3px 7px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: rgba(255, 255, 255, 0.75);
-  background: rgba(9, 10, 15, 0.7);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 4px;
+/* Extended preview mode -- overflow: visible is set inline (see
+   EntityRenderer.jsx) so content positioned or animating outside the
+   frame stays on screen instead of being clipped. The frame's own border
+   still marks the real, exported bounds, but box-shadow/border-radius
+   would otherwise clip like overflow does, so both are dropped here.
+   The border itself is drawn via ::after (rather than the normal CSS
+   border) so it paints above any overflowing entity content instead of
+   underneath it -- entities are DOM siblings inside the frame and can
+   otherwise stack visually over a plain border. Yellow for visibility
+   against the entities it's meant to be seen over. */
+.preview-canvas-frame--extended {
+  box-shadow: none;
+  border-radius: 0;
+  border-color: transparent;
+}
+ 
+/* Marks the real, exported frame edge in extended mode. Lives inside
+   .preview-entities-layer (see EntityRenderer.jsx) so it pans/zooms
+   together with the entities instead of staying static like the outer
+   .preview-canvas-frame box does -- an outline that doesn't move with
+   the content it's meant to bound isn't useful. z-index keeps it above
+   entities sharing the same layer; yellow for visibility. */
+.preview-frame-bounds-outline {
+  border-style: dashed;
+  border-color: #facc15;
   pointer-events: none;
-  font-variant-numeric: tabular-nums;
+  /* Always above every entity AND its selection gizmo, regardless of
+     track count or selection state. Entities stack at 100 + trackIndex
+     (see layerZIndexOf in EntityRenderer.jsx), with a selected one adding
+     +1000 on top of that, and its selection-gizmo overlay matches that
+     same +1000 band -- so 999 here used to lose to any selected entity
+     (1000+) the moment something was selected, letting the gizmo/border
+     render over this frame-edge marker instead of under it. 9999 sits
+     comfortably above that whole band (track count would need to reach
+     ~8900 tracks to catch up), so the real exported frame edge stays
+     visibly on top no matter what's selected. */
+  z-index: 9999;
+  box-sizing: border-box;
 }
  
 .preview-render-layer {
@@ -1020,30 +1039,54 @@
   cursor: pointer;
 }
  
-/* Selection outline for the active clip in the Game preview — previously
-   the "selected" class was applied but had no visible styling here, so a
-   selected clip looked identical to an unselected one in the viewport. */
-.preview-render-layer.selected {
-  outline: 1.5px solid var(--unity-accent, #38bdf8);
-  outline-offset: 4px;
-}
- 
 .preview-render-layer.gizmo-draggable.selected {
   cursor: move;
 }
  
+/* Selection outline + rotate/scale gizmo overlay — a SIBLING of the
+   selected clip's .preview-render-layer (see EntityRenderer.jsx), not a
+   child of it. .preview-render-layer carries `scale(transform.scaleX,
+   transform.scaleY)` (the entity's own Scale); this overlay deliberately
+   is NOT a descendant of that element, so it never inherits that scale in
+   the first place. Its width/height are set inline in px to the entity's
+   *actual* rendered box size (baseWidth/baseHeight * scaleX/scaleY), so
+   0%/50%/100% positioning below lines up with the real edges/center
+   without any extra division. The only remaining scale factor to counter
+   is view zoom (--view-scale, set on .preview-entities-layer) — border
+   thickness and handle size no longer need to know or care how big the
+   entity's own Scale is. */
+.preview-selection-gizmo {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform-origin: center center;
+  outline: calc(1.5px / var(--view-scale, 1)) solid var(--unity-accent, #38bdf8);
+  outline-offset: calc(4px / var(--view-scale, 1));
+  pointer-events: none;
+}
+ 
+/* Handles themselves still need pointer events, even though the outline
+   box they sit in doesn't (so it never intercepts clicks meant for the
+   clip underneath). */
+.preview-selection-gizmo > * {
+  pointer-events: auto;
+}
+ 
 /* Rotate gizmo — a short stem plus a circular handle above the clip's
    selection outline, matching Unity's Scene view rotate tool convention.
-   Positioned in the same rotated/scaled coordinate space as the clip
-   itself (both are children of .preview-render-layer, which already
-   carries the entity's rotate/scale transform), so the stem always points
-   "up" relative to the clip's own current rotation, not the screen. */
+   Positioned in the same rotated coordinate space as the clip itself
+   (both .preview-render-layer and .preview-selection-gizmo apply the same
+   rotate(transform.rotation) — see EntityRenderer.jsx), so the stem
+   always points "up" relative to the clip's own current rotation, not the
+   screen. Counter-scaled against --view-scale only now (see the overlay
+   comment above for why the entity's own Scale no longer needs
+   countering here). */
 .gizmo-rotate-stem {
   position: absolute;
   left: 50%;
   bottom: 100%;
-  width: 1px;
-  height: 28px;
+  width: calc(1px / var(--view-scale, 1));
+  height: calc(28px / var(--view-scale, 1));
   background: var(--unity-accent, #38bdf8);
   opacity: 0.7;
   transform: translateX(-50%);
@@ -1053,20 +1096,68 @@
 .gizmo-rotate-handle {
   position: absolute;
   left: 50%;
-  bottom: calc(100% + 28px);
-  width: 12px;
-  height: 12px;
-  margin-left: -6px;
-  margin-bottom: -6px;
+  bottom: calc(100% + 28px / var(--view-scale, 1));
+  width: calc(12px / var(--view-scale, 1));
+  height: calc(12px / var(--view-scale, 1));
+  margin-left: calc(-6px / var(--view-scale, 1));
+  margin-bottom: calc(-6px / var(--view-scale, 1));
   border-radius: 50%;
   background: var(--unity-accent, #38bdf8);
-  border: 1.5px solid #0d0e12;
+  border: calc(1.5px / var(--view-scale, 1)) solid #0d0e12;
   cursor: grab;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15);
+  box-shadow: 0 0 0 calc(1px / var(--view-scale, 1)) rgba(255, 255, 255, 0.15);
 }
  
 .gizmo-rotate-handle:active {
   cursor: grabbing;
+}
+ 
+/* Scale handles — one small square pinned to EACH corner of the
+   selection-gizmo overlay box, which is now sized to exactly the clip's
+   real on-screen dimensions (see .preview-selection-gizmo comment above),
+   so 0%/100% on each axis lines up exactly with the clip's own actual
+   left/right/top/bottom edges. Drag any corner to resize from that
+   corner; counter-scaled against --view-scale only, so every handle stays
+   a constant, grabbable on-screen size regardless of view zoom, and no
+   longer needs to know or counteract how big/small the entity itself has
+   been scaled. */
+.gizmo-scale-handle {
+  position: absolute;
+  width: calc(11px / var(--view-scale, 1));
+  height: calc(11px / var(--view-scale, 1));
+  margin-left: calc(-5.5px / var(--view-scale, 1));
+  margin-top: calc(-5.5px / var(--view-scale, 1));
+  background: var(--unity-accent, #38bdf8);
+  border: calc(1.5px / var(--view-scale, 1)) solid #0d0e12;
+  box-shadow: 0 0 0 calc(1px / var(--view-scale, 1)) rgba(255, 255, 255, 0.15);
+}
+ 
+.gizmo-scale-handle:active {
+  filter: brightness(1.2);
+}
+ 
+.gizmo-scale-handle-tl {
+  left: 0%;
+  top: 0%;
+  cursor: nwse-resize;
+}
+ 
+.gizmo-scale-handle-tr {
+  left: 100%;
+  top: 0%;
+  cursor: nesw-resize;
+}
+ 
+.gizmo-scale-handle-bl {
+  left: 0%;
+  top: 100%;
+  cursor: nesw-resize;
+}
+ 
+.gizmo-scale-handle-br {
+  left: 100%;
+  top: 100%;
+  cursor: nwse-resize;
 }
  
 .rendered-text-node {
@@ -1095,35 +1186,29 @@
   pointer-events: none;
 }
  
+/* Re-enables click/drag interaction for video clips in the editor
+   viewport — previously .video-layer-container was unconditionally
+   pointer-events: none, so a video clip could never be clicked to select
+   it or dragged like a shape/text/script clip already could. Only turned
+   on when the renderer is actually editable (onUpdateEntity passed, same
+   condition every other gizmo-draggable clip already checks); a read-only
+   / export-preview usage keeps the original none, since there's nothing
+   to select in that context. */
+.video-layer-container.gizmo-draggable {
+  pointer-events: auto;
+  cursor: pointer;
+}
+ 
+.video-layer-container.gizmo-draggable.selected {
+  cursor: move;
+}
+ 
 .active-video-element {
   width: 100%;
   height: 100%;
   object-fit: contain;
   display: block;
   background: #000;
-}
- 
-.preview-empty-screen {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  gap: 8px;
-  padding: 24px;
-}
- 
-.empty-text {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--unity-text-muted);
-}
- 
-.empty-sub {
-  font-size: 11px;
-  color: var(--unity-text-dim);
-  max-width: 320px;
-  line-height: 1.4;
 }
  
 .text-dim {

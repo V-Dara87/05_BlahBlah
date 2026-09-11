@@ -36,7 +36,7 @@ function buildDefaultLayout(api) {
   const previewPanel = api.addPanel({
     id: 'preview',
     component: 'preview',
-    title: 'Game',
+    title: 'Preview',
   });
  
   api.addPanel({

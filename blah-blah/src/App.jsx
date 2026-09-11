@@ -77,7 +77,7 @@ export function App() {
   // Actual pixel dimensions the project renders/exports at (see
   // NewProjectModal's resolution picker + types.js RESOLUTION_PRESETS).
   // EntityRenderer's preview frame derives its aspect-ratio from this
-  // instead of a hardcoded 16:9, so the Game preview always matches
+  // instead of a hardcoded 16:9, so the Preview always matches
   // whatever the project was created at.
   const [resolution, setResolution] = useState(DEFAULT_RESOLUTION);
  
@@ -526,14 +526,14 @@ export function App() {
       label: 'Window',
       items: [
         { label: 'Inspector', icon: <Sliders size={13} />, onClick: () => openOrFocusPanel('inspector', 'Inspector') },
-        { label: 'Game / Preview', icon: <PlaySquare size={13} />, onClick: () => openOrFocusPanel('preview', 'Game') },
+        { label: 'Preview', icon: <PlaySquare size={13} />, onClick: () => openOrFocusPanel('preview', 'Preview') },
         { label: 'Project', icon: <FolderOpen size={13} />, onClick: () => openOrFocusPanel('project', 'Project') },
         { label: 'Timeline', icon: <Clock size={13} />, onClick: () => openOrFocusPanel('timeline', 'Timeline') },
         { label: 'Dopesheet', icon: <Layers size={13} />, onClick: () => openOrFocusPanel('dopesheet', 'Dopesheet') },
         { label: 'Curves', icon: <Activity size={13} />, onClick: () => openOrFocusPanel('curveEditor', 'Curves') },
         { type: 'separator' },
         { label: 'New Inspector Tab', icon: <Copy size={13} />, onClick: () => addNewPanelInstance('inspector', 'Inspector') },
-        { label: 'New Preview Tab', icon: <Copy size={13} />, onClick: () => addNewPanelInstance('preview', 'Game') },
+        { label: 'New Preview Tab', icon: <Copy size={13} />, onClick: () => addNewPanelInstance('preview', 'Preview') },
         { type: 'separator' },
         { label: 'Popout Active Window', shortcut: 'Alt+P', icon: <ExternalLink size={13} />, onClick: popoutActivePanel },
         { label: 'Float Active Window', shortcut: 'Alt+F', icon: <Maximize2 size={13} />, onClick: floatActivePanel },
@@ -696,7 +696,7 @@ export function App() {
       />
  
       {/* Unity-style dockable workspace: every panel below (Project,
-          Game/Preview, Inspector, Timeline) can be dragged to any edge,
+          Preview, Inspector, Timeline) can be dragged to any edge,
           split, or merged into tabs, same as Unity's editor windows.
           Panels read their props from EditorContext instead of being
           passed props directly, since dockview owns their mounting. */}
@@ -713,9 +713,11 @@ export function App() {
           setSelectedEntityId,
           setAutoKeyEnabled,
           setPixelsPerSecond,
+          setSnappingEnabled,
           // handlers
+          undo, redo, canUndo, canRedo,
           handleUpdateEntity, handleUpdateClips, handleDuplicateClips,
-          handleDeleteEntity, handleSaveAsPrefab,
+          handleDeleteEntity, handleSplitEntity, handleSaveAsPrefab,
           handleUpdateTrack, handleDeleteTrack, handleAddTrack, handleAddEmptyClip,
           handleDropItemOnTrack, handleAttachScriptToEntity,
           selectedKeyId, setSelectedKeyId,

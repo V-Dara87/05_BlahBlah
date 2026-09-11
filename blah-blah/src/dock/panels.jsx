@@ -100,15 +100,15 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
     autoKeyEnabled, setAutoKeyEnabled,
     mediaAssets,
   } = useEditorContext();
-
+ 
   const [isLocked, setIsLocked] = useState(false);
   const [lockedEntityId, setLockedEntityId] = useState(null);
-
+ 
   // If locked entity was deleted, fall back to unlocked
   const activeEntityId = (isLocked && lockedEntityId && entities.some(e => e.id === lockedEntityId))
     ? lockedEntityId
     : selectedEntityId;
-
+ 
   const handleToggleLock = useCallback(() => {
     setIsLocked((prev) => {
       if (!prev) {
@@ -122,10 +122,10 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
       return false;
     });
   }, [selectedEntityId]);
-
+ 
   const currentTime = useCurrentTime();
   const selectedEntity = entities.find((e) => e.id === activeEntityId);
-
+ 
   return (
     <div className="dock-panel-root">
       <UnityInspector
@@ -164,16 +164,16 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
     exportRange, setExportRange,
     onSplitVideoAndAudio,
   } = useEditorContext();
-
+ 
   const store = usePlaybackStore();
-
+ 
   const handleToggleSelect = useCallback((id) => {
     setSelectedIds((prev) => {
       if (prev.includes(id)) return prev.filter((i) => i !== id);
       return [...prev, id];
     });
   }, [setSelectedIds]);
-
+ 
   const handleRangeSelect = useCallback((endId) => {
     if (!selectedEntityId || selectedEntityId === endId) return;
     const startIdx = entities.findIndex((e) => e.id === selectedEntityId);
@@ -184,11 +184,11 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
     const rangeIds = entities.slice(min, max + 1).map((e) => e.id);
     setSelectedIds((prev) => [...new Set([...prev, ...rangeIds])]);
   }, [selectedEntityId, entities, setSelectedIds]);
-
+ 
   const handleClearSelection = useCallback(() => {
     setSelectedIds([]);
   }, [setSelectedIds]);
-
+ 
   return (
     <Timeline
       tracks={tracks}
@@ -233,12 +233,19 @@ export const DopesheetDockPanel = memo(function DopesheetDockPanel() {
     entities, selectedEntityId, scripts, calculatedDuration,
     handleUpdateEntity,
     selectedKeyId, setSelectedKeyId,
+    // Timeline-parity shortcuts — same handlers App.jsx's Edit menu and
+    // EditorPlaybackShortcuts already use, now also fed to the Dopesheet
+    // toolbar (see Dopesheet.jsx's new onUndo/onSplitSelected/etc. props).
+    undo, redo, canUndo, canRedo,
+    handleSplitEntity, handleDeleteEntity, handleDuplicateClips,
+    setSelectedIds,
+    snappingEnabled, setSnappingEnabled,
   } = useEditorContext();
-
+ 
   const currentTime = useCurrentTime();
   const store = usePlaybackStore();
   const selectedEntity = entities.find((e) => e.id === selectedEntityId);
-
+ 
   return (
     <Dopesheet
       selectedEntity={selectedEntity}
@@ -249,18 +256,31 @@ export const DopesheetDockPanel = memo(function DopesheetDockPanel() {
       onUpdateEntity={handleUpdateEntity}
       selectedKeyId={selectedKeyId}
       onSelectedKeyChange={setSelectedKeyId}
+      onUndo={undo}
+      onRedo={redo}
+      canUndo={canUndo}
+      canRedo={canRedo}
+      onSplitSelected={() => selectedEntityId && handleSplitEntity(selectedEntityId)}
+      onDeleteSelected={() => selectedEntityId && handleDeleteEntity(selectedEntityId)}
+      onDuplicateSelected={() => {
+        if (!selectedEntityId) return;
+        const newIds = handleDuplicateClips([selectedEntityId]);
+        if (newIds && newIds.length > 0) setSelectedIds(newIds);
+      }}
+      onToggleSnapping={() => setSnappingEnabled((v) => !v)}
+      snappingEnabled={snappingEnabled}
     />
   );
 });
-
+ 
 export function CurveEditorDockPanel() {
   const {
     entities, selectedEntityId, handleUpdateEntity,
     selectedKeyId,
   } = useEditorContext();
-
+ 
   const selectedEntity = entities.find((e) => e.id === selectedEntityId);
-
+ 
   // Find the selected keyframe's location and curve segment
   const { curveSegment, trackKey, fieldName, keyframeTime } = useMemo(() => {
     if (!selectedKeyId || !selectedEntity?.keyframes) return {};
@@ -283,35 +303,35 @@ export function CurveEditorDockPanel() {
     }
     return {};
   }, [selectedKeyId, selectedEntity]);
-
+ 
   // Use refs for the latest values so callbacks never go stale
   const stateRef = useRef({});
   stateRef.current = { trackKey, fieldName, selectedEntity, selectedKeyId };
-
+ 
   const handleChangeCurve = useCallback((cp1, cp2) => {
     const { trackKey: tk, fieldName: fn, selectedEntity: ent, selectedKeyId: kid } = stateRef.current;
     if (!tk || !fn || !ent) return;
     const keyframes = setKeyframeCurve(ent, tk, fn, kid, cp1, cp2);
     handleUpdateEntity(ent.id, { keyframes });
   }, [handleUpdateEntity]);
-
+ 
   const handleApplyPreset = useCallback((cp1, cp2) => {
     const { trackKey: tk, fieldName: fn, selectedEntity: ent, selectedKeyId: kid } = stateRef.current;
     if (!tk || !fn || !ent) return;
     const keyframes = setKeyframeCurve(ent, tk, fn, kid, cp1, cp2);
     handleUpdateEntity(ent.id, { keyframes });
   }, [handleUpdateEntity]);
-
+ 
   const handleResetCurve = useCallback(() => {
     const { trackKey: tk, fieldName: fn, selectedEntity: ent, selectedKeyId: kid } = stateRef.current;
     if (!tk || !fn || !ent) return;
     const keyframes = setKeyframeCurve(ent, tk, fn, kid, null, null);
     handleUpdateEntity(ent.id, { keyframes });
   }, [handleUpdateEntity]);
-
+ 
   const cp1 = curveSegment?.cp1 || { x: 0.33, y: 0 };
   const cp2 = curveSegment?.cp2 || { x: 0.67, y: 1 };
-
+ 
   return (
     <CurveEditorTab
       cp1={cp1}
