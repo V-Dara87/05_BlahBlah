@@ -174,349 +174,10 @@ input, select, textarea {
   box-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
 }
  
-.auto-key-toggle-btn.active:hover {
-  background: #0ea5e9;
-  box-shadow: 0 0 12px rgba(56, 189, 248, 0.7);
-}
- 
 /* ========================================================
-   17. EASING PICKER — curve preset selector for keyframes
-   ======================================================== */
- 
-/* Trigger button (inline in Inspector fields) */
-.easing-trigger-wrapper {
-  position: relative;
-  display: inline-flex;
-}
- 
-.easing-trigger-btn {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  width: 22px;
-  height: 18px;
-  border-radius: 3px;
-  color: var(--unity-text-dim);
-  justify-content: center;
-}
- 
-.easing-trigger-btn:hover {
-  background: var(--unity-subtle);
-  color: #38bdf8;
-}
- 
-.easing-trigger-icon {
-  flex-shrink: 0;
-}
- 
-/* Picker panel (dropdown) */
-.easing-picker-panel,
-.easing-picker-compact {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  width: 280px;
-  max-height: 380px;
-  background: var(--unity-panel);
-  border: 1px solid var(--unity-border-light);
-  border-radius: 6px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
-  z-index: 200;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
- 
-.easing-picker-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--unity-border);
-  flex-shrink: 0;
-}
- 
-.easing-picker-title {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--unity-text);
-}
- 
-.easing-picker-close {
-  width: 18px;
-  height: 18px;
-  border-radius: 3px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--unity-text-dim);
-}
- 
-.easing-picker-close:hover {
-  background: var(--unity-subtle);
-  color: #fff;
-}
- 
-.easing-picker-search {
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--unity-border);
-  flex-shrink: 0;
-}
- 
-.easing-picker-search-input {
-  width: 100%;
-  background: var(--unity-dark);
-  border: 1px solid var(--unity-border);
-  border-radius: 3px;
-  color: var(--unity-text);
-  font-size: 10px;
-  padding: 3px 6px;
-}
- 
-.easing-picker-search-input:focus {
-  border-color: #38bdf8;
-  outline: none;
-}
- 
-.easing-picker-current {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
-  border-bottom: 1px solid var(--unity-border);
-  flex-shrink: 0;
-}
- 
-.easing-picker-current-label {
-  font-size: 10px;
-  font-weight: 600;
-  color: #38bdf8;
-  font-family: var(--font-mono);
-}
- 
-.easing-picker-grid {
-  flex: 1;
-  overflow-y: auto;
-  padding: 4px 6px;
-}
- 
-.easing-picker-group {
-  margin-bottom: 4px;
-}
- 
-.easing-picker-group-label {
-  font-size: 9px;
-  font-weight: 700;
-  color: var(--unity-text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  padding: 3px 2px 2px;
-}
- 
-.easing-picker-group-items {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 3px;
-}
- 
-.easing-preset-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1px;
-  padding: 4px 2px 3px;
-  border-radius: 4px;
-  background: var(--unity-dark);
-  border: 1px solid transparent;
-  cursor: pointer;
-  transition: all 0.1s;
-}
- 
-.easing-preset-item:hover {
-  background: var(--unity-subtle);
-  border-color: var(--unity-border-light);
-}
- 
-.easing-preset-item.active {
-  background: rgba(56, 189, 248, 0.1);
-  border-color: rgba(56, 189, 248, 0.5);
-}
- 
-.easing-preset-label {
-  font-size: 7.5px;
-  color: var(--unity-text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-  line-height: 1;
-}
- 
-.easing-preset-prefix {
-  font-size: 7px;
-  color: var(--unity-text-dim);
-  font-weight: 600;
-  line-height: 1;
-}
- 
-.easing-curve-icon {
-  flex-shrink: 0;
-}
- 
-.easing-picker-empty {
-  font-size: 10px;
-  color: var(--unity-text-dim);
-  text-align: center;
-  padding: 12px;
-}
- 
-/* ========================================================
-   18. CURVE EDITOR — bezier curve editor for keyframe easing
-   ======================================================== */
- 
-.curve-editor-root {
-  display: flex;
-  justify-content: center;
-}
- 
-.curve-editor-root canvas {
-  border-radius: 4px;
-  border: 1px solid var(--unity-border);
-}
- 
-.curve-editor-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
- 
-.curve-editor-canvas-wrap {
-  display: flex;
-  justify-content: center;
-}
- 
-.curve-editor-presets {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
- 
-.curve-editor-presets-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
- 
-.curve-editor-presets-title {
-  font-size: 9px;
-  font-weight: 700;
-  color: var(--unity-text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
- 
-.curve-editor-reset-btn {
-  width: 18px;
-  height: 18px;
-  border-radius: 3px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--unity-text-dim);
-}
- 
-.curve-editor-reset-btn:hover {
-  background: var(--unity-subtle);
-  color: #fff;
-}
- 
-.curve-editor-preset-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 3px;
-}
- 
-.curve-editor-preset-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  padding: 4px 2px 3px;
-  border-radius: 4px;
-  background: var(--unity-dark);
-  border: 1px solid transparent;
-  color: var(--unity-text-muted);
-  cursor: pointer;
-  transition: all 0.1s;
-}
- 
-.curve-editor-preset-btn:hover {
-  background: var(--unity-subtle);
-  border-color: var(--unity-border-light);
-  color: #fff;
-}
- 
-.curve-editor-preset-btn.active {
-  background: rgba(56, 189, 248, 0.1);
-  border-color: rgba(56, 189, 248, 0.5);
-  color: #38bdf8;
-}
- 
-.curve-editor-preset-name {
-  font-size: 7.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-}
- 
-/* Dopesheet curve editor section */
-.dopesheet-curve-section {
-  padding: 8px 10px;
-  background: var(--unity-dark);
-  border-bottom: 1px solid var(--unity-border);
-  flex-shrink: 0;
-}
- 
-.dopesheet-curve-header {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 6px;
-}
- 
-.dopesheet-curve-title {
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--unity-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-}
- 
-.dopesheet-curve-sub {
-  font-size: 9px;
-  color: var(--unity-text-dim);
-}
- 
-/* Curve editor empty state */
-.curve-editor-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  padding: 20px;
-  text-align: center;
-}
- 
-.curve-editor-empty p {
-  font-size: 11px;
-  color: var(--unity-text-dim);
-  max-width: 240px;
-  line-height: 1.5;
-}
- 
-/* ========================================================
-   18b. CURVE TAB — standalone dockable curves panel
+   18. CURVE TAB — standalone dockable curves panel
+   (Presets/gallery styles are a planned follow-up layer —
+   not included yet; this covers the drag-only editor.)
    ======================================================== */
  
 .curve-tab-root {
@@ -587,180 +248,80 @@ input, select, textarea {
   border-radius: 6px;
 }
  
-.curve-tab-presets {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 0 10px 10px;
-  flex: 1;
-  min-height: 0;
-}
- 
-.curve-tab-presets-label {
-  font-size: 9px;
-  font-weight: 700;
-  color: var(--unity-text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  padding: 2px 0;
-}
- 
-.curve-tab-preset-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 3px;
-}
- 
-.curve-tab-preset-btn {
+.curve-tab-empty-state {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 4px 2px 3px;
-  border-radius: 4px;
-  background: var(--unity-dark);
-  border: 1px solid transparent;
-  color: var(--unity-text-muted);
-  cursor: pointer;
-  transition: all 0.1s;
-}
- 
-.curve-tab-preset-btn:hover {
-  background: var(--unity-subtle);
-  border-color: var(--unity-border-light);
-  color: #fff;
-}
- 
-.curve-tab-preset-btn.active {
-  background: rgba(56, 189, 248, 0.1);
-  border-color: rgba(56, 189, 248, 0.5);
-  color: #38bdf8;
-}
- 
-.curve-tab-preset-name {
-  font-size: 7.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
+  justify-content: center;
+  gap: 8px;
+  flex: 1;
+  padding: 24px;
   text-align: center;
+  color: var(--unity-text-dim);
 }
-.curve-tab-custom-header {
+ 
+.curve-tab-empty-state svg {
+  opacity: 0.4;
+}
+ 
+.curve-tab-empty-state p {
+  font-size: 11px;
+  max-width: 220px;
+  line-height: 1.5;
+}
+ 
+/* ========================================================
+   19. CURVE PICKER MODAL — preset gallery (mirrors the
+   Transition Picker Modal's master-detail shell; only the
+   curve-specific bits below are new, everything else reuses
+   .modal-*/.master-*/.detail-*/.transition-modal-split etc.)
+   ======================================================== */
+ 
+.curve-picker-modal.master-detail-layout {
+  width: 760px;
+  height: 520px;
+  max-width: 95vw;
+  max-height: 90vh;
+  background: var(--unity-dark, #1f1f1f);
+  border: 1px solid var(--unity-border-light, #3e3e3e);
+  border-radius: 6px;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 0 2px;
+  flex-direction: column;
+  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  animation: modalFadeIn 0.15s ease-out;
 }
  
-.curve-tab-save-btn {
+.curve-picker-canvas-box {
   display: flex;
-  align-items: center;
-  gap: 3px;
-  padding: 3px 7px;
-  border-radius: 3px;
-  background: var(--unity-dark);
-  border: 1px solid var(--unity-border-light);
-  color: var(--unity-text-muted);
-  font-size: 9.5px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.1s;
+  justify-content: center;
+  padding: 4px;
 }
  
-.curve-tab-save-btn:hover {
-  background: rgba(56, 189, 248, 0.12);
-  border-color: rgba(56, 189, 248, 0.5);
-  color: #38bdf8;
+.curve-picker-canvas-box canvas {
+  border-radius: 4px;
 }
  
-.curve-tab-save-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 0 6px;
-}
- 
-.curve-tab-save-input {
-  flex: 1;
-  min-width: 0;
-  background: var(--unity-dark);
-  border: 1px solid var(--unity-border-light);
-  border-radius: 3px;
-  color: var(--unity-text);
-  font-size: 10px;
-  padding: 4px 6px;
-}
- 
-.curve-tab-save-input:focus {
-  outline: none;
-  border-color: rgba(56, 189, 248, 0.6);
-}
- 
-.curve-tab-save-confirm,
-.curve-tab-save-cancel {
+.curve-picker-reset-inline {
   width: 20px;
   height: 20px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   border-radius: 3px;
-  border: 1px solid var(--unity-border-light);
-  background: var(--unity-dark);
-  color: var(--unity-text-muted);
-  cursor: pointer;
-}
- 
-.curve-tab-save-confirm:hover:not(:disabled) {
-  background: rgba(34, 197, 94, 0.15);
-  border-color: rgba(34, 197, 94, 0.5);
-  color: #4ade80;
-}
- 
-.curve-tab-save-confirm:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
- 
-.curve-tab-save-cancel:hover {
-  background: rgba(239, 68, 68, 0.15);
-  border-color: rgba(239, 68, 68, 0.5);
-  color: #f87171;
-}
- 
-.curve-tab-custom-preset-btn {
-  position: relative;
-}
- 
-.curve-tab-custom-delete {
-  position: absolute;
-  top: 1px;
-  right: 1px;
-  width: 13px;
-  height: 13px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 2px;
-  background: rgba(0, 0, 0, 0.5);
   color: var(--unity-text-dim);
-  opacity: 0;
-  transition: opacity 0.1s;
-  z-index: 1;
+  flex-shrink: 0;
+  margin-left: auto;
 }
  
-.curve-tab-custom-preset-btn:hover .curve-tab-custom-delete {
-  opacity: 1;
-}
- 
-.curve-tab-custom-delete:hover {
-  background: rgba(239, 68, 68, 0.7);
+.curve-picker-reset-inline:hover {
+  background: var(--unity-subtle);
   color: #fff;
 }
  
-.curve-tab-custom-empty {
-  font-size: 9.5px;
-  color: var(--unity-text-dim);
-  line-height: 1.5;
-  padding: 4px 2px 2px;
+/* Inline dropdown + Browse button row inside the Curves dock tab */
+.curve-tab-preset-row {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--unity-border);
+  flex-shrink: 0;
 }

@@ -32,7 +32,10 @@ import { isScriptComponent, createTransitionComponent } from '../engine/ecs';
 import { readDragPayload, dragHasItemKind, ITEM_KIND_SCRIPT } from '../utils/dragData';
 import { TransitionInspector } from './inspector/TransitionInspector';
 import { TransitionPickerModal } from './TransitionPickerModal';
-
+import { createSubtitleTrackComponent, createPhrase, addPhrase, updatePhrase, removePhrase } from '../engine/subtitleTrack';
+import { parseSrt, toSrt } from '../engine/srt';
+import { Captions, Upload, Download } from 'lucide-react';
+ 
 // Per-kind display metadata for script cards (icon + color + label). The
 // kind comes from detectScriptKind at runtime — there is ONE component type
 // (ScriptComponent) and the script's own code decides how it executes.
@@ -162,7 +165,7 @@ export const UnityInspector = memo(function UnityInspector({
   const [pickerSlot, setPickerSlot] = useState('in');
   const [pickerCallback, setPickerCallback] = useState(null);
   const [pickerInitialParams, setPickerInitialParams] = useState(null);
-
+ 
   const eligibleParentEntities = useMemo(() => {
     if (!entities || !selectedEntity) return [];
     const isDescendant = (candidateId, ancestorId) => {
@@ -176,7 +179,7 @@ export const UnityInspector = memo(function UnityInspector({
       }
       return false;
     };
-
+ 
     const getDepth = (entity) => {
       let d = 0;
       const visited = new Set();
@@ -189,7 +192,7 @@ export const UnityInspector = memo(function UnityInspector({
       }
       return d;
     };
-
+ 
     return entities
       .filter((e) => e.id !== selectedEntity.id && !isDescendant(e.id, selectedEntity.id))
       .map((e) => ({
@@ -198,7 +201,7 @@ export const UnityInspector = memo(function UnityInspector({
         indent: '  '.repeat(getDepth(e)),
       }));
   }, [entities, selectedEntity]);
-
+ 
   if (!selectedEntity) {
     return (
       <aside className="inspector-sidebar empty">
@@ -214,11 +217,11 @@ export const UnityInspector = memo(function UnityInspector({
   const toggleFoldout = (name) => {
     setOpenFoldouts(prev => ({ ...prev, [name]: !prev[name] }));
   };
-
+ 
   // Local time within this entity's clip (seconds from clip start).
   const localTime = Math.max(0, currentTime - selectedEntity.startTime);
   const snappedLocalTime = Math.round(localTime * 30) / 30;
-
+ 
   /**
    * For a component's values object, replace any field that has keyframes
    * with the keyframe-evaluated value at the current local time.
@@ -234,7 +237,7 @@ export const UnityInspector = memo(function UnityInspector({
     });
     return resolved;
   };
-
+ 
   /**
    * Write a single field value. If the field already has keyframes (it is
    * animated), update/create a keyframe at the current time — writing to the
@@ -251,16 +254,17 @@ export const UnityInspector = memo(function UnityInspector({
     }
     return null;
   };
-
+ 
   const transformComp = selectedEntity.components.find(c => c.type === 'Transform') || {
     x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1
   };
-
+ 
   const textComp = selectedEntity.components.find(c => c.type === 'TextRenderer');
   const shapeComp = selectedEntity.components.find(c => c.type === 'ShapeRenderer');
   const videoComp = selectedEntity.components.find(c => c.type === 'VideoRenderer');
   const audioComp = selectedEntity.components.find(c => c.type === 'AudioSource');
   const transitionComp = selectedEntity.components.find(c => c.type === 'TransitionComponent');
+  const subtitleComp = selectedEntity.components.find(c => c.type === 'SubtitleTrack');
   const scriptComps = selectedEntity.components.filter(isScriptComponent);
  
   const updateTransform = (updates) => {
@@ -278,7 +282,7 @@ export const UnityInspector = memo(function UnityInspector({
     // static (non-keyframe) write — an animated/keyframed speed has no
     // single timeline length to derive, so it leaves duration alone.
     let durationUpdate = null;
-
+ 
     Object.keys(updates).forEach((fieldName) => {
       const tempEntity = { ...selectedEntity, keyframes: kfsSnapshot };
       const result = tryWriteKeyframe(tempEntity, 'Transform', fieldName, updates[fieldName]);
@@ -296,7 +300,7 @@ export const UnityInspector = memo(function UnityInspector({
         }
       }
     });
-
+ 
     const batchUpdate = {};
     if (kfsChanged) batchUpdate.keyframes = kfsSnapshot;
     if (durationUpdate !== null) batchUpdate.duration = durationUpdate;
@@ -345,7 +349,7 @@ export const UnityInspector = memo(function UnityInspector({
       onUpdateEntity(selectedEntity.id, { components: updatedComponents });
     }
   };
-
+ 
   const updateScriptComp = (scriptId, updates) => {
     const updatedComponents = selectedEntity.components.map((c) =>
       isScriptComponent(c) && c.scriptId === scriptId ? { ...c, ...updates } : c
@@ -417,6 +421,8 @@ export const UnityInspector = memo(function UnityInspector({
       newComp = { type: 'AudioSource', src: '', volume: 1, speed: 1, mediaOffset: 0 };
     } else if (type === 'TransitionComponent') {
       newComp = createTransitionComponent();
+    } else if (type === 'SubtitleTrack') {
+      newComp = createSubtitleTrackComponent();
     } else if (type === 'ScriptComponent' && scriptId) {
       // ONE script component type — the runtime dispatches per the
       // script's detected kind (motion / react / canvas).
@@ -433,13 +439,13 @@ export const UnityInspector = memo(function UnityInspector({
       onUpdateEntity(selectedEntity.id, { components: [...selectedEntity.components, newComp] });
     }
   };
-
+ 
   // Attach a script by id (Add Component click or a Project-panel script
   // card dropped onto the Inspector).
   const handleAttachScript = (scriptId) => {
     if (scriptId) handleAddComponent('ScriptComponent', scriptId);
   };
-
+ 
   // HTML5 drop zone: a script card dragged from the Project panel (scripts/
   // or shared/) lands on the Inspector and attaches to the selected clip.
   const handleInspectorDragOver = (e) => {
@@ -448,7 +454,7 @@ export const UnityInspector = memo(function UnityInspector({
     e.dataTransfer.dropEffect = 'copy';
     if (!isScriptDragOver) setIsScriptDragOver(true);
   };
-
+ 
   const handleInspectorDrop = (e) => {
     if (!selectedEntity) return;
     const payload = readDragPayload(e.dataTransfer);
@@ -472,25 +478,26 @@ export const UnityInspector = memo(function UnityInspector({
   // half-written script ('unknown') is never hidden while being written.
   const allScripts = scripts.map(s => ({ ...s, kind: detectScriptKind(s.code) }));
   const scriptKindLabel = (kind) => (SCRIPT_KIND_META[kind] || SCRIPT_KIND_META.motion).label;
-
+ 
   const searchTerm = componentSearch.trim().toLowerCase();
   const matchesSearch = (name) => !searchTerm || name.toLowerCase().includes(searchTerm);
-
+ 
   const rendererItems = [
     { type: 'TextRenderer', icon: <Type size={12} className="text-amber" />, label: 'Text Component', present: !!textComp },
     { type: 'ShapeRenderer', icon: <Square size={12} className="text-cyan" />, label: 'Shape Component', present: !!shapeComp },
     { type: 'VideoRenderer', icon: <Film size={12} className="text-indigo" />, label: 'Video Component', present: !!videoComp },
     { type: 'AudioSource', icon: <Volume2 size={12} className="text-emerald" />, label: 'Audio Component', present: !!audioComp },
     { type: 'TransitionComponent', icon: <Sparkles size={12} className="text-amber" />, label: 'GL Transition', present: !!transitionComp },
+    { type: 'SubtitleTrack', icon: <Captions size={12} className="text-cyan" />, label: 'Subtitle Track', present: !!subtitleComp },
   ].filter((it) => matchesSearch(it.label) || matchesSearch(it.type));
-
+ 
   const scriptKinds = ['motion', 'react', 'canvas', 'shader'];
   const scriptsByKind = (kind) => allScripts.filter((s) => s.kind === kind && matchesSearch(s.name));
-
+ 
   const toggleCompCategory = (name) => {
     setOpenCompCategories(prev => ({ ...prev, [name]: !prev[name] }));
   };
-
+ 
   return (
     <aside
       className={`inspector-sidebar${isScriptDragOver ? ' script-drop-zone' : ''}`}
@@ -524,7 +531,7 @@ export const UnityInspector = memo(function UnityInspector({
             onChange={(e) => onUpdateEntity(selectedEntity.id, { name: e.target.value })}
           />
         </div>
-
+ 
         <div className="inspector-header-field">
           <label className="field-label-sm">Timeline Track (Layer)</label>
           <select
@@ -537,7 +544,7 @@ export const UnityInspector = memo(function UnityInspector({
             ))}
           </select>
         </div>
-
+ 
         <div className="inspector-header-field">
           <label className="field-label-sm">Parent (Hierarchy)</label>
           <select
@@ -553,7 +560,7 @@ export const UnityInspector = memo(function UnityInspector({
             ))}
           </select>
         </div>
-
+ 
       </div>
  
       {/* Component Stack */}
@@ -812,7 +819,7 @@ export const UnityInspector = memo(function UnityInspector({
             )}
           </div>
         )}
-
+ 
         {audioComp && (
           <div className="inspector-card">
             <InspectorCardHeader
@@ -882,7 +889,163 @@ export const UnityInspector = memo(function UnityInspector({
             )}
           </div>
         )}
-
+ 
+        {/* ========== SUBTITLE TRACK — data-only timed phrases ========== */}
+        {/* Presentation is deliberately NOT here — this card only edits
+            the phrase list/timing (and SRT import/export). Drawing the
+            text on screen is a CanvasRenderer script's job, reading this
+            data via EntityRef.getPhraseAt/getCurrentText — see the
+            subtitle-track feature scope doc for why that split exists. */}
+        {subtitleComp && (
+          <div className="inspector-card">
+            <InspectorCardHeader
+              icon={<Captions size={13} className="text-cyan" />}
+              title="Subtitle Track"
+              isOpen={openFoldouts.SubtitleTrack !== false}
+              onToggle={() => toggleFoldout('SubtitleTrack')}
+              draggable
+              isDragOver={dragOverCompType === 'SubtitleTrack'}
+              onDragStart={handleCardDragStart('SubtitleTrack')}
+              onDragOver={handleCardDragOver('SubtitleTrack')}
+              onDrop={handleCardDrop('SubtitleTrack')}
+              onDragEnd={handleCardDragEnd}
+              actions={
+                <button className="del-btn-sm" onClick={() => removeComponent('SubtitleTrack')}>
+                  <Trash2 size={11} />
+                </button>
+              }
+            />
+            {openFoldouts.SubtitleTrack !== false && (
+              <div className="inspector-card-body">
+                <div className="inspector-row">
+                  <label className="unity-btn unity-btn-secondary btn-xs" style={{ cursor: 'pointer' }}>
+                    <Upload size={11} />
+                    <span>Import SRT</span>
+                    <input
+                      type="file"
+                      accept=".srt"
+                      style={{ display: 'none' }}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = '';
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                          const imported = parseSrt(String(reader.result || ''));
+                          if (imported.length === 0) return;
+                          const merged = imported.reduce(
+                            (comp, phrase) => addPhrase(comp, phrase),
+                            { ...subtitleComp, phrases: [] }
+                          );
+                          onUpdateEntity(selectedEntity.id, {
+                            components: selectedEntity.components.map((c) =>
+                              c.type === 'SubtitleTrack' ? merged : c
+                            ),
+                          });
+                        };
+                        reader.readAsText(file);
+                      }}
+                    />
+                  </label>
+                  <button
+                    className="unity-btn unity-btn-secondary btn-xs"
+                    disabled={(subtitleComp.phrases || []).length === 0}
+                    onClick={() => {
+                      const srtText = toSrt(subtitleComp.phrases || []);
+                      const blob = new Blob([srtText], { type: 'text/plain' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `${selectedEntity.name || 'subtitles'}.srt`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                  >
+                    <Download size={11} />
+                    <span>Export SRT</span>
+                  </button>
+                </div>
+ 
+                {(subtitleComp.phrases || []).length === 0 && (
+                  <p className="hint-text-sm">
+                    No phrases yet. Import an SRT file, or add one below and adjust its timing by hand.
+                  </p>
+                )}
+ 
+                {(subtitleComp.phrases || []).map((phrase) => (
+                  <div key={phrase.id} className="inspector-row subtitle-phrase-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <DragNumber
+                        label="in"
+                        value={parseFloat(phrase.startTime.toFixed(2))}
+                        step={0.05}
+                        min={0}
+                        onChange={(v) => {
+                          const updated = updatePhrase(subtitleComp, phrase.id, { startTime: v });
+                          onUpdateEntity(selectedEntity.id, {
+                            components: selectedEntity.components.map((c) => (c.type === 'SubtitleTrack' ? updated : c)),
+                          });
+                        }}
+                      />
+                      <DragNumber
+                        label="out"
+                        value={parseFloat(phrase.endTime.toFixed(2))}
+                        step={0.05}
+                        min={0}
+                        onChange={(v) => {
+                          const updated = updatePhrase(subtitleComp, phrase.id, { endTime: v });
+                          onUpdateEntity(selectedEntity.id, {
+                            components: selectedEntity.components.map((c) => (c.type === 'SubtitleTrack' ? updated : c)),
+                          });
+                        }}
+                      />
+                      <button
+                        className="del-btn-sm"
+                        title="Remove phrase"
+                        onClick={() => {
+                          const updated = removePhrase(subtitleComp, phrase.id);
+                          onUpdateEntity(selectedEntity.id, {
+                            components: selectedEntity.components.map((c) => (c.type === 'SubtitleTrack' ? updated : c)),
+                          });
+                        }}
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
+                    <textarea
+                      className="inspector-textarea"
+                      rows={1}
+                      value={phrase.text}
+                      placeholder="Phrase text"
+                      onChange={(e) => {
+                        const updated = updatePhrase(subtitleComp, phrase.id, { text: e.target.value });
+                        onUpdateEntity(selectedEntity.id, {
+                          components: selectedEntity.components.map((c) => (c.type === 'SubtitleTrack' ? updated : c)),
+                        });
+                      }}
+                    />
+                  </div>
+                ))}
+ 
+                <button
+                  className="unity-btn unity-btn-secondary full-width btn-xs"
+                  onClick={() => {
+                    const phrases = subtitleComp.phrases || [];
+                    const lastEnd = phrases.length > 0 ? phrases[phrases.length - 1].endTime : Math.max(0, currentTime - selectedEntity.startTime);
+                    const updated = addPhrase(subtitleComp, createPhrase({ startTime: lastEnd, endTime: lastEnd + 2, text: '' }));
+                    onUpdateEntity(selectedEntity.id, {
+                      components: selectedEntity.components.map((c) => (c.type === 'SubtitleTrack' ? updated : c)),
+                    });
+                  }}
+                >
+                  <Plus size={11} />
+                  <span>Add Phrase</span>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+ 
         {/* ========== SCRIPTS (motion / React / Canvas — one component type) ========== */}
         {scriptComps.map((scriptComp) => {
           const scriptDef = scripts.find(s => s.id === scriptComp.scriptId);
@@ -936,7 +1099,7 @@ export const UnityInspector = memo(function UnityInspector({
                       <span>Resolving imports…</span>
                     </div>
                   )}
-
+ 
                   <div className="inspector-row">
                     <span className="row-label">Enabled</span>
                     <input
@@ -945,7 +1108,7 @@ export const UnityInspector = memo(function UnityInspector({
                       onChange={(e) => updateScriptComp(scriptComp.scriptId, { enabled: e.target.checked })}
                     />
                   </div>
-
+ 
                   {/* Motion-kind scripts follow the Transform's Speed
                       (clip-level rate) by default. ignoreParentSpeed is the
                       per-script opt-out: when checked, this script's
@@ -965,7 +1128,7 @@ export const UnityInspector = memo(function UnityInspector({
                       />
                     </div>
                   )}
-
+ 
                   <InspectorFieldList
                     fields={fields}
                     values={resolveComponentValues(`script:${scriptComp.scriptId}`, scriptComp.props)}
@@ -1018,7 +1181,7 @@ export const UnityInspector = memo(function UnityInspector({
                   </button>
                 )}
               </div>
-
+ 
               <div className="add-comp-scroll">
                 {/* 📁 Renderers — built-in visual components */}
                 <div className="comp-category">
@@ -1051,7 +1214,7 @@ export const UnityInspector = memo(function UnityInspector({
                     </div>
                   )}
                 </div>
-
+ 
                 {/* 📁 Scripts — grouped by kind (Motion / React / Canvas) */}
                 <div className="comp-category">
                   <button
@@ -1118,7 +1281,7 @@ export const UnityInspector = memo(function UnityInspector({
           <span>Delete Clip</span>
         </button>
       </div>
-
+ 
       <TransitionPickerModal
         isOpen={showPickerModal}
         onClose={() => setShowPickerModal(false)}

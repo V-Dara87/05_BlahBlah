@@ -4,7 +4,7 @@ import './dopesheet.css';
 import {
   ChevronDown, ChevronRight, Sliders, Type, Square, FileCode,
   ArrowRightToLine, Move, SlidersHorizontal, Repeat, Filter,
-  ChevronsLeft, ChevronsRight, SkipBack, SkipForward, ZoomIn, ZoomOut, Spline,
+  ChevronsLeft, ChevronsRight, SkipBack, SkipForward, ZoomIn, ZoomOut,
   Undo2, Redo2, Scissors, Trash2, Copy, Magnet,
 } from 'lucide-react';
 import { TRANSFORM_FIELD_GROUPS } from '../inspector/InspectorField';
@@ -344,6 +344,11 @@ export const Dopesheet = memo(function Dopesheet({
   const handleDragKey = (trackKey, fieldName, keyId) => (e) => {
     e.stopPropagation();
     setSelectedKeyId(keyId);
+    // Auto-focus (but don't force-open if the user closed it) the Curves
+    // tab so selecting a keyframe here immediately shows its curve —
+    // per requirements, this only activates an already-open tab; it does
+    // not add a new panel or steal focus if no Curves tab exists.
+    focusDockPanel?.('curveEditor', { onlyIfOpen: true });
     const rect = lanesScrollRef.current.getBoundingClientRect();
     const scrollLeft = lanesScrollRef.current.scrollLeft;
  
@@ -419,10 +424,6 @@ export const Dopesheet = memo(function Dopesheet({
           <button className="dopesheet-tool-btn" title="Offset keyframe values">
             <Move size={12} />
             <span>Offset</span>
-          </button>
-          <button className="dopesheet-tool-btn" title="Adjust keyframe curve">
-            <SlidersHorizontal size={12} />
-            <span>Adjust</span>
           </button>
           <button
             className={`dopesheet-tool-btn ${showOnlyKeyframed ? 'active' : ''}`}
@@ -564,15 +565,6 @@ export const Dopesheet = memo(function Dopesheet({
             <SkipForward size={13} />
           </button>
         </div>
- 
-        <button
-          className="dopesheet-tool-btn"
-          title="Open Curves tab to edit keyframe easing"
-          onClick={() => focusDockPanel('curveEditor')}
-        >
-          <Spline size={12} />
-          <span>Curves</span>
-        </button>
  
         <button className="dopesheet-tool-btn-icon" title="Toggle loop playback">
           <Repeat size={13} />
@@ -810,4 +802,3 @@ function PlayheadLine({ x, height, handle = false, label }) {
     </>
   );
 }
- 

@@ -92,6 +92,10 @@ export const RENDERER_REGISTRY = {
   VideoRenderer: createRendererComponent('VideoRenderer', { kind: 'dom', label: 'Video Component' }),
   AudioSource: createRendererComponent('AudioSource', { kind: 'dom', label: 'Audio Component' }),
   TransitionComponent: createRendererComponent('TransitionComponent', { kind: 'gl', label: 'GL Transition' }),
+  // Data-only — holds timed subtitle phrases (see engine/subtitleTrack.js).
+  // Renders nothing itself; a CanvasRenderer script reads it via
+  // EntityRef.getPhraseAt/getCurrentText (engine/referenceTypes.js).
+  SubtitleTrack: createRendererComponent('SubtitleTrack', { kind: 'data', label: 'Subtitle Track' }),
 };
  
 export function createTransitionComponent(config = {}) {

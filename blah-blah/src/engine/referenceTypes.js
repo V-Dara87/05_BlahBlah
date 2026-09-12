@@ -16,6 +16,7 @@
  *
  * TypeScript definitions for VS Code are exported as `REFERENCE_TYPES_DTS`.
  */
+import { getPhraseContextAt } from './subtitleTrack.js';
 
 // ─── EntityRef ────────────────────────────────────────────────────────────────
 
@@ -35,6 +36,8 @@ export function makeEntityRef(entity, allEntities = []) {
       exists: () => false,
       getTransform: () => null,
       getComponent: () => null,
+      getPhraseAt: () => null,
+      getCurrentText: () => '',
     };
   }
 
@@ -77,6 +80,53 @@ export function makeEntityRef(entity, allEntities = []) {
      */
     getComponent(type) {
       return entity.components?.find((c) => c.type === type) ?? null;
+    },
+
+    /**
+     * Subtitle read API — additive to getTransform/getComponent, per the
+     * subtitle-track feature's read-only contract (scripts compute/read
+     * per tick; they never write back to another entity's stored data —
+     * see keyframes.js's determinism note and the absence of any
+     * onUpdateEntity call anywhere in the script execution paths).
+     *
+     * Looks up the entity's SubtitleTrack component (if any) and returns
+     * the full context a presentation script needs to animate a
+     * transition between phrases, not just the current one: the active
+     * phrase (or null during a gap between phrases — an explicit,
+     * documented choice, not an accident; see subtitleTrack.js's
+     * getPhraseContextAt), plus its neighbors.
+     *
+     * `time` is entity-LOCAL time in seconds (time since this clip's own
+     * start), matching the convention every other per-tick script value
+     * in this codebase uses (keyframes.js's evaluateField, canvasRunner's
+     * localTime, etc.) — NOT the absolute timeline time.
+     *
+     * Returns null when the entity has no SubtitleTrack component at all,
+     * or one with zero phrases. Otherwise returns:
+     *   { text, index, phrase, prev, next }
+     * where `phrase`/`index` are null and `text` is '' during a gap.
+     *
+     * @param {number} time
+     * @returns {{ text: string, index: number|null, phrase: object|null, prev: object|null, next: object|null }|null}
+     */
+    getPhraseAt(time) {
+      const track = entity.components?.find((c) => c.type === 'SubtitleTrack');
+      if (!track) return null;
+      return getPhraseContextAt(track, time);
+    },
+
+    /**
+     * Convenience shorthand for scripts that just want the plain current
+     * text with no surrounding context. Returns '' when there is no
+     * SubtitleTrack, no phrases, or the given time falls in a gap
+     * between phrases (see getPhraseAt above) — never null, so callers
+     * can render this directly without a null-check.
+     * @param {number} time
+     * @returns {string}
+     */
+    getCurrentText(time) {
+      const result = this.getPhraseAt(time);
+      return result?.text || '';
     },
 
     /** startTime of the clip on the timeline (seconds). */
@@ -193,6 +243,39 @@ export function resolveScriptProps(rawProps, schema, allEntities = [], allAssets
  */
 export const REFERENCE_TYPES_DTS = `
 /**
+ * A single timed subtitle phrase, as read from a SubtitleTrack component.
+ * See EntityRef.getPhraseAt / getCurrentText.
+ */
+declare interface SubtitlePhrase {
+  readonly id: string;
+  readonly startTime: number;
+  readonly endTime: number;
+  readonly text: string;
+  /** Word-level timing, only present when known (e.g. from transcription). */
+  readonly words?: { word: string; start: number; end: number }[];
+  /** Light styling hint a presentation script may use — not a style property. */
+  readonly emphasis?: boolean;
+  readonly language?: string;
+}
+
+/**
+ * The result of EntityRef.getPhraseAt(time) — full context around the
+ * active phrase (or lack thereof, during a gap between phrases).
+ */
+declare interface SubtitlePhraseContext {
+  /** The active phrase's text, or '' during a gap. */
+  readonly text: string;
+  /** The active phrase's index, or null during a gap. */
+  readonly index: number | null;
+  /** The active phrase, or null during a gap between phrases. */
+  readonly phrase: SubtitlePhrase | null;
+  /** The previous phrase in time, if any. */
+  readonly prev: SubtitlePhrase | null;
+  /** The next phrase in time, if any. */
+  readonly next: SubtitlePhrase | null;
+}
+
+/**
  * A reference to another clip/entity on the BlahBlah timeline.
  * Obtained when a script prop is declared with \`type: 'entity'\`.
  */
@@ -216,9 +299,22 @@ declare class EntityRef {
   getTransform(): { x: number; y: number; rotation: number; scaleX: number; scaleY: number; opacity: number; speed: number; } | null;
   /**
    * Returns the first component of the given type attached to the entity, or null.
-   * Common types: 'VideoRenderer', 'AudioSource', 'TextRenderer', 'ShapeRenderer'
+   * Common types: 'VideoRenderer', 'AudioSource', 'TextRenderer', 'ShapeRenderer', 'SubtitleTrack'
    */
   getComponent(type: string): object | null;
+  /**
+   * Returns the active subtitle phrase (and its neighbors) at entity-LOCAL
+   * time \`time\`, from this entity's SubtitleTrack component. Returns null
+   * when the entity has no SubtitleTrack or it has zero phrases. During a
+   * gap between phrases, \`phrase\`/\`index\` are null and \`text\` is ''.
+   */
+  getPhraseAt(time: number): SubtitlePhraseContext | null;
+  /**
+   * Convenience shorthand for the plain current subtitle text at
+   * entity-LOCAL time \`time\`. Always a string — '' when there is no
+   * SubtitleTrack, no phrases, or \`time\` falls in a gap.
+   */
+  getCurrentText(time: number): string;
 }
 
 /**

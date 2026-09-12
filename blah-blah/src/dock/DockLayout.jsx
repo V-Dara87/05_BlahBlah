@@ -80,7 +80,9 @@ function buildDefaultLayout(api) {
   // Curve Editor — separate tab alongside Dopesheet. Shows the bezier
   // curve for the currently selected keyframe (shared via selectedKeyId
   // in EditorContext). Selecting a keyframe in the Dopesheet activates
-  // this tab's content automatically.
+  // this tab's content automatically, but does NOT steal focus from
+  // whichever tab the user currently has active — see
+  // useAutoFocusCurveTab in Dopesheet.jsx for the explicit focus trigger.
   api.addPanel({
     id: 'curveEditor',
     component: 'curveEditor',

@@ -6,7 +6,7 @@ import { UnityInspector } from '../components/UnityInspector';
 import { Timeline } from '../components/Timeline/Timeline';
 import { Dopesheet } from '../components/Dopesheet/Dopesheet';
 import { CurveEditorTab } from '../components/CurveEditor';
-import { getCurveSegment, setKeyframeCurve } from '../engine/keyframes';
+import { setKeyframeCurve, findKeyframeById, DEFAULT_CP1, DEFAULT_CP2 } from '../engine/keyframes';
 import { useEditorContext } from './EditorContext';
 import { useCurrentTime, useIsPlaying, useIsLooping, usePlaybackStore } from '../hooks/PlaybackContext';
  
@@ -275,75 +275,55 @@ export const DopesheetDockPanel = memo(function DopesheetDockPanel() {
   );
 });
  
-export function CurveEditorDockPanel() {
-  const {
-    entities, selectedEntityId, handleUpdateEntity,
-    selectedKeyId,
-  } = useEditorContext();
- 
+/**
+ * CurveEditorDockPanel — the dockable "Curves" tab. Reads `selectedKeyId`
+ * from the same EditorContext slice the Dopesheet writes to, so selecting
+ * a keyframe there automatically drives what shows here — no separate
+ * wiring needed. Renders the empty state when nothing is selected, or
+ * when the selected keyframe is the last one in its field's list (no
+ * outgoing segment to curve).
+ */
+export const CurveEditorDockPanel = memo(function CurveEditorDockPanel() {
+  const { entities, selectedEntityId, selectedKeyId, handleUpdateEntity } = useEditorContext();
   const selectedEntity = entities.find((e) => e.id === selectedEntityId);
  
-  // Find the selected keyframe's location and curve segment
-  const { curveSegment, trackKey, fieldName, keyframeTime } = useMemo(() => {
-    if (!selectedKeyId || !selectedEntity?.keyframes) return {};
-    for (const [tk, byField] of Object.entries(selectedEntity.keyframes)) {
-      for (const [fn, kfs] of Object.entries(byField)) {
-        const idx = kfs.findIndex((k) => k.id === selectedKeyId);
-        if (idx >= 0) {
-          // Use the next keyframe's segment if available, otherwise show the current key's curve
-          const segment = idx < kfs.length - 1
-            ? getCurveSegment(kfs[idx], kfs[idx + 1])
-            : getCurveSegment(kfs[idx], kfs[idx]); // single key — show its own curve as fallback
-          return {
-            trackKey: tk,
-            fieldName: fn,
-            keyframeTime: kfs[idx].time,
-            curveSegment: segment,
-          };
-        }
-      }
-    }
-    return {};
-  }, [selectedKeyId, selectedEntity]);
+  const found = useMemo(
+    () => findKeyframeById(selectedEntity, selectedKeyId),
+    [selectedEntity, selectedKeyId]
+  );
  
-  // Use refs for the latest values so callbacks never go stale
-  const stateRef = useRef({});
-  stateRef.current = { trackKey, fieldName, selectedEntity, selectedKeyId };
+  // Curve/easing is stored on the "from" keyframe. If the selected
+  // keyframe is the last one in its list, there's no outgoing segment
+  // to shape a curve for.
+  const hasOutgoingSegment = found && found.index < found.list.length - 1;
  
-  const handleChangeCurve = useCallback((cp1, cp2) => {
-    const { trackKey: tk, fieldName: fn, selectedEntity: ent, selectedKeyId: kid } = stateRef.current;
-    if (!tk || !fn || !ent) return;
-    const keyframes = setKeyframeCurve(ent, tk, fn, kid, cp1, cp2);
-    handleUpdateEntity(ent.id, { keyframes });
-  }, [handleUpdateEntity]);
+  const cp1 = found?.keyframe?.cp1 || DEFAULT_CP1;
+  const cp2 = found?.keyframe?.cp2 || DEFAULT_CP2;
  
-  const handleApplyPreset = useCallback((cp1, cp2) => {
-    const { trackKey: tk, fieldName: fn, selectedEntity: ent, selectedKeyId: kid } = stateRef.current;
-    if (!tk || !fn || !ent) return;
-    const keyframes = setKeyframeCurve(ent, tk, fn, kid, cp1, cp2);
-    handleUpdateEntity(ent.id, { keyframes });
-  }, [handleUpdateEntity]);
+  const handleChange = useCallback((nextCp1, nextCp2) => {
+    if (!selectedEntity || !found) return;
+    const keyframes = setKeyframeCurve(
+      selectedEntity, found.trackKey, found.fieldName, found.keyframe.id, nextCp1, nextCp2
+    );
+    handleUpdateEntity(selectedEntity.id, { keyframes });
+  }, [selectedEntity, found, handleUpdateEntity]);
  
-  const handleResetCurve = useCallback(() => {
-    const { trackKey: tk, fieldName: fn, selectedEntity: ent, selectedKeyId: kid } = stateRef.current;
-    if (!tk || !fn || !ent) return;
-    const keyframes = setKeyframeCurve(ent, tk, fn, kid, null, null);
-    handleUpdateEntity(ent.id, { keyframes });
-  }, [handleUpdateEntity]);
- 
-  const cp1 = curveSegment?.cp1 || { x: 0.33, y: 0 };
-  const cp2 = curveSegment?.cp2 || { x: 0.67, y: 1 };
+  const handleReset = useCallback(() => {
+    if (!selectedEntity || !found) return;
+    const keyframes = setKeyframeCurve(
+      selectedEntity, found.trackKey, found.fieldName, found.keyframe.id, null, null
+    );
+    handleUpdateEntity(selectedEntity.id, { keyframes });
+  }, [selectedEntity, found, handleUpdateEntity]);
  
   return (
     <CurveEditorTab
       cp1={cp1}
       cp2={cp2}
-      onChange={handleChangeCurve}
-      onPresetApply={handleApplyPreset}
-      onReset={handleResetCurve}
-      selectedKeyId={selectedKeyId}
-      keyframeInfo={trackKey ? { trackKey, fieldName, time: keyframeTime } : null}
+      onChange={handleChange}
+      onReset={handleReset}
+      selectedKeyId={hasOutgoingSegment ? selectedKeyId : null}
+      keyframeInfo={hasOutgoingSegment ? { trackKey: found.trackKey, fieldName: found.fieldName, time: found.keyframe.time } : null}
     />
   );
-}
- 
+});

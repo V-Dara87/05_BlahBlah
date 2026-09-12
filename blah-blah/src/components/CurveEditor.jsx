@@ -1,34 +1,20 @@
-import { useRef, useEffect, useCallback, useState, memo, useMemo } from 'react';
-import { RotateCcw, MousePointer2, Plus, Trash2, Check, X } from 'lucide-react';
+import { useRef, useEffect, useCallback, useState, memo } from 'react';
+import { RotateCcw, MousePointer2, Maximize2 } from 'lucide-react';
 import { CURVE_PRESETS } from '../engine/keyframes';
+import { CurvePickerModal } from './CurvePickerModal';
  
 const PADDING = 24;
+const HANDLE_HIT_RADIUS = 14;
 const HANDLE_RADIUS = 5;
 const POINT_RADIUS = 4;
-const CUSTOM_PRESETS_KEY = 'blahblah.customCurvePresets';
- 
-/**
- * Load user-saved custom curve presets from localStorage.
- * Same localStorage-blob pattern as keybindSettings.js / audioSettings.js.
- */
-function loadCustomPresets() {
-  try {
-    const raw = localStorage.getItem(CUSTOM_PRESETS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
- 
-function saveCustomPresets(presets) {
-  try {
-    localStorage.setItem(CUSTOM_PRESETS_KEY, JSON.stringify(presets));
-  } catch {
-    // storage disabled/full — custom presets just won't persist this session
-  }
-}
+// The plottable y-range is wider than [0,1] so overshoot/anticipation
+// handles (y < 0 or y > 1) still land inside the canvas with room to
+// grab and drag, instead of being squeezed against the very top/bottom
+// edge — visually this "shrinks" the 0..1 curve toward the middle of
+// the canvas, leaving headroom above and below it.
+const Y_RANGE_MIN = -0.5;
+const Y_RANGE_MAX = 1.5;
+const Y_RANGE = Y_RANGE_MAX - Y_RANGE_MIN;
  
 /**
  * Evaluate cubic bezier at parameter t, given two control points.
@@ -56,35 +42,24 @@ function evalCubicBezier(t, p1, p2) {
 }
  
 /**
- * Mini curve preview SVG for a single preset.
- */
-function CurvePreviewIcon({ cp1, cp2, size = 32, isActive = false }) {
-  const d = useMemo(() => {
-    const pts = [];
-    const steps = 20;
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
-      const y = evalCubicBezier(t, cp1, cp2);
-      const x = t * size;
-      const sy = size - y * size;
-      pts.push(`${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${sy.toFixed(1)}`);
-    }
-    return pts.join(' ');
-  }, [cp1, cp2, size]);
- 
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-      <line x1={0} y1={size} x2={size} y2={size} stroke="rgba(255,255,255,0.08)" strokeWidth={0.5} />
-      <line x1={0} y1={0} x2={0} y2={size} stroke="rgba(255,255,255,0.08)" strokeWidth={0.5} />
-      <line x1={0} y1={size} x2={size} y2={0} stroke="rgba(255,255,255,0.06)" strokeWidth={0.5} strokeDasharray="2,2" />
-      <path d={d} fill="none" stroke={isActive ? '#38bdf8' : '#8fe3e0'} strokeWidth={1.5} strokeLinecap="round" />
-    </svg>
-  );
-}
- 
-/**
- * CurveEditor — canvas-based bezier curve editor.
+ * CurveEditor — canvas-based bezier curve editor. Hand-drag only; preset
+ * selection lives one level up in CurveEditorTab (inline dropdown) and
+ * CurvePickerModal (gallery) — both just call this component's onChange
+ * with a preset's cp1/cp2, same as a manual drag would.
+ *
  * Props: cp1, cp2, onChange(cp1, cp2), width, height
+ *
+ * Implementation notes (this rewrite fixes a prior version where drag
+ * silently did nothing):
+ *  - The canvas element's CSS size is set explicitly via width/height
+ *    *props* used consistently for both drawing math (toCanvas/fromCanvas)
+ *    and hit-testing (hitTest), so there is exactly one coordinate space
+ *    for the whole component — no implicit devicePixelRatio creeping into
+ *    the pointer math (dpr is only ever applied inside the 2D context via
+ *    ctx.scale, never touching clientX/clientY math).
+ *  - cp1/cp2 are tracked in a single `points` state object (not two refs
+ *    synced ad-hoc with a manual forceRender counter) so React's own
+ *    render cycle drives the canvas redraw — one source of truth.
  */
 export const CurveEditor = memo(function CurveEditor({
   cp1 = { x: 0.33, y: 0 },
@@ -94,28 +69,21 @@ export const CurveEditor = memo(function CurveEditor({
   height = 180,
 }) {
   const canvasRef = useRef(null);
-  const draggingRef = useRef(null); // 'cp1' | 'cp2' | null
-  const cp1Ref = useRef(cp1);
-  const cp2Ref = useRef(cp2);
-  const [, forceRender] = useState(0);
+  const [dragging, setDragging] = useState(null); // 'cp1' | 'cp2' | null
+  const pointsRef = useRef({ cp1, cp2 });
  
-  // Sync from props ONLY when not dragging
-  useEffect(() => {
-    if (!draggingRef.current) {
-      cp1Ref.current = cp1;
-      cp2Ref.current = cp2;
-      forceRender((n) => n + 1);
-    }
-  }, [cp1.x, cp1.y, cp2.x, cp2.y]);
+  // Keep the ref in sync every render so drag math always reads the
+  // latest points without needing draw()/hitTest() in its dep array.
+  pointsRef.current = { cp1, cp2 };
  
   const toCanvas = useCallback((nx, ny) => ({
     x: PADDING + nx * (width - PADDING * 2),
-    y: PADDING + (1 - ny) * (height - PADDING * 2),
+    y: PADDING + (1 - (ny - Y_RANGE_MIN) / Y_RANGE) * (height - PADDING * 2),
   }), [width, height]);
  
   const fromCanvas = useCallback((px, py) => ({
     x: Math.max(0, Math.min(1, (px - PADDING) / (width - PADDING * 2))),
-    y: Math.max(-0.5, Math.min(1.5, 1 - (py - PADDING) / (height - PADDING * 2))),
+    y: Y_RANGE_MIN + Math.max(0, Math.min(1, 1 - (py - PADDING) / (height - PADDING * 2))) * Y_RANGE,
   }), [width, height]);
  
   const draw = useCallback(() => {
@@ -123,36 +91,56 @@ export const CurveEditor = memo(function CurveEditor({
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
-    ctx.scale(dpr, dpr);
+    if (canvas.width !== width * dpr || canvas.height !== height * dpr) {
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
  
-    const c1 = cp1Ref.current;
-    const c2 = cp2Ref.current;
- 
-    ctx.fillStyle = '#13141a';
-    ctx.fillRect(0, 0, width, height);
+    const { cp1: c1, cp2: c2 } = pointsRef.current;
  
     const plotW = width - PADDING * 2;
     const plotH = height - PADDING * 2;
  
-    // Grid
+    // The visible "0..1" curve box, inset from the full canvas — this is
+    // the shrink: 0..1 no longer fills the whole plot area, it only
+    // fills the middle band, leaving headroom above/below for overshoot
+    // handles to stay grabbable.
+    const box0 = toCanvas(0, 0);
+    const box1 = toCanvas(1, 1);
+    const boxTop = Math.min(box0.y, box1.y);
+    const boxBottom = Math.max(box0.y, box1.y);
+ 
+    // Outer background
+    ctx.fillStyle = '#13141a';
+    ctx.fillRect(0, 0, width, height);
+ 
+    // Inner 0..1 box — slightly lighter so it reads as "the curve area"
+    // versus the overshoot headroom around it.
+    ctx.fillStyle = 'rgba(255,255,255,0.02)';
+    ctx.fillRect(PADDING, boxTop, plotW, boxBottom - boxTop);
+    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(PADDING, boxTop, plotW, boxBottom - boxTop);
+ 
+    // Grid — 4 columns across full width, 4 rows across the 0..1 box only
     ctx.strokeStyle = 'rgba(255,255,255,0.06)';
     ctx.lineWidth = 0.5;
     for (let i = 0; i <= 4; i++) {
       const x = PADDING + (i / 4) * plotW;
-      const y = PADDING + (i / 4) * plotH;
       ctx.beginPath(); ctx.moveTo(x, PADDING); ctx.lineTo(x, PADDING + plotH); ctx.stroke();
+      const y = boxTop + (i / 4) * (boxBottom - boxTop);
       ctx.beginPath(); ctx.moveTo(PADDING, y); ctx.lineTo(PADDING + plotW, y); ctx.stroke();
     }
  
-    // Diagonal reference (linear)
+    // Diagonal reference (linear), drawn from (0,0) to (1,1) in the same
+    // shrunk mapping as everything else
     ctx.strokeStyle = 'rgba(255,255,255,0.08)';
     ctx.lineWidth = 1;
     ctx.setLineDash([3, 3]);
     ctx.beginPath();
-    ctx.moveTo(PADDING, PADDING + plotH);
-    ctx.lineTo(PADDING + plotW, PADDING);
+    ctx.moveTo(box0.x, box0.y);
+    ctx.lineTo(box1.x, box1.y);
     ctx.stroke();
     ctx.setLineDash([]);
  
@@ -164,20 +152,19 @@ export const CurveEditor = memo(function CurveEditor({
     for (let i = 0; i <= 60; i++) {
       const t = i / 60;
       const y = evalCubicBezier(t, c1, c2);
-      const px = PADDING + t * plotW;
-      const py = PADDING + (1 - y) * plotH;
-      if (i === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
+      const pt = toCanvas(t, y);
+      if (i === 0) ctx.moveTo(pt.x, pt.y);
+      else ctx.lineTo(pt.x, pt.y);
     }
     ctx.stroke();
  
     // Control point lines
     ctx.strokeStyle = 'rgba(255,255,255,0.25)';
     ctx.lineWidth = 1;
-    const a0 = toCanvas(0, 0);
+    const a0 = box0;
     const h1 = toCanvas(c1.x, c1.y);
     ctx.beginPath(); ctx.moveTo(a0.x, a0.y); ctx.lineTo(h1.x, h1.y); ctx.stroke();
-    const a1 = toCanvas(1, 1);
+    const a1 = box1;
     const h2 = toCanvas(c2.x, c2.y);
     ctx.beginPath(); ctx.moveTo(a1.x, a1.y); ctx.lineTo(h2.x, h2.y); ctx.stroke();
  
@@ -187,35 +174,34 @@ export const CurveEditor = memo(function CurveEditor({
     ctx.beginPath(); ctx.arc(a1.x, a1.y, POINT_RADIUS, 0, Math.PI * 2); ctx.fill();
  
     // Control point handles
-    const active = draggingRef.current;
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 1.5;
-    ctx.fillStyle = active === 'cp1' ? '#fff' : '#f59e0b';
+    ctx.fillStyle = dragging === 'cp1' ? '#fff' : '#f59e0b';
     ctx.beginPath(); ctx.arc(h1.x, h1.y, HANDLE_RADIUS, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = active === 'cp2' ? '#fff' : '#f59e0b';
+    ctx.fillStyle = dragging === 'cp2' ? '#fff' : '#f59e0b';
     ctx.beginPath(); ctx.arc(h2.x, h2.y, HANDLE_RADIUS, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-  }, [width, height, toCanvas]);
+  }, [width, height, toCanvas, dragging]);
  
-  useEffect(() => { draw(); }, [draw]);
+  useEffect(() => { draw(); }, [draw, cp1, cp2]);
  
-  const hitTest = useCallback((clientX, clientY) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return null;
-    const rect = canvas.getBoundingClientRect();
-    const px = clientX - rect.left;
-    const py = clientY - rect.top;
-    const h1 = toCanvas(cp1Ref.current.x, cp1Ref.current.y);
-    const h2 = toCanvas(cp2Ref.current.x, cp2Ref.current.y);
-    if (Math.hypot(px - h1.x, py - h1.y) < 14) return 'cp1';
-    if (Math.hypot(px - h2.x, py - h2.y) < 14) return 'cp2';
+  const hitTest = useCallback((offsetX, offsetY) => {
+    const { cp1: c1, cp2: c2 } = pointsRef.current;
+    const h1 = toCanvas(c1.x, c1.y);
+    const h2 = toCanvas(c2.x, c2.y);
+    if (Math.hypot(offsetX - h1.x, offsetY - h1.y) < HANDLE_HIT_RADIUS) return 'cp1';
+    if (Math.hypot(offsetX - h2.x, offsetY - h2.y) < HANDLE_HIT_RADIUS) return 'cp2';
     return null;
   }, [toCanvas]);
  
+  // Use the native pointer event's offsetX/offsetY — these are already
+  // relative to the target element's padding box in CSS pixels, so they
+  // match toCanvas/fromCanvas's coordinate space directly without needing
+  // a manual getBoundingClientRect() subtraction (which is where the
+  // previous version's math could drift from the actual rendered size).
   const handlePointerDown = useCallback((e) => {
-    const hit = hitTest(e.clientX, e.clientY);
+    const hit = hitTest(e.nativeEvent.offsetX, e.nativeEvent.offsetY);
     if (hit) {
-      draggingRef.current = hit;
-      forceRender((n) => n + 1);
+      setDragging(hit);
       e.currentTarget.setPointerCapture(e.pointerId);
     }
   }, [hitTest]);
@@ -223,38 +209,34 @@ export const CurveEditor = memo(function CurveEditor({
   const handlePointerMove = useCallback((e) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const px = e.clientX - rect.left;
-    const py = e.clientY - rect.top;
+    const ox = e.nativeEvent.offsetX;
+    const oy = e.nativeEvent.offsetY;
  
-    if (!draggingRef.current) {
-      const hit = hitTest(e.clientX, e.clientY);
+    if (!dragging) {
+      const hit = hitTest(ox, oy);
       canvas.style.cursor = hit ? 'grab' : 'default';
       return;
     }
  
     canvas.style.cursor = 'grabbing';
-    const norm = fromCanvas(px, py);
+    const norm = fromCanvas(ox, oy);
+    const { cp1: c1, cp2: c2 } = pointsRef.current;
  
-    if (draggingRef.current === 'cp1') {
-      cp1Ref.current = norm;
-      onChange?.(norm, cp2Ref.current);
+    if (dragging === 'cp1') {
+      onChange?.(norm, c2);
     } else {
-      cp2Ref.current = norm;
-      onChange?.(cp1Ref.current, norm);
+      onChange?.(c1, norm);
     }
-    forceRender((n) => n + 1);
-  }, [fromCanvas, hitTest, onChange]);
+  }, [dragging, fromCanvas, hitTest, onChange]);
  
   const handlePointerUp = useCallback(() => {
-    draggingRef.current = null;
-    forceRender((n) => n + 1);
+    setDragging(null);
   }, []);
  
   return (
     <canvas
       ref={canvasRef}
-      style={{ width, height, display: 'block', cursor: 'default', borderRadius: 6 }}
+      style={{ width, height, display: 'block', cursor: 'default', borderRadius: 6, touchAction: 'none' }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
@@ -264,101 +246,70 @@ export const CurveEditor = memo(function CurveEditor({
 });
  
 /**
- * CurveEditorTab — the full dockable Curves tab.
+ * CurveEditorTab — the dockable Curves tab.
  *
- * Shows:
- *   - A header bar with info about the selected keyframe (or empty state)
- *   - The bezier canvas editor (drag the orange handles by hand)
- *   - A grid of built-in preset curve buttons
- *   - A "Custom" section: save the current hand-tweaked curve as a named
- *     preset (persisted in localStorage), reapply it later, or delete it
+ * Shows a header (with selected-keyframe info + reset button), an inline
+ * preset dropdown + "browse gallery" button (opens CurvePickerModal), and
+ * the bezier canvas editor.
  *
  * Props:
  *   cp1, cp2           — current bezier control points (from selected keyframe)
- *   onChange(cp1, cp2)  — called when user drags a handle or edits a number
- *   onPresetApply(cp1, cp2) — called when user clicks a preset (built-in or custom)
+ *   onChange(cp1, cp2)  — called when user drags a handle or picks a preset
  *   onReset()           — called when user clicks reset
  *   selectedKeyId       — currently selected keyframe id (null = none)
- *   keyframeInfo        — { trackKey, fieldName, time, easing } or null
+ *   keyframeInfo        — { trackKey, fieldName, time } or null
  */
 export const CurveEditorTab = memo(function CurveEditorTab({
   cp1 = { x: 0.33, y: 0 },
   cp2 = { x: 0.67, y: 1 },
   onChange,
-  onPresetApply,
   onReset,
   selectedKeyId,
   keyframeInfo,
 }) {
-  const [activePreset, setActivePreset] = useState(null);
-  const [customPresets, setCustomPresets] = useState(loadCustomPresets);
-  const [isSaving, setIsSaving] = useState(false);
-  const [saveName, setSaveName] = useState('');
-  const saveInputRef = useRef(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const canvasWrapRef = useRef(null);
+  // Canvas grows to fill the tab's available width (and a proportional
+  // height, capped so a very wide/tall dock panel doesn't produce a
+  // huge, empty-feeling canvas) instead of staying a fixed 280×200 —
+  // resizing the Curves tab (wider dock pane, different screen) now
+  // resizes the curve editor with it.
+  const [canvasSize, setCanvasSize] = useState({ width: 280, height: 200 });
  
   useEffect(() => {
-    if (isSaving) saveInputRef.current?.focus();
-  }, [isSaving]);
+    const el = canvasWrapRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      // contentRect already excludes the wrap's own padding (10px each
+      // side), so this is the actual space available for the canvas.
+      const availableWidth = entry.contentRect.width;
+      if (availableWidth <= 0) return;
+      const nextWidth = Math.max(200, Math.floor(availableWidth));
+      const nextHeight = Math.max(140, Math.min(420, Math.round(nextWidth * 0.62)));
+      setCanvasSize((prev) =>
+        prev.width === nextWidth && prev.height === nextHeight ? prev : { width: nextWidth, height: nextHeight }
+      );
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
  
-  const handlePresetClick = (preset) => {
-    setActivePreset(preset.name);
-    onPresetApply?.(preset.cp1, preset.cp2);
+  // Highlight the dropdown/list item matching the current curve, if any
+  // (within a small tolerance since dragging can land just off-preset).
+  const matchedPresetName = CURVE_PRESETS.find(
+    (p) =>
+      Math.abs(p.cp1.x - cp1.x) < 0.005 &&
+      Math.abs(p.cp1.y - cp1.y) < 0.005 &&
+      Math.abs(p.cp2.x - cp2.x) < 0.005 &&
+      Math.abs(p.cp2.y - cp2.y) < 0.005
+  )?.name || '';
+ 
+  const handleSelectPreset = (e) => {
+    const preset = CURVE_PRESETS.find((p) => p.name === e.target.value);
+    if (preset) onChange?.({ ...preset.cp1 }, { ...preset.cp2 });
   };
- 
-  const handleReset = () => {
-    setActivePreset(null);
-    onReset?.();
-  };
- 
-  const handleChange = (nextCp1, nextCp2) => {
-    setActivePreset(null);
-    onChange?.(nextCp1, nextCp2);
-  };
- 
-  const startSaving = () => {
-    setSaveName('');
-    setIsSaving(true);
-  };
- 
-  const cancelSaving = () => {
-    setIsSaving(false);
-    setSaveName('');
-  };
- 
-  const confirmSaving = () => {
-    const name = saveName.trim();
-    if (!name) return;
-    const withoutDup = customPresets.filter((p) => p.name !== name);
-    const next = [...withoutDup, { name, cp1: { ...cp1 }, cp2: { ...cp2 } }];
-    setCustomPresets(next);
-    saveCustomPresets(next);
-    setActivePreset(name);
-    setIsSaving(false);
-    setSaveName('');
-  };
- 
-  const deleteCustomPreset = (name, e) => {
-    e.stopPropagation();
-    const next = customPresets.filter((p) => p.name !== name);
-    setCustomPresets(next);
-    saveCustomPresets(next);
-    if (activePreset === name) setActivePreset(null);
-  };
- 
-  // Check if current cp1/cp2 match any built-in or custom preset
-  const matchedPreset = useMemo(() => {
-    if (!cp1 || !cp2) return null;
-    const all = [...CURVE_PRESETS, ...customPresets];
-    return all.find(
-      (p) =>
-        Math.abs(p.cp1.x - cp1.x) < 0.01 &&
-        Math.abs(p.cp1.y - cp1.y) < 0.01 &&
-        Math.abs(p.cp2.x - cp2.x) < 0.01 &&
-        Math.abs(p.cp2.y - cp2.y) < 0.01
-    )?.name || null;
-  }, [cp1, cp2, customPresets]);
- 
-  const effectiveActive = activePreset || matchedPreset;
  
   return (
     <div className="curve-tab-root">
@@ -375,104 +326,61 @@ export const CurveEditorTab = memo(function CurveEditorTab({
           </span>
         )}
         {selectedKeyId && (
-          <button className="curve-tab-reset-btn" onClick={handleReset} title="Reset to default (linear)">
+          <button className="curve-tab-reset-btn" onClick={onReset} title="Reset to default (linear)">
             <RotateCcw size={11} />
           </button>
         )}
       </div>
  
-      {/* Canvas */}
-      <div className="curve-tab-canvas-wrap">
-        <CurveEditor
-          cp1={cp1}
-          cp2={cp2}
-          onChange={handleChange}
-          width={280}
-          height={200}
-        />
-      </div>
- 
-      {/* Presets */}
-      <div className="curve-tab-presets">
-        <div className="curve-tab-presets-label">Presets</div>
-        <div className="curve-tab-preset-grid">
-          {CURVE_PRESETS.map((preset) => (
-            <button
-              key={preset.name}
-              className={`curve-tab-preset-btn${effectiveActive === preset.name ? ' active' : ''}`}
-              onClick={() => handlePresetClick(preset)}
-              title={preset.name}
-            >
-              <CurvePreviewIcon cp1={preset.cp1} cp2={preset.cp2} size={28} isActive={effectiveActive === preset.name} />
-              <span className="curve-tab-preset-name">{preset.name}</span>
-            </button>
-          ))}
-        </div>
- 
-        {/* Custom presets — user-saved hand-tweaked curves */}
-        <div className="curve-tab-custom-header">
-          <span className="curve-tab-presets-label">Custom</span>
-          {!isSaving && selectedKeyId && (
-            <button className="curve-tab-save-btn" onClick={startSaving} title="Save current curve as a custom preset">
-              <Plus size={11} />
-              <span>Save Curve</span>
-            </button>
-          )}
-        </div>
- 
-        {isSaving && (
-          <div className="curve-tab-save-row">
-            <input
-              ref={saveInputRef}
-              type="text"
-              className="curve-tab-save-input"
-              placeholder="Preset name…"
-              value={saveName}
-              maxLength={40}
-              onChange={(e) => setSaveName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') confirmSaving();
-                if (e.key === 'Escape') cancelSaving();
-              }}
-            />
-            <button className="curve-tab-save-confirm" onClick={confirmSaving} disabled={!saveName.trim()} title="Save">
-              <Check size={12} />
-            </button>
-            <button className="curve-tab-save-cancel" onClick={cancelSaving} title="Cancel">
-              <X size={12} />
-            </button>
-          </div>
-        )}
- 
-        {customPresets.length > 0 ? (
-          <div className="curve-tab-preset-grid">
-            {customPresets.map((preset) => (
+      {selectedKeyId ? (
+        <>
+          {/* Inline preset dropdown + Browse gallery button */}
+          <div className="curve-tab-preset-row inspector-row">
+            <span className="row-label">Preset</span>
+            <div className="preset-select-group">
+              <select className="inspector-select" value={matchedPresetName} onChange={handleSelectPreset}>
+                <option value="" disabled>
+                  {matchedPresetName ? matchedPresetName : 'Custom'}
+                </option>
+                {CURVE_PRESETS.map((p) => (
+                  <option key={p.name} value={p.name}>{p.name}</option>
+                ))}
+              </select>
               <button
-                key={preset.name}
-                className={`curve-tab-preset-btn curve-tab-custom-preset-btn${effectiveActive === preset.name ? ' active' : ''}`}
-                onClick={() => handlePresetClick(preset)}
-                title={preset.name}
+                type="button"
+                className="gallery-open-btn"
+                title="Browse all curve presets visually"
+                onClick={() => setPickerOpen(true)}
               >
-                <button
-                  className="curve-tab-custom-delete"
-                  onClick={(e) => deleteCustomPreset(preset.name, e)}
-                  title={`Delete "${preset.name}"`}
-                >
-                  <Trash2 size={9} />
-                </button>
-                <CurvePreviewIcon cp1={preset.cp1} cp2={preset.cp2} size={28} isActive={effectiveActive === preset.name} />
-                <span className="curve-tab-preset-name">{preset.name}</span>
+                <Maximize2 size={11} />
               </button>
-            ))}
-          </div>
-        ) : (
-          !isSaving && (
-            <div className="curve-tab-custom-empty">
-              {selectedKeyId ? 'No saved curves yet — tweak the curve above and click "Save Curve".' : 'Select a keyframe to save custom curves.'}
             </div>
-          )
-        )}
-      </div>
+          </div>
+ 
+          <div className="curve-tab-canvas-wrap" ref={canvasWrapRef}>
+            <CurveEditor
+              cp1={cp1}
+              cp2={cp2}
+              onChange={onChange}
+              width={canvasSize.width}
+              height={canvasSize.height}
+            />
+          </div>
+        </>
+      ) : (
+        <div className="curve-tab-empty-state">
+          <MousePointer2 size={22} />
+          <p>Select a keyframe in the Dopesheet to edit its curve.</p>
+        </div>
+      )}
+ 
+      <CurvePickerModal
+        isOpen={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onApplyPreset={(nextCp1, nextCp2) => onChange?.(nextCp1, nextCp2)}
+        currentCp1={cp1}
+        currentCp2={cp2}
+      />
     </div>
   );
 });

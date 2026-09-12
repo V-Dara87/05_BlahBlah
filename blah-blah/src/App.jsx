@@ -173,14 +173,17 @@ export function App() {
   }, [popoutActivePanel, floatActivePanel]);
  
   /** Focus an existing dock panel by id, or add it as a new tab next to
-   *  the dopesheet if it doesn't exist yet. */
-  const focusDockPanel = useCallback((panelId) => {
+   *  the dopesheet if it doesn't exist yet. Pass { onlyIfOpen: true } for
+   *  callers that want to activate the tab only when it's already present
+   *  (e.g. selecting a keyframe shouldn't force-open the Curves tab for
+   *  someone who closed it — it should just switch to it if it's there). */
+  const focusDockPanel = useCallback((panelId, opts) => {
     const api = dockApiRef.current;
     if (!api) return;
     const existing = api.getPanel(panelId);
     if (existing) {
       existing.api.setActive();
-    } else {
+    } else if (!opts?.onlyIfOpen) {
       // Add new tab next to dopesheet (or timeline if dopesheet missing)
       const refPanel = api.getPanel('dopesheet') || api.getPanel('timeline');
       if (refPanel) {
