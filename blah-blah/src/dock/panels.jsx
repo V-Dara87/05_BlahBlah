@@ -62,6 +62,7 @@ export const PreviewDockPanel = memo(function PreviewDockPanel() {
     handleUpdateEntity, resolution,
     fps = 30,
     mediaAssets,
+    autoKeyEnabled,
   } = useEditorContext();
  
   const currentTime = useCurrentTime();
@@ -87,6 +88,7 @@ export const PreviewDockPanel = memo(function PreviewDockPanel() {
       resolution={resolution}
       fps={fps}
       mediaAssets={mediaAssets}
+      autoKeyEnabled={autoKeyEnabled}
     />
   );
 });

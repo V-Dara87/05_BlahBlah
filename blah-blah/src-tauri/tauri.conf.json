@@ -45,6 +45,9 @@
     "resources": {
       "../public/esbuild.wasm": "esbuild.wasm"
     },
+    "externalBin": [
+      "binaries/ffmpeg"
+    ],
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

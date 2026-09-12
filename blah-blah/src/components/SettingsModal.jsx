@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Settings, X, Mic, AlertCircle, Keyboard, RotateCcw, Pencil } from 'lucide-react';
+import { Settings, X, Mic, AlertCircle, Keyboard, RotateCcw, Pencil, Cpu, CheckCircle2 } from 'lucide-react';
 import { loadAudioSettings, saveAudioSettings, listAudioInputDevices } from '../services/audioSettings';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
+import { getFfmpegVersion, isFfmpegAvailable } from '../services/ffmpegRunner';
+import { isTauri } from '../services/tauriFsAdapter';
 import {
   SHORTCUT_ACTIONS,
   loadKeybindSettings,
@@ -15,6 +17,7 @@ import {
 const TABS = [
   { id: 'audio', label: 'Audio', icon: Mic },
   { id: 'shortcuts', label: 'Keyboard Shortcuts', icon: Keyboard },
+  { id: 'system', label: 'System', icon: Cpu },
 ];
  
 export function SettingsModal({ isOpen, onClose, onSettingsChanged }) {
@@ -84,7 +87,11 @@ export function SettingsModal({ isOpen, onClose, onSettingsChanged }) {
             <div>
               <h3>Settings</h3>
               <p className="modal-subtitle">
-                {activeTab === 'audio' ? 'Audio input device for voice recording' : 'Customize your keyboard shortcuts'}
+                {activeTab === 'audio'
+                  ? 'Audio input device for voice recording'
+                  : activeTab === 'shortcuts'
+                  ? 'Customize your keyboard shortcuts'
+                  : 'Desktop environment and background sidecars'}
               </p>
             </div>
           </div>
@@ -153,6 +160,7 @@ export function SettingsModal({ isOpen, onClose, onSettingsChanged }) {
         )}
  
         {activeTab === 'shortcuts' && <KeyboardShortcutsTab />}
+        {activeTab === 'system' && <SystemTab />}
  
         <div className="modal-footer">
           <button type="button" className="btn-secondary" onClick={onClose}>
@@ -317,6 +325,79 @@ function KeyboardShortcutsTab() {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function SystemTab() {
+  const [checking, setChecking] = useState(false);
+  const [ffmpegStatus, setFfmpegStatus] = useState(null);
+  const [errorMsg, setErrorMsg] = useState(null);
+
+  const tauriActive = isTauri();
+
+  const handleCheckFfmpeg = async () => {
+    setChecking(true);
+    setFfmpegStatus(null);
+    setErrorMsg(null);
+    try {
+      const version = await getFfmpegVersion();
+      setFfmpegStatus(version);
+    } catch (err) {
+      setErrorMsg(err?.message || String(err));
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  return (
+    <div className="modal-body settings-body">
+      <div className="form-field-group">
+        <label className="form-label">Runtime Environment</label>
+        <p className="hint-text-sm" style={{ color: tauriActive ? '#00f0ff' : '#aaa' }}>
+          {tauriActive ? '● Tauri Desktop Application (IPC Available)' : '○ Web Browser (IPC Unavailable)'}
+        </p>
+      </div>
+
+      <div className="form-field-group" style={{ marginTop: '16px' }}>
+        <label className="form-label">FFmpeg Sidecar Status</label>
+        <p className="hint-text-sm" style={{ marginBottom: '10px' }}>
+          Verify that the FFmpeg sidecar binary is bundled, permissioned, and callable end-to-end.
+        </p>
+
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px' }}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={handleCheckFfmpeg}
+            disabled={checking}
+          >
+            {checking ? 'Checking FFmpeg...' : 'Check FFmpeg'}
+          </button>
+        </div>
+
+        {ffmpegStatus && (
+          <div className="modal-alert-box" style={{ background: 'rgba(0, 240, 255, 0.1)', borderColor: 'rgba(0, 240, 255, 0.3)', color: '#00f0ff' }}>
+            <CheckCircle2 size={16} />
+            <span style={{ fontFamily: 'monospace', fontSize: '11px', wordBreak: 'break-all' }}>
+              {ffmpegStatus}
+            </span>
+          </div>
+        )}
+
+        {errorMsg && (
+          <div className="modal-alert-box error">
+            <AlertCircle size={16} />
+            <span style={{ fontSize: '12px', wordBreak: 'break-word' }}>
+              {errorMsg}
+            </span>
+          </div>
+        )}
+
+        <p className="hint-text-sm" style={{ marginTop: '12px', fontSize: '11px', opacity: 0.7 }}>
+          Target sidecar binary location: <code>src-tauri/binaries/ffmpeg-&lt;target-triple&gt;</code>
+        </p>
+      </div>
     </div>
   );
 }

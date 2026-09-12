@@ -323,6 +323,16 @@
   border-left: 1px solid var(--unity-border-light);
 }
  
+/* Minor ticks (no label) draw a shorter line so the ruler still reads as
+   fine-grained without a text label on every single one — only labeled
+   "major" ticks get the full-height line + text (see labelStride in
+   Dopesheet.jsx, which spaces labels at least ~40px apart regardless of
+   zoom, to avoid the labels overlapping into an unreadable wall of text). */
+.dopesheet-ruler-tick.minor {
+  bottom: 14px;
+  opacity: 0.6;
+}
+ 
 .dopesheet-ruler-tick .tick-label {
   position: absolute;
   top: 3px;
@@ -333,12 +343,21 @@
   white-space: nowrap;
 }
  
-.dopesheet-lane-bg {
+/* Background grid running through the lanes — mirrors Timeline's
+   .track-grid-pattern approach: a single repeating linear-gradient line
+   pattern, spaced to match the ruler's labeled tick interval (set inline
+   via backgroundSize/backgroundPosition in Dopesheet.jsx) so the grid
+   always lines up with the ruler above it at any zoom level. */
+.dopesheet-grid-pattern {
   position: absolute;
   top: 0;
+  left: 0;
+  right: 0;
   bottom: 0;
-  border-left: 1px solid var(--unity-border);
-  opacity: 0.6;
+  background-image: linear-gradient(90deg, rgba(255,255,255,0.08) 1px, transparent 1px);
+  background-size: 40px 100%;
+  pointer-events: none;
+  z-index: 0;
 }
  
 /* ---------- Clip-end boundary ---------- */
@@ -392,45 +411,40 @@
   pointer-events: none;
 }
  
-/* ---------- Keyframe markers (Spine 2D-style keymark) ---------- */
-/* Spine's Dopesheet keymark isn't a rotated square -- it's a flattened
-   hexagon ("bowtie", pointed left/right, flat top/bottom). clip-path
-   draws that shape exactly. `border` doesn't render correctly against a
-   clipped element, so the outline is faked with drop-shadow (which
-   respects the clip silhouette) instead of box-shadow (which would
-   still draw a square ring around the original box). */
+/* ---------- Keyframe markers ---------- */
+/* A thin tick mark at each keyframe's time, connected to its neighbor by a
+   hairline -- the lane itself stays empty/transparent otherwise (no filled
+   block), matching the reference dopesheet look. */
  
-.dopesheet-keyframe {
+.dopesheet-keyframe-tick {
   position: absolute;
-  top: 50%;
-  width: 11px;
-  height: 9px;
-  transform: translate(-50%, -50%);
+  top: 3px;
+  bottom: 3px;
+  width: 2px;
+  transform: translateX(-50%);
   background: var(--dopesheet-teal-bright);
-  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
-  filter: drop-shadow(0 0 0 1px var(--unity-darkest));
   cursor: grab;
   z-index: 2;
 }
  
-.dopesheet-keyframe:hover {
+.dopesheet-keyframe-tick:hover {
   background: #fff;
 }
  
-.dopesheet-keyframe.selected {
+.dopesheet-keyframe-tick.selected {
   background: var(--unity-accent-amber);
-  filter: drop-shadow(0 0 0 1px var(--unity-darkest)) drop-shadow(0 0 3px rgba(245, 158, 11, 0.85));
+  box-shadow: 0 0 3px rgba(245, 158, 11, 0.85);
 }
  
-.dopesheet-keyframe:active {
+.dopesheet-keyframe-tick:active {
   cursor: grabbing;
 }
  
-/* Summary keymark on the component group lane (union of all child fields) */
-.dopesheet-keyframe.group-summary {
-  width: 10px;
-  height: 8px;
-  opacity: 0.85;
+/* Summary tick on the component group lane (union of all child fields) */
+.dopesheet-keyframe-tick.group-summary {
+  top: 6px;
+  bottom: 6px;
+  opacity: 0.9;
 }
  
 /* Connecting line between consecutive keyframes on a field lane */
@@ -442,6 +456,7 @@
   transform: translateY(-50%);
   z-index: 1;
 }
+ 
  
 /* ---------- Playhead (scrub line), shared visually across ruler+lanes ---------- */
  
@@ -466,6 +481,22 @@
   transform: translateX(-5px);
   z-index: 6;
   cursor: ew-resize;
+}
+ 
+/* Current-time label floating above the playhead on the ruler, replacing
+   whatever regular tick label would otherwise sit there — mirrors the
+   reference dopesheet's highlighted time readout at the scrub position. */
+.dopesheet-playhead-time-label {
+  position: absolute;
+  top: 2px;
+  transform: translateX(-50%);
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--dopesheet-playhead);
+  white-space: nowrap;
+  z-index: 7;
+  pointer-events: none;
 }
  
 /* Loop start / end markers, matching Spine's orange diamonds on the ruler */

@@ -18,6 +18,7 @@ import { resolveScriptProps } from '../engine/referenceTypes';
 import { updateCanvasComponent, unmountCanvasComponent, pruneCanvasComponents } from '../engine/canvasRunner';
 import { isScriptComponent } from '../engine/ecs';
 import { computeActiveEntitiesAtTime } from '../engine/renderPipeline';
+import { trackKeyFor, getFieldKeyframes, setKeyframe } from '../engine/keyframes';
 import { getSharedGLTransitionRenderer } from '../engine/glTransitions';
 import {
   setMediaElementVolume,
@@ -71,6 +72,12 @@ export function EntityRenderer({
   fps = 30,
   // All media assets — used to resolve 'asset'-type reference props in scripts.
   mediaAssets = [],
+  // Auto Key — same toggle the Inspector's Transform card reads (see
+  // App.jsx's autoKeyEnabled state). When on, dragging the gizmo on a
+  // field with no keyframes yet still creates one at the playhead
+  // instead of writing a static value. Off by default, matching the
+  // Inspector's own default.
+  autoKeyEnabled = false,
 }) {
   const containerRef = useRef(null);
   const viewportBoxRef = useRef(null);
@@ -612,15 +619,49 @@ export function EntityRenderer({
   // but the frame can render smaller than that on narrow windows, so
   // screen-space drag deltas are divided by the frame's actual on-screen
   // size vs its intrinsic logical width to stay accurate at any zoom.
+  //
+  // Keyframe-aware write — mirrors UnityInspector.jsx's tryWriteKeyframe:
+  // a field that already has ANY keyframes gets overwritten every render
+  // by resolveKeyframedComponents (engine/keyframes.js) evaluating the
+  // interpolated value at the current playhead time, so writing a plain
+  // static value here for that field is silently discarded the very next
+  // frame — the gizmo would visually snap back and look "stuck"/unmovable.
+  // The fix: if the field has keyframes (or Auto Key is on), write/move a
+  // keyframe AT THE CURRENT TIME instead of the static prop, exactly like
+  // the Inspector's own number fields already do. Only fields with no
+  // keyframes and Auto Key off fall through to the old static-prop write.
+  const localTime = selectedEntity => Math.max(0, currentTime - selectedEntity.startTime);
+  const snapToFrame = (t) => Math.round(t * fps) / fps;
   const updateSelectedTransform = (entityId, updates) => {
     if (!onUpdateEntity) return;
     const entity = entities.find((e) => e.id === entityId);
     if (!entity) return;
-    const hasTransform = entity.components.some((c) => c.type === 'Transform');
-    const updatedComponents = hasTransform
-      ? entity.components.map((c) => (c.type === 'Transform' ? { ...c, ...updates } : c))
-      : [{ type: 'Transform', x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1, ...updates }, ...entity.components];
-    onUpdateEntity(entityId, { components: updatedComponents });
+    const trackKey = trackKeyFor({ type: 'Transform' });
+    const snappedTime = snapToFrame(localTime(entity));
+ 
+    const staticUpdates = {};
+    let keyframesSnapshot = entity.keyframes || {};
+    let keyframesChanged = false;
+ 
+    Object.entries(updates).forEach(([fieldName, value]) => {
+      const kfs = getFieldKeyframes({ ...entity, keyframes: keyframesSnapshot }, trackKey, fieldName);
+      if (kfs.length > 0 || autoKeyEnabled) {
+        keyframesSnapshot = setKeyframe({ ...entity, keyframes: keyframesSnapshot }, trackKey, fieldName, snappedTime, value);
+        keyframesChanged = true;
+      } else {
+        staticUpdates[fieldName] = value;
+      }
+    });
+ 
+    const patch = {};
+    if (keyframesChanged) patch.keyframes = keyframesSnapshot;
+    if (Object.keys(staticUpdates).length > 0) {
+      const hasTransform = entity.components.some((c) => c.type === 'Transform');
+      patch.components = hasTransform
+        ? entity.components.map((c) => (c.type === 'Transform' ? { ...c, ...staticUpdates } : c))
+        : [{ type: 'Transform', x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1, ...staticUpdates }, ...entity.components];
+    }
+    if (Object.keys(patch).length > 0) onUpdateEntity(entityId, patch);
   };
  
   const handleMoveGizmoPointerDown = (e, entity, transform, localTransform) => {

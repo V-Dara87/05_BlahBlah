@@ -224,6 +224,14 @@ export const Dopesheet = memo(function Dopesheet({
  
   const laneWidth = Math.max(viewSpan * pixelsPerSecond + 200, 600);
   const numTicks = Math.ceil(viewSpan / tickInterval) + 1;
+  // Every tick gets a line mark, but at high zoom the ticks are packed too
+  // close together (in px) for a "0.1s"-style label on every single one
+  // without them overlapping into an unreadable wall of text. Instead, only
+  // every Nth tick gets a label — N is picked so labeled ticks land at
+  // least ~40px apart, whatever the current zoom/tickInterval combination
+  // is. Minor (unlabeled) ticks still draw their line, just no text.
+  const tickPx = tickInterval * pixelsPerSecond;
+  const labelStride = Math.max(1, Math.ceil(40 / Math.max(tickPx, 1)));
   // Playhead x position — timeToX expects LOCAL clip-time (t + viewOffset,
   // where viewOffset is 0 in entity mode and -startTime in timeline mode;
   // see viewOffset above). localTime IS local clip-time already, so it's
@@ -286,6 +294,36 @@ export const Dopesheet = memo(function Dopesheet({
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
   }, [selectedEntity, xToTime, onSeek, snapToNearestKeyframe, clipDuration, isTimelineView, totalDuration]);
+ 
+  // Ctrl/Cmd + wheel zoom, mirroring Timeline's zoom gesture. Zooms
+  // around the cursor's current time (not the container's left edge) by
+  // adjusting scrollLeft after the pps change so whatever was under the
+  // pointer stays under the pointer, the same trick Timeline.jsx uses.
+  const handleLanesWheel = useCallback((e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    const container = lanesScrollRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const pointerX = e.clientX - rect.left + container.scrollLeft;
+    const timeAtPointer = pointerX / pixelsPerSecond;
+ 
+    const zoomFactor = Math.exp(-e.deltaY * 0.0015);
+    const nextPps = Math.min(MAX_PPS, Math.max(MIN_PPS, pixelsPerSecond * zoomFactor));
+    if (nextPps === pixelsPerSecond) return;
+ 
+    setPixelsPerSecond(nextPps);
+ 
+    // Restore the pointer's time position under the cursor at the new
+    // zoom level. Runs after the pps state update has been applied to
+    // the DOM (rAF gives the browser a paint tick to resize the lanes).
+    requestAnimationFrame(() => {
+      if (!lanesScrollRef.current) return;
+      const newScrollLeft = timeAtPointer * nextPps - (e.clientX - rect.left);
+      lanesScrollRef.current.scrollLeft = Math.max(0, newScrollLeft);
+      if (rulerRef.current) rulerRef.current.scrollLeft = lanesScrollRef.current.scrollLeft;
+    });
+  }, [pixelsPerSecond]);
  
   const handleAddKeyAtPlayhead = (trackKey, fieldName, defaultVal) => {
     if (!selectedEntity) return;
@@ -598,6 +636,7 @@ export const Dopesheet = memo(function Dopesheet({
             ref={rulerRef}
             style={{ width: '100%', overflow: 'hidden' }}
             onPointerDown={handleRulerScrub}
+            onWheel={handleLanesWheel}
           >
             <div style={{ position: 'relative', width: `${laneWidth}px`, marginLeft: -(lanesScrollRef.current?.scrollLeft || 0) }}>
               {/* Ruler tick times are in the CURRENT view's own time base:
@@ -612,9 +651,10 @@ export const Dopesheet = memo(function Dopesheet({
                   keyframe does. */}
               {Array.from({ length: numTicks }).map((_, i) => {
                 const time = i * tickInterval;
+                const isMajor = i % labelStride === 0;
                 return (
-                  <div key={i} className="dopesheet-ruler-tick" style={{ left: `${time * pixelsPerSecond}px` }}>
-                    <span className="tick-label">{time.toFixed(tickInterval < 1 ? 1 : 0)}s</span>
+                  <div key={i} className={`dopesheet-ruler-tick ${isMajor ? 'major' : 'minor'}`} style={{ left: `${time * pixelsPerSecond}px` }}>
+                    {isMajor && <span className="tick-label">{time.toFixed(tickInterval < 1 ? 1 : 0)}s</span>}
                   </div>
                 );
               }).filter((_, i) => (i * tickInterval) <= viewSpan)}
@@ -651,7 +691,7 @@ export const Dopesheet = memo(function Dopesheet({
                   <div className="dopesheet-clip-end-line" style={{ left: `${timeToX(clipDuration)}px` }} />
                 </>
               )}
-              <PlayheadLine x={playheadX} height={24} handle />
+              <PlayheadLine x={playheadX} height={24} handle label={(isTimelineView ? currentTime : localTime).toFixed(2)} />
             </div>
           </div>
  
@@ -661,8 +701,24 @@ export const Dopesheet = memo(function Dopesheet({
             onScroll={(e) => {
               if (rulerRef.current) rulerRef.current.scrollLeft = e.currentTarget.scrollLeft;
             }}
+            onWheel={handleLanesWheel}
           >
             <div className="dopesheet-lanes-inner" style={{ width: `${laneWidth}px` }}>
+              {/* Background grid — lines run through every lane at the same
+                  spacing as the ruler's MAJOR (labeled) ticks above, using
+                  the same labelStride*tickInterval spacing so a grid line
+                  always sits directly under a labeled tick, not an
+                  unlabeled minor one. backgroundPosition shifts by
+                  viewOffset*pixelsPerSecond so timeline mode's absolute-time
+                  ticks (which start at project time 0, not the scrolled
+                  lane's local 0) still line up exactly with the ruler. */}
+              <div
+                className="dopesheet-grid-pattern"
+                style={{
+                  backgroundSize: `${tickPx * labelStride}px 100%`,
+                  backgroundPosition: `${(viewOffset * pixelsPerSecond) % (tickPx * labelStride)}px 0`,
+                }}
+              />
               {groups.map((group) => {
                 const isOpen = !collapsedGroups[group.trackKey];
                 const allGroupKeyTimes = new Set();
@@ -676,7 +732,7 @@ export const Dopesheet = memo(function Dopesheet({
                       {[...allGroupKeyTimes].sort((a, b) => a - b).map((t) => (
                         <div
                           key={t}
-                          className="dopesheet-keyframe group-summary"
+                          className="dopesheet-keyframe-tick group-summary"
                           style={{ left: `${timeToX(t)}px` }}
                           title={formatTimecode(t)}
                         />
@@ -696,7 +752,7 @@ export const Dopesheet = memo(function Dopesheet({
                           {kfs.map((k) => (
                             <div
                               key={k.id}
-                              className={`dopesheet-keyframe ${selectedKeyId === k.id ? 'selected' : ''}`}
+                              className={`dopesheet-keyframe-tick ${selectedKeyId === k.id ? 'selected' : ''}`}
                               style={{ left: `${timeToX(k.time)}px` }}
                               title={`${field.label || field.name} @ ${formatTimecode(k.time)} = ${typeof k.value === 'number' ? k.value.toFixed(2) : k.value}`}
                               onPointerDown={handleDragKey(group.trackKey, field.name, k.id)}
@@ -741,9 +797,14 @@ export const Dopesheet = memo(function Dopesheet({
   );
 });
  
-function PlayheadLine({ x, height, handle = false }) {
+function PlayheadLine({ x, height, handle = false, label }) {
   return (
     <>
+      {label !== undefined && (
+        <div className="dopesheet-playhead-time-label" style={{ left: `${x}px` }}>
+          {label}
+        </div>
+      )}
       <div className="dopesheet-playhead-line" style={{ left: `${x}px`, height: typeof height === 'number' ? `${height}px` : height }} />
       {handle && <div className="dopesheet-playhead-handle" style={{ left: `${x}px` }} />}
     </>

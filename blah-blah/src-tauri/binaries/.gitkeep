@@ -1,0 +1,5 @@
+# Place platform-specific FFmpeg sidecar binaries in this directory:
+# Windows: ffmpeg-x86_64-pc-windows-msvc.exe
+# macOS (Apple Silicon): ffmpeg-aarch64-apple-darwin
+# macOS (Intel): ffmpeg-x86_64-apple-darwin
+# Linux: ffmpeg-x86_64-unknown-linux-gnu
