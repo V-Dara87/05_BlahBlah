@@ -56,6 +56,7 @@ export function useProjectStore({
   setSelectedEntityId,
   selectedEntityId,
   setSaveStatus,
+  setSchemaWarning,
   setScreen,
   setMediaAssets,
   mediaAssets,
@@ -836,6 +837,7 @@ export function useProjectStore({
     setMediaAssets([]);
     setSelectedEntityId(null);
     setSaveStatus('saved');
+    setSchemaWarning?.(null); // clear any warning left over from a previously opened project
     setScreen('editor');
     // Record it in the Hub's recent/known-folders list. The folder's
     // parent isn't tracked here, so pass null — NewProjectModal already
@@ -866,6 +868,10 @@ export function useProjectStore({
     setMediaAssets(loaded.mediaAssets);
     setSelectedEntityId(null);
     setSaveStatus('saved');
+    // P1 #6 — surface a too-new project.json schemaVersion in the UI
+    // (previously this only reached console.warn); null clears any
+    // warning left over from a previously opened project.
+    setSchemaWarning?.(loaded.schemaWarning || null);
     setScreen('editor');
  
     // Real-import support: pre-bundle every script with import statements

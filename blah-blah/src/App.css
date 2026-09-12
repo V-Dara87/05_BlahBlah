@@ -426,6 +426,19 @@
   color: var(--unity-text-dim);
   padding: 0 4px;
 }
+
+/* P1 #6 — schemaVersion-too-new warning badge, styled like the adjacent
+   save-status badges (amber, matching .save-status-saving's palette). */
+.schema-warning-badge {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fbbf24;
+  padding: 0 4px;
+  cursor: help;
+}
  
 .unity-action-btn.save-btn {
   background: #1e3a5f;

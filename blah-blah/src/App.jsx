@@ -205,6 +205,11 @@ export function App() {
   // Project Folder Handle & Disk Save State
   const [projectFolderHandle, setProjectFolderHandle] = useState(null);
   const [saveStatus, setSaveStatus] = useState('in-memory'); // 'saved' | 'saving' | 'in-memory'
+  // P1 #6 — set when an opened project.json has a schemaVersion newer than
+  // this build supports (see warnIfSchemaVersionTooNew in engine/ecs.js).
+  // Previously this only ever reached console.warn; now it's shown in
+  // EditorHeader/UnityHeader next to the save-status badge.
+  const [schemaWarning, setSchemaWarning] = useState(null);
   const isAutoSavingRef = useRef(false);
  
   // Modals
@@ -307,6 +312,7 @@ export function App() {
     setSelectedEntityId,
     selectedEntityId,
     setSaveStatus,
+    setSchemaWarning,
     setScreen,
     setMediaAssets,
     mediaAssets,
@@ -678,6 +684,7 @@ export function App() {
         hasSelectedEntity={!!selectedEntityId}
         projectFolderHandle={projectFolderHandle}
         saveStatus={saveStatus}
+        schemaWarning={schemaWarning}
         canUndo={canUndo}
         canRedo={canRedo}
         onSetPixelsPerSecond={setPixelsPerSecond}

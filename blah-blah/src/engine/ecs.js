@@ -39,21 +39,25 @@ export function readProjectSchemaVersion(project) {
  
 /**
  * Version gate: warn (without blocking the load) when a project was saved
- * by a NEWER build than this one understands. Returns true when it warned.
- * Projects newer than CURRENT_SCHEMA_VERSION usually still open — fields
- * the newer build added are simply unknown to this one and are left
- * untouched on the next save.
+ * by a NEWER build than this one understands. Returns the warning message
+ * string when it warned, or null otherwise, so callers can surface it in
+ * the UI (previously this only ever reached `console.warn` — a project
+ * saved by a newer build could silently lose data on next save with no
+ * way for the user to know short of opening devtools). Projects newer
+ * than CURRENT_SCHEMA_VERSION usually still open — fields the newer
+ * build added are simply unknown to this one and are left untouched on
+ * the next save.
  */
 export function warnIfSchemaVersionTooNew(project) {
   const version = readProjectSchemaVersion(project);
   if (version > CURRENT_SCHEMA_VERSION) {
-    console.warn(
+    const message =
       `project.json schemaVersion ${version} is newer than this build of blahblah supports (${CURRENT_SCHEMA_VERSION}). ` +
-        'This project was created with a newer version of blahblah — some features may not work correctly.'
-    );
-    return true;
+      'This project was created with a newer version of blahblah — some features may not work correctly.';
+    console.warn(message);
+    return message;
   }
-  return false;
+  return null;
 }
  
 /**
@@ -124,6 +128,23 @@ export const isScriptComponent = (c) =>
   c?.type === 'ScriptComponent' || c?.type === 'MonoBehaviour';
  
 /**
+ * P0 #2 — single source of truth for "is this entity a video/audio clip".
+ *
+ * Previously this `entity.type === 'video' || components.some(VideoRenderer)`
+ * check was hand-duplicated in EntityRenderer.jsx, ExportModal.jsx,
+ * exportRunner.js, and Timeline/ClipItem.jsx. Duplicated checks like that
+ * can silently drift (e.g. a VideoRenderer component gets removed but
+ * `entity.type` is left stale as 'video', or vice versa) — different call
+ * sites would then disagree about what an entity is. Route every check
+ * through these two helpers instead.
+ */
+export const isVideoEntity = (entity) =>
+  entity?.type === 'video' || Boolean(entity?.components?.some((c) => c.type === 'VideoRenderer'));
+ 
+export const isAudioEntity = (entity) =>
+  entity?.type === 'audio' || Boolean(entity?.components?.some((c) => c.type === 'AudioSource'));
+ 
+/**
  * Migrate a saved project's entities (and prefab component lists) to the
  * unified model: ReactRenderer/CanvasRenderer/MonoBehaviour components
  * become ScriptComponent, and keyframes keyed under the old component
@@ -142,6 +163,23 @@ export const isScriptComponent = (c) =>
  */
 export function migrateEntities(entities) {
   if (!Array.isArray(entities)) return entities || [];
+ 
+  // P1 #5 — this used to always .map() every entity AND .map() every
+  // component inside it, on every single project load, even for a
+  // project that has nothing left to migrate (the overwhelmingly common
+  // case once a project has been opened once with a build that has this
+  // migration). That's wasted work that scales with project size on
+  // every load. A single cheap pre-scan for any legacy component type
+  // lets us skip straight back to the original array when nothing here
+  // actually needs migrating.
+  const needsMigration = entities.some((entity) =>
+    Array.isArray(entity?.components) &&
+    entity.components.some(
+      (c) => c?.type === 'ReactRenderer' || c?.type === 'CanvasRenderer' || c?.type === 'MonoBehaviour'
+    )
+  );
+  if (!needsMigration) return entities;
+ 
   return entities.map((entity) => {
     const comps = Array.isArray(entity?.components) ? entity.components : [];
     const trackKeyMap = {};
@@ -178,6 +216,13 @@ export function createDefaultTransform(overrides = {}) {
     scaleX: 1,
     scaleY: 1,
     opacity: 1,
+    // Pivot point in normalized space: 0 = center (default), -0.5 = left/top
+    // edge, +0.5 = right/bottom edge — the same convention Unity uses.
+    // Rotation and scale both happen around this point. Default (0, 0) is
+    // center, which is what every existing entity was implicitly using, so
+    // old projects with no pivot field render identically.
+    pivotX: 0,
+    pivotY: 0,
     ...overrides
   };
 }
@@ -197,7 +242,12 @@ export function createGameObject({
   const finalComponents = hasTransform ? [...components] : [createDefaultTransform(), ...components];
  
   return {
-    id: `go-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+    // P1 #3 — crypto.randomUUID() instead of Date.now()+Math.random(): the
+    // old scheme had a non-zero collision chance on bulk create (multi-paste,
+    // multi-drop landing in the same millisecond), and a collision here
+    // silently corrupts parentId/reference lookups elsewhere rather than
+    // erroring loudly.
+    id: `go-${crypto.randomUUID()}`,
     name,
     tag: 'Untagged',
     layer: 'Default',
@@ -219,20 +269,47 @@ export function createGameObject({
  * Return a NEW entity array with the entities whose ids are in `idsToRemove`
  * removed. If any removed entity has children (entities with `parentId` pointing
  * to a doomed entity), they are cascadingly deleted as well to any depth.
+ *
+ * P0 #1 — guarded against `parentId` cycles: a cyclic parent graph can no
+ * longer cause an infinite loop (see the visited check in the BFS below).
+ *
+ * P1 #4 — indexed cascade instead of an O(n²) repeated full-array scan.
+ * The old version re-scanned every entity on every pass of a
+ * `while (changed)` loop, so a deep or wide hierarchy meant a full pass
+ * per level of depth. This builds a `parentId -> children[]` index once
+ * (O(n)) and then walks it breadth-first starting from the ids to
+ * remove, so the whole cascade resolves in roughly one pass over the
+ * graph regardless of how deep it is. A cycle simply can't be
+ * re-visited (the `doomed` set doubles as the visited set), so no
+ * iteration cap is needed either.
  */
 export function removeEntitiesByIds(entities, idsToRemove) {
+  const list = entities || [];
+ 
+  const childrenByParentId = new Map();
+  for (const e of list) {
+    if (e.parentId) {
+      const siblings = childrenByParentId.get(e.parentId);
+      if (siblings) siblings.push(e.id);
+      else childrenByParentId.set(e.parentId, [e.id]);
+    }
+  }
+ 
   const doomed = new Set(idsToRemove);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const e of entities || []) {
-      if (!doomed.has(e.id) && e.parentId && doomed.has(e.parentId)) {
-        doomed.add(e.id);
-        changed = true;
+  const queue = [...idsToRemove];
+  while (queue.length > 0) {
+    const id = queue.pop();
+    const children = childrenByParentId.get(id);
+    if (!children) continue;
+    for (const childId of children) {
+      if (!doomed.has(childId)) {
+        doomed.add(childId);
+        queue.push(childId);
       }
     }
   }
-  return (entities || []).filter((e) => !doomed.has(e.id));
+ 
+  return list.filter((e) => !doomed.has(e.id));
 }
  
  

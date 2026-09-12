@@ -4,7 +4,7 @@ import { flushSync } from 'react-dom';
 import { getCompiledReactComponent, detectScriptKind } from './scriptRunner.js';
 import { updateCanvasComponent, unmountCanvasComponent } from './canvasRunner.js';
 import { computeActiveEntitiesAtTime } from './renderPipeline.js';
-import { isScriptComponent } from './ecs.js';
+import { isScriptComponent, isVideoEntity, isAudioEntity } from './ecs.js';
 import { getSharedGLTransitionRenderer } from './glTransitions.js';
  
 /**
@@ -263,18 +263,16 @@ export function drawExportFrame({
     .map(({ item }) => item);
  
   for (const { entity, transform, localTime, transitionState } of drawOrder) {
-    const isVideo = entity.type === 'video' || entity.components.some((c) => c.type === 'VideoRenderer');
-    const isAudio = entity.type === 'audio' || entity.components.some((c) => c.type === 'AudioSource');
-    if (isAudio) continue;
+    if (isAudioEntity(entity)) continue;
  
     try {
-      if (isVideo) {
+      if (isVideoEntity(entity)) {
         const videoComp = entity.components.find((c) => c.type === 'VideoRenderer') || { src: entity.src };
         const src = videoComp.src || entity.src;
         if (!src) continue;
         const video = videoFrameProvider.getVideoElement(entity.id);
         if (!video) continue;
-
+ 
         let mediaToDraw = video;
         if (transitionState) {
           const isOut = transitionState.type === 'out';
@@ -295,7 +293,7 @@ export function drawExportFrame({
             }
           }
         }
-
+ 
         drawTransformedMedia(ctx, mediaToDraw, transform, width, height);
         continue;
       }
@@ -384,11 +382,19 @@ export function drawExportFrame({
 // ---------------------------------------------------------------------------
  
 function applyTransform(ctx, transform, width, height) {
-  const cx = width / 2 + (transform.x || 0);
-  const cy = height / 2 + (transform.y || 0);
-  ctx.translate(cx, cy);
+  const scaleX = transform.scaleX ?? 1;
+  const scaleY = transform.scaleY ?? 1;
+  // Pivot in canvas pixels: pivotX/Y are normalized (-0.5..0.5, 0=center).
+  // Multiply by the rendered box size to get the pixel offset from center.
+  // Default 0,0 → px=0,py=0 → identical to the old code.
+  const px = (transform.pivotX ?? 0) * width;
+  const py = (transform.pivotY ?? 0) * height;
+  // Move to entity center + position offset + pivot offset.
+  ctx.translate(width / 2 + (transform.x || 0) + px, height / 2 + (transform.y || 0) + py);
   ctx.rotate(((transform.rotation || 0) * Math.PI) / 180);
-  ctx.scale(transform.scaleX ?? 1, transform.scaleY ?? 1);
+  ctx.scale(scaleX, scaleY);
+  // Shift the draw origin back so the content is centered on the pivot point.
+  ctx.translate(-px / scaleX, -py / scaleY);
   ctx.globalAlpha = Math.max(0, Math.min(1, transform.opacity ?? 1));
 }
  

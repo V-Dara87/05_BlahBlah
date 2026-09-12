@@ -282,6 +282,15 @@ export const TRANSFORM_FIELD_GROUPS = [
     ],
   },
   {
+    label: 'Pivot',
+    fields: [
+      // Normalized pivot: 0 = center, -0.5 = left/top edge, +0.5 = right/bottom edge.
+      // Rotation and scale both happen around this point. Matches Unity convention.
+      { name: 'pivotX', type: 'number', dragLabel: 'X', labelColor: '#f87171', step: 0.01, min: -0.5, max: 0.5, defaultVal: 0 },
+      { name: 'pivotY', type: 'number', dragLabel: 'Y', labelColor: '#4ade80', step: 0.01, min: -0.5, max: 0.5, defaultVal: 0 },
+    ],
+  },
+  {
     label: 'Opacity',
     fields: [
       { name: 'opacity', type: 'number', dragLabel: 'α', labelColor: '#a78bfa', step: 0.01, min: 0, max: 1, defaultVal: 1 },

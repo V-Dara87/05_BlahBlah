@@ -309,6 +309,13 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
   if (!dirHandle) return null;
   await verifyPermission(dirHandle, true);
  
+  // P1 #6 — surfaced up through the return value (see `return` below) so
+  // the caller can show it in the UI. Previously warnIfSchemaVersionTooNew
+  // only reached console.warn, so a project saved by a newer build could
+  // silently lose data on the next save with no way for the user to know
+  // short of opening devtools.
+  let schemaWarning = null;
+ 
   let projectMeta = {
     name: dirHandle.name || 'my-project',
     tracks: fallbackTracks,
@@ -335,7 +342,7 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
     // migration). migrateProjectSchema is the future structural-migration
     // chain (currently a pass-through).
     const fromVersion = readProjectSchemaVersion(parsed);
-    warnIfSchemaVersionTooNew(parsed);
+    schemaWarning = warnIfSchemaVersionTooNew(parsed);
     const schemaProject = migrateProjectSchema(parsed, fromVersion, CURRENT_SCHEMA_VERSION);
     projectMeta = {
       name: schemaProject.name || dirHandle.name,
@@ -567,6 +574,7 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
     scripts: loadedScripts,
     prefabs: loadedPrefabs,
     mediaAssets: loadedMedia,
+    schemaWarning,
   };
 }
  

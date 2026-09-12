@@ -16,7 +16,7 @@ import { formatSimpleTime } from '../utils/timeFormat';
 import { getCompiledReactComponent, detectScriptKind, extractScriptProps } from '../engine/scriptRunner';
 import { resolveScriptProps } from '../engine/referenceTypes';
 import { updateCanvasComponent, unmountCanvasComponent, pruneCanvasComponents } from '../engine/canvasRunner';
-import { isScriptComponent } from '../engine/ecs';
+import { isScriptComponent, isVideoEntity, isAudioEntity } from '../engine/ecs';
 import { computeActiveEntitiesAtTime } from '../engine/renderPipeline';
 import { trackKeyFor, getFieldKeyframes, setKeyframe } from '../engine/keyframes';
 import { getSharedGLTransitionRenderer } from '../engine/glTransitions';
@@ -384,22 +384,13 @@ export function EntityRenderer({
   // Derived from computedEntities (already memoized above), so these only
   // recompute when computedEntities itself actually changes.
   const activeVideoItems = useMemo(
-    () =>
-      computedEntities.filter(
-        ({ entity }) => entity.type === 'video' || entity.components.some((c) => c.type === 'VideoRenderer')
-      ),
+    () => computedEntities.filter(({ entity }) => isVideoEntity(entity)),
     [computedEntities]
   );
  
   const activeOverlayItems = useMemo(
     () =>
-      computedEntities.filter(
-        ({ entity }) =>
-          entity.type !== 'video' &&
-          !entity.components.some((c) => c.type === 'VideoRenderer') &&
-          entity.type !== 'audio' &&
-          !entity.components.some((c) => c.type === 'AudioSource')
-      ),
+      computedEntities.filter(({ entity }) => !isVideoEntity(entity) && !isAudioEntity(entity)),
     [computedEntities]
   );
  
@@ -741,7 +732,7 @@ export function EntityRenderer({
     window.addEventListener('pointerup', handlePointerUp);
   };
  
-  const handleRotateGizmoPointerDown = (e, entity, transform, localTransform) => {
+  const handleRotateGizmoPointerDown = (e, entity, transform, localTransform, baseWidth = 0, baseHeight = 0) => {
     if (!onUpdateEntity) return;
     e.stopPropagation();
     e.preventDefault();
@@ -750,7 +741,7 @@ export function EntityRenderer({
     const frameEl = canvasFrameRef.current;
     if (!frameEl) return;
     const frameRect = frameEl.getBoundingClientRect();
-    // Rotation pivot is the entity's own center on screen. In normal
+    // Rotation pivot is the entity's pivot point on screen. In normal
     // mode the entities layer is centered in the frame at scale
     // frameScale, so screen center = frame center + entity pos * scale.
     // In extended mode the layer is instead pinned to the frame's
@@ -760,19 +751,24 @@ export function EntityRenderer({
     // instead of assuming frame-centered placement -- otherwise a
     // panned/zoomed rotate grabs the wrong pivot and the clip visibly
     // swings from the wrong point.
+    //
+    // pivotOffsetX/Y: normalized pivot → frame-space pixel offset from
+    // entity center. Default (0, 0) → 0, 0 → identical to old behavior.
+    const pivotOffsetX = (transform.pivotX ?? 0) * baseWidth;
+    const pivotOffsetY = (transform.pivotY ?? 0) * baseHeight;
     let pivotX;
     let pivotY;
     if (previewMode === 'extended') {
       const vt = viewTransformRef.current;
       const scale = (frameScale || 1) * (vt.zoom || 1);
-      const originX = safeResWidth / 2 + transform.x;
-      const originY = safeResHeight / 2 + transform.y;
+      const originX = safeResWidth / 2 + transform.x + pivotOffsetX;
+      const originY = safeResHeight / 2 + transform.y + pivotOffsetY;
       pivotX = frameRect.left + vt.panX + originX * scale;
       pivotY = frameRect.top + vt.panY + originY * scale;
     } else {
       const scale = frameScale || 1;
-      pivotX = frameRect.left + frameRect.width / 2 + transform.x * scale;
-      pivotY = frameRect.top + frameRect.height / 2 + transform.y * scale;
+      pivotX = frameRect.left + frameRect.width / 2 + (transform.x + pivotOffsetX) * scale;
+      pivotY = frameRect.top + frameRect.height / 2 + (transform.y + pivotOffsetY) * scale;
     }
  
     const startAngle = Math.atan2(e.clientY - pivotY, e.clientX - pivotX) * (180 / Math.PI);
@@ -1040,6 +1036,12 @@ export function EntityRenderer({
                 className={`video-layer-container ${isSelected ? 'selected' : ''} ${onUpdateEntity ? 'gizmo-draggable' : ''}`}
                 style={{
                   transform: `translate(${transform.x}px, ${transform.y}px) rotate(${transform.rotation}deg) scale(${transform.scaleX}, ${transform.scaleY})`,
+                  // Shift the CSS rotation/scale origin by the pivot offset so
+                  // rotate and scale happen around the pivot point, not the
+                  // element center. pivotX/Y are normalized (0=center, ±0.5=edge)
+                  // so the pixel offset = pivot * baseSize. Default 0,0 →
+                  // "calc(50% + 0px)" = center = existing behavior unchanged.
+                  transformOrigin: `calc(50% + ${(transform.pivotX ?? 0) * baseWidth}px) calc(50% + ${(transform.pivotY ?? 0) * baseHeight}px)`,
                   opacity: transform.opacity,
                   // Unified with the overlay layer below: both use the same
                   // 100 + trackZIndexOf(...) base so a video and a shape/
@@ -1192,6 +1194,13 @@ export function EntityRenderer({
                     // frame-center + (x, y), matching where the video's
                     // own on-screen center really is.
                     transform: `translate(calc(-50% + ${transform.x}px), calc(-50% + ${transform.y}px)) rotate(${transform.rotation}deg)`,
+                    // Same pivot origin as the video content layer: keeps the
+                    // gizmo outline and the video rotating around the same
+                    // point. The gizmo's own dimensions are baseWidth*scaleX ×
+                    // baseHeight*scaleY, so we still use baseWidth/baseHeight
+                    // (pre-scale) for the pixel offset — that gives the same
+                    // world-space origin as the content layer's transformOrigin.
+                    transformOrigin: `calc(50% + ${(transform.pivotX ?? 0) * baseWidth}px) calc(50% + ${(transform.pivotY ?? 0) * baseHeight}px)`,
                     width: `${baseWidth * (transform.scaleX || 1)}px`,
                     height: `${baseHeight * (transform.scaleY || 1)}px`,
                     zIndex: 1000 + 100 + layerZIndexOf(item),
@@ -1201,7 +1210,7 @@ export function EntityRenderer({
                   <div
                     className="gizmo-rotate-handle"
                     title="Drag to rotate (hold Shift to snap to 15°)"
-                    onPointerDown={(e) => handleRotateGizmoPointerDown(e, entity, transform, localTransform)}
+                    onPointerDown={(e) => handleRotateGizmoPointerDown(e, entity, transform, localTransform, baseWidth, baseHeight)}
                   />
                   <div
                     className="gizmo-scale-handle gizmo-scale-handle-tl"
@@ -1284,6 +1293,11 @@ export function EntityRenderer({
                 className={`preview-render-layer ${onUpdateEntity ? 'gizmo-draggable' : ''} ${isSelected && onUpdateEntity ? 'selected' : ''}`}
                 style={{
                   transform: `translate(calc(-50% + ${transform.x}px), calc(-50% + ${transform.y}px)) rotate(${transform.rotation}deg) scale(${transform.scaleX}, ${transform.scaleY})`,
+                  // Shift rotation/scale origin to the pivot point. Same
+                  // formula as the video layer: pivotX/Y normalized × baseSize
+                  // gives the pixel offset from element center. Default 0,0 →
+                  // no offset → identical behavior to before.
+                  transformOrigin: `calc(50% + ${(transform.pivotX ?? 0) * baseWidth}px) calc(50% + ${(transform.pivotY ?? 0) * baseHeight}px)`,
                   opacity: (transform.opacity ?? 1) * transitionFactor,
                   zIndex: (isSelected ? 1000 : 0) + 100 + layerZIndexOf(item),
                   willChange: 'transform, opacity',
@@ -1422,18 +1436,22 @@ export function EntityRenderer({
                   className="preview-selection-gizmo"
                   style={{
                     transform: `translate(calc(-50% + ${transform.x}px), calc(-50% + ${transform.y}px)) rotate(${transform.rotation}deg)`,
+                    // Same pivot origin as the content layer above so the
+                    // gizmo outline and the content element rotate around
+                    // the same world-space point.
+                    transformOrigin: `calc(50% + ${(transform.pivotX ?? 0) * baseWidth}px) calc(50% + ${(transform.pivotY ?? 0) * baseHeight}px)`,
                     width: `${baseWidth * (transform.scaleX || 1)}px`,
                     height: `${baseHeight * (transform.scaleY || 1)}px`,
                     zIndex: 1000 + 100 + layerZIndexOf(item),
                   }}
                 >
                   {/* Rotate handle — small circle above the clip, drag to
-                      rotate around the clip's own center. */}
+                      rotate around the clip's pivot point. */}
                   <div className="gizmo-rotate-stem" />
                   <div
                     className="gizmo-rotate-handle"
                     title="Drag to rotate (hold Shift to snap to 15°)"
-                    onPointerDown={(e) => handleRotateGizmoPointerDown(e, entity, transform, localTransform)}
+                    onPointerDown={(e) => handleRotateGizmoPointerDown(e, entity, transform, localTransform, baseWidth, baseHeight)}
                   />
  
                   {/* Scale handles — one small square at each of the clip's

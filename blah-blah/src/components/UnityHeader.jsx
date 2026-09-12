@@ -19,7 +19,8 @@ import {
   HardDrive,
   Undo2,
   Redo2,
-  Settings
+  Settings,
+  AlertTriangle
 } from 'lucide-react';
 import { formatTimecode } from '../utils/timeFormat';
 import { isTauri } from '../services/tauriFsAdapter';
@@ -37,6 +38,7 @@ export function UnityHeader({
   hasSelectedEntity,
   projectFolderHandle,
   saveStatus = 'saved', // 'saved' | 'saving' | 'in-memory'
+  schemaWarning = null,
   canUndo = false,
   canRedo = false,
   onTogglePlay,
@@ -143,6 +145,14 @@ export function UnityHeader({
         ) : (
           <span className="save-status-memory" title="In-Memory Mode. Click 'Open' or 'New' to save to real files on disk.">
             <HardDrive size={11} /> In-Memory
+          </span>
+        )}
+
+        {/* P1 #6 — schemaVersion-too-new warning. Previously console.warn
+            only; this is the first UI-visible surface for it. */}
+        {schemaWarning && (
+          <span className="schema-warning-badge" title={schemaWarning}>
+            <AlertTriangle size={11} /> Newer project format
           </span>
         )}
  

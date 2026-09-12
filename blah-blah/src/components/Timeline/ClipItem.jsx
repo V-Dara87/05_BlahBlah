@@ -1,7 +1,7 @@
 import { useRef, useMemo, memo, useState } from 'react';
 import { Film, Music, Type, Square, FileCode, Link2, X } from 'lucide-react';
 import { WaveformCanvas } from '../WaveformCanvas';
-import { isScriptComponent } from '../../engine/ecs';
+import { isScriptComponent, isVideoEntity, isAudioEntity } from '../../engine/ecs';
 import { dragHasItemKind, ITEM_KIND_SCRIPT, setDragPayload, ITEM_KIND_ENTITY } from '../../utils/dragData';
  
 /** Return true if candidateChild is a descendant of ancestorId (cycle guard). */
@@ -80,8 +80,8 @@ export const ClipItem = memo(function ClipItem({
   const hasScript = clip.components?.some((c) => isScriptComponent(c) && c.enabled !== false);
   const hasText = clip.components?.some((c) => c.type === 'TextRenderer');
   const hasShape = clip.components?.some((c) => c.type === 'ShapeRenderer');
-  const hasVideo = clip.components?.some((c) => c.type === 'VideoRenderer') || clip.type === 'video';
-  const hasAudio = clip.components?.some((c) => c.type === 'AudioSource') || clip.type === 'audio';
+  const hasVideo = isVideoEntity(clip);
+  const hasAudio = isAudioEntity(clip);
  
   const clipCategory = hasVideo ? 'video' : hasAudio ? 'audio' : hasText ? 'text' : hasShape ? 'shape' : 'prefab';
  
@@ -561,11 +561,8 @@ export const ClipItem = memo(function ClipItem({
  
     if (!isLocked) {
       // Split Video & Audio option (for video clips that don't already have an audio child)
-      const isVideo = clip.type === 'video' || clip.components?.some((c) => c.type === 'VideoRenderer');
-      const hasAudioChild = allClips.some(
-        (c) => c.parentId === clip.id && (c.type === 'audio' || c.components?.some((comp) => comp.type === 'AudioSource'))
-      );
-      if (isVideo && !hasAudioChild && onSplitVideoAndAudio) {
+      const hasAudioChild = allClips.some((c) => c.parentId === clip.id && isAudioEntity(c));
+      if (isVideoEntity(clip) && !hasAudioChild && onSplitVideoAndAudio) {
         const splitAudioBtn = document.createElement('button');
         splitAudioBtn.textContent = '🎵 Split Video & Audio';
         splitAudioBtn.className = 'ctx-menu-item';

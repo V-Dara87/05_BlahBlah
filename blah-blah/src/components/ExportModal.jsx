@@ -17,6 +17,7 @@ import {
   Cpu
 } from 'lucide-react';
 import { formatTimecode } from '../utils/timeFormat';
+import { isVideoEntity } from '../engine/ecs';
 import { isTauri } from '../services/tauriFsAdapter';
 import {
   drawExportFrame,
@@ -98,7 +99,7 @@ export function ExportModal({
   ); // '720p' | '1080p' | '4k' | 'project'
   const [fps, setFps] = useState('30');
   const [quality, setQuality] = useState('high');
-
+ 
   // Export engine: 'webcodecs' (default/browser) or 'ffmpeg' (Tauri sidecar)
   const [engine, setEngine] = useState('webcodecs');
   const [ffmpegFormat, setFfmpegFormat] = useState('mp4_h264');
@@ -121,7 +122,7 @@ export function ExportModal({
  
   const previewCanvasRef = useRef(null);
   const abortRef = useRef(false);
-
+ 
   useEffect(() => {
     if (!isOpen) return;
     let mounted = true;
@@ -148,7 +149,7 @@ export function ExportModal({
   const isFfmpegEngine = engine === 'ffmpeg' && isTauri() && ffmpegAvailable;
   const selectedFfmpegFormat = FFMPEG_FORMATS[ffmpegFormat] || FFMPEG_FORMATS.mp4_h264;
   const format = isFfmpegEngine ? selectedFfmpegFormat.extension : 'mp4';
-
+ 
   const targetFps = parseInt(fps) || 30;
   // Use export range if set, otherwise full duration
   const exportStartTime = exportRange?.in ?? 0;
@@ -209,7 +210,7 @@ export function ExportModal({
       console.warn('Could not reveal exported file in Explorer:', err);
     }
   };
-
+ 
   const handleStartExport = async () => {
     setIsExporting(true);
     setProgress(0);
@@ -218,7 +219,7 @@ export function ExportModal({
     setSavedFilePath(null);
     setErrorMessage(null);
     abortRef.current = false;
-
+ 
     // Tauri: ask where the finished video should live BEFORE doing any
     // render work (native "Save As" dialog). Cancelling aborts the whole
     // export — no point rendering something the user then can't place.
@@ -252,7 +253,7 @@ export function ExportModal({
  
     const canvasContainers = createCanvasContainerPool();
     const videoFrameProvider = createVideoFrameProvider();
-
+ 
     // Ensure any import-using scripts are bundled before the frame loop
     // starts (no-op when everything is already compiled or import-free).
     try {
@@ -389,8 +390,7 @@ export function ExportModal({
         });
         await Promise.all(
           activeAtFrame.map(({ entity, transform }) => {
-            const isVideo = entity.type === 'video' || entity.components.some((c) => c.type === 'VideoRenderer');
-            if (!isVideo) return Promise.resolve();
+            if (!isVideoEntity(entity)) return Promise.resolve();
             const videoComp = entity.components.find((c) => c.type === 'VideoRenderer') || { src: entity.src };
             const src = videoComp.src || entity.src;
             if (!src) return Promise.resolve();
@@ -494,13 +494,13 @@ export function ExportModal({
  
       const { buffer } = muxer.target;
       const blob = new Blob([buffer], { type: 'video/mp4' });
-
+ 
       if (isTauri() && savePath) {
         const { writeFile, remove } = await import('@tauri-apps/plugin-fs');
         if (isFfmpegEngine && tempIntermediatePath) {
           setExportPhase('ffmpeg');
           await writeFile(tempIntermediatePath, new Uint8Array(buffer));
-
+ 
           await executeFfmpegExport({
             inputPath: tempIntermediatePath,
             outputPath: savePath,
@@ -516,7 +516,7 @@ export function ExportModal({
               setFfmpegProgressDetail({ frame, speed });
             },
           });
-
+ 
           try {
             await remove(tempIntermediatePath);
           } catch (cleanErr) {
@@ -619,7 +619,7 @@ export function ExportModal({
                     <Download size={18} />
                     <span>Download Video ({format.toUpperCase()})</span>
                   </a>
-
+ 
                   <button
                     className="unity-btn unity-btn-secondary"
                     onClick={() => {
@@ -631,7 +631,7 @@ export function ExportModal({
                   </button>
                 </div>
               )}
-
+ 
               {/* Tauri: the file was saved natively — show where, and
                   offer to reveal it (highlighted) in Explorer. */}
               {isTauri() && savedFilePath && (
@@ -648,7 +648,7 @@ export function ExportModal({
                       <FolderOpen size={18} />
                       <span>Show in Explorer</span>
                     </button>
-
+ 
                     <button
                       className="unity-btn unity-btn-secondary"
                       onClick={() => {
@@ -776,7 +776,7 @@ export function ExportModal({
                       <span className="preset-name">WebCodecs</span>
                       <span className="preset-res">Direct MP4 (H.264)</span>
                     </div>
-
+ 
                     <div
                       className={`preset-card ${engine === 'ffmpeg' ? 'active' : ''} ${(!isTauri() || !ffmpegAvailable) ? 'disabled-card' : ''}`}
                       onClick={() => {
@@ -793,7 +793,7 @@ export function ExportModal({
                     </div>
                   </div>
                 </div>
-
+ 
                 {/* Framerate & Quality */}
                 <div className="export-params-row">
                   {isFfmpegEngine ? (
@@ -812,7 +812,7 @@ export function ExportModal({
                           ))}
                         </select>
                       </div>
-
+ 
                       <div className="param-field">
                         <label className="param-label">Framerate</label>
                         <select
@@ -825,7 +825,7 @@ export function ExportModal({
                           <option value="60">60 FPS (Smooth 60fps)</option>
                         </select>
                       </div>
-
+ 
                       <div className="param-field">
                         <label className="param-label">Quality Preset</label>
                         <select
@@ -849,7 +849,7 @@ export function ExportModal({
                           <option value="mp4">MP4 Video (H.264)</option>
                         </select>
                       </div>
-
+ 
                       <div className="param-field">
                         <label className="param-label">Framerate</label>
                         <select
@@ -862,7 +862,7 @@ export function ExportModal({
                           <option value="60">60 FPS (Smooth 60fps)</option>
                         </select>
                       </div>
-
+ 
                       <div className="param-field">
                         <label className="param-label">Quality</label>
                         <select
@@ -878,7 +878,7 @@ export function ExportModal({
                     </>
                   )}
                 </div>
-
+ 
                 <button
                   className="unity-btn unity-btn-primary render-submit-btn"
                   onClick={handleStartExport}
@@ -889,24 +889,24 @@ export function ExportModal({
                   </span>
                 </button>
               </div>
-
+ 
               {/* Right Column: Video Specs & Summary */}
               <div className="export-summary-col">
                 <span className="summary-title">Composition Overview</span>
-
+ 
                 <div className="summary-stat-grid">
                   <div className="stat-tile">
                     <span className="stat-tile-label"><Clock size={11} /> Duration</span>
                     <span className="stat-tile-val">{hasRange ? `${formatTimecode(exportStartTime)} → ${formatTimecode(exportEndTime)}` : formatTimecode(totalDuration)} ({totalFrames} frames)</span>
                   </div>
-
+ 
                   <div className="stat-tile">
                     <span className="stat-tile-label"><Tv size={11} /> Engine & Format</span>
                     <span className="stat-tile-val">
                       {isFfmpegEngine ? `FFmpeg · ${selectedFfmpegFormat.label}` : 'WebCodecs · MP4 (H.264)'}
                     </span>
                   </div>
-
+ 
                   <div className="stat-tile">
                     <span className="stat-tile-label"><Volume2 size={11} /> Audio</span>
                     <span className="stat-tile-val">
@@ -919,18 +919,18 @@ export function ExportModal({
                         : 'Silent (no audio clips)'}
                     </span>
                   </div>
-
+ 
                   <div className="stat-tile">
                     <span className="stat-tile-label"><Layers size={11} /> Layers</span>
                     <span className="stat-tile-val">{tracks.length} Tracks / {clips.length} Clips</span>
                   </div>
-
+ 
                   <div className="stat-tile">
                     <span className="stat-tile-label"><HardDrive size={11} /> Est. Size</span>
                     <span className="stat-tile-val">~{estSizeMB} MB</span>
                   </div>
                 </div>
-
+ 
                 <div className="summary-info-banner">
                   <Settings size={13} className="text-cyan" />
                   <span>
