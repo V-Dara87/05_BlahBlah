@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import {
   Download,
@@ -13,7 +13,8 @@ import {
   Settings,
   HardDrive,
   Tv,
-  Volume2
+  Volume2,
+  Cpu
 } from 'lucide-react';
 import { formatTimecode } from '../utils/timeFormat';
 import { isTauri } from '../services/tauriFsAdapter';
@@ -25,6 +26,12 @@ import {
   mixdownAudio,
   encodeAudioTrack,
 } from '../engine/exportRunner';
+import {
+  FFMPEG_FORMATS,
+  FFMPEG_QUALITY_PRESETS,
+  executeFfmpegExport,
+  isFfmpegAvailable
+} from '../services/ffmpegExportRunner';
  
 /**
  * P1 #11 — MP4 export. Video is the original deterministic frame-by-frame
@@ -91,6 +98,14 @@ export function ExportModal({
   ); // '720p' | '1080p' | '4k' | 'project'
   const [fps, setFps] = useState('30');
   const [quality, setQuality] = useState('high');
+
+  // Export engine: 'webcodecs' (default/browser) or 'ffmpeg' (Tauri sidecar)
+  const [engine, setEngine] = useState('webcodecs');
+  const [ffmpegFormat, setFfmpegFormat] = useState('mp4_h264');
+  const [ffmpegQuality, setFfmpegQuality] = useState('high');
+  const [ffmpegAvailable, setFfmpegAvailable] = useState(false);
+  const [exportPhase, setExportPhase] = useState('rendering'); // 'rendering' | 'ffmpeg'
+  const [ffmpegProgressDetail, setFfmpegProgressDetail] = useState(null);
  
   const [isExporting, setIsExporting] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -106,10 +121,34 @@ export function ExportModal({
  
   const previewCanvasRef = useRef(null);
   const abortRef = useRef(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let mounted = true;
+    (async () => {
+      try {
+        const available = await isFfmpegAvailable();
+        if (mounted) {
+          setFfmpegAvailable(available);
+          if (available && isTauri()) {
+            // Optional: keep webcodecs as initial option or let user toggle
+          }
+        }
+      } catch {
+        if (mounted) setFfmpegAvailable(false);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [isOpen]);
  
   if (!isOpen) return null;
  
-  const format = 'mp4'; // Phase 1 scope is MP4-only, per the export task.
+  const isFfmpegEngine = engine === 'ffmpeg' && isTauri() && ffmpegAvailable;
+  const selectedFfmpegFormat = FFMPEG_FORMATS[ffmpegFormat] || FFMPEG_FORMATS.mp4_h264;
+  const format = isFfmpegEngine ? selectedFfmpegFormat.extension : 'mp4';
+
   const targetFps = parseInt(fps) || 30;
   // Use export range if set, otherwise full duration
   const exportStartTime = exportRange?.in ?? 0;
@@ -128,7 +167,20 @@ export function ExportModal({
   const encodeHeight = height % 2 === 0 ? height : height - 1;
  
   const bitrateMbps = quality === 'ultra' ? 16 : quality === 'high' ? 8 : 4;
-  const estSizeBytes = (bitrateMbps * 1_000_000 / 8) * exportDuration;
+  let estMbps = bitrateMbps;
+  if (isFfmpegEngine) {
+    if (ffmpegFormat === 'mov_prores') estMbps = 150;
+    else if (ffmpegFormat === 'mp4_h265') {
+      estMbps = ffmpegQuality === 'ultra' ? 10 : ffmpegQuality === 'high' ? 5 : 2.5;
+    } else if (ffmpegFormat === 'webm_vp9') {
+      estMbps = ffmpegQuality === 'ultra' ? 12 : ffmpegQuality === 'high' ? 6 : 3;
+    } else if (ffmpegFormat === 'gif') {
+      estMbps = 20;
+    } else {
+      estMbps = ffmpegQuality === 'ultra' ? 16 : ffmpegQuality === 'high' ? 8 : 4;
+    }
+  }
+  const estSizeBytes = (estMbps * 1_000_000 / 8) * exportDuration;
   const estSizeMB = (estSizeBytes / (1024 * 1024)).toFixed(1);
  
   // Pre-export preview only — a coarse "does this project have anything
@@ -171,18 +223,24 @@ export function ExportModal({
     // render work (native "Save As" dialog). Cancelling aborts the whole
     // export — no point rendering something the user then can't place.
     let savePath = null;
+    let tempIntermediatePath = null;
     if (isTauri()) {
       try {
         const { save } = await import('@tauri-apps/plugin-dialog');
-        const defaultFileName = `${(projectName || 'blahblah-video').replace(/[\\/:*?"<>|]/g, '-')}_${encodeWidth}x${encodeHeight}.mp4`;
+        const ext = format;
+        const defaultFileName = `${(projectName || 'blahblah-video').replace(/[\\/:*?"<>|]/g, '-')}_${encodeWidth}x${encodeHeight}.${ext}`;
+        const filterName = isFfmpegEngine ? selectedFfmpegFormat.label : 'MP4 Video';
         savePath = await save({
           title: 'Save Rendered Video',
           defaultPath: defaultFileName,
-          filters: [{ name: 'MP4 Video', extensions: ['mp4'] }],
+          filters: [{ name: filterName, extensions: [ext] }],
         });
         if (!savePath) {
           setIsExporting(false);
           return;
+        }
+        if (isFfmpegEngine) {
+          tempIntermediatePath = `${savePath}.intermediate.mp4`;
         }
       } catch (err) {
         console.error('Save dialog error:', err);
@@ -384,7 +442,8 @@ export function ExportModal({
         }
  
         setCurrentSec(time);
-        setProgress(Math.min(99, Math.round(((i + 1) / totalFrames) * 100)));
+        const rawPct = Math.min(99, Math.round(((i + 1) / totalFrames) * 100));
+        setProgress(isFfmpegEngine ? Math.round(rawPct * 0.6) : rawPct);
  
         // Cheap live-progress preview — draws the same canvas already
         // rendered above, not a second render pass.
@@ -437,12 +496,40 @@ export function ExportModal({
       const blob = new Blob([buffer], { type: 'video/mp4' });
 
       if (isTauri() && savePath) {
-        // Native save: write the bytes straight to the path the user
-        // picked in the dialog, then surface it with a "Show in Explorer"
-        // action instead of the browser download anchor.
-        const { writeFile } = await import('@tauri-apps/plugin-fs');
-        await writeFile(savePath, new Uint8Array(buffer));
-        setSavedFilePath(savePath);
+        const { writeFile, remove } = await import('@tauri-apps/plugin-fs');
+        if (isFfmpegEngine && tempIntermediatePath) {
+          setExportPhase('ffmpeg');
+          await writeFile(tempIntermediatePath, new Uint8Array(buffer));
+
+          await executeFfmpegExport({
+            inputPath: tempIntermediatePath,
+            outputPath: savePath,
+            format: ffmpegFormat,
+            quality: ffmpegQuality,
+            fps: targetFps,
+            width: encodeWidth,
+            height: encodeHeight,
+            totalDurationSec: exportDuration,
+            onProgress: ({ percent, frame, speed }) => {
+              const overall = Math.min(99, 60 + Math.round(percent * 0.39));
+              setProgress(overall);
+              setFfmpegProgressDetail({ frame, speed });
+            },
+          });
+
+          try {
+            await remove(tempIntermediatePath);
+          } catch (cleanErr) {
+            console.warn('Could not clean up intermediate export file:', cleanErr);
+          }
+          setSavedFilePath(savePath);
+        } else {
+          // Native save: write the bytes straight to the path the user
+          // picked in the dialog, then surface it with a "Show in Explorer"
+          // action instead of the browser download anchor.
+          await writeFile(savePath, new Uint8Array(buffer));
+          setSavedFilePath(savePath);
+        }
       } else {
         const url = URL.createObjectURL(blob);
         setDownloadUrl(url);
@@ -457,9 +544,20 @@ export function ExportModal({
         // already closed
       }
     } finally {
+      if (tempIntermediatePath) {
+        try {
+          const { exists, remove } = await import('@tauri-apps/plugin-fs');
+          if (await exists(tempIntermediatePath)) {
+            await remove(tempIntermediatePath);
+          }
+        } catch {
+          // ignore cleanup errors
+        }
+      }
       videoFrameProvider.disposeAll();
       canvasContainers.disposeAll();
       setIsExporting(false);
+      setExportPhase('rendering');
     }
   };
  
@@ -576,12 +674,9 @@ export function ExportModal({
                 <span className="render-status-sub">
                   {audioStatus === 'mixing'
                     ? 'Mixing audio…'
-                    : `Rendering frame ${Math.min(totalFrames, Math.round(currentSec * targetFps) + 1)} / ${totalFrames}`}
-                  {audioStatus !== 'mixing' && (
-                    <>
-                      {' '}({formatTimecode(currentSec)} / {formatTimecode(exportDuration)}) — {progress}%
-                    </>
-                  )}
+                    : exportPhase === 'ffmpeg'
+                    ? `FFmpeg encoding (${selectedFfmpegFormat.label}) ${ffmpegProgressDetail?.frame ? `— frame ${ffmpegProgressDetail.frame}` : ''} ${ffmpegProgressDetail?.speed ? `(${ffmpegProgressDetail.speed})` : ''} — ${progress}%`
+                    : `Rendering frame ${Math.min(totalFrames, Math.round(currentSec * targetFps) + 1)} / ${totalFrames} (${formatTimecode(currentSec)} / ${formatTimecode(exportDuration)}) — ${progress}%`}
                 </span>
               </div>
  
@@ -595,6 +690,8 @@ export function ExportModal({
               <p className="render-caption">
                 {audioStatus === 'mixing'
                   ? 'Decoding and mixing every audio-bearing clip in the export range down to one track before rendering video frames.'
+                  : exportPhase === 'ffmpeg'
+                  ? `Running FFmpeg sidecar to master and encode ${selectedFfmpegFormat.label} with ${FFMPEG_QUALITY_PRESETS[ffmpegQuality]?.label || ''}.`
                   : audioStatus === 'encoding'
                   ? 'Video render complete — encoding the mixed audio track to AAC and finalizing the MP4.'
                   : "Rendering each frame as a deterministic snapshot (not live playback) and encoding it into MP4 as it goes — render speed isn't tied to video duration."}
@@ -656,86 +753,194 @@ export function ExportModal({
                   </div>
                 </div>
  
-                {/* Framerate & Quality */}
-                <div className="export-params-row">
-                  <div className="param-field">
-                    <label className="param-label">Format</label>
-                    <select className="unity-select" value={format} disabled>
-                      <option value="mp4">MP4 Video (H.264)</option>
-                    </select>
+                {/* Export Engine Selection */}
+                <div className="export-section">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <label className="section-label">Export Engine</label>
+                    {!isTauri() ? (
+                      <span style={{ fontSize: 10, color: 'var(--unity-text-dim)' }}>
+                        Desktop only: FFmpeg sidecar
+                      </span>
+                    ) : !ffmpegAvailable ? (
+                      <span style={{ fontSize: 10, color: '#f87171' }}>
+                        FFmpeg sidecar not found
+                      </span>
+                    ) : null}
                   </div>
- 
-                  <div className="param-field">
-                    <label className="param-label">Framerate</label>
-                    <select
-                      className="unity-select"
-                      value={fps}
-                      onChange={(e) => setFps(e.target.value)}
+                  <div className="engine-cards-row">
+                    <div
+                      className={`preset-card ${engine === 'webcodecs' ? 'active' : ''}`}
+                      onClick={() => setEngine('webcodecs')}
                     >
-                      <option value="24">24 FPS (Cinematic)</option>
-                      <option value="30">30 FPS (Standard)</option>
-                      <option value="60">60 FPS (Smooth 60fps)</option>
-                    </select>
-                  </div>
- 
-                  <div className="param-field">
-                    <label className="param-label">Quality</label>
-                    <select
-                      className="unity-select"
-                      value={quality}
-                      onChange={(e) => setQuality(e.target.value)}
+                      <div className="preset-tag popular">Built-in</div>
+                      <span className="preset-name">WebCodecs</span>
+                      <span className="preset-res">Direct MP4 (H.264)</span>
+                    </div>
+
+                    <div
+                      className={`preset-card ${engine === 'ffmpeg' ? 'active' : ''} ${(!isTauri() || !ffmpegAvailable) ? 'disabled-card' : ''}`}
+                      onClick={() => {
+                        if (isTauri() && ffmpegAvailable) {
+                          setEngine('ffmpeg');
+                        }
+                      }}
+                      title={!isTauri() ? 'FFmpeg sidecar is available in Tauri desktop app' : !ffmpegAvailable ? 'FFmpeg binary not detected' : 'Master with FFmpeg Sidecar'}
+                      style={(!isTauri() || !ffmpegAvailable) ? { opacity: 0.45, cursor: 'not-allowed' } : {}}
                     >
-                      <option value="standard">Standard Bitrate (4 Mbps)</option>
-                      <option value="high">High Quality (8 Mbps)</option>
-                      <option value="ultra">Ultra Fidelity (16 Mbps)</option>
-                    </select>
+                      <div className="preset-tag ultra">Sidecar</div>
+                      <span className="preset-name">FFmpeg Engine</span>
+                      <span className="preset-res">CRF Master · ProRes · GIF · WebM</span>
+                    </div>
                   </div>
                 </div>
- 
+
+                {/* Framerate & Quality */}
+                <div className="export-params-row">
+                  {isFfmpegEngine ? (
+                    <>
+                      <div className="param-field">
+                        <label className="param-label">Format / Codec</label>
+                        <select
+                          className="unity-select"
+                          value={ffmpegFormat}
+                          onChange={(e) => setFfmpegFormat(e.target.value)}
+                        >
+                          {Object.entries(FFMPEG_FORMATS).map(([key, f]) => (
+                            <option key={key} value={key}>
+                              {f.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="param-field">
+                        <label className="param-label">Framerate</label>
+                        <select
+                          className="unity-select"
+                          value={fps}
+                          onChange={(e) => setFps(e.target.value)}
+                        >
+                          <option value="24">24 FPS (Cinematic)</option>
+                          <option value="30">30 FPS (Standard)</option>
+                          <option value="60">60 FPS (Smooth 60fps)</option>
+                        </select>
+                      </div>
+
+                      <div className="param-field">
+                        <label className="param-label">Quality Preset</label>
+                        <select
+                          className="unity-select"
+                          value={ffmpegQuality}
+                          onChange={(e) => setFfmpegQuality(e.target.value)}
+                        >
+                          {Object.entries(FFMPEG_QUALITY_PRESETS).map(([key, q]) => (
+                            <option key={key} value={key}>
+                              {q.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="param-field">
+                        <label className="param-label">Format</label>
+                        <select className="unity-select" value={format} disabled>
+                          <option value="mp4">MP4 Video (H.264)</option>
+                        </select>
+                      </div>
+
+                      <div className="param-field">
+                        <label className="param-label">Framerate</label>
+                        <select
+                          className="unity-select"
+                          value={fps}
+                          onChange={(e) => setFps(e.target.value)}
+                        >
+                          <option value="24">24 FPS (Cinematic)</option>
+                          <option value="30">30 FPS (Standard)</option>
+                          <option value="60">60 FPS (Smooth 60fps)</option>
+                        </select>
+                      </div>
+
+                      <div className="param-field">
+                        <label className="param-label">Quality</label>
+                        <select
+                          className="unity-select"
+                          value={quality}
+                          onChange={(e) => setQuality(e.target.value)}
+                        >
+                          <option value="standard">Standard Bitrate (4 Mbps)</option>
+                          <option value="high">High Quality (8 Mbps)</option>
+                          <option value="ultra">Ultra Fidelity (16 Mbps)</option>
+                        </select>
+                      </div>
+                    </>
+                  )}
+                </div>
+
                 <button
                   className="unity-btn unity-btn-primary render-submit-btn"
                   onClick={handleStartExport}
                 >
                   <Sparkles size={16} />
-                  <span>Start Export ({encodeWidth}×{encodeHeight})</span>
+                  <span>
+                    Start {isFfmpegEngine ? 'FFmpeg ' : ''}Export ({encodeWidth}×{encodeHeight} · {isFfmpegEngine ? selectedFfmpegFormat.extension.toUpperCase() : 'MP4'})
+                  </span>
                 </button>
               </div>
- 
+
               {/* Right Column: Video Specs & Summary */}
               <div className="export-summary-col">
                 <span className="summary-title">Composition Overview</span>
- 
+
                 <div className="summary-stat-grid">
                   <div className="stat-tile">
                     <span className="stat-tile-label"><Clock size={11} /> Duration</span>
                     <span className="stat-tile-val">{hasRange ? `${formatTimecode(exportStartTime)} → ${formatTimecode(exportEndTime)}` : formatTimecode(totalDuration)} ({totalFrames} frames)</span>
                   </div>
- 
+
+                  <div className="stat-tile">
+                    <span className="stat-tile-label"><Tv size={11} /> Engine & Format</span>
+                    <span className="stat-tile-val">
+                      {isFfmpegEngine ? `FFmpeg · ${selectedFfmpegFormat.label}` : 'WebCodecs · MP4 (H.264)'}
+                    </span>
+                  </div>
+
                   <div className="stat-tile">
                     <span className="stat-tile-label"><Volume2 size={11} /> Audio</span>
                     <span className="stat-tile-val">
-                      {!audioSupported ? 'Silent (unsupported browser)' : hasAnyAudioSource ? 'AAC, will mix down' : 'Silent (no audio clips)'}
+                      {isFfmpegEngine && selectedFfmpegFormat.noAudio
+                        ? 'No Audio (GIF)'
+                        : !audioSupported
+                        ? 'Silent (unsupported browser)'
+                        : hasAnyAudioSource
+                        ? `${isFfmpegEngine && selectedFfmpegFormat.audioCodec ? selectedFfmpegFormat.audioCodec.toUpperCase() : 'AAC'}, will mix down`
+                        : 'Silent (no audio clips)'}
                     </span>
                   </div>
- 
+
                   <div className="stat-tile">
                     <span className="stat-tile-label"><Layers size={11} /> Layers</span>
                     <span className="stat-tile-val">{tracks.length} Tracks / {clips.length} Clips</span>
                   </div>
- 
+
                   <div className="stat-tile">
                     <span className="stat-tile-label"><HardDrive size={11} /> Est. Size</span>
                     <span className="stat-tile-val">~{estSizeMB} MB</span>
                   </div>
                 </div>
- 
+
                 <div className="summary-info-banner">
                   <Settings size={13} className="text-cyan" />
                   <span>
-                    Renders every frame as a deterministic snapshot of the exact composition — video, shapes, typography,
-                    and BlahTween/CanvasRenderer motion — then encodes it to H.264 MP4.
-                    {audioSupported
-                      ? ' Every AudioSource and audible VideoRenderer clip is mixed down and muxed in as AAC.'
+                    {isFfmpegEngine
+                      ? `Deterministic Canvas rendering followed by FFmpeg Sidecar mastering to ${selectedFfmpegFormat.label} with ${FFMPEG_QUALITY_PRESETS[ffmpegQuality]?.label}.`
+                      : 'Renders every frame as a deterministic snapshot of the exact composition — video, shapes, typography, and BlahTween/CanvasRenderer motion — then encodes it to H.264 MP4.'}
+                    {isFfmpegEngine && selectedFfmpegFormat.noAudio
+                      ? ' Audio track is omitted for animated GIF format.'
+                      : audioSupported
+                      ? ' Every AudioSource and audible VideoRenderer clip is mixed down and muxed in.'
                       : ' This browser lacks WebCodecs AudioEncoder support, so the export will be video-only.'}
                   </span>
                 </div>
