@@ -1209,26 +1209,54 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
+/* Portal variant — rendered directly on document.body (see
+   FontFamilyPicker.jsx) so the popover floats free of the Inspector dock
+   panel's width and scroll clipping instead of being boxed into its
+   layout. Position/size come from inline styles computed from the
+   trigger's live bounding rect; this class only supplies the chrome and a
+   z-index high enough to sit above dockview's own panels/tab strips. */
+.font-family-picker-popover-portal {
+  top: auto;
+  left: auto;
+  right: auto;
+  z-index: 10000;
+}
+
 .font-family-picker-popover .search-bar-sm input {
   width: 100%;
 }
 
 .font-family-picker-list {
-  max-height: 180px;
+  max-height: 240px;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 
 .font-family-picker-item {
   display: block;
   width: 100%;
+  box-sizing: border-box;
   text-align: left;
   background: none;
   border: none;
   color: var(--unity-text, #e2e8f0);
-  font-size: 11px;
-  padding: 5px 6px;
+  /* Fixed row box so a decorative/display font's own natural size, weight,
+     or oversized ascenders/descenders (e.g. "Algerian", "Engravers MT")
+     can't blow out this row's height and collide with the rows next to it
+     — the font still renders in its own family via the inline style, just
+     clipped to one line at a controlled, capped size. */
+  font-size: clamp(11px, 1em, 15px);
+  line-height: 18px;
+  height: 28px;
+  padding: 5px 8px;
   border-radius: 3px;
   cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
 }
 
 .font-family-picker-item:hover,
@@ -2494,16 +2522,39 @@
  
 /* Context menu for clips */
 .clip-context-menu {
-  position: fixed;
-  z-index: 9999;
   background: #1e1f26;
   border: 1px solid var(--unity-border-light);
   border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   padding: 4px 0;
-  min-width: 140px;
 }
- 
+
+/* Shared shell for every right-click menu (Project panel, Timeline clips,
+   any future one) — see components/ContextMenu.jsx. Handles position
+   (fixed, portal'd to document.body so no ancestor can clip it) and the
+   fade + slight scale/slide open/close animation; each menu's own class
+   (.clip-context-menu / .project-context-menu / ...) only supplies
+   background/border/padding on top of this. */
+.context-menu-shell {
+  position: fixed;
+  z-index: 9999;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  transform-origin: top left;
+  /* Quick and snappy: opacity + transform settle well under 150ms so the
+     menu feels immediate rather than delayed. */
+  transition: opacity 0.11s ease-out, transform 0.11s ease-out;
+}
+
+.context-menu-closed {
+  opacity: 0;
+  transform: scale(0.96) translateY(-2px);
+  pointer-events: none;
+}
+
+.context-menu-open {
+  opacity: 1;
+  transform: scale(1) translateY(0);
+}
+
 .ctx-menu-item {
   display: block;
   width: 100%;
@@ -2516,15 +2567,15 @@
   cursor: pointer;
   text-align: left;
 }
- 
+
 .ctx-menu-item:hover {
   background: rgba(56, 189, 248, 0.15);
 }
- 
+
 .ctx-menu-item.danger {
   color: #ef4444;
 }
- 
+
 .ctx-menu-item.danger:hover {
   background: rgba(239, 68, 68, 0.15);
 }
@@ -4502,14 +4553,10 @@
  
 /* Right-click context menu (project panel) */
 .project-context-menu {
-  position: fixed;
-  z-index: 9999;
   background: #1e1f26;
   border: 1px solid var(--unity-border-light);
   border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   padding: 4px;
-  min-width: 170px;
 }
  
 .project-context-menu .ctx-menu-item {

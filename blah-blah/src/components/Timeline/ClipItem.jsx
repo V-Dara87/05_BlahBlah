@@ -1,8 +1,9 @@
 import { useRef, useMemo, memo, useState } from 'react';
-import { Film, Music, Type, Square, FileCode, Link2, X } from 'lucide-react';
+import { Film, Music, Type, Square, FileCode, Link2, X, Copy, Scissors, Unlink } from 'lucide-react';
 import { WaveformCanvas } from '../WaveformCanvas';
 import { isScriptComponent, isVideoEntity, isAudioEntity } from '../../engine/ecs';
 import { dragHasItemKind, ITEM_KIND_SCRIPT, setDragPayload, ITEM_KIND_ENTITY } from '../../utils/dragData';
+import { ContextMenu } from '../ContextMenu';
  
 /** Return true if candidateChild is a descendant of ancestorId (cycle guard). */
 function isDescendantOf(candidateChildId, ancestorId, allClips) {
@@ -527,104 +528,54 @@ export const ClipItem = memo(function ClipItem({
     if (onSelectClip) onSelectClip(clip.id);
   };
  
+  // Right-click menu content — rendered through the shared <ContextMenu>
+  // shell (see components/ContextMenu.jsx and the JSX return below) so it
+  // gets the same portal/positioning/animation as every other menu in the
+  // app, instead of the old hand-built document.createElement popup with
+  // its own duplicated close-on-outside-click/Escape listeners.
+  const [ctxMenu, setCtxMenu] = useState(null); // { x, y } | null
+  const closeCtxMenu = () => setCtxMenu(null);
+
   const handleContextMenu = (e) => {
     e.preventDefault();
     e.stopPropagation();
- 
+
     // Ensure this clip is selected
     if (!isSelectedCard && !isSelectedMulti) {
       onSelectClip(clip.id);
     }
- 
-    const existing = document.querySelector('.clip-context-menu');
-    if (existing) existing.remove();
- 
-    const menu = document.createElement('div');
-    menu.className = 'clip-context-menu';
-    menu.style.left = `${e.clientX}px`;
-    menu.style.top = `${e.clientY}px`;
- 
-    const activeTargetIds = isSelectedMulti ? selectedIds : [clip.id];
- 
-    // Duplicate button
-    if (onDuplicateClips && !isLocked) {
-      const dupBtn = document.createElement('button');
-      dupBtn.textContent = '📄 Duplicate';
-      dupBtn.className = 'ctx-menu-item';
-      dupBtn.onclick = () => {
-        const newIds = onDuplicateClips(activeTargetIds);
-        if (newIds && newIds.length > 0 && onSelectClip) onSelectClip(newIds[0]);
-        menu.remove();
-      };
-      menu.appendChild(dupBtn);
-    }
- 
-    if (!isLocked) {
-      // Split Video & Audio option (for video clips that don't already have an audio child)
-      const hasAudioChild = allClips.some((c) => c.parentId === clip.id && isAudioEntity(c));
-      if (isVideoEntity(clip) && !hasAudioChild && onSplitVideoAndAudio) {
-        const splitAudioBtn = document.createElement('button');
-        splitAudioBtn.textContent = '🎵 Split Video & Audio';
-        splitAudioBtn.className = 'ctx-menu-item';
-        splitAudioBtn.onclick = () => {
-          onSplitVideoAndAudio(clip.id);
-          menu.remove();
-        };
-        menu.appendChild(splitAudioBtn);
-      }
- 
-      // Unlink Parent button if clip currently has a parent
-      if (clip.parentId) {
-        const unlinkBtn = document.createElement('button');
-        unlinkBtn.textContent = '🔗 Unlink Parent';
-        unlinkBtn.className = 'ctx-menu-item';
-        unlinkBtn.onclick = () => {
-          onUpdateClip(clip.id, { parentId: null });
-          menu.remove();
-        };
-        menu.appendChild(unlinkBtn);
-      }
- 
-      // Quick-link options for up to 6 eligible candidate clips
-      const eligibleParents = allClips.filter(
-        (c) => c.id !== clip.id && c.id !== clip.parentId && !isDescendantOf(c.id, clip.id, allClips)
-      );
-      if (eligibleParents.length > 0 && eligibleParents.length <= 6) {
-        eligibleParents.forEach((p) => {
-          const parentBtn = document.createElement('button');
-          parentBtn.textContent = `🔗 Set Parent: ${p.name}`;
-          parentBtn.className = 'ctx-menu-item';
-          parentBtn.onclick = () => {
-            onUpdateClip(clip.id, { parentId: p.id });
-            menu.remove();
-          };
-          menu.appendChild(parentBtn);
-        });
-      }
-    }
- 
-    document.body.appendChild(menu);
-    const closeMenu = (ev) => {
-      if (!menu.contains(ev.target)) {
-        menu.remove();
-        document.removeEventListener('pointerdown', closeMenu);
-        document.removeEventListener('keydown', onKey);
-      }
-    };
-    const onKey = (ev) => {
-      if (ev.key === 'Escape') {
-        menu.remove();
-        document.removeEventListener('pointerdown', closeMenu);
-        document.removeEventListener('keydown', onKey);
-      }
-    };
-    requestAnimationFrame(() => {
-      document.addEventListener('pointerdown', closeMenu);
-      document.addEventListener('keydown', onKey);
-    });
+
+    setCtxMenu({ x: e.clientX, y: e.clientY });
+  };
+
+  const activeTargetIds = isSelectedMulti ? selectedIds : [clip.id];
+  const hasAudioChild = allClips.some((c) => c.parentId === clip.id && isAudioEntity(c));
+  const showSplitAudio = !isLocked && isVideoEntity(clip) && !hasAudioChild && onSplitVideoAndAudio;
+  const eligibleParents = allClips.filter(
+    (c) => c.id !== clip.id && c.id !== clip.parentId && !isDescendantOf(c.id, clip.id, allClips)
+  );
+  const showQuickLinks = !isLocked && eligibleParents.length > 0 && eligibleParents.length <= 6;
+
+  const handleDuplicate = () => {
+    const newIds = onDuplicateClips(activeTargetIds);
+    if (newIds && newIds.length > 0 && onSelectClip) onSelectClip(newIds[0]);
+    closeCtxMenu();
+  };
+  const handleSplitAudio = () => {
+    onSplitVideoAndAudio(clip.id);
+    closeCtxMenu();
+  };
+  const handleUnlinkParent = () => {
+    onUpdateClip(clip.id, { parentId: null });
+    closeCtxMenu();
+  };
+  const handleSetParent = (parentId) => {
+    onUpdateClip(clip.id, { parentId });
+    closeCtxMenu();
   };
  
   return (
+    <>
     <div
       data-clip-id={clip.id}
       className={`timeline-clip-card ${clipCategory} ${isSelectedCard || isSelectedMulti ? 'selected' : ''} ${isChildOfSelected ? 'is-linked-child' : ''} ${isParentOfSelected ? 'is-linked-parent' : ''} ${clip.parentId ? 'is-child' : ''} ${isLocked ? 'is-locked' : ''} ${compact ? 'compact' : ''} ${isScriptDragOver ? 'script-drop-target' : ''}`}
@@ -750,6 +701,32 @@ export const ClipItem = memo(function ClipItem({
         />
       )}
     </div>
+
+    {ctxMenu && (
+      <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onClose={closeCtxMenu} className="clip-context-menu" minWidth={140}>
+        {onDuplicateClips && !isLocked && (
+          <button className="ctx-menu-item" onClick={handleDuplicate}>
+            <Copy size={12} /> Duplicate
+          </button>
+        )}
+        {showSplitAudio && (
+          <button className="ctx-menu-item" onClick={handleSplitAudio}>
+            <Scissors size={12} /> Split Video &amp; Audio
+          </button>
+        )}
+        {!isLocked && clip.parentId && (
+          <button className="ctx-menu-item" onClick={handleUnlinkParent}>
+            <Unlink size={12} /> Unlink Parent
+          </button>
+        )}
+        {showQuickLinks && eligibleParents.map((p) => (
+          <button key={p.id} className="ctx-menu-item" onClick={() => handleSetParent(p.id)}>
+            <Link2 size={12} /> Set Parent: {p.name}
+          </button>
+        ))}
+      </ContextMenu>
+    )}
+    </>
   );
 });
  

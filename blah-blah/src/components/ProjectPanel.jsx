@@ -29,6 +29,7 @@ import { isTauri } from '../services/tauriFsAdapter';
 import { openProjectInVsCode } from '../services/ideLauncher';
 import { isScriptComponent } from '../engine/ecs';
 import { setDragPayload, readDragPayload, dragHasItemKind, ITEM_KIND_MEDIA, ITEM_KIND_PREFAB, ITEM_KIND_SCRIPT } from '../utils/dragData';
+import { ContextMenu } from './ContextMenu';
 
 // Per-kind display metadata for script cards (see detectScriptKind).
 const SCRIPT_KIND_META = {
@@ -188,23 +189,10 @@ export const ProjectPanel = memo(function ProjectPanel({
   // Folder currently glowing as a drag-drop target: `${section}:${folderName}`
   const [dragOverKey, setDragOverKey] = useState(null);
 
+  // Outside-click / Escape-to-close now lives in the shared <ContextMenu>
+  // shell (see components/ContextMenu.jsx) — it owns its own listeners and
+  // calls this back once its closing animation finishes.
   const closeCtxMenu = () => setCtxMenu(null);
-
-  useEffect(() => {
-    if (!ctxMenu) return;
-    const onDown = (e) => {
-      if (!e.target.closest || !e.target.closest('.project-context-menu')) closeCtxMenu();
-    };
-    const onKey = (e) => {
-      if (e.key === 'Escape') closeCtxMenu();
-    };
-    document.addEventListener('pointerdown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [ctxMenu]);
 
   // ── Selection helpers (Feature 1) ────────────────────────────────────────
   const clearSelection = () => setSelectedItems(new Set());
@@ -1549,7 +1537,7 @@ export default class NewScript extends CanvasComponent {
 
       {/* ── Right-click context menu ─────────────────────────────────────── */}
       {ctxMenu && (
-        <div className="project-context-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }} onContextMenu={(e) => e.preventDefault()}>
+        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onClose={closeCtxMenu} className="project-context-menu" minWidth={170}>
           {ctxMenu.target.kind === 'empty' && (
             <>
               {ctxMenu.target.section && ctxMenu.target.section !== 'shared' && (
@@ -1609,7 +1597,7 @@ export default class NewScript extends CanvasComponent {
               </button>
             </>
           )}
-        </div>
+        </ContextMenu>
       )}
 
       {/* ── Hover / click asset preview ───────────────────────────────────── */}
