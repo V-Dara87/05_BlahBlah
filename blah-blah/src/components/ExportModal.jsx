@@ -1,3 +1,4 @@
+ 
 import { useState, useRef, useEffect } from 'react';
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import {
@@ -84,6 +85,14 @@ export function ExportModal({
   totalDuration,
   resolution,
   exportRange,
+  // BUG FIX: needed to resolve 'entity'/'asset'-typed script props (e.g.
+  // a SubtitleTrack source slot on a canvas-kind script) during export —
+  // see the drawExportFrame call below and exportRunner.js's
+  // updateCanvasComponent call for the full explanation. Without this,
+  // any script reading a subtitle source (or other entity/asset-ref
+  // prop) rendered blank specifically during export, even though the
+  // live preview showed it correctly.
+  mediaAssets = [],
   // Real-import support: awaited once at export start so every script's
   // async bundle has landed before the (synchronous) frame loop reads the
   // compile cache — a script using `import` would otherwise render in its
@@ -414,6 +423,7 @@ export function ExportModal({
           fps: targetFps,
           canvasContainers,
           videoFrameProvider,
+          mediaAssets,
         });
  
         const frameTimestampUs = Math.round((i / targetFps) * 1_000_000);

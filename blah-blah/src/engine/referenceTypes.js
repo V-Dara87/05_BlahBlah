@@ -263,8 +263,14 @@ declare interface SubtitlePhrase {
  * active phrase (or lack thereof, during a gap between phrases).
  */
 declare interface SubtitlePhraseContext {
-  /** The active phrase's text, or '' during a gap. */
+  /** The effective text (in 'add' mode, this is all accumulated phrases up to now; in 'set' mode, active phrase text or ''). */
   readonly text: string;
+  /** Full concatenated text of all phrases up to the current time, separated by spaces. */
+  readonly accumulatedText: string;
+  /** Array of all phrases up to the current time. */
+  readonly accumulatedPhrases: SubtitlePhrase[];
+  /** SubtitleTrack displayMode ('set' or 'add'). */
+  readonly mode: 'set' | 'add';
   /** The active phrase's index, or null during a gap. */
   readonly index: number | null;
   /** The active phrase, or null during a gap between phrases. */

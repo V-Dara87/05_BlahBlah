@@ -50,6 +50,9 @@ export interface MotionScriptMountArgs extends ClipTimingArgs {
   canvasWidth?: number;
   /** Resolved effective canvas height — see resolveCanvasSize in canvasRunner.js. */
   canvasHeight?: number;
+  /** Stateless timeline helpers; supplied directly to Canvas lifecycle hooks. */
+  tween?: typeof Tween;
+  Tween?: typeof Tween;
 }
 
 export interface MotionScriptUpdateArgs extends ClipTimingArgs {
@@ -67,6 +70,9 @@ export interface MotionScriptUpdateArgs extends ClipTimingArgs {
   canvasWidth?: number;
   /** Resolved effective canvas height. */
   canvasHeight?: number;
+  /** Stateless timeline helpers; use `tween.between(...)` for deterministic values. */
+  tween?: typeof Tween;
+  Tween?: typeof Tween;
 }
 
 /**
@@ -82,6 +88,8 @@ export interface MotionScriptSeekArgs extends ClipTimingArgs {
   props?: Record<string, any>;
   canvasWidth?: number;
   canvasHeight?: number;
+  tween?: typeof Tween;
+  Tween?: typeof Tween;
 }
 
 export interface MotionScriptUnmountArgs {
@@ -108,12 +116,30 @@ export class MotionScript {
 }
 
 /**
- * Base for scripts that draw into a 2D <canvas>. Adds typed `canvas`/`ctx`
- * properties so `this.canvas` and `this.ctx` type-check automatically.
+ * Base for scripts that draw into a 2D <canvas>. Automatically creates and sizes
+ * `<canvas>` in `container`, handles resize in `onUpdate`, and removes on unmount.
  */
 export class CanvasComponent extends MotionScript {
+  container: HTMLElement | null;
   canvas: HTMLCanvasElement | null;
   ctx: CanvasRenderingContext2D | null;
+  canvasWidth: number;
+  canvasHeight: number;
+  aspect: number;
+}
+
+/**
+ * Base for Three.js visual scripts. Automatically handles DOM attachment,
+ * camera projection matrix and WebGLRenderer resize, and disposal.
+ */
+export class ThreeComponent extends MotionScript {
+  container: HTMLElement | null;
+  scene: any;
+  camera: any;
+  renderer: any;
+  canvasWidth: number;
+  canvasHeight: number;
+  aspect: number;
 }
 
 // ─── Transform Motion Scripts (ScriptComponent / onStart / onUpdate) ──────────
@@ -144,6 +170,7 @@ export interface TransformStartArgs {
   fps: number;
   duration: number;
   Math: typeof MathUtils;
+  Tween: typeof Tween;
 }
 
 export interface TransformUpdateArgs {
@@ -158,6 +185,8 @@ export interface TransformUpdateArgs {
   clamp: (val: number, min: number, max: number) => number;
   interpolate: typeof interpolate;
   spring: typeof spring;
+  tween: typeof Tween;
+  Tween: typeof Tween;
 }
 
 // ─── Easing ──────────────────────────────────────────────────────────────────
@@ -229,6 +258,26 @@ export const MathUtils: {
   vec2(x: number, y: number): Vector2;
   /** Creates a 3D vector object `{ x, y, z }`. */
   vec3(x: number, y: number, z?: number): Vector3;
+};
+
+export interface TweenWindowOptions {
+  at?: number;
+  duration?: number;
+  ease?: EasingFunction | EasingName;
+}
+
+/** Stateless, deterministic helpers shared by Canvas, React, and motion scripts. */
+export const Tween: {
+  clamp: typeof MathUtils.clamp;
+  clamp01: typeof MathUtils.clamp01;
+  lerp: typeof MathUtils.lerp;
+  remap: typeof MathUtils.remap;
+  ease(t: number, ease?: EasingFunction | EasingName): number;
+  progress(time: number, options?: TweenWindowOptions): number;
+  between(from: number, to: number, time: number, options?: TweenWindowOptions): number;
+  loop(time: number, duration?: number, mode?: 'restart' | 'yoyo' | 'pingpong'): number;
+  pingPong(time: number, duration?: number): number;
+  stagger(index: number, each?: number): number;
 };
 
 // ─── Interpolate & Spring ────────────────────────────────────────────────────
@@ -377,5 +426,153 @@ export interface AssetRef {
   readonly duration: number | null;
   /** Returns true when the asset exists in the current project. */
   exists(): boolean;
+}
+
+// ─── SubtitleTrack ────────────────────────────────────────────────────────────
+
+/** A single word with sub-phrase timing (from Whisper-style transcription). */
+export interface SubtitleWord {
+  word: string;
+  start: number;
+  end: number;
+}
+
+/**
+ * A single timed phrase in a SubtitleTrack component.
+ *
+ * Per-phrase `mode` controls whether this phrase starts a new sentence (`'set'`)
+ * or accumulates onto the previous phrase(s) (`'add'`).
+ *
+ * In `timingMode: 'duration'` the `duration` field is the source of truth and
+ * `startTime`/`endTime` are derived automatically by `recalculateSequentialPhrases`.
+ */
+export interface SubtitlePhrase {
+  /** Unique stable ID (crypto.randomUUID format). */
+  id: string;
+  /** Phrase start time in seconds, entity-local. */
+  startTime: number;
+  /** Phrase end time in seconds, entity-local. */
+  endTime: number;
+  /** The displayed text for this phrase. */
+  text: string;
+  /**
+   * Per-phrase display mode.
+   * - `'set'` (default): replace — this phrase begins a new sentence group.
+   * - `'add'`: accumulate — this phrase is appended to the previous sentence group.
+   */
+  mode: 'set' | 'add';
+  /**
+   * Duration in seconds. Present only when `timingMode === 'duration'`.
+   * `startTime`/`endTime` are derived from this by the engine.
+   */
+  duration?: number;
+  /** Word-level timing array. Only present when available (e.g. from Whisper). */
+  words?: SubtitleWord[];
+  /** Styling hint: indicates this phrase should be visually differentiated. */
+  emphasis?: boolean;
+  /** Reserved for future multi-language support. Not surfaced in UI yet. */
+  language?: string;
+}
+
+/**
+ * The SubtitleTrack component data object.
+ *
+ * `timingMode` controls how phrase timing is authored:
+ * - `'duration'` (default): each phrase has a `duration`; times are chained sequentially.
+ * - `'range'`: each phrase has explicit `startTime` / `endTime` (manual).
+ *
+ * `displayMode` is the **track-level** fallback default when individual phrases have no
+ * per-phrase `mode` override:
+ * - `'set'` (default): each phrase replaces the previous one.
+ * - `'add'`: all phrases accumulate into an ever-growing sentence.
+ *
+ * Per-phrase `mode` on each `SubtitlePhrase` takes precedence over `displayMode`.
+ */
+export interface SubtitleTrackComponent {
+  type: 'SubtitleTrack';
+  phrases: SubtitlePhrase[];
+  /**
+   * How phrase timing is authored in the Inspector.
+   * @default 'duration'
+   */
+  timingMode: 'duration' | 'range';
+  /**
+   * Track-level default display mode (fallback when phrase has no per-phrase override).
+   * @default 'set'
+   */
+  displayMode: 'set' | 'add';
+}
+
+/**
+ * Result of `getPhraseContextAt(component, t)` — the full display context at a given time.
+ *
+ * `text` is the "smart" display text and is what most scripts should render:
+ * - During an active phrase with `mode === 'set'`: only that phrase's text.
+ * - During an active phrase with `mode === 'add'`: accumulated sentence up to and including
+ *   that phrase (`sentenceText`).
+ * - In a gap after an `'add'` phrase: holds the last sentence text.
+ * - In all other gaps: empty string.
+ *
+ * The raw sentence / accumulated arrays are provided for advanced rendering
+ * (e.g. animating each word, highlighting the current phrase, karaoke-style display).
+ */
+export interface SubtitlePhraseContext {
+  /**
+   * The recommended display string. Use this for simple subtitle rendering.
+   * Respects per-phrase and track-level `mode` automatically.
+   */
+  text: string;
+  /**
+   * All phrases from the nearest `'set'` boundary up to the current phrase
+   * (the "current sentence group").
+   */
+  sentencePhrases: SubtitlePhrase[];
+  /**
+   * The concatenated text of `sentencePhrases` (joined with spaces, empty phrases filtered).
+   */
+  sentenceText: string;
+  /**
+   * All phrases from the beginning of the track up to and including the current phrase.
+   */
+  accumulatedPhrases: SubtitlePhrase[];
+  /**
+   * The concatenated text of all phrases seen so far (`accumulatedPhrases`).
+   */
+  accumulatedText: string;
+  /**
+   * Effective display mode of the active phrase.
+   * `'set'` means this phrase starts fresh; `'add'` means it accumulates.
+   */
+  mode: 'set' | 'add';
+  /** Zero-based index of the active phrase in the track's phrase array. Null during a gap. */
+  index: number | null;
+  /** The currently active phrase object. Null during a gap. */
+  phrase: SubtitlePhrase | null;
+  /** The phrase immediately before the active one (or before the gap). Null if none. */
+  prev: SubtitlePhrase | null;
+  /** The phrase immediately after the active one (or after the gap). Null if none. */
+  next: SubtitlePhrase | null;
+}
+
+/**
+ * Resolves subtitle display context for an entity's SubtitleTrack component at a given local time.
+ * Provided on `EntityRef` when the entity has a SubtitleTrack.
+ *
+ * @example
+ * ```js
+ * // In a canvas script:
+ * const sub = props.subtitleSource;   // EntityRef (entity prop)
+ * const ctx = sub.getPhraseAt(localTime);
+ * if (ctx) {
+ *   drawText(ctx.text);               // smart display text
+ * }
+ * ```
+ */
+export interface SubtitleEntityRef extends EntityRef {
+  /**
+   * Returns the subtitle context at the given entity-local time,
+   * or `null` if the entity has no SubtitleTrack or no phrases.
+   */
+  getPhraseAt(localTime: number): SubtitlePhraseContext | null;
 }
 

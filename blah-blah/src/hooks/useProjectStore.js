@@ -11,6 +11,7 @@ import {
   loadProjectFromDirectory,
   checkScriptsForChanges,
   writeScriptFile,
+  renameScriptFile,
   verifyPermission,
   watchScriptsDirectory,
 } from '../services/projectFileSystem';
@@ -427,12 +428,16 @@ export function useProjectStore({
     setScripts(prev => prev.filter(s => s.id !== scriptId));
   }, [setScripts]);
  
-  // Rename a script record (Project panel context menu). In-memory rename;
-  // the on-disk file is written with the new name on the next save pass
-  // through handleSaveScript.
-  const handleRenameScript = useCallback((scriptId, newName) => {
+  // Rename both the record and its scripts/ file. Do the disk operation first
+  // so a failed/colliding rename never makes the Project panel claim success.
+  const handleRenameScript = useCallback(async (scriptId, newName) => {
+    const script = scripts.find((s) => s.id === scriptId);
+    if (!script) return;
+    if (projectFolderHandle) {
+      await renameScriptFile(projectFolderHandle, script.name, newName, script.code);
+    }
     setScripts(prev => prev.map(s => s.id === scriptId ? { ...s, name: newName } : s));
-  }, [setScripts]);
+  }, [scripts, projectFolderHandle, setScripts]);
  
   // Add Prefab to Timeline. Handles BOTH prefab shapes:
   //  - Legacy flat prefabs (a `components` snapshot of one entity) — a

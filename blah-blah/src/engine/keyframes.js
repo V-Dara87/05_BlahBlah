@@ -169,22 +169,24 @@ export function resolveKeyframedComponents(entity, t) {
     const byField = entity.keyframes[trackKey];
     if (!byField) return comp;
  
-    const isTransform = comp.type === 'Transform';
+    const isScript = isScriptComponent(comp);
     const overrides = {};
     let propOverrides = null;
- 
+
     Object.keys(byField).forEach((fieldName) => {
       const val = evaluateField(entity, trackKey, fieldName, t);
       if (val === undefined) return;
-      if (isTransform) {
-        overrides[fieldName] = val;
-      } else {
+      if (isScript) {
         propOverrides = propOverrides || { ...(comp.props || {}) };
         propOverrides[fieldName] = val;
+      } else {
+        // Transform, TextRenderer, ShapeRenderer, … — values live on the
+        // component itself, not under `.props`.
+        overrides[fieldName] = val;
       }
     });
- 
-    if (isTransform && Object.keys(overrides).length > 0) {
+
+    if (Object.keys(overrides).length > 0) {
       return { ...comp, ...overrides };
     }
     if (propOverrides) {

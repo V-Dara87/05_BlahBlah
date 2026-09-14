@@ -14,8 +14,20 @@
  *     matter where the project lives on disk.
  *   - bare specifiers (`three`, `gsap@^3`, `animejs`)  -> packageResolver
  *     (esm.sh fetch once, IndexedDB cache forever; offline after first use)
- *   - relative specifiers (`./helpers.js`)             -> project scripts/
- *     folder via the File System Access API (never network-dependent)
+ *   - relative specifiers from the USER'S ENTRY SCRIPT (`./helpers.js`)
+ *     -> project scripts/ folder via the File System Access API (never
+ *     network-dependent)
+ *   - relative specifiers from INSIDE an esm.sh-served module (e.g.
+ *     FontLoader.js's own `../../../three.mjs`) -> resolved against that
+ *     module's own esm.sh URL and fetched/cached as an esm.sh chunk, NOT
+ *     treated as a local project file. This is the one case that isn't a
+ *     plain "path starts with '.'" check — a relative import only means
+ *     "look in scripts/" when the file doing the importing is the user's
+ *     own script or another local file; a relative import from a fetched
+ *     esm.sh module is that module's own internal dependency graph and
+ *     must resolve back to esm.sh instead. We track this via each loaded
+ *     module's own resolved path/namespace and resolve child imports
+ *     relative to it in onResolve using esbuild's `importer` argument.
  *   - esm.sh internal chunk paths (`/three@0.185.1/...`) -> fetched + cached
  *     recursively, so a package's own import graph is fully offline-reusable
  *   - `react` / `react-dom` / `react/jsx-runtime` (+ their esm.sh paths)
@@ -139,15 +151,59 @@ export function reactShimContents(kind) {
 }
 
 /**
+ * Resolve a relative specifier (e.g. '../../../three.mjs' or './chunk.mjs')
+ * against an esm.sh absolute base path (e.g.
+ * '/three@0.160.0/examples/jsm/loaders/FontLoader.js'), the same way a
+ * browser resolves a relative URL against a base URL — but working on
+ * plain path strings since esm.sh chunk paths are already absolute
+ * (leading '/'), not full https:// URLs.
+ *
+ * '/a/b/c.js' + '../d.js'    -> '/a/d.js'
+ * '/a/b/c.js' + './d.js'     -> '/a/b/d.js'
+ * '/a/b/c.js' + '../../d.js' -> '/d.js'
+ */
+export function resolveEsmShRelativePath(basePath, relativeSpec) {
+  const baseDir = basePath.slice(0, basePath.lastIndexOf('/'));
+  const baseParts = baseDir.split('/').filter(Boolean);
+  const relParts = relativeSpec.split('/');
+
+  for (const part of relParts) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') {
+      baseParts.pop();
+    } else {
+      baseParts.push(part);
+    }
+  }
+
+  return `/${baseParts.join('/')}`;
+}
+
+/**
  * esbuild plugin implementing the resolution rules in the header comment.
  * `dirHandle` must be the project's `scripts/` folder (see bundleScript).
+ *
+ * Tracks which esm.sh absolute path each `blahblah-esmsh`/`blahblah-pkg`
+ * module was loaded from (keyed by the synthetic path esbuild uses to
+ * identify that module — see the `path` returned from each onResolve
+ * branch below), so a RELATIVE import found inside one of those modules
+ * (e.g. FontLoader.js's own `../../../three.mjs`) can be resolved against
+ * that module's own esm.sh location instead of being treated as a request
+ * to look inside the user's local scripts/ folder. A relative import is
+ * only ever a "look in scripts/" request when it comes from the user's
+ * own entry script or another local file — never when it comes from a
+ * package fetched off esm.sh.
  */
 export function createImportPlugin(dirHandle) {
+  // path (as esbuild sees it, i.e. the `path` we returned from onResolve
+  // for that module) -> the esm.sh absolute chunk path it was loaded from.
+  const esmShOrigins = new Map();
+
   return {
     name: 'blahblah-imports',
     setup(build) {
-      build.onResolve({ filter: /.*/ }, (args) => {
-        const { path } = args;
+      build.onResolve({ filter: /.*/ }, async (args) => {
+        const { path, importer } = args;
 
         if (isBlahblahSdkSpecifier(path)) {
           return { path, namespace: 'blahblah-sdk' };
@@ -166,9 +222,21 @@ export function createImportPlugin(dirHandle) {
         }
         if (path.startsWith('/')) {
           // esm.sh internal chunk path (e.g. /three@0.185.1/es2022/three.mjs)
+          esmShOrigins.set(path, path);
           return { path, namespace: 'blahblah-esmsh' };
         }
         if (path.startsWith('.')) {
+          // A relative import — but WHO is importing it decides what it
+          // means. If the importer is itself a module we loaded from
+          // esm.sh (tracked in esmShOrigins), this relative path is that
+          // package's own internal dependency graph and must resolve back
+          // to esm.sh, not to the user's local scripts/ folder.
+          const importerOrigin = esmShOrigins.get(importer);
+          if (importerOrigin) {
+            const resolvedPath = resolveEsmShRelativePath(importerOrigin, path);
+            esmShOrigins.set(resolvedPath, resolvedPath);
+            return { path: resolvedPath, namespace: 'blahblah-esmsh' };
+          }
           return { path, namespace: 'blahblah-file' };
         }
         if (isBareSpecifier(path)) {
@@ -215,6 +283,13 @@ export function createImportPlugin(dirHandle) {
 
       build.onLoad({ filter: /.*/, namespace: 'blahblah-pkg' }, async (args) => {
         const resolved = await resolvePackageImport(args.path);
+        // Record where this package's own top-level module physically
+        // lives on esm.sh (its cache key doubles as its resolvable path,
+        // e.g. 'three@0.160.0/examples/jsm/loaders/FontLoader.js'), so
+        // any relative import INSIDE this module's source (caught by the
+        // onResolve branch above) can be resolved against it instead of
+        // the user's local scripts/ folder.
+        esmShOrigins.set(args.path, `/${resolved.key}`);
         return { loader: 'js', contents: resolved.sourceText };
       });
     },

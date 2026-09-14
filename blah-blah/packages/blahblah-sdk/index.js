@@ -19,10 +19,111 @@ export class MotionScript {
 }
 
 export class CanvasComponent extends MotionScript {
+  /** @type {HTMLElement | null} */
+  container = null;
   /** @type {HTMLCanvasElement | null} */
   canvas = null;
   /** @type {CanvasRenderingContext2D | null} */
   ctx = null;
+  /** @type {number} */
+  canvasWidth = 0;
+  /** @type {number} */
+  canvasHeight = 0;
+  /** @type {number} */
+  aspect = 1;
+
+  onMount(args) {
+    this.container = args.container;
+    this.canvasWidth = args.canvasWidth || 0;
+    this.canvasHeight = args.canvasHeight || 0;
+    this.aspect = args.aspect || (this.canvasHeight > 0 ? this.canvasWidth / this.canvasHeight : 1);
+
+    if (this.container && !this.canvas) {
+      this.canvas = document.createElement('canvas');
+      this.canvas.width = this.canvasWidth;
+      this.canvas.height = this.canvasHeight;
+      this.ctx = this.canvas.getContext('2d');
+      this.container.appendChild(this.canvas);
+    }
+  }
+
+  onUpdate(args) {
+    this.canvasWidth = args.canvasWidth || this.canvasWidth;
+    this.canvasHeight = args.canvasHeight || this.canvasHeight;
+    this.aspect = args.aspect || (this.canvasHeight > 0 ? this.canvasWidth / this.canvasHeight : 1);
+
+    if (this.canvas && (this.canvas.width !== this.canvasWidth || this.canvas.height !== this.canvasHeight)) {
+      this.canvas.width = this.canvasWidth;
+      this.canvas.height = this.canvasHeight;
+    }
+  }
+
+  onUnmount() {
+    if (this.canvas && this.canvas.parentNode) {
+      this.canvas.parentNode.removeChild(this.canvas);
+    }
+    this.canvas = null;
+    this.ctx = null;
+    this.container = null;
+  }
+}
+
+export class ThreeComponent extends MotionScript {
+  /** @type {HTMLElement | null} */
+  container = null;
+  /** @type {any} THREE.Scene */
+  scene = null;
+  /** @type {any} THREE.Camera */
+  camera = null;
+  /** @type {any} THREE.WebGLRenderer */
+  renderer = null;
+  /** @type {number} */
+  canvasWidth = 0;
+  /** @type {number} */
+  canvasHeight = 0;
+  /** @type {number} */
+  aspect = 1;
+
+  onMount(args) {
+    this.container = args.container;
+    this.canvasWidth = args.canvasWidth || 0;
+    this.canvasHeight = args.canvasHeight || 0;
+    this.aspect = args.aspect || (this.canvasHeight > 0 ? this.canvasWidth / this.canvasHeight : 1);
+
+    // If subclass created this.renderer during or before onMount, attach its DOM
+    if (this.renderer && this.renderer.domElement && this.container) {
+      if (this.renderer.domElement.parentNode !== this.container) {
+        this.container.appendChild(this.renderer.domElement);
+      }
+    }
+  }
+
+  onUpdate(args) {
+    this.canvasWidth = args.canvasWidth || this.canvasWidth;
+    this.canvasHeight = args.canvasHeight || this.canvasHeight;
+    this.aspect = args.aspect || (this.canvasHeight > 0 ? this.canvasWidth / this.canvasHeight : 1);
+
+    // Automatic camera & renderer resize
+    if (this.renderer && typeof this.renderer.setSize === 'function') {
+      const dom = this.renderer.domElement;
+      if (dom && (dom.width !== this.canvasWidth || dom.height !== this.canvasHeight)) {
+        this.renderer.setSize(this.canvasWidth, this.canvasHeight, false);
+        if (this.camera && this.camera.isPerspectiveCamera) {
+          this.camera.aspect = this.canvasWidth / this.canvasHeight;
+          this.camera.updateProjectionMatrix();
+        }
+      }
+    }
+  }
+
+  onUnmount() {
+    this.renderer?.dispose?.();
+    this.renderer?.domElement?.remove?.();
+    this.renderer = null;
+    this.camera = null;
+    this.scene = null;
+    this.container = null;
+  }
 }
 
 // ─── Easing & Interpolation helpers ──────────────────────────────────────────
@@ -112,6 +213,42 @@ export const MathUtils = {
   vec2: (x, y) => ({ x, y }),
   vec3: (x, y, z = 0) => ({ x, y, z }),
 };
+
+// Stateless timeline helpers. These intentionally never retain state or mutate
+// a target, so Canvas/React/Motion scripts remain seek- and export-safe.
+function resolveEase(ease) {
+  if (typeof ease === 'function') return ease;
+  return Easing[ease] || Ease[ease] || Easing.linear;
+}
+
+export const Tween = Object.freeze({
+  clamp: MathUtils.clamp,
+  clamp01: MathUtils.clamp01,
+  lerp: MathUtils.lerp,
+  remap: MathUtils.remap,
+  ease(t, ease = 'linear') {
+    return resolveEase(ease)(MathUtils.clamp01(t));
+  },
+  progress(time, { at = 0, duration = 1, ease = 'linear' } = {}) {
+    const normalized = duration <= 0 ? (time >= at ? 1 : 0) : (time - at) / duration;
+    return resolveEase(ease)(MathUtils.clamp01(normalized));
+  },
+  between(from, to, time, options = {}) {
+    return MathUtils.lerp(from, to, Tween.progress(time, options));
+  },
+  loop(time, duration = 1, mode = 'restart') {
+    if (duration <= 0) return 0;
+    const cycles = Math.floor(time / duration);
+    const value = ((time % duration) + duration) % duration / duration;
+    return (mode === 'yoyo' || mode === 'pingpong') && Math.abs(cycles) % 2 === 1 ? 1 - value : value;
+  },
+  pingPong(time, duration = 1) {
+    return Tween.loop(time, duration, 'pingpong');
+  },
+  stagger(index, each = 0.1) {
+    return Math.max(0, index) * each;
+  },
+});
 
 // ─── interpolate & spring ────────────────────────────────────────────────────
 
@@ -418,6 +555,7 @@ export default {
   Ease,
   LoopType,
   MathUtils,
+  Tween,
   interpolate,
   spring,
   MotionTweenContext,

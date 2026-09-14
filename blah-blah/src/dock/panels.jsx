@@ -101,6 +101,7 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
     handleAttachScriptToEntity,
     autoKeyEnabled, setAutoKeyEnabled,
     mediaAssets,
+    resolution,
   } = useEditorContext();
  
   const [isLocked, setIsLocked] = useState(false);
@@ -144,6 +145,7 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
         autoKeyEnabled={autoKeyEnabled}
         setAutoKeyEnabled={setAutoKeyEnabled}
         mediaAssets={mediaAssets}
+        resolution={resolution}
         isLocked={isLocked}
         onToggleLock={handleToggleLock}
       />

@@ -148,6 +148,27 @@ export const ProjectPanel = memo(function ProjectPanel({
   const [prefabExtraFolders, setPrefabExtraFolders] = useState([]);
   const [scriptExtraFolders, setScriptExtraFolders] = useState([]);
 
+  // Empty folders have no asset metadata from which to reconstruct their
+  // tree row. Read their real on-disk entries whenever a project is attached.
+  useEffect(() => {
+    if (!projectFolderHandle) return;
+    let cancelled = false;
+    const scan = async (section, dirName, setter) => {
+      try {
+        const root = await projectFolderHandle.getDirectoryHandle(dirName, { create: false });
+        const names = [];
+        for await (const entry of root.values()) {
+          if (entry.kind === 'directory' && !entry.name.startsWith('.')) names.push(entry.name);
+        }
+        if (!cancelled) setter((previous) => Array.from(new Set([...previous, ...names])));
+      } catch { /* folder may not exist in an older project */ }
+    };
+    scan('media', 'media', setExtraFolders);
+    scan('prefabs', 'prefabs', setPrefabExtraFolders);
+    scan('scripts', 'scripts', setScriptExtraFolders);
+    return () => { cancelled = true; };
+  }, [projectFolderHandle]);
+
   // ── Multi-select (Feature 1) ─────────────────────────────────────────────
   // Set of composite keys `${kind}:${id}`. Can span kinds via Ctrl+click,
   // but shift-range is confined to one section (see sectionOrder below).
@@ -343,11 +364,20 @@ export const ProjectPanel = memo(function ProjectPanel({
     setReplaceTarget(null);
   };
 
-  const handleCreateNewScript = () => {
+  const handleCreateNewScript = async () => {
     setScriptsMenuOpen(false);
+    // Creating "New Script" repeatedly used to overwrite NewScript.jsx on
+    // disk. Pick an unused display/file name before the store writes it.
+    const usedNames = new Set(scripts.map((script) => script.name.toLowerCase()));
+    let number = 1;
+    let name = 'NewScript.jsx';
+    while (usedNames.has(name.toLowerCase())) {
+      number += 1;
+      name = `NewScript ${number}.jsx`;
+    }
     const newScript = {
-      id: `script-${Date.now()}`,
-      name: 'NewScript.jsx',
+      id: `script-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name,
       description: 'Blank JavaScript Motion script',
       code: `import { CanvasComponent } from '@blahblah/sdk';
 
@@ -391,7 +421,12 @@ export default class NewScript extends CanvasComponent {
   }
 }`
     };
-    onCreateScript(newScript);
+    try {
+      await onCreateScript?.(newScript);
+    } catch (err) {
+      console.error('Could not create script file:', err);
+      return;
+    }
     onOpenScriptEditor(newScript);
   };
 
@@ -526,7 +561,7 @@ export default class NewScript extends CanvasComponent {
     );
   };
 
-  const commitRename = () => {
+  const commitRename = async () => {
     if (!renaming) return;
     const name = (renaming.name || '').trim();
     if (name) {
@@ -534,7 +569,14 @@ export default class NewScript extends CanvasComponent {
         commitFolderRename(renaming.section, renaming.id, name);
       } else if (renaming.kind === 'media' && onRenameMediaAsset) onRenameMediaAsset(renaming.id, name);
       else if (renaming.kind === 'prefab' && onRenamePrefab) onRenamePrefab(renaming.id, name);
-      else if (renaming.kind === 'script' && onRenameScript) onRenameScript(renaming.id, name);
+      else if (renaming.kind === 'script' && onRenameScript) {
+        try {
+          await onRenameScript(renaming.id, name);
+        } catch (err) {
+          console.error('Could not rename script:', err);
+          return;
+        }
+      }
     }
     setRenaming(null);
   };
@@ -645,10 +687,23 @@ export default class NewScript extends CanvasComponent {
     }
   };
 
-  const commitNewFolder = () => {
+  const commitNewFolder = async () => {
     const section = creatingFolder || 'media';
     const name = (newFolderName || '').trim();
-    if (name) {
+    // One level only: the Project tab's tree and persistence model use a
+    // single `folder` name, so accepting a path here would create a folder
+    // users could not address or rename safely.
+    if (name && !/[\\/:*?"<>|]/.test(name) && name !== '.' && name !== '..') {
+      const rootName = section === 'prefabs' ? 'prefabs' : section;
+      try {
+        if (projectFolderHandle) {
+          const root = await projectFolderHandle.getDirectoryHandle(rootName, { create: true });
+          await root.getDirectoryHandle(name, { create: true });
+        }
+      } catch (err) {
+        console.error('Could not create project folder:', err);
+        return;
+      }
       setExtraFoldersFor(section, (prev) => (prev.includes(name) ? prev : [...prev, name]));
       setOpenFolders((prev) => ({ ...prev, [section]: true }));
       setOpenSubfoldersFor(section, (prev) => ({ ...prev, [name]: true }));

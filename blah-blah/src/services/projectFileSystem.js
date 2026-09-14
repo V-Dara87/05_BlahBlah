@@ -673,6 +673,43 @@ export async function writeScriptFile(dirHandle, scriptName, scriptCode) {
   await writable.write(scriptCode);
   await writable.close();
 }
+
+/**
+ * Rename a script on disk without leaving its previous filename behind.
+ * The File System Access API has no portable rename primitive, so this is a
+ * safe write-new-then-remove-old operation. Existing destination files are
+ * rejected rather than silently overwritten.
+ */
+export async function renameScriptFile(dirHandle, oldName, newName, scriptCode) {
+  if (!dirHandle) return;
+  await verifyPermission(dirHandle, true);
+  const scriptsDirHandle = await dirHandle.getDirectoryHandle('scripts', { create: true });
+  const oldFileName = toScriptFileName(oldName);
+  const newFileName = toScriptFileName(newName);
+  if (oldFileName === newFileName) return;
+
+  try {
+    await scriptsDirHandle.getFileHandle(newFileName, { create: false });
+    throw new Error(`A script named "${newFileName}" already exists.`);
+  } catch (err) {
+    if (err?.message?.includes('already exists')) throw err;
+    // NotFoundError is expected: the destination is available.
+  }
+
+  const nextHandle = await scriptsDirHandle.getFileHandle(newFileName, { create: true });
+  const writable = await nextHandle.createWritable();
+  await writable.write(scriptCode || '');
+  await writable.close();
+
+  try {
+    await scriptsDirHandle.removeEntry(oldFileName);
+  } catch (err) {
+    // Do not report a false success: both files would otherwise appear after
+    // reload and users could unknowingly edit the stale one.
+    try { await scriptsDirHandle.removeEntry(newFileName); } catch { /* best effort rollback */ }
+    throw new Error(`Renamed file was created, but the old file could not be removed: ${err?.message || err}`);
+  }
+}
  
 /**
  * Save an uploaded media file directly into the media/ folder.

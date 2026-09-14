@@ -26,15 +26,18 @@ import {
 } from 'lucide-react';
 import { extractScriptProps, getScriptError, detectScriptKind, isScriptBundlePending } from '../engine/scriptRunner';
 import { DragNumber } from './DragNumber';
-import { InspectorFieldList, TRANSFORM_FIELD_GROUPS } from './inspector/InspectorField';
+import { InspectorFieldList, TRANSFORM_FIELD_GROUPS, TEXT_RENDERER_FIELDS } from './inspector/InspectorField';
+import { FontFamilyPicker } from './inspector/FontFamilyPicker';
+import { EntityRefSlot } from './inspector/RefSlot';
 import { getFieldKeyframes, setKeyframe, evaluateField } from '../engine/keyframes';
 import { isScriptComponent, createTransitionComponent } from '../engine/ecs';
 import { readDragPayload, dragHasItemKind, ITEM_KIND_SCRIPT } from '../utils/dragData';
 import { TransitionInspector } from './inspector/TransitionInspector';
 import { TransitionPickerModal } from './TransitionPickerModal';
-import { createSubtitleTrackComponent, createPhrase, addPhrase, updatePhrase, removePhrase } from '../engine/subtitleTrack';
-import { parseSrt, toSrt } from '../engine/srt';
-import { Captions, Upload, Download } from 'lucide-react';
+import { SubtitleTrackInspector } from './inspector/SubtitleTrackInspector';
+import { createSubtitleTrackComponent } from '../engine/subtitleTrack';
+import { isTextDrivenBySubtitle } from '../engine/textRenderer';
+import { Captions } from 'lucide-react';
  
 // Per-kind display metadata for script cards (icon + color + label). The
 // kind comes from detectScriptKind at runtime — there is ONE component type
@@ -410,7 +413,7 @@ export const UnityInspector = memo(function UnityInspector({
     let newComp;
  
     if (type === 'TextRenderer') {
-      newComp = { type: 'TextRenderer', text: 'New Text', fontSize: 36, fontColor: '#ffffff', fontFamily: 'Inter' };
+      newComp = { type: 'TextRenderer', text: 'New Text', fontSize: 36, fontColor: '#ffffff', fontFamily: 'Inter', subtitleSourceId: null };
     } else if (type === 'ShapeRenderer') {
       newComp = { type: 'ShapeRenderer', shapeType: 'rect', width: 140, height: 140, color: '#ffffff', strokeColor: '#38bdf8', strokeWidth: 0, borderRadius: 0 };
     } else if (type === 'VideoRenderer') {
@@ -646,37 +649,64 @@ export const UnityInspector = memo(function UnityInspector({
               }
             />
  
-            {openFoldouts.Text && (
+            {openFoldouts.Text && (() => {
+              const resolvedText = resolveComponentValues('TextRenderer', textComp);
+              const subtitleEntities = entities.filter((e) =>
+                e.components?.some((c) => c.type === 'SubtitleTrack')
+              );
+              const drivenBySubtitle = isTextDrivenBySubtitle(textComp, selectedEntity);
+              const updateTextField = (name, v) => {
+                const newKfs = tryWriteKeyframe(selectedEntity, 'TextRenderer', name, v);
+                if (newKfs) {
+                  onUpdateEntity(selectedEntity.id, { keyframes: newKfs });
+                } else {
+                  updateComponent('TextRenderer', { [name]: v });
+                }
+              };
+              return (
               <div className="inspector-card-body">
                 <textarea
                   className="inspector-textarea"
                   rows={2}
-                  value={textComp.text || ''}
+                  value={drivenBySubtitle ? '' : (textComp.text || '')}
+                  placeholder={drivenBySubtitle ? 'Text comes from Subtitle Track' : ''}
+                  disabled={drivenBySubtitle}
                   onChange={(e) => updateComponent('TextRenderer', { text: e.target.value })}
                 />
- 
+
                 <div className="inspector-row">
-                  <span className="row-label">Font Size</span>
-                  <DragNumber
-                    label="px"
-                    value={textComp.fontSize ?? 32}
-                    step={1}
-                    min={4}
-                    onChange={(v) => updateComponent('TextRenderer', { fontSize: Math.round(v) })}
+                  <span className="row-label">Subtitle Source</span>
+                  <EntityRefSlot
+                    value={textComp.subtitleSourceId || null}
+                    onChange={(id) => updateComponent('TextRenderer', { subtitleSourceId: id || null })}
+                    entities={subtitleEntities}
+                    emptyLabel="None"
                   />
                 </div>
- 
+                {subtitleComp && !textComp.subtitleSourceId && (
+                  <p className="hint-text-sm">Using this clip&apos;s Subtitle Track.</p>
+                )}
+
+                <InspectorFieldList
+                  fields={TEXT_RENDERER_FIELDS}
+                  values={resolvedText}
+                  onFieldChange={updateTextField}
+                  trackKey="TextRenderer"
+                  selectedEntity={selectedEntity}
+                  currentTime={currentTime}
+                  onUpdateEntity={onUpdateEntity}
+                />
+
                 <div className="inspector-row">
-                  <span className="row-label">Color</span>
-                  <input
-                    type="color"
-                    className="inspector-color-input"
-                    value={textComp.fontColor || '#ffffff'}
-                    onChange={(e) => updateComponent('TextRenderer', { fontColor: e.target.value })}
+                  <span className="row-label">Font</span>
+                  <FontFamilyPicker
+                    value={textComp.fontFamily || 'Inter'}
+                    onChange={(family) => updateComponent('TextRenderer', { fontFamily: family })}
                   />
                 </div>
               </div>
-            )}
+              );
+            })()}
           </div>
         )}
  
@@ -917,130 +947,12 @@ export const UnityInspector = memo(function UnityInspector({
             />
             {openFoldouts.SubtitleTrack !== false && (
               <div className="inspector-card-body">
-                <div className="inspector-row">
-                  <label className="unity-btn unity-btn-secondary btn-xs" style={{ cursor: 'pointer' }}>
-                    <Upload size={11} />
-                    <span>Import SRT</span>
-                    <input
-                      type="file"
-                      accept=".srt"
-                      style={{ display: 'none' }}
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        e.target.value = '';
-                        if (!file) return;
-                        const reader = new FileReader();
-                        reader.onload = () => {
-                          const imported = parseSrt(String(reader.result || ''));
-                          if (imported.length === 0) return;
-                          const merged = imported.reduce(
-                            (comp, phrase) => addPhrase(comp, phrase),
-                            { ...subtitleComp, phrases: [] }
-                          );
-                          onUpdateEntity(selectedEntity.id, {
-                            components: selectedEntity.components.map((c) =>
-                              c.type === 'SubtitleTrack' ? merged : c
-                            ),
-                          });
-                        };
-                        reader.readAsText(file);
-                      }}
-                    />
-                  </label>
-                  <button
-                    className="unity-btn unity-btn-secondary btn-xs"
-                    disabled={(subtitleComp.phrases || []).length === 0}
-                    onClick={() => {
-                      const srtText = toSrt(subtitleComp.phrases || []);
-                      const blob = new Blob([srtText], { type: 'text/plain' });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement('a');
-                      a.href = url;
-                      a.download = `${selectedEntity.name || 'subtitles'}.srt`;
-                      a.click();
-                      URL.revokeObjectURL(url);
-                    }}
-                  >
-                    <Download size={11} />
-                    <span>Export SRT</span>
-                  </button>
-                </div>
- 
-                {(subtitleComp.phrases || []).length === 0 && (
-                  <p className="hint-text-sm">
-                    No phrases yet. Import an SRT file, or add one below and adjust its timing by hand.
-                  </p>
-                )}
- 
-                {(subtitleComp.phrases || []).map((phrase) => (
-                  <div key={phrase.id} className="inspector-row subtitle-phrase-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                      <DragNumber
-                        label="in"
-                        value={parseFloat(phrase.startTime.toFixed(2))}
-                        step={0.05}
-                        min={0}
-                        onChange={(v) => {
-                          const updated = updatePhrase(subtitleComp, phrase.id, { startTime: v });
-                          onUpdateEntity(selectedEntity.id, {
-                            components: selectedEntity.components.map((c) => (c.type === 'SubtitleTrack' ? updated : c)),
-                          });
-                        }}
-                      />
-                      <DragNumber
-                        label="out"
-                        value={parseFloat(phrase.endTime.toFixed(2))}
-                        step={0.05}
-                        min={0}
-                        onChange={(v) => {
-                          const updated = updatePhrase(subtitleComp, phrase.id, { endTime: v });
-                          onUpdateEntity(selectedEntity.id, {
-                            components: selectedEntity.components.map((c) => (c.type === 'SubtitleTrack' ? updated : c)),
-                          });
-                        }}
-                      />
-                      <button
-                        className="del-btn-sm"
-                        title="Remove phrase"
-                        onClick={() => {
-                          const updated = removePhrase(subtitleComp, phrase.id);
-                          onUpdateEntity(selectedEntity.id, {
-                            components: selectedEntity.components.map((c) => (c.type === 'SubtitleTrack' ? updated : c)),
-                          });
-                        }}
-                      >
-                        <Trash2 size={11} />
-                      </button>
-                    </div>
-                    <textarea
-                      className="inspector-textarea"
-                      rows={1}
-                      value={phrase.text}
-                      placeholder="Phrase text"
-                      onChange={(e) => {
-                        const updated = updatePhrase(subtitleComp, phrase.id, { text: e.target.value });
-                        onUpdateEntity(selectedEntity.id, {
-                          components: selectedEntity.components.map((c) => (c.type === 'SubtitleTrack' ? updated : c)),
-                        });
-                      }}
-                    />
-                  </div>
-                ))}
- 
-                <button
-                  className="unity-btn unity-btn-secondary full-width btn-xs"
-                  onClick={() => {
-                    const phrases = subtitleComp.phrases || [];
-                    const lastEnd = phrases.length > 0 ? phrases[phrases.length - 1].endTime : Math.max(0, currentTime - selectedEntity.startTime);
-                    const updated = addPhrase(subtitleComp, createPhrase({ startTime: lastEnd, endTime: lastEnd + 2, text: '' }));
-                    onUpdateEntity(selectedEntity.id, {
-                      components: selectedEntity.components.map((c) => (c.type === 'SubtitleTrack' ? updated : c)),
-                    });
-                  }}
-                >
-                  <Plus size={11} />
-                  <span>Add Phrase</span>
-                </button>
+                <SubtitleTrackInspector
+                  component={subtitleComp}
+                  onUpdateEntity={onUpdateEntity}
+                  selectedEntity={selectedEntity}
+                  currentTime={currentTime}
+                />
               </div>
             )}
           </div>

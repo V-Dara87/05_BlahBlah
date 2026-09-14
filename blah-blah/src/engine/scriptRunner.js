@@ -1,3 +1,4 @@
+ 
 import React from 'react';
 import ReactDOM from 'react-dom';
 import ReactDOMClient from 'react-dom/client';
@@ -10,7 +11,8 @@ import {
   LoopType, 
   MathUtils, 
   interpolate, 
-  spring 
+  spring,
+  Tween,
 } from './motionTween.js';
 import { resolveScriptProps } from './referenceTypes.js';
  
@@ -21,7 +23,7 @@ const compiledModuleCache = new Map();
 const propsSchemaCache = new Map();
 const lastErrorCache = new Map();
 const scriptKindCache = new Map();
-
+ 
 /**
  * Scripts whose code contains real ESM `import` statements and which have
  * NOT finished their one-time async bundle yet. These are distinct from
@@ -119,7 +121,7 @@ const esbuildInitPromise = (async () => {
     console.warn('esbuild-wasm init failed, staying on regex transpiler:', err);
   }
 })();
-
+ 
 // ─── real `import` support (the async/sync split) ────────────────────────
 //
 // compileScriptModule is called synchronously from React's useMemo and the
@@ -133,7 +135,7 @@ const esbuildInitPromise = (async () => {
 // regex transpiler (which would silently delete the import and leave the
 // script referencing undefined names). Scripts with NO imports never touch
 // any of this — they compile through the regex path exactly as before.
-
+ 
 /**
  * All external specifiers this script statically imports, as strings
  * ('three', './helpers.js', ...). Used both to decide whether the sync
@@ -154,21 +156,21 @@ export function extractImportSpecifiers(code) {
   if (!code) return [];
   const specs = [];
   const n = code.length;
-
+ 
   let i = 0;
   let quote = null; // ' " or ` when inside a string literal
   let lineComment = false;
   let blockComment = false;
   let sawImportKeyword = false; // last keyword was `import` (or `export`)
   let expectingFrom = false; // `from` seen after import/export — next quote is the specifier
-
+ 
   const isWordChar = (ch) => /[A-Za-z0-9_$]/.test(ch);
   const isIdentStart = (ch) => /[A-Za-z_$]/.test(ch);
-
+ 
   while (i < n) {
     const ch = code[i];
     const next = code[i + 1];
-
+ 
     if (lineComment) {
       if (ch === '\n' || ch === '\r') lineComment = false;
       i++;
@@ -198,7 +200,7 @@ export function extractImportSpecifiers(code) {
       i += 2;
       continue;
     }
-
+ 
     // The specifier quote: either right after `from` or immediately after
     // `import` (side-effect import: `import 'x'`). MUST run before the
     // generic string-start check below, or the opening quote gets consumed
@@ -214,13 +216,13 @@ export function extractImportSpecifiers(code) {
       i = j + 1;
       continue;
     }
-
+ 
     if (ch === '"' || ch === "'" || ch === '`') {
       quote = ch;
       i++;
       continue;
     }
-
+ 
     if (isIdentStart(ch)) {
       let j = i;
       while (j < n && isWordChar(code[j])) j++;
@@ -238,27 +240,27 @@ export function extractImportSpecifiers(code) {
       i = j;
       continue;
     }
-
+ 
     if (ch === ';' || ch === '\n') {
       sawImportKeyword = false;
       expectingFrom = false;
     }
     i++;
   }
-
+ 
   return specs;
 }
-
+ 
 /** True if the script contains any static import statement. */
 export function hasImportStatements(code) {
   return extractImportSpecifiers(code).length > 0;
 }
-
+ 
 /** Tells the Inspector whether a script is waiting on its first bundle. */
 export function isScriptBundlePending(scriptCode) {
   return !!scriptCode && pendingBundleCache.has(scriptCode);
 }
-
+ 
 function formatBundleError(err) {
   const esbuildError = err?.errors?.[0];
   if (esbuildError?.text) {
@@ -269,14 +271,14 @@ function formatBundleError(err) {
   }
   return err?.message || String(err);
 }
-
+ 
 /** Broadcast that some script finished bundling, so React re-renders. */
 function notifyScriptsRecompiled() {
   if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
     window.dispatchEvent(new CustomEvent('blahblah:scripts-recompiled'));
   }
 }
-
+ 
 /**
  * Async, esbuild-bundled compile path for scripts that contain real
  * `import` statements. Resolves the full module graph (npm packages via
@@ -297,10 +299,10 @@ function notifyScriptsRecompiled() {
 export async function precompileWithBundler(scriptCode, projectDirHandle) {
   if (!scriptCode) return;
   if (!hasImportStatements(scriptCode)) return; // regex path handles these
-
+ 
   await esbuildInitPromise;
   if (!esbuildReady) return;
-
+ 
   try {
     const bundled = await bundleScript(scriptCode, projectDirHandle);
     const exportedResult = runCompiledModule(toCommonJsExports(bundled));
@@ -314,17 +316,37 @@ export async function precompileWithBundler(scriptCode, projectDirHandle) {
     lastErrorCache.set(scriptCode, formatBundleError(err));
   }
 }
-
+ 
 /**
  * Kick off background bundling for every script that needs it (project
  * load, hot-reload poll, before export). Skips import-free scripts in
  * O(1); never rejects.
+ *
+ * BUG FIX: hot-reload's poll calls this with a freshly-rebuilt scripts
+ * array on every tick that finds ANY file changed under scripts/ — that
+ * array previously included every script, not just the one(s) actually
+ * edited (see checkScriptsForChanges in projectFileSystem.js). Since
+ * compiledModuleCache/pendingBundleCache are keyed by the exact source
+ * STRING, an unchanged script's own re-bundle here was a no-op for the
+ * cache, but it still awaited a real bundleScript() pass and, on success,
+ * called notifyScriptsRecompiled() again — bumping EntityRenderer's
+ * scriptsRecompiledTick and forcing every canvas-kind script's
+ * useLayoutEffect to re-run, which re-read `compiled` via
+ * compileScriptModule and could observe a brief `null` (cache miss window
+ * during the redundant re-bundle) before the identical result landed
+ * again, tearing the canvas component down and remounting it — restarting
+ * any in-flight async work in a script's onMount (e.g. a font fetch) even
+ * though ITS code never changed. Skip scripts already sitting in the
+ * cache under this exact code string; only genuinely new/changed code
+ * (a cache miss) needs a bundle pass.
  */
 export async function precompileAllProjectScripts(scripts, projectDirHandle) {
   if (!scripts || scripts.length === 0) return;
-  await Promise.allSettled(
-    scripts.map((s) => (s?.code ? precompileWithBundler(s.code, projectDirHandle) : Promise.resolve()))
-  );
+  const needsBundle = (s) =>
+    !!s?.code && hasImportStatements(s.code) && !compiledModuleCache.has(s.code) && !pendingBundleCache.has(s.code);
+  const toBundle = scripts.filter(needsBundle);
+  if (toBundle.length === 0) return;
+  await Promise.allSettled(toBundle.map((s) => precompileWithBundler(s.code, projectDirHandle)));
 }
  
 /**
@@ -656,6 +678,10 @@ export function detectScriptKind(code) {
   const hasOnMount = /\bonMount\s*\(/.test(code);
   const hasOnUnmount = /\bonUnmount\s*\(/.test(code);
   const hasContainerArg = /\{\s*[^}]*\bcontainer\b[^}]*\}\s*\)\s*\{/.test(code);
+
+  // Scripts that extend CanvasComponent or ThreeComponent are always canvas-kind,
+  // even if they don't declare their own onMount (they inherit it from the base class).
+  const extendsCanvasClass = /\bextends\s+(CanvasComponent|ThreeComponent)\b/.test(code);
  
   const hasOnStartOrOnUpdate = /\bonStart\s*\(|\bonUpdate\s*\(/.test(code);
   const hasTransformArg = /\{\s*[^}]*\btransform\b[^}]*\}\s*\)\s*\{/.test(code);
@@ -671,11 +697,12 @@ export function detectScriptKind(code) {
   const isClass = /\bclass\s+[A-Za-z0-9_]+/.test(code);
  
   const isShader = /\bvec4\s+transition\s*\(|\bgl_FragColor\b/.test(code);
-
+ 
   if (isShader) {
     kind = 'shader';
-  } else if (hasOnMount || hasOnUnmount || (hasContainerArg && !hasTransformArg)) {
-    // CanvasRenderer contract: onMount({ container, props, libs }) / onUpdate({ container, ... }) / onUnmount(...)
+  } else if (extendsCanvasClass || hasOnMount || hasOnUnmount || (hasContainerArg && !hasTransformArg)) {
+    // CanvasRenderer contract: extends CanvasComponent/ThreeComponent, or
+    // explicit onMount({ container, props }) / onUpdate({ container, ... }) / onUnmount(...)
     kind = 'canvas';
   } else if (hasOnStartOrOnUpdate && (hasTransformArg || !returnsJsx) && isClass) {
     // ScriptComponent (motion script) contract: onStart/onUpdate({ transform, tween, props })
@@ -860,6 +887,7 @@ export function executeScriptComponent({
         fps,
         duration: clipDuration,
         Math: MathUtils,
+        Tween,
       });
     }
  
@@ -895,6 +923,10 @@ export function executeScriptComponent({
         clamp: MathUtils.clamp,
         interpolate,
         spring,
+        // onUpdate has no stateful MotionTweenContext. `tween` is the
+        // stateless, generic helper shared by motion/canvas scripts.
+        tween: Tween,
+        Tween,
       });
     }
  

@@ -1,3 +1,4 @@
+ 
 /**
  * SubtitleTrack — data-only component for timed subtitle phrases.
  *
@@ -40,7 +41,7 @@
  * re-sorts on write so callers (Inspector list editor, Dopesheet, SRT
  * import) never have to remember to do it themselves.
  */
-
+ 
 /**
  * Component factory, matching the convention other components use
  * (see engine/ecs.js's createDefaultTransform / createTransitionComponent).
@@ -55,52 +56,136 @@ export function createSubtitleTrackComponent(overrides = {}) {
     // is no separate boolean, since a SubtitleTrack with no phrases yet
     // is already the "just switched into this mode" state.
     phrases: [],
+    // timingMode: 'duration' (default) allows setting how long each phrase lasts,
+    // chaining phrases sequentially. 'range' exposes manual 'in' and 'out' timestamps.
+    timingMode: 'duration',
+    // displayMode: 'set' (default, replace each phrase) vs 'add' (accumulate phrases into sentence/list)
+    displayMode: 'set',
     ...overrides,
   };
 }
 
+/**
+ * Given a list of phrases where each phrase has a `duration` (or endTime - startTime),
+ * recalculates all startTime and endTime sequentially starting from initialStart (default 0).
+ */
+export function recalculateSequentialPhrases(phrases = [], initialStart = 0) {
+  let curr = initialStart;
+  return phrases.map((p) => {
+    const rawDur = Number.isFinite(p.duration) ? p.duration : Math.max(0.1, (p.endTime || 0) - (p.startTime || 0));
+    const dur = Math.max(0.1, parseFloat(rawDur.toFixed(2)));
+    const startTime = parseFloat(curr.toFixed(2));
+    const endTime = parseFloat((curr + dur).toFixed(2));
+    curr = endTime;
+    return {
+      ...p,
+      duration: dur,
+      startTime,
+      endTime,
+    };
+  });
+}
+ 
 /** True for a SubtitleTrack component, mirroring isScriptComponent's style in ecs.js. */
 export const isSubtitleTrackComponent = (c) => c?.type === 'SubtitleTrack';
-
+ 
 /**
  * Create a single phrase object with sensible defaults. `words` and
  * `language` are intentionally left undefined (not `[]`/`''`) when not
  * given, so a plain phrase serializes/round-trips through SRT without
  * carrying empty placeholder fields that were never actually authored.
  */
-export function createPhrase({ startTime, endTime, text, words, emphasis, language, id } = {}) {
+export function createPhrase({ startTime, endTime, text, words, emphasis, language, id, mode } = {}) {
   const phrase = {
     id: id || `phrase-${crypto.randomUUID()}`,
     startTime: startTime ?? 0,
     endTime: endTime ?? Math.max((startTime ?? 0) + 1, 1),
     text: text ?? '',
+    mode: mode || 'set', // 'set' (replace / start fresh sentence) vs 'add' (append to previous phrase)
   };
   if (words && words.length > 0) phrase.words = words;
   if (emphasis) phrase.emphasis = true;
   if (language) phrase.language = language;
   return phrase;
 }
-
+ 
 function sortPhrases(phrases) {
   return [...phrases].sort((a, b) => a.startTime - b.startTime);
 }
-
+ 
 /** Add a phrase to a SubtitleTrack component, returning a new component (no mutation). */
 export function addPhrase(component, phrase) {
-  return { ...component, phrases: sortPhrases([...(component.phrases || []), phrase]) };
+  const isDuration = (component.timingMode || 'duration') === 'duration';
+  let phrases = [...(component.phrases || []), phrase];
+  if (isDuration) {
+    phrases = recalculateSequentialPhrases(phrases, phrases[0]?.startTime || 0);
+  } else {
+    phrases = sortPhrases(phrases);
+  }
+  return { ...component, phrases };
 }
 
 /** Update one phrase by id with a partial patch, returning a new component. */
 export function updatePhrase(component, phraseId, patch) {
-  const phrases = (component.phrases || []).map((p) => (p.id === phraseId ? { ...p, ...patch } : p));
-  return { ...component, phrases: sortPhrases(phrases) };
+  const isDuration = (component.timingMode || 'duration') === 'duration';
+  let phrases = (component.phrases || []).map((p) => {
+    if (p.id !== phraseId) return p;
+    const updated = { ...p, ...patch };
+    // If updating in duration mode, calculate duration or endTime accordingly
+    if (patch.duration !== undefined) {
+      updated.duration = Math.max(0.1, patch.duration);
+    }
+    return updated;
+  });
+
+  if (isDuration) {
+    phrases = recalculateSequentialPhrases(phrases, phrases[0]?.startTime || 0);
+  } else {
+    phrases = sortPhrases(phrases);
+  }
+  return { ...component, phrases };
 }
 
 /** Remove one phrase by id, returning a new component. */
 export function removePhrase(component, phraseId) {
-  return { ...component, phrases: (component.phrases || []).filter((p) => p.id !== phraseId) };
+  const isDuration = (component.timingMode || 'duration') === 'duration';
+  let phrases = (component.phrases || []).filter((p) => p.id !== phraseId);
+  if (isDuration) {
+    phrases = recalculateSequentialPhrases(phrases, phrases[0]?.startTime || 0);
+  }
+  return { ...component, phrases };
 }
 
+/**
+ * Reorder two phrases in the Inspector's phrase list.
+ * In 'duration' mode, we reorder by array index and recalculate sequential times.
+ * In 'range' mode, we swap startTime/endTime.
+ */
+export function reorderPhrases(component, draggedId, targetId) {
+  if (!draggedId || !targetId || draggedId === targetId) return component;
+  const phrases = component.phrases || [];
+  const draggedIdx = phrases.findIndex((p) => p.id === draggedId);
+  const targetIdx = phrases.findIndex((p) => p.id === targetId);
+  if (draggedIdx === -1 || targetIdx === -1) return component;
+
+  const isDuration = (component.timingMode || 'duration') === 'duration';
+  if (isDuration) {
+    const list = [...phrases];
+    const [moved] = list.splice(draggedIdx, 1);
+    list.splice(targetIdx, 0, moved);
+    return { ...component, phrases: recalculateSequentialPhrases(list, list[0]?.startTime || 0) };
+  }
+
+  const dragged = phrases[draggedIdx];
+  const target = phrases[targetIdx];
+  const swapped = phrases.map((p) => {
+    if (p.id === draggedId) return { ...p, startTime: target.startTime, endTime: target.endTime };
+    if (p.id === targetId) return { ...p, startTime: dragged.startTime, endTime: dragged.endTime };
+    return p;
+  });
+  return { ...component, phrases: sortPhrases(swapped) };
+}
+ 
 /**
  * Find the phrase active at local time `t`, plus its neighbors — the
  * shared lookup behind both the read API (referenceTypes.js) and any
@@ -122,7 +207,7 @@ export function removePhrase(component, phraseId) {
 export function getPhraseContextAt(component, t) {
   const phrases = component?.phrases;
   if (!phrases || phrases.length === 0) return null;
-
+ 
   const sorted = phrases; // stored pre-sorted by the mutation helpers above
   let activeIndex = -1;
   for (let i = 0; i < sorted.length; i++) {
@@ -131,6 +216,16 @@ export function getPhraseContextAt(component, t) {
       break;
     }
   }
+ 
+  // Helper: Find all phrases in the current cumulative group (starting from the most recent 'set' phrase up to targetIdx)
+  const getSentencePhrases = (targetIdx) => {
+    if (targetIdx < 0 || targetIdx >= sorted.length) return [];
+    let startIdx = targetIdx;
+    while (startIdx > 0 && sorted[startIdx].mode === 'add') {
+      startIdx--;
+    }
+    return sorted.slice(startIdx, targetIdx + 1);
+  };
 
   if (activeIndex === -1) {
     // In a gap — find the surrounding phrases by time for prev/next context.
@@ -140,19 +235,49 @@ export function getPhraseContextAt(component, t) {
       else break;
     }
     const nextIdx = prevIdx + 1 < sorted.length ? prevIdx + 1 : -1;
+    const currentSentencePhrases = prevIdx !== -1 ? getSentencePhrases(prevIdx) : [];
+    const currentSentenceText = currentSentencePhrases.map((p) => p.text).filter(Boolean).join(' ');
+    const allPastPhrases = prevIdx !== -1 ? sorted.slice(0, prevIdx + 1) : [];
+    const allPastText = allPastPhrases.map((p) => p.text).filter(Boolean).join(' ');
+
+    const prevPhrase = prevIdx !== -1 ? sorted[prevIdx] : null;
+    const effectiveText = prevPhrase?.mode === 'add' || component.displayMode === 'add'
+      ? currentSentenceText
+      : '';
+
     return {
-      text: '',
+      text: effectiveText,
+      sentenceText: currentSentenceText,
+      sentencePhrases: currentSentencePhrases,
+      accumulatedText: allPastText,
+      accumulatedPhrases: allPastPhrases,
       index: null,
       phrase: null,
-      prev: prevIdx !== -1 ? sorted[prevIdx] : null,
+      prev: prevPhrase,
       next: nextIdx !== -1 ? sorted[nextIdx] : null,
     };
   }
 
+  const activePhrase = sorted[activeIndex];
+  const currentSentencePhrases = getSentencePhrases(activeIndex);
+  const currentSentenceText = currentSentencePhrases.map((p) => p.text).filter(Boolean).join(' ');
+  const allPastPhrases = sorted.slice(0, activeIndex + 1);
+  const allPastText = allPastPhrases.map((p) => p.text).filter(Boolean).join(' ');
+
+  // If the active phrase is 'add' (or if track is in 'add' mode), show the cumulative sentence text.
+  // If the active phrase is 'set' (and track is in default 'set' mode), show only its own text.
+  const isCumulative = activePhrase.mode === 'add' || component.displayMode === 'add';
+  const effectiveText = isCumulative ? currentSentenceText : activePhrase.text;
+
   return {
-    text: sorted[activeIndex].text,
+    text: effectiveText,
+    sentenceText: currentSentenceText,
+    sentencePhrases: currentSentencePhrases,
+    accumulatedText: allPastText,
+    accumulatedPhrases: allPastPhrases,
+    mode: activePhrase.mode || 'set',
     index: activeIndex,
-    phrase: sorted[activeIndex],
+    phrase: activePhrase,
     prev: activeIndex > 0 ? sorted[activeIndex - 1] : null,
     next: activeIndex < sorted.length - 1 ? sorted[activeIndex + 1] : null,
   };

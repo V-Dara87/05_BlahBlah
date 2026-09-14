@@ -1,0 +1,10 @@
+            {openFoldouts.SubtitleTrack !== false && (
+              <div className="inspector-card-body">
+                <SubtitleTrackInspector
+                  component={subtitleComp}
+                  onUpdateEntity={onUpdateEntity}
+                  selectedEntity={selectedEntity}
+                  currentTime={currentTime}
+                />
+              </div>
+            )}

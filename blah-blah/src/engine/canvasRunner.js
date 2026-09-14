@@ -1,5 +1,7 @@
-import { compileScriptModule, getScriptError, extractScriptProps } from './scriptRunner';
-import { resolveScriptProps } from './referenceTypes';
+ 
+import { compileScriptModule, getScriptError, extractScriptProps } from './scriptRunner.js';
+import { resolveScriptProps } from './referenceTypes.js';
+import { Tween } from './motionTween.js';
  
 /**
  * P0 #2 — canvas-kind script lifecycle runner.
@@ -111,7 +113,31 @@ export function updateCanvasComponent({
   const compiled = compileScriptModule(scriptCode);
   if (!compiled) return; // compile error already recorded in scriptRunner's lastErrorCache
  
-  const needsRemount = !mounted || mounted.scriptCode !== scriptCode || mounted.container !== container;
+  const needsRemount = !mounted || mounted.scriptCode !== scriptCode;
+
+  // Container re-attachment: if the DOM container changed (e.g. React reconciliation,
+  // Dockview panel layout change or remount) while the script code is identical, do NOT
+  // tear down the script instance. Preserve all state, WebGL context, geometries, and
+  // in-flight async loading (such as FontLoader or textures).
+  if (mounted && mounted.container !== container) {
+    const prevContainer = mounted.container;
+    mounted.prevContainer = prevContainer;
+    mounted.container = container;
+
+    // Reparent any canvas or DOM nodes from the old container to the new one
+    if (prevContainer && prevContainer !== container) {
+      while (prevContainer.firstChild) {
+        container.appendChild(prevContainer.firstChild);
+      }
+    }
+
+    if (mounted.instance && typeof mounted.instance === 'object' && 'container' in mounted.instance) {
+      mounted.instance.container = container;
+    }
+
+    safeCall(mounted.instance, 'onContainerReattach', { container, prevContainer });
+  }
+ 
  
   const schema = extractScriptProps(scriptCode);
   const effProps = resolveScriptProps(props, schema, allEntities, allAssets);
@@ -153,14 +179,26 @@ export function updateCanvasComponent({
       return;
     }
  
-    mounted = { instance, scriptCode, container, lastLocalTime: null };
+    mounted = { instance, scriptCode, container, prevContainer: null, lastLocalTime: null, controller: new AbortController() };
     mountedInstances.set(mountKey, mounted);
  
+    // Expose size and aspect directly on the instance so user scripts can access
+    // this.canvasWidth / this.canvasHeight / this.aspect without manual boilerplate
+    if (instance && typeof instance === 'object') {
+      instance.canvasWidth = effWidth;
+      instance.canvasHeight = effHeight;
+      instance.aspect = effHeight > 0 ? effWidth / effHeight : 1;
+    }
+
     safeCall(instance, 'onMount', {
       container,
+      signal: mounted.controller.signal,
       props: effProps,
       canvasWidth: effWidth,
       canvasHeight: effHeight,
+      aspect: effHeight > 0 ? effWidth / effHeight : 1,
+      tween: Tween,
+      Tween,
       ...timingArgs,
     });
   }
@@ -192,12 +230,45 @@ export function updateCanvasComponent({
       props: effProps,
       canvasWidth: effWidth,
       canvasHeight: effHeight,
+      tween: Tween,
+      Tween,
       ...timingArgs,
     });
   }
  
   mounted.lastLocalTime = localTime;
- 
+
+  // If the script created a canvas or WebGLRenderer domElement after onMount (e.g. inside an
+  // async callback like FontLoader), ensure it is attached to the active container if not already.
+  const canvasEl = mounted.instance?.renderer?.domElement || mounted.instance?.canvas;
+  if (canvasEl && canvasEl.parentNode !== container) {
+    container.appendChild(canvasEl);
+  } else if (mounted.prevContainer && mounted.prevContainer !== container && mounted.prevContainer.firstChild) {
+    while (mounted.prevContainer.firstChild) {
+      container.appendChild(mounted.prevContainer.firstChild);
+    }
+  }
+
+  // Keep size updated directly on instance
+  if (mounted.instance && typeof mounted.instance === 'object') {
+    mounted.instance.canvasWidth = effWidth;
+    mounted.instance.canvasHeight = effHeight;
+    mounted.instance.aspect = effHeight > 0 ? effWidth / effHeight : 1;
+
+    // Automatic resize helper for Three.js WebGLRenderer & Camera if present
+    const inst = mounted.instance;
+    if (inst.autoResize !== false && inst.renderer && typeof inst.renderer.setSize === 'function') {
+      const dom = inst.renderer.domElement;
+      if (dom && (dom.width !== effWidth || dom.height !== effHeight)) {
+        inst.renderer.setSize(effWidth, effHeight, false);
+        if (inst.camera && inst.camera.isPerspectiveCamera) {
+          inst.camera.aspect = effWidth / effHeight;
+          inst.camera.updateProjectionMatrix();
+        }
+      }
+    }
+  }
+
   safeCall(mounted.instance, 'onUpdate', {
     container,
     time: localTime,
@@ -206,6 +277,9 @@ export function updateCanvasComponent({
     props: effProps,
     canvasWidth: effWidth,
     canvasHeight: effHeight,
+    aspect: effHeight > 0 ? effWidth / effHeight : 1,
+    tween: Tween,
+    Tween,
     ...timingArgs,
   });
 }
@@ -214,6 +288,7 @@ export function unmountCanvasComponent(entityId, scriptId = '') {
   const mountKey = mountKeyFor(entityId, scriptId);
   const mounted = mountedInstances.get(mountKey);
   if (!mounted) return;
+  mounted.controller?.abort();
   safeCall(mounted.instance, 'onUnmount', { container: mounted.container });
   mountedInstances.delete(mountKey);
 }
@@ -244,3 +319,4 @@ function safeCall(instance, methodName, args) {
 }
  
 export { getScriptError };
+ 

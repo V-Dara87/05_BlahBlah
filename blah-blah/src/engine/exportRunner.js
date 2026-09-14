@@ -1,3 +1,4 @@
+ 
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
@@ -6,6 +7,14 @@ import { updateCanvasComponent, unmountCanvasComponent } from './canvasRunner.js
 import { computeActiveEntitiesAtTime } from './renderPipeline.js';
 import { isScriptComponent, isVideoEntity, isAudioEntity } from './ecs.js';
 import { getSharedGLTransitionRenderer } from './glTransitions.js';
+import {
+  resolveTextRendererText,
+  cssFontFamily,
+  DEFAULT_TEXT_FONT_SIZE,
+  DEFAULT_TEXT_FONT_COLOR,
+  DEFAULT_TEXT_FONT_FAMILY,
+  DEFAULT_TEXT_FONT_WEIGHT,
+} from './textRenderer.js';
  
 /**
  * P1 #11 — export-time equivalent of EntityRenderer.jsx's live preview.
@@ -238,6 +247,11 @@ export function drawExportFrame({
   fps = 30,
   canvasContainers,
   videoFrameProvider,
+  // BUG FIX: needed so canvas-kind scripts can resolve 'entity'/'asset'
+  // typed props (e.g. a SubtitleTrack source slot) during export the
+  // same way the live preview does — see the updateCanvasComponent call
+  // below for the full explanation.
+  mediaAssets = [],
 }) {
   ctx.fillStyle = '#000000';
   ctx.fillRect(0, 0, width, height);
@@ -331,6 +345,19 @@ export function drawExportFrame({
             startTime: entity.startTime ?? 0,
             canvasWidth: width,
             canvasHeight: height,
+            // BUG FIX: allEntities/allAssets were never passed here, so
+            // resolveScriptProps (referenceTypes.js) always resolved
+            // 'entity'/'asset'-typed props (e.g. a SubtitleTrack source
+            // slot, or any EntityRef/AssetRef prop) against an empty
+            // array — makeEntityRef(undefined, []) silently returns the
+            // "entity does not exist" stub, whose getCurrentText() always
+            // returns ''. That's invisible in the *live preview* (which
+            // does pass allEntities/allAssets — see EntityRenderer.jsx's
+            // updateCanvasComponent call) but meant any script reading a
+            // subtitle source (or any other entity/asset-ref prop) went
+            // silently blank specifically during export.
+            allEntities: entities,
+            allAssets: mediaAssets,
           });
           drawCanvasContainerContents(ctx, container, transform, width, height);
         } else if (kind === 'react') {
@@ -356,7 +383,7 @@ export function drawExportFrame({
       if (shapeComp) {
         drawShape(ctx, shapeComp, transform, width, height);
       } else if (textComp) {
-        drawText(ctx, textComp, entity, transform, width, height);
+        drawText(ctx, textComp, entity, transform, width, height, entities, time);
       }
     } catch (err) {
       console.warn(`Export: render error on entity "${entity.name}":`, err);
@@ -457,18 +484,19 @@ function drawRoundedRectPath(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
  
-function drawText(ctx, textComp, entity, transform, width, height) {
-  const text = textComp.text || entity.name || '';
-  const fontSize = textComp.fontSize || 38;
-  const fontFamily = textComp.fontFamily || 'Inter, sans-serif';
- 
+function drawText(ctx, textComp, entity, transform, width, height, allEntities = [], time = 0) {
+  const text = resolveTextRendererText(textComp, entity, allEntities, time);
+  const fontSize = textComp.fontSize || DEFAULT_TEXT_FONT_SIZE;
+  const fontFamily = cssFontFamily(textComp.fontFamily || DEFAULT_TEXT_FONT_FAMILY);
+  const fontWeight = textComp.fontWeight || DEFAULT_TEXT_FONT_WEIGHT;
+
   ctx.save();
   applyTransform(ctx, transform, width, height);
- 
-  ctx.font = `${fontSize}px ${fontFamily}`;
+
+  ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
- 
+
   if (textComp.shadowColor) {
     ctx.shadowColor = textComp.shadowColor;
     ctx.shadowBlur = textComp.shadowBlur || 14;
@@ -477,10 +505,10 @@ function drawText(ctx, textComp, entity, transform, width, height) {
     ctx.shadowBlur = 12;
     ctx.shadowOffsetY = 3;
   }
- 
-  ctx.fillStyle = textComp.fontColor || '#ffffff';
+
+  ctx.fillStyle = textComp.fontColor || DEFAULT_TEXT_FONT_COLOR;
   ctx.fillText(text, 0, 0);
- 
+
   ctx.restore();
 }
  

@@ -145,3 +145,49 @@ export function computeClipSubLanes(clips = []) {
  
  
  
+/**
+ * Lays out generic sub-strip segments (see engine/subStripRegistry.js) as
+ * left/width pixel boxes, clamped to the owning clip's own start/duration
+ * so a segment can never visually escape its clip's card — same defensive
+ * clamping spirit as computeClipSubLanes above, just for the sub-strip
+ * row instead of the main clip lane.
+ *
+ * @param {Array<{id, startTime, endTime}>} segments  Entity-local times.
+ * @param {number} clipStartTime   Clip's own startTime (timeline seconds).
+ * @param {number} clipDuration    Clip's own duration (seconds).
+ * @param {number} pixelsPerSecond Current timeline zoom.
+ * @returns {Map<string, { leftPx: number, widthPx: number }>}
+ *          segmentId -> position/size relative to the clip card's own
+ *          left edge (i.e. NOT yet offset by the clip's timeline position
+ *          — add clipStartTime * pixelsPerSecond if placing in world
+ *          space; ClipSubStrip renders inside the clip card already
+ *          positioned, so relative-to-card is what it needs).
+ */
+export function computeSubStripSegmentLayout(segments = [], clipStartTime = 0, clipDuration = 0, pixelsPerSecond = 1) {
+  const result = new Map();
+  const clipEndTime = clipStartTime + Math.max(0, clipDuration);
+ 
+  for (const seg of segments || []) {
+    if (!seg || !Number.isFinite(seg.startTime) || !Number.isFinite(seg.endTime)) continue;
+ 
+    // Segment times are entity-local (same convention as the owning
+    // component's own data, e.g. SubtitleTrack phrases) — for a
+    // top-level clip, entity-local time already lines up with the
+    // clip's own [0, duration) span, so clamp directly against it.
+    const clampedStart = Math.max(0, Math.min(seg.startTime, clipDuration));
+    const clampedEnd = Math.max(clampedStart, Math.min(seg.endTime, clipDuration));
+ 
+    const leftPx = clampedStart * pixelsPerSecond;
+    const widthPx = Math.max(4, (clampedEnd - clampedStart) * pixelsPerSecond);
+ 
+    result.set(seg.id, { leftPx, widthPx });
+  }
+ 
+  // clipEndTime currently unused beyond documenting intent above; kept as
+  // a named value (rather than an inline expression) so a future caller
+  // that needs world-space clamping against sibling clips has it ready.
+  void clipEndTime;
+ 
+  return result;
+}
+ 

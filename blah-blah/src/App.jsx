@@ -1,12 +1,14 @@
+ 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useProjectStore } from './hooks/useProjectStore';
 import { usePlaybackController } from './hooks/usePlaybackController';
 import { useMediaAssets } from './hooks/useMediaAssets';
 import { useSharedLibrary } from './hooks/useSharedLibrary';
 import { MenuBar } from './components/MenuBar';
-import { FilePlus, FolderOpen, Save, Download, Undo2, Redo2, Scissors, Trash2, Code, MousePointer2, Settings, Sliders, PlaySquare, Clock, Layers, Activity, Copy, ExternalLink, Maximize2, RotateCcw } from 'lucide-react';
+import { FilePlus, FolderOpen, Save, Download, Undo2, Redo2, Scissors, Trash2, Code, MousePointer2, Settings, Sliders, PlaySquare, Clock, Layers, Activity, Copy, ExternalLink, Maximize2, RotateCcw, BookOpen } from 'lucide-react';
 import { ProjectJsonModal } from './components/ProjectJsonModal';
 import { ScriptEditorModal } from './components/ScriptEditorModal';
+import { ScriptDocsModal } from './components/ScriptDocsModal';
 import { ExportModal } from './components/ExportModal';
 import { NewProjectModal } from './components/NewProjectModal';
 import { SettingsModal } from './components/SettingsModal';
@@ -220,6 +222,7 @@ export function App() {
   const [isProjectJsonOpen, setIsProjectJsonOpen] = useState(false);
   const [isScriptEditorOpen, setIsScriptEditorOpen] = useState(false);
   const [editingScript, setEditingScript] = useState(null);
+  const [isScriptDocsOpen, setIsScriptDocsOpen] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
  
@@ -527,6 +530,7 @@ export function App() {
       label: 'View',
       items: [
         { label: 'Project Code', icon: <Code size={13} />, onClick: () => setIsProjectJsonOpen(true) },
+        { label: 'Script API Docs', icon: <BookOpen size={13} />, onClick: () => setIsScriptDocsOpen(true) },
         { type: 'separator' },
         { label: 'Settings', icon: <Settings size={13} />, onClick: () => setIsSettingsOpen(true) },
       ],
@@ -790,6 +794,11 @@ export function App() {
         onSaveScript={handleSaveScript}
       />
  
+      <ScriptDocsModal
+        isOpen={isScriptDocsOpen}
+        onClose={() => setIsScriptDocsOpen(false)}
+      />
+ 
       <ExportModal
         isOpen={isExportOpen}
         onClose={() => setIsExportOpen(false)}
@@ -800,6 +809,7 @@ export function App() {
         totalDuration={calculatedDuration}
         resolution={resolution}
         exportRange={exportRange}
+        mediaAssets={mediaAssets}
         onBeforeExport={async () => {
           if (projectFolderHandle) {
             await precompileAllProjectScripts(scripts, projectFolderHandle);
@@ -819,6 +829,3 @@ export function App() {
 }
  
 export default App;
- 
- 
- 

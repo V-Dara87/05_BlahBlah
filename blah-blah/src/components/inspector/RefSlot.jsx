@@ -20,7 +20,7 @@ import { readDragPayload } from '../../utils/dragData';
  *   onChange    — (newEntityId: string|null) => void
  *   entities    — all entities array
  */
-export function EntityRefSlot({ value, onChange, entities = [] }) {
+export function EntityRefSlot({ value, onChange, entities = [], emptyLabel = 'None (Entity)' }) {
   const [isDragOver, setIsDragOver] = useState(false);
 
   const handleDragOver = (e) => {
@@ -69,7 +69,7 @@ export function EntityRefSlot({ value, onChange, entities = [] }) {
         value={value || ''}
         onChange={(e) => onChange(e.target.value || null)}
       >
-        <option value="">None (Entity)</option>
+        <option value="">{emptyLabel}</option>
         {entities.map((ent) => (
           <option key={ent.id} value={ent.id}>
             {ent.name}

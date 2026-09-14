@@ -1,4 +1,6 @@
  
+ 
+ 
 import { useRef, useEffect, useLayoutEffect, useMemo, useState, Fragment } from 'react';
 import {
   Play,
@@ -15,7 +17,8 @@ import {
 import { formatSimpleTime } from '../utils/timeFormat';
 import { getCompiledReactComponent, detectScriptKind, extractScriptProps } from '../engine/scriptRunner';
 import { resolveScriptProps } from '../engine/referenceTypes';
-import { updateCanvasComponent, unmountCanvasComponent, pruneCanvasComponents } from '../engine/canvasRunner';
+import { resolveTextRendererText, cssFontFamily, DEFAULT_TEXT_FONT_SIZE, DEFAULT_TEXT_FONT_COLOR, DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_WEIGHT } from '../engine/textRenderer';
+import { updateCanvasComponent, pruneCanvasComponents } from '../engine/canvasRunner';
 import { isScriptComponent, isVideoEntity, isAudioEntity } from '../engine/ecs';
 import { computeActiveEntitiesAtTime } from '../engine/renderPipeline';
 import { trackKeyFor, getFieldKeyframes, setKeyframe } from '../engine/keyframes';
@@ -1243,6 +1246,9 @@ export function EntityRenderer({
             const { entity, transform, localTransform } = item;
             const isSelected = entity.id === selectedEntityId;
             const textComp = entity.components.find((c) => c.type === 'TextRenderer');
+            const displayText = textComp
+              ? resolveTextRendererText(textComp, entity, entities, currentTime)
+              : '';
             const shapeComp = entity.components.find((c) => c.type === 'ShapeRenderer');
             // Rendered box size at scale 1 -- shared by the scale-gizmo drag
             // math (handleScaleGizmoPointerDown) and, for the selected
@@ -1363,7 +1369,6 @@ export function EntityRenderer({
                             canvasContainerRefs.current[mountKey] = el;
                           } else {
                             delete canvasContainerRefs.current[mountKey];
-                            unmountCanvasComponent(entity.id, comp.scriptId);
                           }
                         }}
                       />
@@ -1401,15 +1406,16 @@ export function EntityRenderer({
                     <div
                       className="rendered-text-node"
                       style={{
-                        fontSize: `${textComp.fontSize || 38}px`,
-                        color: textComp.fontColor || '#ffffff',
-                        fontFamily: textComp.fontFamily || 'Inter',
+                        fontSize: `${textComp.fontSize || DEFAULT_TEXT_FONT_SIZE}px`,
+                        color: textComp.fontColor || DEFAULT_TEXT_FONT_COLOR,
+                        fontFamily: cssFontFamily(textComp.fontFamily || DEFAULT_TEXT_FONT_FAMILY),
+                        fontWeight: textComp.fontWeight || DEFAULT_TEXT_FONT_WEIGHT,
                         textShadow: textComp.shadowColor
                           ? `0 0 ${textComp.shadowBlur || 14}px ${textComp.shadowColor}`
                           : '0 3px 12px rgba(0,0,0,0.9)',
                       }}
                     >
-                      {textComp.text || entity.name}
+                      {displayText}
                     </div>
                   )}
                 </EntityErrorBoundary>

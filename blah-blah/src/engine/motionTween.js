@@ -94,6 +94,64 @@ export const MathUtils = {
 };
 
 /**
+ * Stateless timeline helpers for every script kind.
+ *
+ * Unlike MotionTweenContext (the legacy onStart() transform-track builder),
+ * this object never retains state or writes to a target.  A Canvas, React, or
+ * motion script can therefore derive a value from the current timeline time
+ * and produce the exact same result after a seek or during export.
+ */
+function resolveEase(ease) {
+  if (typeof ease === 'function') return ease;
+  return Easing[ease] || Ease[ease] || Easing.linear;
+}
+
+export const Tween = Object.freeze({
+  clamp: MathUtils.clamp,
+  clamp01: MathUtils.clamp01,
+  lerp: MathUtils.lerp,
+  remap: MathUtils.remap,
+
+  /** Apply a named (or custom) easing function to progress. */
+  ease(t, ease = 'linear') {
+    return resolveEase(ease)(MathUtils.clamp01(t));
+  },
+
+  /**
+   * Normalized progress for a time window. `time` and `at` are seconds.
+   * Values outside the window clamp to 0/1, which is the usual authoring
+   * behaviour for enter/exit animations.
+   */
+  progress(time, { at = 0, duration = 1, ease = 'linear' } = {}) {
+    const normalized = duration <= 0 ? (time >= at ? 1 : 0) : (time - at) / duration;
+    return resolveEase(ease)(MathUtils.clamp01(normalized));
+  },
+
+  /** Return an eased value between two numbers at an absolute local time. */
+  between(from, to, time, options = {}) {
+    return MathUtils.lerp(from, to, Tween.progress(time, options));
+  },
+
+  /** Repeating 0..1 progress. `mode: 'yoyo'`/`'pingpong'` returns 1..0 every other loop. */
+  loop(time, duration = 1, mode = 'restart') {
+    if (duration <= 0) return 0;
+    const cycles = Math.floor(time / duration);
+    const value = ((time % duration) + duration) % duration / duration;
+    return (mode === 'yoyo' || mode === 'pingpong') && Math.abs(cycles) % 2 === 1 ? 1 - value : value;
+  },
+
+  /** Convenience form of `loop(time, duration, 'pingpong')`. */
+  pingPong(time, duration = 1) {
+    return Tween.loop(time, duration, 'pingpong');
+  },
+
+  /** Offset in seconds for item `index` in a staggered sequence. */
+  stagger(index, each = 0.1) {
+    return Math.max(0, index) * each;
+  },
+});
+
+/**
  * Remotion-style interpolate() helper
  */
 export function interpolate(value, inputRange, outputRange, options = {}) {

@@ -1,3 +1,4 @@
+ 
 /* ========================================================
    0. MENU BAR — Unity-style top menu bar with dropdowns
    ======================================================== */
@@ -426,7 +427,7 @@
   color: var(--unity-text-dim);
   padding: 0 4px;
 }
-
+ 
 /* P1 #6 — schemaVersion-too-new warning badge, styled like the adjacent
    save-status badges (amber, matching .save-status-saving's palette). */
 .schema-warning-badge {
@@ -1174,10 +1175,71 @@
 }
  
 .rendered-text-node {
-  white-space: nowrap;
+  white-space: pre-wrap;
   font-weight: 800;
   user-select: none;
   text-align: center;
+}
+
+.font-family-picker {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.font-family-picker-trigger {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.font-family-picker-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: var(--unity-panel, #25262e);
+  border: 1px solid var(--unity-border, rgba(255, 255, 255, 0.12));
+  border-radius: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.font-family-picker-popover .search-bar-sm input {
+  width: 100%;
+}
+
+.font-family-picker-list {
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.font-family-picker-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--unity-text, #e2e8f0);
+  font-size: 11px;
+  padding: 5px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.font-family-picker-item:hover,
+.font-family-picker-item.active {
+  background: rgba(56, 189, 248, 0.12);
+}
+
+.font-family-picker-empty {
+  font-size: 10px;
+  color: var(--unity-text-dim, #64748b);
+  padding: 8px 6px;
 }
  
 .rendered-shape-node {
@@ -1876,6 +1938,59 @@
   opacity: 0.9;
 }
  
+/* Font picker -- reuses .comp-dropdown-popover's visual language (panel
+   bg, border, shadow) but sits inline below the Font row instead of
+   being absolutely positioned, since the Text Component card already
+   scrolls with the rest of the Inspector body. */
+.font-picker-trigger {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+ 
+.font-picker-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 8px;
+  padding: 6px;
+  background: var(--unity-panel);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 4px;
+}
+ 
+.font-picker-search input {
+  width: 100%;
+}
+ 
+.font-picker-load-btn {
+  align-self: flex-start;
+}
+ 
+.font-picker-scroll {
+  max-height: 160px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+ 
+.popover-empty-hint {
+  font-size: 11px;
+  color: var(--unity-text-dim);
+  padding: 6px 8px;
+}
+ 
+/* Drag-to-reorder feedback for Subtitle Track phrase rows (see
+   ArrayFieldEditor.jsx, which handles the row drag/drop and calls
+   reorderPhrases) -- same visual treatment as .inspector-card-header.drag-over,
+   scoped to this row instead since a phrase row isn't a card header. */
+.subtitle-phrase-row.drag-over {
+  box-shadow: inset 0 0 0 1px #38bdf8;
+  background: #40474f;
+  border-radius: 3px;
+}
+ 
 /* ========================================================
    4. BOTTOM UNIFIED TIMELINE WITH TIME RULER & PLAYHEAD
    ======================================================== */
@@ -2428,7 +2543,11 @@
   z-index: 20;
 }
  
-.clip-trim-handle:hover { background: #38bdf8; }.clip-content-box {
+.clip-trim-handle:hover { background: #38bdf8; }
+ 
+ 
+ 
+.clip-content-box {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -2826,13 +2945,13 @@
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.06);
   overflow: hidden;
 }
-
+ 
 .export-header {
   background: #14151c;
   padding: 14px 18px;
   border-bottom: 1px solid var(--unity-border);
 }
-
+ 
 .export-icon-badge {
   width: 32px;
   height: 32px;
@@ -2844,29 +2963,29 @@
   color: #fff;
   flex-shrink: 0;
 }
-
+ 
 .export-header-sub {
   font-size: 10px;
   color: var(--unity-text-dim);
 }
-
+ 
 .export-body {
   padding: 18px;
 }
-
+ 
 .export-hub-grid {
   display: grid;
   grid-template-columns: 1fr 270px;
   gap: 16px;
   min-width: 0;
 }
-
+ 
 .export-controls-col {
   min-width: 0;
   display: flex;
   flex-direction: column;
 }
-
+ 
 /* Preset Cards */
 .export-section {
   display: flex;
@@ -2874,7 +2993,7 @@
   gap: 8px;
   margin-bottom: 14px;
 }
-
+ 
 .section-label {
   font-size: 11px;
   font-weight: 700;
@@ -2882,19 +3001,19 @@
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-
+ 
 .preset-cards-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
   gap: 8px;
 }
-
+ 
 .engine-cards-row {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 8px;
 }
-
+ 
 .preset-card {
   background: #1f222e;
   border: 1px solid var(--unity-border);
@@ -2907,18 +3026,18 @@
   position: relative;
   transition: all 0.15s;
 }
-
+ 
 .preset-card:hover {
   background: #272b3a;
   border-color: #4f5882;
 }
-
+ 
 .preset-card.active {
   background: #1e293b;
   border: 2px solid #38bdf8;
   box-shadow: 0 0 12px rgba(56, 189, 248, 0.25);
 }
-
+ 
 .preset-tag {
   font-size: 8px;
   font-weight: 800;
@@ -2929,29 +3048,29 @@
   border-radius: 3px;
   align-self: flex-start;
 }
-
+ 
 .preset-tag.popular {
   color: #38bdf8;
   background: rgba(56, 189, 248, 0.15);
 }
-
+ 
 .preset-tag.ultra {
   color: #c084fc;
   background: rgba(192, 132, 252, 0.15);
 }
-
+ 
 .preset-name {
   font-size: 12px;
   font-weight: 700;
   color: #fff;
 }
-
+ 
 .preset-res {
   font-size: 10px;
   font-family: var(--font-mono);
   color: var(--unity-text-dim);
 }
-
+ 
 /* Param Fields */
 .export-params-row {
   display: grid;
@@ -2960,20 +3079,20 @@
   margin-bottom: 16px;
   min-width: 0;
 }
-
+ 
 .param-field {
   display: flex;
   flex-direction: column;
   gap: 4px;
   min-width: 0;
 }
-
+ 
 .param-label {
   font-size: 10px;
   font-weight: 600;
   color: var(--unity-text-dim);
 }
-
+ 
 .unity-select {
   background: #13141a;
   border: 1px solid var(--unity-border-light);
@@ -2989,12 +3108,12 @@
   white-space: nowrap;
   overflow: hidden;
 }
-
+ 
 .unity-select:focus {
   border-color: #38bdf8;
   outline: none;
 }
-
+ 
 .render-submit-btn {
   width: 100%;
   padding: 10px 0;
@@ -3003,7 +3122,7 @@
   border-radius: 6px;
   box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);
 }
-
+ 
 /* Right Column Summary */
 .export-summary-col {
   background: #13141a;
@@ -5593,3 +5712,170 @@ input[type="checkbox"]:checked::after {
  
  
  
+ 
+ 
+/* ========================================================
+   15. SCRIPT DOCS MODAL — user-script API reference
+   ======================================================== */
+ 
+.docs-modal-card {
+  width: 92%;
+  max-width: 860px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--unity-panel);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+ 
+.docs-modal-body {
+  display: flex;
+  flex-direction: row;
+  gap: 0;
+  padding: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+ 
+.docs-toc {
+  flex-shrink: 0;
+  width: 170px;
+  padding: 14px 10px;
+  border-right: 1px solid var(--unity-border);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+ 
+.docs-toc-link {
+  display: block;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--unity-text-muted);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.08s;
+}
+ 
+.docs-toc-link:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+ 
+.docs-content {
+  flex: 1;
+  min-width: 0;
+  padding: 18px 22px;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--unity-text);
+}
+ 
+.docs-heading {
+  color: #fff;
+  font-weight: 600;
+  margin: 18px 0 8px;
+  line-height: 1.3;
+}
+ 
+.docs-heading:first-child {
+  margin-top: 0;
+}
+ 
+.docs-content h2.docs-heading { font-size: 16px; }
+.docs-content h3.docs-heading { font-size: 13px; }
+.docs-content h4.docs-heading { font-size: 12px; color: var(--unity-text); }
+ 
+.docs-paragraph {
+  margin: 0 0 10px;
+  color: var(--unity-text-muted);
+}
+ 
+.docs-paragraph code,
+.docs-list code {
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 11px;
+  color: #7dd3fc;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+ 
+.docs-list {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  color: var(--unity-text-muted);
+}
+ 
+.docs-list li {
+  margin-bottom: 4px;
+}
+ 
+.docs-hr {
+  border: none;
+  border-top: 1px solid var(--unity-border);
+  margin: 18px 0;
+}
+ 
+.docs-code-block {
+  background: var(--unity-darkest);
+  border: 1px solid var(--unity-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 0 0 12px;
+  overflow-x: auto;
+}
+ 
+.docs-code-block code {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #d4d4d8;
+  white-space: pre;
+}
+ 
+.docs-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 14px;
+  font-size: 11px;
+}
+ 
+.docs-table th,
+.docs-table td {
+  border: 1px solid var(--unity-border);
+  padding: 5px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+ 
+.docs-table th {
+  background: var(--unity-dark);
+  color: #fff;
+  font-weight: 600;
+}
+ 
+.docs-table td {
+  color: var(--unity-text-muted);
+}
+ 
+.docs-modal-footer {
+  border-top: 1px solid var(--unity-border);
+  padding: 10px 16px;
+  align-items: center;
+  justify-content: space-between;
+}
+ 
+.docs-copy-hint {
+  flex: 1;
+}

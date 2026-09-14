@@ -7,7 +7,7 @@ import {
   ChevronsLeft, ChevronsRight, SkipBack, SkipForward, ZoomIn, ZoomOut,
   Undo2, Redo2, Scissors, Trash2, Copy, Magnet,
 } from 'lucide-react';
-import { TRANSFORM_FIELD_GROUPS } from '../inspector/InspectorField';
+import { TRANSFORM_FIELD_GROUPS, TEXT_RENDERER_FIELDS } from '../inspector/InspectorField';
 import { extractScriptProps, detectScriptKind } from '../../engine/scriptRunner';
 import {
   trackKeyFor, getFieldKeyframes, setKeyframe, removeKeyframe, moveKeyframe,
@@ -50,6 +50,9 @@ const MAX_PPS = 240;
 function fieldSchemaForComponent(component, scripts) {
   if (component.type === 'Transform') {
     return TRANSFORM_FIELD_GROUPS.flatMap((g) => g.fields);
+  }
+  if (component.type === 'TextRenderer') {
+    return TEXT_RENDERER_FIELDS;
   }
   if (isScriptComponent(component)) {
     const scriptDef = scripts.find((s) => s.id === component.scriptId);

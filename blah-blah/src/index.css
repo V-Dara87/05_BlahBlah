@@ -274,7 +274,7 @@ input, select, textarea {
    19. CURVE PICKER MODAL — preset gallery (mirrors the
    Transition Picker Modal's master-detail shell; only the
    curve-specific bits below are new, everything else reuses
-   .modal-*/.master-*/.detail-*/.transition-modal-split etc.)
+   .modal-* / .master-* / .detail-* / .transition-modal-split etc.)
    ======================================================== */
  
 .curve-picker-modal.master-detail-layout {

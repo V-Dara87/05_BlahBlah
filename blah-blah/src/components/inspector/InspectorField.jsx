@@ -211,6 +211,16 @@ export function InspectorFieldList({ fields, values, onFieldChange, emptyHint, b
 }
  
 /**
+ * Inspector / Dopesheet schema for the built-in TextRenderer. Presentation
+ * (size, color) lives here; timed copy lives on a SubtitleTrack referenced
+ * by `subtitleSourceId` (a ref slot, not a keyframed field).
+ */
+export const TEXT_RENDERER_FIELDS = [
+  { name: 'fontSize', type: 'number', label: 'Font Size', dragLabel: 'px', step: 1, min: 4, defaultVal: 36 },
+  { name: 'fontColor', type: 'color', label: 'Color', defaultVal: '#ffffff' },
+];
+
+/**
  * Static field schema for the Transform component — the one component
  * type whose fields aren't script-derived. Expressed in the same shape as
  * extractScriptProps' output so it can flow through the same
