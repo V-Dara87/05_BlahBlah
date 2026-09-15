@@ -1,7 +1,141 @@
 import { DragNumber } from '../DragNumber';
 import { trackKeyFor, getFieldKeyframes, setKeyframe, removeKeyframe } from '../../engine/keyframes';
 import { EntityRefSlot, AssetRefSlot } from './RefSlot';
- 
+import { ArrayFieldEditor } from '../ArrayFieldEditor';
+import { buildStructDefault } from '../../engine/scriptRunner';
+import { useState } from 'react';
+import { ChevronRight } from 'lucide-react';
+
+// ─── Struct helpers ──────────────────────────────────────────────────────────
+
+/**
+ * StructFieldGroup — renders a single `type:'struct'` prop as a
+ * collapsible section whose sub-rows are plain InspectorField instances.
+ * The struct value is a plain JS object; each subfield change merges a patch.
+ */
+function StructFieldGroup({ field, value, onChange, entities, mediaAssets }) {
+  const [open, setOpen] = useState(true);
+  const subVal = value && typeof value === 'object' ? value : buildStructDefault(field.fields);
+  const subfields = Object.entries(field.fields || {}).map(([key, def]) => ({
+    name: key,
+    label: def.label || key,
+    type: def.type || 'string',
+    defaultVal: def.default ?? '',
+    min: def.min,
+    max: def.max,
+    step: def.step,
+    options: def.options,
+  }));
+
+  return (
+    <div style={{ width: '100%' }}>
+      <button
+        className="struct-group-toggle"
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 4,
+          background: 'none', border: 'none', cursor: 'pointer',
+          color: 'var(--text-secondary, #aaa)', fontSize: 11,
+          padding: '2px 0', width: '100%',
+        }}
+      >
+        <ChevronRight
+          size={12}
+          style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}
+        />
+        <span style={{ fontWeight: 500 }}>{field.label || field.name}</span>
+      </button>
+      {open && (
+        <div style={{ paddingLeft: 12, borderLeft: '2px solid var(--border-subtle, #333)' }}>
+          {subfields.map((sf) => (
+            <div key={sf.name} className="inspector-row">
+              <span className="row-label">{sf.label}</span>
+              <InspectorField
+                field={sf}
+                value={subVal[sf.name]}
+                onChange={(v) => onChange({ ...subVal, [sf.name]: v })}
+                entities={entities}
+                mediaAssets={mediaAssets}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * StructArrayEditor — renders a `type:'struct[]'` prop using ArrayFieldEditor.
+ * Each row expands to show all subfields as standard Inspector rows.
+ * The value is a plain JS array of objects.
+ */
+function StructArrayEditor({ field, value, onChange, entities, mediaAssets }) {
+  const items = Array.isArray(value) ? value : [];
+  const subfields = Object.entries(field.fields || {}).map(([key, def]) => ({
+    name: key,
+    label: def.label || key,
+    type: def.type || 'string',
+    defaultVal: def.default ?? '',
+    min: def.min,
+    max: def.max,
+    step: def.step,
+    options: def.options,
+  }));
+
+  // Mutations return a new items array (not a component shape) — we wrap
+  // them so ArrayFieldEditor's commit path passes through.
+  const handleUpdate = (nextItems) => onChange(nextItems);
+
+  return (
+    <div style={{ width: '100%' }}>
+      <ArrayFieldEditor
+        items={items}
+        itemIdKey="_id"
+        addButtonText={`Add ${field.label || field.name}`}
+        emptyMessage={`No ${field.label || field.name} yet.`}
+        onItemUpdate={handleUpdate}
+        onItemChange={(itemId, patch) => {
+          return items.map((it) => (it._id === itemId ? { ...it, ...patch } : it));
+        }}
+        onItemAdd={(newItem) => [...items, newItem]}
+        onItemRemove={(itemId) => items.filter((it) => it._id !== itemId)}
+        onItemReorder={(draggedId, targetId) => {
+          const from = items.findIndex((it) => it._id === draggedId);
+          const to   = items.findIndex((it) => it._id === targetId);
+          if (from < 0 || to < 0) return items;
+          const next = [...items];
+          const [moved] = next.splice(from, 1);
+          next.splice(to, 0, moved);
+          return next;
+        }}
+        createNewItem={() => ({ _id: crypto.randomUUID(), ...buildStructDefault(field.fields) })}
+        renderItem={(item) => (
+          <span style={{ fontSize: 11, color: 'var(--text-secondary, #aaa)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {item[Object.keys(field.fields || {})[0]] ?? '—'}
+          </span>
+        )}
+        renderBody={(item, _index, onUpdate) => (
+          <div style={{ paddingLeft: 20, paddingBottom: 4 }}>
+            {subfields.map((sf) => (
+              <div key={sf.name} className="inspector-row">
+                <span className="row-label">{sf.label}</span>
+                <InspectorField
+                  field={sf}
+                  value={item[sf.name]}
+                  onChange={(v) => onUpdate({ [sf.name]: v })}
+                  entities={entities}
+                  mediaAssets={mediaAssets}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      />
+    </div>
+  );
+}
+
 /**
  * P0 #3 — Unified Inspector field rendering.
  *
@@ -12,8 +146,9 @@ import { EntityRefSlot, AssetRefSlot } from './RefSlot';
  * the script's motion/React/canvas kind).
  *
  * Field shape (matches extractScriptProps' output exactly):
- *   { name, type, defaultVal, label, min, max, step, options }
- * `type` is one of: 'number' | 'color' | 'boolean' | 'select' | 'string'.
+ *   { name, type, defaultVal, label, min, max, step, options, fields }
+ * `type` is one of: 'number' | 'color' | 'boolean' | 'select' | 'string' |
+ *                   'textarea' | 'entity' | 'asset' | 'struct' | 'struct[]'.
  *
  * This replaces the near-identical hand-written field-switch blocks that
  * used to live inline in UnityInspector.jsx, one per script component
@@ -122,6 +257,28 @@ export function InspectorField({ field, value, onChange, trackKey, fieldName, se
             onChange={(e) => onChange(e.target.value)}
           />
         );
+      case 'struct':
+        // Struct fields render as a collapsible group — not keyframeable.
+        return (
+          <StructFieldGroup
+            field={field}
+            value={currentVal}
+            onChange={onChange}
+            entities={entities}
+            mediaAssets={mediaAssets}
+          />
+        );
+      case 'struct[]':
+        // Struct array fields render using ArrayFieldEditor — not keyframeable.
+        return (
+          <StructArrayEditor
+            field={field}
+            value={currentVal}
+            onChange={onChange}
+            entities={entities}
+            mediaAssets={mediaAssets}
+          />
+        );
       default:
         return (
           <input
@@ -134,8 +291,11 @@ export function InspectorField({ field, value, onChange, trackKey, fieldName, se
     }
   })();
  
-  // Only show keyframe button if keyframing props are provided (exclude reference types)
-  if (selectedEntity && trackKey && fieldName && field.type !== 'entity' && field.type !== 'asset') {
+  // Only show keyframe button if keyframing props are provided
+  // (exclude reference types and struct types — neither are keyframeable)
+  const isKeyframeable = field.type !== 'entity' && field.type !== 'asset'
+    && field.type !== 'struct' && field.type !== 'struct[]';
+  if (selectedEntity && trackKey && fieldName && isKeyframeable) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flex: 1 }}>
         {fieldInput}
@@ -191,23 +351,41 @@ export function InspectorFieldList({ fields, values, onFieldChange, emptyHint, b
     ));
   }
  
-  return fields.map((field) => (
-    <div key={field.name} className="inspector-row">
-      <span className="row-label">{field.label || field.name}</span>
-      <InspectorField
-        field={field}
-        value={values?.[field.name]}
-        onChange={(v) => onFieldChange(field.name, v)}
-        trackKey={trackKey}
-        fieldName={field.name}
-        selectedEntity={selectedEntity}
-        currentTime={currentTime}
-        onUpdateEntity={onUpdateEntity}
-        entities={entities}
-        mediaAssets={mediaAssets}
-      />
-    </div>
-  ));
+  return fields.map((field) => {
+    // Struct fields manage their own labels internally — render them full-width
+    // without the 75px label column that normal .inspector-row provides.
+    const isStruct = field.type === 'struct' || field.type === 'struct[]';
+    if (isStruct) {
+      return (
+        <div key={field.name} className="inspector-row" style={{ display: 'block', padding: '4px 0' }}>
+          <InspectorField
+            field={field}
+            value={values?.[field.name]}
+            onChange={(v) => onFieldChange(field.name, v)}
+            entities={entities}
+            mediaAssets={mediaAssets}
+          />
+        </div>
+      );
+    }
+    return (
+      <div key={field.name} className="inspector-row">
+        <span className="row-label">{field.label || field.name}</span>
+        <InspectorField
+          field={field}
+          value={values?.[field.name]}
+          onChange={(v) => onFieldChange(field.name, v)}
+          trackKey={trackKey}
+          fieldName={field.name}
+          selectedEntity={selectedEntity}
+          currentTime={currentTime}
+          onUpdateEntity={onUpdateEntity}
+          entities={entities}
+          mediaAssets={mediaAssets}
+        />
+      </div>
+    );
+  });
 }
  
 /**

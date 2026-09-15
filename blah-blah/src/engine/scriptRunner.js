@@ -556,7 +556,36 @@ function parseJsxChildren(children) {
 }
  
 /**
- * Extracts public props schema for the Unity-style Inspector
+ * Builds a plain default object from a struct's subfield schema.
+ * Used by extractScriptProps and resolveScriptProps to seed initial values.
+ *
+ * @param {object} subfields - The `fields` map from a struct prop definition
+ * @returns {object} - Plain object with each subfield's default value
+ */
+export function buildStructDefault(subfields) {
+  if (!subfields || typeof subfields !== 'object') return {};
+  const result = {};
+  for (const [key, def] of Object.entries(subfields)) {
+    if (typeof def === 'object' && def !== null) {
+      if (def.type === 'number') result[key] = def.default ?? 0;
+      else if (def.type === 'boolean') result[key] = def.default ?? false;
+      else result[key] = def.default ?? '';
+    } else {
+      result[key] = def;
+    }
+  }
+  return result;
+}
+
+/**
+ * Extracts public props schema for the Unity-style Inspector.
+ *
+ * Supported types: number | boolean | string | color | select | textarea |
+ *                  entity | asset | struct | struct[]
+ *
+ * struct / struct[] shape:
+ *   { type: 'struct',   label: 'My Group', fields: { key: { type, default, ...} } }
+ *   { type: 'struct[]', label: 'My List',  fields: { key: { type, default, ...} } }
  */
 export function extractScriptProps(code) {
   if (!code) return [];
@@ -576,6 +605,17 @@ export function extractScriptProps(code) {
         if (schemaObj && typeof schemaObj === 'object') {
           Object.entries(schemaObj).forEach(([name, def]) => {
             if (typeof def === 'object' && def !== null) {
+              // Struct types: single object group or array of objects
+              if (def.type === 'struct' || def.type === 'struct[]') {
+                fields.push({
+                  name,
+                  type: def.type,
+                  label: def.label || name,
+                  fields: def.fields || {},
+                  defaultVal: def.type === 'struct[]' ? [] : buildStructDefault(def.fields || {}),
+                });
+                return;
+              }
               // Reference types: entity / asset — no default value (slot starts empty)
               const isRef = def.type === 'entity' || def.type === 'asset';
               fields.push({
@@ -608,6 +648,7 @@ export function extractScriptProps(code) {
     // 2. Regex fallback for inline public fields.
     // For reference types (entity/asset) there is no `default:` clause, so
     // we also handle the no-default form: `name: { type: 'entity', label: '…' }`
+    // Note: struct/struct[] are not supported by the regex fallback path.
     if (fields.length === 0) {
       // With-default form: propName: { type: 'number', default: 10 }
       const fieldRegex = /(?:public\s+)?([A-Za-z0-9_]+)\s*:\s*\{\s*type:\s*['"]([A-Za-z0-9_]+)['"]\s*,\s*default:\s*([^,}]+)/g;
@@ -622,7 +663,7 @@ export function extractScriptProps(code) {
       }
       // No-default form for reference types: propName: { type: 'entity' } or type: 'asset'
       if (fields.length === 0) {
-        const refRegex = /([A-Za-z0-9_]+)\s*:\s*\{\s*type:\s*['"](entity|asset)['"]/g;
+        const refRegex = /([A-Za-z0-9_]+)\s*:\s*\{\s*type:\s*['\"](entity|asset)['"]/g;
         while ((m = refRegex.exec(code)) !== null) {
           fields.push({ name: m[1], type: m[2], defaultVal: null, label: m[1] });
         }

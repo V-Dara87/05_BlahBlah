@@ -3,10 +3,12 @@ import {
   listSharedItems,
   addSharedItem,
   removeSharedItem,
+  moveSharedItem,
+  moveAllSharedItemsInFolder,
   makeSharedPrefabItem,
   makeSharedScriptItem,
 } from '../services/sharedLibraryStorage';
-
+ 
 /**
  * useSharedLibrary — app-wide shared prefab/script library state.
  *
@@ -19,7 +21,7 @@ import {
 export function useSharedLibrary() {
   const [items, setItems] = useState([]);
   const [ready, setReady] = useState(false);
-
+ 
   useEffect(() => {
     let disposed = false;
     listSharedItems().then((list) => {
@@ -31,41 +33,56 @@ export function useSharedLibrary() {
       disposed = true;
     };
   }, []);
-
+ 
   const refresh = useCallback(async () => {
     const list = await listSharedItems();
     setItems(list);
   }, []);
-
+ 
   const addItem = useCallback(async (item) => {
     const list = await addSharedItem(item);
     setItems(list);
     return item;
   }, []);
-
+ 
   /** Store a project prefab (any shape) into the shared library. */
   const addPrefab = useCallback(
     (prefab) => addItem({ ...makeSharedPrefabItem(prefab), createdAt: Date.now() }),
     [addItem]
   );
-
+ 
   /** Store a project script into the shared library. */
   const addScript = useCallback(
     (script) => addItem({ ...makeSharedScriptItem(script), createdAt: Date.now() }),
     [addItem]
   );
-
+ 
   const remove = useCallback(async (id) => {
     const list = await removeSharedItem(id);
     setItems(list);
   }, []);
-
+ 
+  /** Move one item into a folder (or back to root when folderName is null). */
+  const moveItem = useCallback(async (id, folderName) => {
+    const list = await moveSharedItem(id, folderName);
+    setItems(list);
+  }, []);
+ 
+  /** Move every item out of one folder into another (or root). */
+  const moveFolderContents = useCallback(async (fromFolder, toFolder) => {
+    const list = await moveAllSharedItemsInFolder(fromFolder, toFolder);
+    setItems(list);
+  }, []);
+ 
   return {
     items,
     ready,
     addPrefab,
     addScript,
     removeSharedItem: remove,
+    moveItem,
+    moveFolderContents,
     refresh,
   };
 }
+ 

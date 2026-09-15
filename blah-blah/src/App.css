@@ -1180,19 +1180,19 @@
   user-select: none;
   text-align: center;
 }
-
+ 
 .font-family-picker {
   position: relative;
   flex: 1;
   min-width: 0;
 }
-
+ 
 .font-family-picker-trigger {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
+ 
 .font-family-picker-popover {
   position: absolute;
   top: calc(100% + 4px);
@@ -1208,7 +1208,7 @@
   border-radius: 4px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
-
+ 
 /* Portal variant — rendered directly on document.body (see
    FontFamilyPicker.jsx) so the popover floats free of the Inspector dock
    panel's width and scroll clipping instead of being boxed into its
@@ -1221,11 +1221,11 @@
   right: auto;
   z-index: 10000;
 }
-
+ 
 .font-family-picker-popover .search-bar-sm input {
   width: 100%;
 }
-
+ 
 .font-family-picker-list {
   max-height: 240px;
   overflow-y: auto;
@@ -1233,7 +1233,7 @@
   flex-direction: column;
   gap: 1px;
 }
-
+ 
 .font-family-picker-item {
   display: block;
   width: 100%;
@@ -1258,12 +1258,12 @@
   text-overflow: ellipsis;
   flex-shrink: 0;
 }
-
+ 
 .font-family-picker-item:hover,
 .font-family-picker-item.active {
   background: rgba(56, 189, 248, 0.12);
 }
-
+ 
 .font-family-picker-empty {
   font-size: 10px;
   color: var(--unity-text-dim, #64748b);
@@ -2379,6 +2379,20 @@
   background-size: 40px 100%;
 }
  
+/* Divider line between tracks — plain straight line at the row's
+   bottom edge, same color as the vertical grid lines above.
+   Pointer-events off so it never intercepts clicks meant for clips
+   or the empty-lane seek/lasso handlers. */
+.track-divider-line {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.14);
+  pointer-events: none;
+  z-index: 5;
+}
+ 
 /* Unified Timeline Clip Blocks */
 .timeline-clip-card {
   position: absolute;
@@ -2527,7 +2541,7 @@
   border-radius: 6px;
   padding: 4px 0;
 }
-
+ 
 /* Shared shell for every right-click menu (Project panel, Timeline clips,
    any future one) — see components/ContextMenu.jsx. Handles position
    (fixed, portal'd to document.body so no ancestor can clip it) and the
@@ -2543,18 +2557,18 @@
      menu feels immediate rather than delayed. */
   transition: opacity 0.11s ease-out, transform 0.11s ease-out;
 }
-
+ 
 .context-menu-closed {
   opacity: 0;
   transform: scale(0.96) translateY(-2px);
   pointer-events: none;
 }
-
+ 
 .context-menu-open {
   opacity: 1;
   transform: scale(1) translateY(0);
 }
-
+ 
 .ctx-menu-item {
   display: block;
   width: 100%;
@@ -2567,15 +2581,15 @@
   cursor: pointer;
   text-align: left;
 }
-
+ 
 .ctx-menu-item:hover {
   background: rgba(56, 189, 248, 0.15);
 }
-
+ 
 .ctx-menu-item.danger {
   color: #ef4444;
 }
-
+ 
 .ctx-menu-item.danger:hover {
   background: rgba(239, 68, 68, 0.15);
 }

@@ -153,11 +153,50 @@ static props = {
   visible:  { type: 'boolean', default: true },
   tint:     { type: 'color',   default: '#ff0000' },
 
+  // Dropdown
+  align:    { type: 'select', options: ['left', 'center', 'right'], default: 'center' },
+
   // Entity / Asset references
   subtitle: { type: 'entity', label: 'Subtitle Source' },
   bgMusic:  { type: 'asset',  label: 'Background Audio' },
+
+  // Struct — single collapsible group of sub-fields
+  style: {
+    type: 'struct',
+    label: 'Style',
+    fields: {
+      bgColor:   { type: 'color',   default: '#1a1a2e' },
+      textColor: { type: 'color',   default: '#ffffff' },
+      fontSize:  { type: 'number',  default: 14, min: 8 },
+      bold:      { type: 'boolean', default: false },
+    }
+  },
+
+  // Struct array — draggable list of structured items (add / remove / reorder in Inspector)
+  nodes: {
+    type: 'struct[]',
+    label: 'Flow Nodes',
+    fields: {
+      id:          { type: 'string', default: '' },
+      label:       { type: 'string', default: 'Node' },
+      shape:       { type: 'select', options: ['box', 'diamond', 'circle'], default: 'box' },
+      color:       { type: 'color',  default: '#4a90e2' },
+      connections: { type: 'string', default: '' }, // comma-separated target IDs
+    }
+  },
 };
 ```
+
+**struct** renders as a collapsible group. **struct[]** renders as a drag-to-reorder list with per-item expand. Both pass plain JS values to the script — no unwrapping needed:
+
+```js
+onUpdate({ props }) {
+  const { bgColor, textColor } = props.style;  // struct → plain object
+  const nodes = props.nodes;                    // struct[] → plain array of objects
+}
+```
+
+`entity` / `asset` subfields inside a struct are also resolved to `EntityRef` / `AssetRef` at runtime.
 
 Canvas-kind scripts automatically receive **CANVAS SIZE** controls in the Inspector (`canvasWidth` / `canvasHeight`) — no need to declare them in `static props`.
 

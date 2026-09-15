@@ -28,9 +28,9 @@ import { importMediaFiles } from '../services/mediaImport';
 import { isTauri } from '../services/tauriFsAdapter';
 import { openProjectInVsCode } from '../services/ideLauncher';
 import { isScriptComponent } from '../engine/ecs';
-import { setDragPayload, readDragPayload, dragHasItemKind, ITEM_KIND_MEDIA, ITEM_KIND_PREFAB, ITEM_KIND_SCRIPT } from '../utils/dragData';
+import { setDragPayload, readDragPayload, dragHasItemKind, ITEM_KIND_MEDIA, ITEM_KIND_PREFAB, ITEM_KIND_SCRIPT, ITEM_KIND_SHARED } from '../utils/dragData';
 import { ContextMenu } from './ContextMenu';
-
+ 
 // Per-kind display metadata for script cards (see detectScriptKind).
 const SCRIPT_KIND_META = {
   react: { icon: Sparkles, className: 'text-cyan', label: 'React Component' },
@@ -38,7 +38,7 @@ const SCRIPT_KIND_META = {
   motion: { icon: FileCode, className: 'text-emerald', label: 'Motion Script' },
 };
 const scriptKindMeta = (kind) => SCRIPT_KIND_META[kind] || SCRIPT_KIND_META.motion;
-
+ 
 const COMPONENT_TYPE_LABEL = {
   TextRenderer: 'Text',
   ShapeRenderer: 'Shape',
@@ -48,10 +48,10 @@ const COMPONENT_TYPE_LABEL = {
   MonoBehaviour: 'Script',
   Transform: 'Transform',
 };
-
+ 
 // Short display duration (drop the leading hours part like the old cards).
 const shortDuration = (sec) => formatTimecode(sec).slice(3);
-
+ 
 // Sort control options (Feature 6). Duration/size are media-only keys;
 // they no-op for sections whose items don't carry those fields.
 const SORT_OPTIONS = [
@@ -65,10 +65,10 @@ const MEDIA_SORT_OPTIONS = [
   { value: 'duration-desc', label: 'Duration (longest)' },
   { value: 'size-desc', label: 'Size (largest)' },
 ];
-
+ 
 // Composite selection key `${kind}:${id}` (Feature 1).
 const selKey = (kind, id) => `${kind}:${id}`;
-
+ 
 /**
  * Project file explorer — the single project navigation surface (the old
  * standalone Clips tab was removed; clips live on the timeline).
@@ -94,6 +94,7 @@ export const ProjectPanel = memo(function ProjectPanel({
   // App-wide Shared Library (persists outside any project folder)
   sharedItems = [],
   onRemoveSharedItem,
+  onMoveSharedItem,
   onSharePrefab,
   onShareScript,
   onImportSharedItem,
@@ -125,13 +126,14 @@ export const ProjectPanel = memo(function ProjectPanel({
   const [openMediaSubfolders, setOpenMediaSubfolders] = useState({});
   const [openPrefabSubfolders, setOpenPrefabSubfolders] = useState({});
   const [openScriptSubfolders, setOpenScriptSubfolders] = useState({});
+  const [openSharedSubfolders, setOpenSharedSubfolders] = useState({});
   const [mediaMenuOpen, setMediaMenuOpen] = useState(false);
   const [scriptsMenuOpen, setScriptsMenuOpen] = useState(false);
   const fileInputRef = useRef(null);
   const replaceFileInputRef = useRef(null);
   const panelRef = useRef(null);
   const [replaceTarget, setReplaceTarget] = useState(null); // media asset id awaiting a replacement file
-
+ 
   // Context menu: { x, y, target } where target is
   // { kind: 'empty', section? } | { kind: 'folder', section, name } |
   // { kind: 'multi', items: [{kind, item}, ...] } |
@@ -148,7 +150,8 @@ export const ProjectPanel = memo(function ProjectPanel({
   const [extraFolders, setExtraFolders] = useState([]); // media
   const [prefabExtraFolders, setPrefabExtraFolders] = useState([]);
   const [scriptExtraFolders, setScriptExtraFolders] = useState([]);
-
+  const [sharedExtraFolders, setSharedExtraFolders] = useState([]);
+ 
   // Empty folders have no asset metadata from which to reconstruct their
   // tree row. Read their real on-disk entries whenever a project is attached.
   useEffect(() => {
@@ -169,36 +172,36 @@ export const ProjectPanel = memo(function ProjectPanel({
     scan('scripts', 'scripts', setScriptExtraFolders);
     return () => { cancelled = true; };
   }, [projectFolderHandle]);
-
+ 
   // ── Multi-select (Feature 1) ─────────────────────────────────────────────
   // Set of composite keys `${kind}:${id}`. Can span kinds via Ctrl+click,
   // but shift-range is confined to one section (see sectionOrder below).
   const [selectedItems, setSelectedItems] = useState(() => new Set());
   const lastClickedKeyRef = useRef(null);
-
+ 
   // ── Sorting (Feature 6) ──────────────────────────────────────────────────
   const [sortBy, setSortBy] = useState('date-desc');
-
+ 
   // ── Type filtering (Feature 7) ───────────────────────────────────────────
   const [mediaTypeFilter, setMediaTypeFilter] = useState({ video: true, audio: true });
   const [scriptKindFilter, setScriptKindFilter] = useState({ react: true, canvas: true, motion: true });
-
+ 
   // ── Duplicate-import notice (Feature 8) ──────────────────────────────────
   const [dupeNotice, setDupeNotice] = useState(null); // count of likely duplicates
-
+ 
   // Folder currently glowing as a drag-drop target: `${section}:${folderName}`
   const [dragOverKey, setDragOverKey] = useState(null);
-
+ 
   // Outside-click / Escape-to-close now lives in the shared <ContextMenu>
   // shell (see components/ContextMenu.jsx) — it owns its own listeners and
   // calls this back once its closing animation finishes.
   const closeCtxMenu = () => setCtxMenu(null);
-
+ 
   // ── Selection helpers (Feature 1) ────────────────────────────────────────
   const clearSelection = () => setSelectedItems(new Set());
-
+ 
   const isSelected = (kind, item) => selectedItems.has(selKey(kind, item.id));
-
+ 
   // Contiguous order of one section's visible items, used for shift-range.
   const sectionOrder = (kind) => {
     if (kind === 'shared') return filteredShared.map((i) => selKey('shared', i.id));
@@ -207,7 +210,7 @@ export const ProjectPanel = memo(function ProjectPanel({
     if (kind === 'script') return filteredScripts.map((i) => selKey('script', i.id));
     return [];
   };
-
+ 
   // Selection click policy: plain = select only this; Ctrl/Cmd = toggle;
   // Shift = range-select within the same section (a missing / cross-section
   // anchor degrades to a fresh single-select, per spec).
@@ -239,7 +242,7 @@ export const ProjectPanel = memo(function ProjectPanel({
       lastClickedKeyRef.current = key;
     }
   };
-
+ 
   // Resolve every selected key to its live { kind, item } pair (stale keys
   // from deleted items are dropped).
   const resolveSelectionEntries = () => {
@@ -257,14 +260,14 @@ export const ProjectPanel = memo(function ProjectPanel({
     });
     return out;
   };
-
+ 
   const deleteItem = (kind, item) => {
     if (kind === 'media') onRemoveMediaAsset?.(item.id);
     else if (kind === 'prefab') onRemovePrefab?.(item.id);
     else if (kind === 'script') onRemoveScript?.(item.id);
     else if (kind === 'shared') onRemoveSharedItem?.(item.id);
   };
-
+ 
   // Bulk delete for multi-selection (keyboard Delete/Backspace too). Deletes
   // are sequenced per item (handlers are synchronous state updates; ordering
   // avoids write races with any async side effects).
@@ -278,7 +281,7 @@ export const ProjectPanel = memo(function ProjectPanel({
     entries.forEach(({ kind, item }) => deleteItem(kind, item));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedItems, mediaAssets, prefabs, scripts, sharedItems]);
-
+ 
   // Give the panel focus whenever a selection exists, so the keyboard
   // handlers below know the user is working in the panel (the timeline has
   // its own Delete handler — without this focus guard the two would both
@@ -286,7 +289,7 @@ export const ProjectPanel = memo(function ProjectPanel({
   useEffect(() => {
     if (selectedItems.size > 0) panelRef.current?.focus({ preventScroll: true });
   }, [selectedItems]);
-
+ 
   // Keyboard: Delete/Backspace bulk-deletes the selection when the panel is
   // focused (never while an input is focused); Escape clears the selection
   // (rename/search inputs handle their own Escape).
@@ -308,30 +311,34 @@ export const ProjectPanel = memo(function ProjectPanel({
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [selectedItems, bulkDeleteSelected]);
-
+ 
   // Auto-dismiss the duplicate-import notice.
   useEffect(() => {
     if (dupeNotice == null) return;
     const t = setTimeout(() => setDupeNotice(null), 5000);
     return () => clearTimeout(t);
   }, [dupeNotice]);
-
+ 
   const toggleFolder = (name) => {
     setOpenFolders((prev) => ({ ...prev, [name]: !prev[name] }));
   };
-
+ 
   const toggleMediaSubfolder = (name) => {
     setOpenMediaSubfolders((prev) => ({ ...prev, [name]: !prev[name] }));
   };
-
+ 
   const togglePrefabSubfolder = (name) => {
     setOpenPrefabSubfolders((prev) => ({ ...prev, [name]: !prev[name] }));
   };
-
+ 
   const toggleScriptSubfolder = (name) => {
     setOpenScriptSubfolders((prev) => ({ ...prev, [name]: !prev[name] }));
   };
-
+ 
+  const toggleSharedSubfolder = (name) => {
+    setOpenSharedSubfolders((prev) => ({ ...prev, [name]: !prev[name] }));
+  };
+ 
   const handleFileUpload = (files) => {
     // Shared import helper (same probe + asset shape as OS file drops,
     // see services/mediaImport.js) so the picker and desktop drag&drop
@@ -344,14 +351,14 @@ export const ProjectPanel = memo(function ProjectPanel({
       onDuplicatesDetected: (count) => setDupeNotice(count),
     });
   };
-
+ 
   const handleReplaceFile = (e) => {
     const file = e.target.files?.[0];
     if (file && replaceTarget) onReplaceMediaAsset?.(replaceTarget, file);
     e.target.value = '';
     setReplaceTarget(null);
   };
-
+ 
   const handleCreateNewScript = async () => {
     setScriptsMenuOpen(false);
     // Creating "New Script" repeatedly used to overwrite NewScript.jsx on
@@ -368,10 +375,10 @@ export const ProjectPanel = memo(function ProjectPanel({
       name,
       description: 'Blank JavaScript Motion script',
       code: `import { CanvasComponent } from '@blahblah/sdk';
-
+ 
 export default class NewScript extends CanvasComponent {
   static props = {};
-
+ 
   onMount({ container, canvasWidth, canvasHeight }) {
     this.canvas = document.createElement('canvas');
     this.canvas.width = canvasWidth || 800;
@@ -382,7 +389,7 @@ export default class NewScript extends CanvasComponent {
     container.appendChild(this.canvas);
     this.ctx = this.canvas.getContext('2d');
   }
-
+ 
   onUpdate({ time, canvasWidth, canvasHeight }) {
     if (!this.ctx) return;
     if (this.canvas.width !== canvasWidth || this.canvas.height !== canvasHeight) {
@@ -399,7 +406,7 @@ export default class NewScript extends CanvasComponent {
     this.ctx.arc(x, y, 8, 0, Math.PI * 2);
     this.ctx.fill();
   }
-
+ 
   onUnmount({ container }) {
     if (this.canvas?.parentNode === container) {
       container.removeChild(this.canvas);
@@ -417,29 +424,30 @@ export default class NewScript extends CanvasComponent {
     }
     onOpenScriptEditor(newScript);
   };
-
+ 
   // ── Drag sources (payloads shared with Timeline/Inspector drop zones) ────
   const handleDragStart = (e, itemType, itemData) => {
     setDragPayload(e.dataTransfer, itemType, itemData);
   };
-
+ 
   // ── Folder drag-and-drop (Feature 3, extended to prefabs/scripts by
   //    Feature 5) ───────────────────────────────────────────────────────────
   const moveItemToFolder = (kind, id, folderName) => {
     if (kind === 'media') onMoveMediaAsset?.(id, folderName);
     else if (kind === 'prefab') onMovePrefab?.(id, folderName);
     else if (kind === 'script') onMoveScript?.(id, folderName);
+    else if (kind === 'shared') onMoveSharedItem?.(id, folderName);
   };
-
+ 
   const handleFolderDragOver = (e, itemKind, dropKey) => {
     if (!dragHasItemKind(e.dataTransfer, itemKind)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     if (dragOverKey !== dropKey) setDragOverKey(dropKey);
   };
-
+ 
   const handleFolderDragLeave = () => setDragOverKey(null);
-
+ 
   const handleFolderDrop = (e, section, folderName, itemKind) => {
     if (!dragHasItemKind(e.dataTransfer, itemKind)) return;
     e.preventDefault();
@@ -460,7 +468,7 @@ export default class NewScript extends CanvasComponent {
       moveItemToFolder(section, draggedId, folderName);
     }
   };
-
+ 
   // ── Right-click menus ────────────────────────────────────────────────────
   const openEmptyMenu = (e) => {
     e.preventDefault();
@@ -472,7 +480,7 @@ export default class NewScript extends CanvasComponent {
     const section = sectionEl ? sectionEl.getAttribute('data-section') : 'media';
     setCtxMenu({ x: e.clientX, y: e.clientY, target: { kind: 'empty', section } });
   };
-
+ 
   // Item right-clicks always suppress the native menu (browser default),
   // even for kinds with a reduced menu. Right-clicking part of a
   // multi-selection opens the bulk menu; right-clicking an unselected item
@@ -492,23 +500,23 @@ export default class NewScript extends CanvasComponent {
     }
     setCtxMenu({ x: e.clientX, y: e.clientY, target: { kind, item } });
   };
-
+ 
   const openFolderMenu = (e, section, folderName) => {
     e.preventDefault();
     e.stopPropagation();
     setCtxMenu({ x: e.clientX, y: e.clientY, target: { kind: 'folder', section, name: folderName } });
   };
-
+ 
   const startRename = (kind, item) => {
     setRenaming({ kind, id: item.id, name: item.name || '' });
     closeCtxMenu();
   };
-
+ 
   const startFolderRename = (section, name) => {
     setRenaming({ kind: 'folder', section, id: name, name });
     closeCtxMenu();
   };
-
+ 
   const renameInput = (kind, item) => {
     if (!renaming || renaming.kind !== kind || renaming.id !== item.id) return null;
     return (
@@ -528,7 +536,7 @@ export default class NewScript extends CanvasComponent {
       />
     );
   };
-
+ 
   const folderRenameInput = (section, folderName) => {
     if (!renaming || renaming.kind !== 'folder' || renaming.section !== section || renaming.id !== folderName) return null;
     return (
@@ -548,7 +556,7 @@ export default class NewScript extends CanvasComponent {
       />
     );
   };
-
+ 
   const commitRename = async () => {
     if (!renaming) return;
     const name = (renaming.name || '').trim();
@@ -568,32 +576,38 @@ export default class NewScript extends CanvasComponent {
     }
     setRenaming(null);
   };
-
-  // ── Folder helpers (per-section state; media / prefabs / scripts) ───────
+ 
+  // ── Folder helpers (per-section state; media / prefabs / scripts / shared) ──
   const setExtraFoldersFor = (section, updater) => {
     if (section === 'prefabs') setPrefabExtraFolders(updater);
     else if (section === 'scripts') setScriptExtraFolders(updater);
+    else if (section === 'shared') setSharedExtraFolders(updater);
     else setExtraFolders(updater);
   };
-
+ 
   const itemsForSection = (section) =>
-    section === 'prefabs' ? prefabs : section === 'scripts' ? scripts : mediaAssets;
-
+    section === 'prefabs' ? prefabs : section === 'scripts' ? scripts : section === 'shared' ? sharedItems : mediaAssets;
+ 
+  const sectionKindForFolder = (section) =>
+    section === 'prefabs' ? 'prefab' : section === 'scripts' ? 'script' : section === 'shared' ? 'shared' : 'media';
+ 
   const setOpenSubfoldersFor = (section, updater) => {
     if (section === 'prefabs') setOpenPrefabSubfolders(updater);
     else if (section === 'scripts') setOpenScriptSubfolders(updater);
+    else if (section === 'shared') setOpenSharedSubfolders(updater);
     else setOpenMediaSubfolders(updater);
   };
-
+ 
   // Move every item of a folder to another folder (null = root). Used by
   // folder delete (contents → root) and rename (contents → new name,
   // merging on collision rather than erroring).
   const moveAllInFolder = (section, fromFolder, toFolder) => {
+    const kind = sectionKindForFolder(section);
     (itemsForSection(section) || [])
       .filter((i) => i.folder === fromFolder)
-      .forEach((i) => moveItemToFolder(section, i.id, toFolder));
+      .forEach((i) => moveItemToFolder(kind, i.id, toFolder));
   };
-
+ 
   const commitFolderRename = (section, oldName, newName) => {
     if (!newName || newName === oldName) return;
     moveAllInFolder(section, oldName, newName);
@@ -609,7 +623,7 @@ export default class NewScript extends CanvasComponent {
       return next;
     });
   };
-
+ 
   const deleteFolder = (section, name) => {
     closeCtxMenu();
     // Non-destructive: assets move to the root folder; the (now empty)
@@ -622,17 +636,17 @@ export default class NewScript extends CanvasComponent {
       return next;
     });
   };
-
+ 
   const handleDeleteItem = (kind, item) => {
     closeCtxMenu();
     deleteItem(kind, item);
   };
-
+ 
   const handleContextAction = (action) => {
     if (!ctxMenu) return;
     const { target } = ctxMenu;
     if (action === 'new-folder') {
-      const section = target.section && target.section !== 'shared' ? target.section : 'media';
+      const section = target.section || 'media';
       setCreatingFolder(section);
       setNewFolderName('');
       closeCtxMenu();
@@ -674,7 +688,7 @@ export default class NewScript extends CanvasComponent {
       else if (target.kind === 'script') onShareScript?.(target.item);
     }
   };
-
+ 
   const commitNewFolder = async () => {
     const section = creatingFolder || 'media';
     const name = (newFolderName || '').trim();
@@ -683,14 +697,19 @@ export default class NewScript extends CanvasComponent {
     // users could not address or rename safely.
     if (name && !/[\\/:*?"<>|]/.test(name) && name !== '.' && name !== '..') {
       const rootName = section === 'prefabs' ? 'prefabs' : section;
-      try {
-        if (projectFolderHandle) {
-          const root = await projectFolderHandle.getDirectoryHandle(rootName, { create: true });
-          await root.getDirectoryHandle(name, { create: true });
+      // The Shared Library lives in browser storage, not the project
+      // folder (see services/sharedLibraryStorage.js) — there's no disk
+      // directory to create for it, unlike media/prefabs/scripts.
+      if (section !== 'shared') {
+        try {
+          if (projectFolderHandle) {
+            const root = await projectFolderHandle.getDirectoryHandle(rootName, { create: true });
+            await root.getDirectoryHandle(name, { create: true });
+          }
+        } catch (err) {
+          console.error('Could not create project folder:', err);
+          return;
         }
-      } catch (err) {
-        console.error('Could not create project folder:', err);
-        return;
       }
       setExtraFoldersFor(section, (prev) => (prev.includes(name) ? prev : [...prev, name]));
       setOpenFolders((prev) => ({ ...prev, [section]: true }));
@@ -699,7 +718,7 @@ export default class NewScript extends CanvasComponent {
     setCreatingFolder(null);
     setNewFolderName('');
   };
-
+ 
   // Folders per section: derive from item `folder` fields + context-menu
   // folders. Separate namespaces (media / prefabs / scripts).
   const allMediaFolders = useMemo(() => {
@@ -707,22 +726,28 @@ export default class NewScript extends CanvasComponent {
     extraFolders.forEach((f) => fromAssets.add(f));
     return Array.from(fromAssets);
   }, [mediaAssets, extraFolders]);
-
+ 
   const allPrefabFolders = useMemo(() => {
     const fromItems = new Set(prefabs.filter((p) => p.folder).map((p) => p.folder));
     prefabExtraFolders.forEach((f) => fromItems.add(f));
     return Array.from(fromItems);
   }, [prefabs, prefabExtraFolders]);
-
+ 
   const allScriptFolders = useMemo(() => {
     const fromItems = new Set(scripts.filter((s) => s.folder).map((s) => s.folder));
     scriptExtraFolders.forEach((f) => fromItems.add(f));
     return Array.from(fromItems);
   }, [scripts, scriptExtraFolders]);
-
+ 
+  const allSharedFolders = useMemo(() => {
+    const fromItems = new Set(sharedItems.filter((s) => s.folder).map((s) => s.folder));
+    sharedExtraFolders.forEach((f) => fromItems.add(f));
+    return Array.from(fromItems);
+  }, [sharedItems, sharedExtraFolders]);
+ 
   // ── Search + type filters + sort (Features 6 & 7) ───────────────────────
   const query = searchQuery.toLowerCase();
-
+ 
   // Stable sort applied independently per section, after filtering.
   const sortList = (list) => {
     const sorted = [...list];
@@ -737,7 +762,7 @@ export default class NewScript extends CanvasComponent {
     }
     return sorted;
   };
-
+ 
   const filteredShared = sortList(sharedItems.filter((i) => i.name.toLowerCase().includes(query)));
   const filteredPrefabs = sortList(prefabs.filter((p) => p.name.toLowerCase().includes(query)));
   const filteredMedia = sortList(
@@ -754,7 +779,7 @@ export default class NewScript extends CanvasComponent {
       return scriptKindFilter[kind] !== false;
     })
   );
-
+ 
   const rootMedia = filteredMedia.filter((m) => !m.folder);
   const mediaSubfolderNames = allMediaFolders.filter((folderName) =>
     extraFolders.includes(folderName) || filteredMedia.some((m) => m.folder === folderName)
@@ -767,12 +792,16 @@ export default class NewScript extends CanvasComponent {
   const scriptSubfolderNames = allScriptFolders.filter((folderName) =>
     scriptExtraFolders.includes(folderName) || filteredScripts.some((s) => s.folder === folderName)
   );
-
+  const rootShared = filteredShared.filter((s) => !s.folder);
+  const sharedSubfolderNames = allSharedFolders.filter((folderName) =>
+    sharedExtraFolders.includes(folderName) || filteredShared.some((s) => s.folder === folderName)
+  );
+ 
   // ── Hover preview ─────────────────────────────────────────────────────────
   const showPreview = (e, kind, item) => {
     setPreview({ x: e.clientX, y: e.clientY, kind, item });
   };
-
+ 
   // ── Grid card (shared markup for grid view + folder contents) ────────────
   const renderMediaCard = (asset) => (
     <div
@@ -817,7 +846,7 @@ export default class NewScript extends CanvasComponent {
       </div>
     </div>
   );
-
+ 
   // ── List view row (Name | Type | Duration/Size | Actions) ────────────────
   const renderMediaRow = (asset) => (
     <div
@@ -850,7 +879,7 @@ export default class NewScript extends CanvasComponent {
       </span>
     </div>
   );
-
+ 
   const renderPrefabCard = (prefab) => (
     <div
       key={prefab.id}
@@ -890,7 +919,7 @@ export default class NewScript extends CanvasComponent {
       </div>
     </div>
   );
-
+ 
   const renderPrefabRow = (prefab) => (
     <div
       key={prefab.id}
@@ -925,7 +954,7 @@ export default class NewScript extends CanvasComponent {
       </span>
     </div>
   );
-
+ 
   const renderScriptCard = (script) => {
     const Meta = scriptKindMeta(detectScriptKind(script.code || ''));
     const renamingThis = renaming && renaming.kind === 'script' && renaming.id === script.id;
@@ -967,7 +996,7 @@ export default class NewScript extends CanvasComponent {
       </div>
     );
   };
-
+ 
   const renderScriptRow = (script) => {
     const Meta = scriptKindMeta(detectScriptKind(script.code || ''));
     const renamingThis = renaming && renaming.kind === 'script' && renaming.id === script.id;
@@ -999,7 +1028,7 @@ export default class NewScript extends CanvasComponent {
       </div>
     );
   };
-
+ 
   const renderSharedCard = (item) => {
     const isPrefab = item.type === 'prefab';
     return (
@@ -1008,7 +1037,7 @@ export default class NewScript extends CanvasComponent {
         className={`asset-card shared-card${isSelected('shared', item) ? ' selected' : ''}`}
         title={isPrefab ? 'Shared prefab — add to timeline' : 'Shared script — copy into this project'}
         draggable
-        onDragStart={(e) => handleDragStart(e, isPrefab ? ITEM_KIND_PREFAB : ITEM_KIND_SCRIPT, item.data || item)}
+        onDragStart={(e) => handleDragStart(e, ITEM_KIND_SHARED, item)}
         onMouseMove={(e) => showPreview(e, isPrefab ? 'prefab' : 'script', item.data || item)}
         onMouseLeave={() => setPreview(null)}
         onContextMenu={(e) => openItemMenuSafe(e, 'shared', item)}
@@ -1044,14 +1073,14 @@ export default class NewScript extends CanvasComponent {
       </div>
     );
   };
-
+ 
   const isGridView = viewMode === 'grid';
-
+ 
   const renderSharedItem = (item) =>
     isGridView
       ? renderSharedCard(item)
       : renderSharedRow(item);
-
+ 
   const renderSharedRow = (item) => {
     const isPrefab = item.type === 'prefab';
     return (
@@ -1059,7 +1088,7 @@ export default class NewScript extends CanvasComponent {
         key={item.id}
         className={`asset-list-row${isSelected('shared', item) ? ' selected' : ''}`}
         draggable
-        onDragStart={(e) => handleDragStart(e, isPrefab ? ITEM_KIND_PREFAB : ITEM_KIND_SCRIPT, item.data || item)}
+        onDragStart={(e) => handleDragStart(e, ITEM_KIND_SHARED, item)}
         onMouseMove={(e) => showPreview(e, isPrefab ? 'prefab' : 'script', item.data || item)}
         onMouseLeave={() => setPreview(null)}
         onContextMenu={(e) => openItemMenuSafe(e, 'shared', item)}
@@ -1090,7 +1119,7 @@ export default class NewScript extends CanvasComponent {
       </div>
     );
   };
-
+ 
   const renderListHeader = () => (
     <div className="asset-list-header">
       <span className="asset-row-icon" />
@@ -1100,7 +1129,7 @@ export default class NewScript extends CanvasComponent {
       <span className="asset-row-actions" />
     </div>
   );
-
+ 
   return (
     <aside
       ref={panelRef}
@@ -1201,7 +1230,7 @@ export default class NewScript extends CanvasComponent {
           </button>
         </div>
       </div>
-
+ 
       <input
         type="file"
         ref={fileInputRef}
@@ -1210,7 +1239,7 @@ export default class NewScript extends CanvasComponent {
         accept="video/*,audio/*"
         onChange={(e) => handleFileUpload(e.target.files)}
       />
-
+ 
       {/* Replace picker (Feature 9) — single file, target set by the menu */}
       <input
         type="file"
@@ -1219,32 +1248,91 @@ export default class NewScript extends CanvasComponent {
         accept="video/*,audio/*"
         onChange={handleReplaceFile}
       />
-
+ 
       {/* Folder Tree */}
       <div className="project-tree">
         {/* ========== Shared Library (app-wide, outside any project) ========== */}
         <div className="tree-folder-group" data-section="shared">
-          <div className="tree-folder-header" onClick={() => toggleFolder('shared')}>
+          <div
+            className={`tree-folder-header${dragOverKey === 'shared:__root__' ? ' drag-over' : ''}`}
+            onClick={() => toggleFolder('shared')}
+            onDragOver={(e) => handleFolderDragOver(e, ITEM_KIND_SHARED, 'shared:__root__')}
+            onDragLeave={handleFolderDragLeave}
+            onDrop={(e) => handleFolderDrop(e, 'shared', null, ITEM_KIND_SHARED)}
+          >
             {openFolders.shared ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
             {openFolders.shared ? <FolderOpen size={13} className="text-violet" /> : <Folder size={13} className="text-violet" />}
             <span className="tree-folder-name">Shared Library</span>
             <span className="tree-folder-count">{filteredShared.length}</span>
           </div>
-
+ 
           {openFolders.shared && (
             <div className="tree-folder-contents">
-              {filteredShared.length === 0 && (
+              {filteredShared.length === 0 && sharedExtraFolders.length === 0 && (
                 <p className="tree-empty-hint">
                   App-wide library — use the share button on a prefab or script below to keep it
                   available across every project.
                 </p>
               )}
-              {!isGridView && filteredShared.length > 0 && renderListHeader()}
-              {filteredShared.map(renderSharedItem)}
+ 
+              {/* Shared-library subfolders */}
+              {sharedSubfolderNames.map((folderName) => {
+                const isOpen = !!openSharedSubfolders[folderName];
+                const itemsInFolder = filteredShared.filter((s) => s.folder === folderName);
+                return (
+                  <div key={folderName} className="tree-folder-group nested">
+                    <div
+                      className={`tree-folder-header${dragOverKey === `shared:${folderName}` ? ' drag-over' : ''}`}
+                      onClick={() => toggleSharedSubfolder(folderName)}
+                      onContextMenu={(e) => openFolderMenu(e, 'shared', folderName)}
+                      onDragOver={(e) => handleFolderDragOver(e, ITEM_KIND_SHARED, `shared:${folderName}`)}
+                      onDragLeave={handleFolderDragLeave}
+                      onDrop={(e) => handleFolderDrop(e, 'shared', folderName, ITEM_KIND_SHARED)}
+                    >
+                      {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                      {isOpen ? <FolderOpen size={13} className="text-violet" /> : <Folder size={13} className="text-violet" />}
+                      {folderRenameInput('shared', folderName) || <span className="tree-folder-name">{folderName}</span>}
+                      <span className="tree-folder-count">{itemsInFolder.length}</span>
+                    </div>
+                    {isOpen && (
+                      <div className="tree-folder-contents">
+                        {itemsInFolder.length === 0 && (
+                          <p className="tree-empty-hint">Empty folder — drop shared items here.</p>
+                        )}
+                        {!isGridView && itemsInFolder.length > 0 && renderListHeader()}
+                        {itemsInFolder.map(renderSharedItem)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+ 
+              {/* New shared-library folder inline creation */}
+              {creatingFolder === 'shared' && (
+                <div className="tree-folder-group nested new-folder-row">
+                  <Folder size={13} className="text-violet" />
+                  <input
+                    type="text"
+                    className="asset-rename-input"
+                    placeholder="Folder name"
+                    value={newFolderName}
+                    autoFocus
+                    onChange={(e) => setNewFolderName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitNewFolder();
+                      else if (e.key === 'Escape') { setCreatingFolder(null); setNewFolderName(''); }
+                    }}
+                    onBlur={commitNewFolder}
+                  />
+                </div>
+              )}
+ 
+              {!isGridView && rootShared.length > 0 && renderListHeader()}
+              {rootShared.map(renderSharedItem)}
             </div>
           )}
         </div>
-
+ 
         {/* ========== prefabs/ ========== */}
         <div className="tree-folder-group" data-section="prefabs">
           <div
@@ -1259,13 +1347,13 @@ export default class NewScript extends CanvasComponent {
             <span className="tree-folder-name">prefabs</span>
             <span className="tree-folder-count">{filteredPrefabs.length}</span>
           </div>
-
+ 
           {openFolders.prefabs && (
             <div className="tree-folder-contents">
               {filteredPrefabs.length === 0 && prefabExtraFolders.length === 0 && (
                 <p className="tree-empty-hint">No prefabs yet. Save a GameObject as a Prefab from the Inspector.</p>
               )}
-
+ 
               {/* Prefab subfolders (Feature 5) */}
               {prefabSubfolderNames.map((folderName) => {
                 const isOpen = !!openPrefabSubfolders[folderName];
@@ -1297,7 +1385,7 @@ export default class NewScript extends CanvasComponent {
                   </div>
                 );
               })}
-
+ 
               {/* New prefab folder inline creation */}
               {creatingFolder === 'prefabs' && (
                 <div className="tree-folder-group nested new-folder-row">
@@ -1317,13 +1405,13 @@ export default class NewScript extends CanvasComponent {
                   />
                 </div>
               )}
-
+ 
               {!isGridView && rootPrefabs.length > 0 && renderListHeader()}
               {rootPrefabs.map((prefab) => (isGridView ? renderPrefabCard(prefab) : renderPrefabRow(prefab)))}
             </div>
           )}
         </div>
-
+ 
         {/* ========== media/ ========== */}
         <div className="tree-folder-group" data-section="media">
           <div
@@ -1355,13 +1443,13 @@ export default class NewScript extends CanvasComponent {
               )}
             </div>
           </div>
-
+ 
           {openFolders.media && (
             <div className="tree-folder-contents">
               {filteredMedia.length === 0 && extraFolders.length === 0 && (
                 <p className="tree-empty-hint">No media yet. Use + to import a clip.</p>
               )}
-
+ 
               {/* Duplicate-import notice (Feature 8) */}
               {dupeNotice != null && (
                 <div className="project-dupe-notice">
@@ -1369,7 +1457,7 @@ export default class NewScript extends CanvasComponent {
                   <button onClick={() => setDupeNotice(null)} title="Dismiss">×</button>
                 </div>
               )}
-
+ 
               {/* Media subfolders (asset folders like "Recordings" + context-menu folders) */}
               {mediaSubfolderNames.map((folderName) => {
                 const isOpen = !!openMediaSubfolders[folderName];
@@ -1401,7 +1489,7 @@ export default class NewScript extends CanvasComponent {
                   </div>
                 );
               })}
-
+ 
               {/* New media folder inline creation */}
               {creatingFolder === 'media' && (
                 <div className="tree-folder-group nested new-folder-row">
@@ -1421,13 +1509,13 @@ export default class NewScript extends CanvasComponent {
                   />
                 </div>
               )}
-
+ 
               {!isGridView && rootMedia.length > 0 && renderListHeader()}
               {rootMedia.map((m) => (isGridView ? renderMediaCard(m) : renderMediaRow(m)))}
             </div>
           )}
         </div>
-
+ 
         {/* ========== scripts/ ========== */}
         <div className="tree-folder-group" data-section="scripts">
           <div
@@ -1469,13 +1557,13 @@ export default class NewScript extends CanvasComponent {
               )}
             </div>
           </div>
-
+ 
           {openFolders.scripts && (
             <div className="tree-folder-contents">
               {filteredScripts.length === 0 && scriptExtraFolders.length === 0 && (
                 <p className="tree-empty-hint">No scripts yet. Use + to create a new script.</p>
               )}
-
+ 
               {/* Script subfolders (Feature 5) */}
               {scriptSubfolderNames.map((folderName) => {
                 const isOpen = !!openScriptSubfolders[folderName];
@@ -1507,7 +1595,7 @@ export default class NewScript extends CanvasComponent {
                   </div>
                 );
               })}
-
+ 
               {/* New script folder inline creation */}
               {creatingFolder === 'scripts' && (
                 <div className="tree-folder-group nested new-folder-row">
@@ -1527,20 +1615,20 @@ export default class NewScript extends CanvasComponent {
                   />
                 </div>
               )}
-
+ 
               {!isGridView && rootScripts.length > 0 && renderListHeader()}
               {rootScripts.map((script) => (isGridView ? renderScriptCard(script) : renderScriptRow(script)))}
             </div>
           )}
         </div>
       </div>
-
+ 
       {/* ── Right-click context menu ─────────────────────────────────────── */}
       {ctxMenu && (
         <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onClose={closeCtxMenu} className="project-context-menu" minWidth={170}>
           {ctxMenu.target.kind === 'empty' && (
             <>
-              {ctxMenu.target.section && ctxMenu.target.section !== 'shared' && (
+              {ctxMenu.target.section && (
                 <button className="ctx-menu-item" onClick={() => handleContextAction('new-folder')}>
                   <FolderPlus size={12} /> New Folder
                 </button>
@@ -1599,7 +1687,7 @@ export default class NewScript extends CanvasComponent {
           )}
         </ContextMenu>
       )}
-
+ 
       {/* ── Hover / click asset preview ───────────────────────────────────── */}
       {preview && (
         <AssetPreviewPopover x={preview.x} y={preview.y} kind={preview.kind} item={preview.item} />
@@ -1607,9 +1695,9 @@ export default class NewScript extends CanvasComponent {
     </aside>
   );
 });
-
+ 
 // ── Compact hover preview ---------------------------------------------------
-
+ 
 function AssetPreviewPopover({ x, y, kind, item }) {
   return (
     <div className="asset-hover-preview" style={{ left: Math.min(x + 16, window.innerWidth - 300), top: Math.min(y + 16, window.innerHeight - 200) }} onMouseLeave={() => {}}>
@@ -1619,7 +1707,7 @@ function AssetPreviewPopover({ x, y, kind, item }) {
     </div>
   );
 }
-
+ 
 function MediaPreview({ asset }) {
   if (asset?.type === 'video') {
     return (
@@ -1655,7 +1743,7 @@ function MediaPreview({ asset }) {
     </>
   );
 }
-
+ 
 function ScriptPreview({ script }) {
   const Meta = scriptKindMeta(detectScriptKind(script?.code || ''));
   const snippet = (script?.code || '').slice(0, 900);
@@ -1672,7 +1760,7 @@ function ScriptPreview({ script }) {
     </>
   );
 }
-
+ 
 // Prefab breakdown: component summary of every snapshot.
 function PrefabPreview({ prefab }) {
   const snapshots = (Array.isArray(prefab?.entities) && prefab.entities.length > 0 ? prefab.entities : null);
@@ -1706,3 +1794,4 @@ function PrefabPreview({ prefab }) {
     </>
   );
 }
+ 

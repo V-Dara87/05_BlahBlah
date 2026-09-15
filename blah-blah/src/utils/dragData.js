@@ -10,23 +10,24 @@
  * accept the drag.
  */
 export const DRAG_PAYLOAD_MIME = 'application/json';
-
+ 
 export const ITEM_KIND_MEDIA = 'media';
 export const ITEM_KIND_PREFAB = 'prefab';
 export const ITEM_KIND_SCRIPT = 'script';
 export const ITEM_KIND_ENTITY = 'entity';
-
+export const ITEM_KIND_SHARED = 'shared';
+ 
 // Per-kind marker MIME. dragover handlers can only see dataTransfer.types
 // (custom-type payload values are readable on drop only), so the kind goes
 // in the type name itself: presence of `application/x-blahblah-item-script`
 // in types means "a script drag is happening".
 const kindMime = (itemType) => `application/x-blahblah-item-${itemType}`;
-
+ 
 /**
  * Serialize an in-app asset drag onto a DataTransfer.
  * @param {DataTransfer} dataTransfer
- * @param {'media'|'prefab'|'script'} itemType
- * @param {object} itemData the full asset/prefab/script object
+ * @param {'media'|'prefab'|'script'|'shared'} itemType
+ * @param {object} itemData the full asset/prefab/script/shared-item object
  */
 export function setDragPayload(dataTransfer, itemType, itemData) {
   try {
@@ -37,7 +38,7 @@ export function setDragPayload(dataTransfer, itemType, itemData) {
     // Drag payloads are best-effort; an unreadable payload just won't drop.
   }
 }
-
+ 
 /**
  * Read the payload of an in-app asset drag on drop.
  * @returns {{ itemType: string, itemData: any } | null}
@@ -53,7 +54,7 @@ export function readDragPayload(dataTransfer) {
     return null;
   }
 }
-
+ 
 /** True when an active drag carries the given item kind marker. */
 export function dragHasItemKind(dataTransfer, itemType) {
   if (!dataTransfer) return false;
@@ -66,3 +67,4 @@ export function dragHasItemKind(dataTransfer, itemType) {
   // Legacy DOMStringList DataTransfer (rare): index scan.
   return Array.prototype.indexOf.call(types, marker) !== -1;
 }
+ 

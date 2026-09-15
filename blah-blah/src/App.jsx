@@ -404,6 +404,10 @@ export function App() {
     (id) => { sharedLibrary.removeSharedItem(id); },
     [sharedLibrary]
   );
+  const handleMoveSharedItem = useCallback(
+    (id, folderName) => { sharedLibrary.moveItem(id, folderName); },
+    [sharedLibrary]
+  );
  
   const handleImportSharedItem = useCallback(async (sharedItem) => {
     if (!sharedItem) return;
@@ -760,6 +764,7 @@ export function App() {
           onSharePrefab: handleSharePrefab,
           onShareScript: handleShareScript,
           onRemoveSharedItem: handleRemoveSharedItem,
+          onMoveSharedItem: handleMoveSharedItem,
           onImportSharedItem: handleImportSharedItem,
           onZoomIn: handleZoomIn,
           onZoomOut: handleZoomOut,

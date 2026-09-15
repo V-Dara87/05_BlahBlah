@@ -11,6 +11,9 @@
  *     data: any;        // prefab JSON (project-prefab shape) or script
  *                       // { name, code, description }
  *     createdAt: number;
+ *     folder?: string;  // optional one-level subfolder name within the
+ *                       // Shared Library section (same model as project
+ *                       // media/prefabs/scripts — see ProjectPanel.jsx)
  *   }
  *
  * Backend: IndexedDB when available (the Tauri webview and all modern
@@ -24,13 +27,13 @@ const LS_KEY = 'blahblah.sharedLibrary.v1';
 const DB_NAME = 'blahblah-shared-library';
 const DB_VERSION = 1;
 const DB_STORE = 'items';
-
+ 
 const hasIndexedDB = () => typeof indexedDB !== 'undefined' && indexedDB !== null;
-
+ 
 // ─── IndexedDB plumbing ─────────────────────────────────────────────────────
-
+ 
 let dbPromise = null;
-
+ 
 /** Open (once) the shared-library database; resolves null on any failure. */
 function openDb() {
   if (!hasIndexedDB()) return Promise.resolve(null);
@@ -53,7 +56,7 @@ function openDb() {
   });
   return dbPromise;
 }
-
+ 
 /** Read the whole item list out of IndexedDB (empty on failure). */
 async function idbList() {
   const db = await openDb();
@@ -69,7 +72,7 @@ async function idbList() {
     }
   });
 }
-
+ 
 /** Write the whole item list into IndexedDB. */
 async function idbWriteAll(items) {
   const db = await openDb();
@@ -88,9 +91,9 @@ async function idbWriteAll(items) {
     }
   });
 }
-
+ 
 // ─── localStorage fallback ──────────────────────────────────────────────────
-
+ 
 function lsList() {
   try {
     const raw = localStorage.getItem(LS_KEY);
@@ -100,7 +103,7 @@ function lsList() {
     return [];
   }
 }
-
+ 
 function lsWriteAll(items) {
   try {
     localStorage.setItem(LS_KEY, JSON.stringify(items));
@@ -109,9 +112,9 @@ function lsWriteAll(items) {
     return false; // quota/disabled — shared library silently unavailable
   }
 }
-
+ 
 // ─── Public API (all async, all promise-based, never reject) ────────────────
-
+ 
 async function mutate(mutator) {
   // Try IndexedDB first; on ANY failure fall back to localStorage, and
   // finally to the in-memory list so the UI stays consistent even when
@@ -125,12 +128,12 @@ async function mutate(mutator) {
   if (lsWriteAll(next)) return next;
   return next; // last resort: keep this session's list in memory only
 }
-
+ 
 /** @returns {Promise<SharedItem[]>} every item in the shared library. */
 export function listSharedItems() {
   return idbList().then((items) => (items !== null ? items : lsList()));
 }
-
+ 
 /** Add one item (or overwrite by id). Resolves the updated full list. */
 export function addSharedItem(item) {
   return mutate((items) => [
@@ -138,12 +141,33 @@ export function addSharedItem(item) {
     item,
   ]);
 }
-
+ 
 /** Remove an item by id. Resolves the updated full list. */
 export function removeSharedItem(id) {
   return mutate((items) => items.filter((i) => i.id !== id));
 }
-
+ 
+/**
+ * Move an item into a folder (or back to root when folderName is null).
+ * Resolves the updated full list. No-op if the id isn't found.
+ */
+export function moveSharedItem(id, folderName) {
+  return mutate((items) =>
+    items.map((i) => (i.id === id ? { ...i, folder: folderName || undefined } : i))
+  );
+}
+ 
+/**
+ * Rename every item in one folder to live in another (used for folder
+ * rename/delete, same "move contents" semantics as project folders).
+ * Pass toFolder = null to move everything back to root.
+ */
+export function moveAllSharedItemsInFolder(fromFolder, toFolder) {
+  return mutate((items) =>
+    items.map((i) => (i.folder === fromFolder ? { ...i, folder: toFolder || undefined } : i))
+  );
+}
+ 
 /** Convenience: build a prefab SharedItem (not yet stored). */
 export function makeSharedPrefabItem(prefab) {
   return {
@@ -154,7 +178,7 @@ export function makeSharedPrefabItem(prefab) {
     createdAt: Date.now(),
   };
 }
-
+ 
 /** Convenience: build a script SharedItem (not yet stored). */
 export function makeSharedScriptItem(script) {
   return {
@@ -169,3 +193,4 @@ export function makeSharedScriptItem(script) {
     createdAt: Date.now(),
   };
 }
+ 

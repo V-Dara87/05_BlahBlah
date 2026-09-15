@@ -204,6 +204,36 @@ export function makeAssetRef(asset) {
  * @param {Array}  allAssets     - All mediaAssets from the project
  * @returns {object}             - Resolved props ready for the script
  */
+
+/**
+ * Resolves entity/asset refs inside a single struct value object.
+ * Subfields that are entity/asset IDs are converted to EntityRef/AssetRef.
+ * All other subfields pass through unchanged.
+ *
+ * @param {object} rawItem    - Plain object (one struct instance)
+ * @param {object} subfields  - The struct's `fields` schema map
+ * @param {Array}  allEntities
+ * @param {Array}  allAssets
+ * @returns {object} - Resolved struct instance
+ */
+function resolveStructValue(rawItem, subfields, allEntities, allAssets) {
+  if (!rawItem || typeof rawItem !== 'object' || !subfields) return rawItem;
+  const result = { ...rawItem };
+  for (const [key, subDef] of Object.entries(subfields)) {
+    if (!subDef || typeof subDef !== 'object') continue;
+    const val = result[key];
+    if (subDef.type === 'entity') {
+      const entity = val ? allEntities.find((e) => e.id === val) : null;
+      result[key] = makeEntityRef(entity, allEntities);
+    } else if (subDef.type === 'asset') {
+      const asset = val ? allAssets.find((a) => a.id === val) : null;
+      result[key] = makeAssetRef(asset);
+    }
+    // All other subfield types pass through unchanged
+  }
+  return result;
+}
+
 export function resolveScriptProps(rawProps, schema, allEntities = [], allAssets = []) {
   if (!rawProps || !schema || schema.length === 0) return rawProps || {};
 
@@ -227,6 +257,14 @@ export function resolveScriptProps(rawProps, schema, allEntities = [], allAssets
       // value is an asset ID string (or null)
       const asset = value ? allAssets.find((a) => a.id === value) : null;
       resolved[key] = makeAssetRef(asset);
+    } else if (fieldDef.type === 'struct') {
+      // Resolve any entity/asset refs inside the struct object
+      resolved[key] = resolveStructValue(value || {}, fieldDef.fields, allEntities, allAssets);
+    } else if (fieldDef.type === 'struct[]') {
+      // Resolve entity/asset refs inside each item of the array
+      resolved[key] = (Array.isArray(value) ? value : []).map((item) =>
+        resolveStructValue(item, fieldDef.fields, allEntities, allAssets)
+      );
     }
     // Other types pass through unchanged
   }

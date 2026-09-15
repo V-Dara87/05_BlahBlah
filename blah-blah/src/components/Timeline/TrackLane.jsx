@@ -150,6 +150,11 @@ export const TrackLane = memo(function TrackLane({
     >
       <div className="track-grid-pattern" style={{ backgroundSize: `${gridSpacingPx}px 100%` }} />
  
+      {/* Divider between this track and the one below it — plain
+          straight line at the row's bottom edge, same color as the
+          vertical grid lines. */}
+      <div className="track-divider-line" style={{ width: totalWidth }} />
+ 
       <div
         className="timeline-lane-main"
         style={{ height: rowHeight }}

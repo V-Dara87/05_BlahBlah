@@ -52,6 +52,75 @@ Time is **timeline-driven** (`localTime = currentTime - clip.startTime`), not wa
 
 ---
 
+## Props System
+
+Scripts expose editable data to the Inspector via a static `props` schema object. The engine reads this schema, renders appropriate UI controls, and passes resolved values to the script at runtime.
+
+### Supported prop types
+
+| Type | Schema example | Inspector widget | Keyframeable |
+|---|---|---|---|
+| `number` | `{ type: 'number', default: 1, min: 0, max: 10 }` | DragNumber | ✅ |
+| `boolean` | `{ type: 'boolean', default: true }` | Checkbox | ✅ |
+| `string` | `{ type: 'string', default: 'Hello' }` | Text input | ✅ |
+| `color` | `{ type: 'color', default: '#ff0000' }` | Color picker | ✅ |
+| `select` | `{ type: 'select', options: ['A','B'], default: 'A' }` | Dropdown | ✅ |
+| `textarea` | `{ type: 'textarea', default: '' }` | Multi-line textarea | ❌ |
+| `entity` | `{ type: 'entity', label: 'Target' }` | Entity ref slot (drag/drop) | ❌ |
+| `asset` | `{ type: 'asset', label: 'Audio' }` | Asset ref slot (drag/drop) | ❌ |
+| `struct` | `{ type: 'struct', fields: { ... } }` | Collapsible field group | ❌ |
+| `struct[]` | `{ type: 'struct[]', fields: { ... } }` | Draggable array of groups | ❌ |
+
+### struct / struct[] schema syntax
+
+```js
+static props = {
+  // Single struct — renders as a collapsible group of sub-fields
+  settings: {
+    type: 'struct',
+    label: 'Flow Settings',
+    fields: {
+      speed:     { type: 'number', default: 1, min: 0 },
+      direction: { type: 'select', options: ['LR', 'TB'], default: 'LR' },
+      color:     { type: 'color', default: '#4a90e2' },
+    }
+  },
+
+  // Struct array — renders as a drag-to-reorder list, each item expandable
+  nodes: {
+    type: 'struct[]',
+    label: 'Flow Nodes',
+    fields: {
+      id:    { type: 'string', default: '' },
+      label: { type: 'string', default: 'Node' },
+      shape: { type: 'select', options: ['box', 'diamond', 'circle'], default: 'box' },
+      color: { type: 'color', default: '#ffffff' },
+    }
+  }
+};
+```
+
+Script receives struct values as plain JS objects / arrays — no unwrapping needed:
+```js
+// struct  → { speed: 1, direction: 'LR', color: '#4a90e2' }
+// struct[] → [ { id: 'a', label: 'Start', shape: 'box', color: '#fff' }, ... ]
+```
+
+`entity` / `asset` subfields inside a struct are resolved to `EntityRef` / `AssetRef` objects just like top-level refs.
+
+### Props pipeline (end-to-end)
+
+```
+Script source code
+  → extractScriptProps()    [scriptRunner.js]    → field schema []
+  → InspectorFieldList()    [InspectorField.jsx]  → renders per-field widgets
+  → comp.props[fieldName]   [stored in project.json as plain JSON]
+  → resolveScriptProps()    [referenceTypes.js]   → resolves entity/asset IDs to refs
+  → keyframes.evaluateField [keyframes.js]        → overrides at render time (primitives only)
+  → script receives props   [canvasRunner / scriptRunner]
+```
+
+
 ## Strengths (keep)
 
 | Area | Why it matters |

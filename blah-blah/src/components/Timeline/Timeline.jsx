@@ -59,6 +59,22 @@ export const Timeline = memo(function Timeline({
   const lastUserScrollTimeRef = useRef(0);
   const velocityRef = useRef(0);
   const smoothScrollAnimIdRef = useRef(null);
+  const miniScrollbarTrackRef = useRef(null);
+ 
+  // ── Custom horizontal minimap scrollbar ────────────────────────
+  // Mirrors lanesScrollRef's scrollLeft/scrollWidth/clientWidth as a
+  // 0..1 thumb position + width so it stays visually in sync with
+  // whatever scrolled the lanes (wheel, pan-drag, playhead auto-scroll).
+  const [scrollMetrics, setScrollMetrics] = useState({ left: 0, thumbRatio: 1, scrollRatio: 0 });
+ 
+  const updateScrollMetrics = useCallback(() => {
+    const el = lanesScrollRef.current;
+    if (!el) return;
+    const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth);
+    const thumbRatio = el.clientWidth > 0 ? Math.min(1, el.clientWidth / el.scrollWidth) : 1;
+    const scrollRatio = maxScroll > 0 ? el.scrollLeft / maxScroll : 0;
+    setScrollMetrics({ left: el.scrollLeft, thumbRatio, scrollRatio });
+  }, []);
  
   // ── Track lane layout ──────────────────────────────────────────
   // Pure flat track layout from utils/timelineLayout.js (computeTrackLanes):
@@ -88,6 +104,7 @@ export const Timeline = memo(function Timeline({
   }, [tracks, clips]);
  
   const timelineLanesHeight = Math.max(layout.surfaceY, 180);
+  const totalWidth = Math.max(totalDuration * pixelsPerSecond + 400, 1600);
  
   const handleLanesScroll = () => {
     lastUserScrollTimeRef.current = Date.now();
@@ -96,7 +113,24 @@ export const Timeline = memo(function Timeline({
     if (rulerScrollRef.current) {
       rulerScrollRef.current.scrollLeft = lanesScrollRef.current.scrollLeft;
     }
+    updateScrollMetrics();
   };
+ 
+  // Recompute the minimap thumb whenever the scrollable content's size
+  // could have changed (zoom, track/clip changes, panel resize) — not
+  // just on scroll, so the thumb width stays accurate even when the
+  // user never touches the scrollbar directly.
+  useEffect(() => {
+    updateScrollMetrics();
+  }, [updateScrollMetrics, totalWidth, layout.surfaceY]);
+ 
+  useEffect(() => {
+    const el = lanesScrollRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => updateScrollMetrics());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [updateScrollMetrics]);
  
   const snappingPoints = useMemo(() => {
     if (!snappingEnabled) return [];
@@ -109,8 +143,6 @@ export const Timeline = memo(function Timeline({
     });
     return Array.from(points);
   }, [clips, snappingEnabled, playbackStore]);
- 
-  const totalWidth = Math.max(totalDuration * pixelsPerSecond + 400, 1600);
  
   const handleSetIn = useCallback(() => {
     const t = playbackStore.getCurrentTime();
@@ -171,6 +203,58 @@ export const Timeline = memo(function Timeline({
       }
     };
   }, []);
+ 
+  // Drag the minimap thumb (or click-to-jump on its track) to scroll.
+  const handleMiniScrollbarPointerDown = useCallback((e) => {
+    const track = miniScrollbarTrackRef.current;
+    const scroller = lanesScrollRef.current;
+    if (!track || !scroller) return;
+    stopSmoothScroll();
+    e.preventDefault();
+ 
+    const trackRect = track.getBoundingClientRect();
+    const maxScroll = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+ 
+    const scrollToClientX = (clientX) => {
+      const ratio = Math.max(0, Math.min(1, (clientX - trackRect.left) / trackRect.width));
+      scroller.scrollLeft = ratio * maxScroll;
+      if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = scroller.scrollLeft;
+      lastUserScrollTimeRef.current = Date.now();
+      updateScrollMetrics();
+    };
+ 
+    // Clicking directly on the thumb pans relative to grab point;
+    // clicking empty track space jumps the view straight there.
+    const isThumb = e.target.closest('.timeline-mini-scrollbar-thumb');
+    if (!isThumb) {
+      scrollToClientX(e.clientX);
+    } else {
+      const startClientX = e.clientX;
+      const startScrollLeft = scroller.scrollLeft;
+      const onMove = (me) => {
+        const deltaRatio = (me.clientX - startClientX) / trackRect.width;
+        scroller.scrollLeft = Math.max(0, Math.min(maxScroll, startScrollLeft + deltaRatio * maxScroll));
+        if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = scroller.scrollLeft;
+        lastUserScrollTimeRef.current = Date.now();
+        updateScrollMetrics();
+      };
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+      };
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      return;
+    }
+ 
+    const onMove = (me) => scrollToClientX(me.clientX);
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }, [stopSmoothScroll, updateScrollMetrics]);
  
   const startSmoothScroll = useCallback((delta) => {
     const scroller = lanesScrollRef.current;
@@ -719,6 +803,27 @@ export const Timeline = memo(function Timeline({
               ))}
             </div>
           </div>
+        </div>
+ 
+        {/* Always-visible horizontal minimap scrollbar. Its thumb width
+            reflects how much of the total timeline is currently in view
+            (scrollMetrics.thumbRatio), and its position shows where that
+            view sits relative to the full track content — so at a glance
+            you can tell whether a track's clips further out (like the
+            ones past 00:20 in a long timeline) are off-screen, and drag
+            or click the bar to jump straight there. */}
+        <div
+          className="timeline-mini-scrollbar-track"
+          ref={miniScrollbarTrackRef}
+          onPointerDown={handleMiniScrollbarPointerDown}
+        >
+          <div
+            className="timeline-mini-scrollbar-thumb"
+            style={{
+              width: `${scrollMetrics.thumbRatio * 100}%`,
+              left: `${scrollMetrics.scrollRatio * (1 - scrollMetrics.thumbRatio) * 100}%`,
+            }}
+          />
         </div>
       </div>
     </section>
