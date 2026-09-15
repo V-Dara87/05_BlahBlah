@@ -29,6 +29,7 @@ import { setDragPayload, readDragPayload, dragHasItemKind, ITEM_KIND_MEDIA, ITEM
 import { ContextMenu } from './ContextMenu';
 import { AssetPreviewPopover } from './project/AssetPreviewPopover';
 import { useSectionFolders } from './project/useSectionFolders';
+import { KIND_REGISTRY } from './project/kindRegistry';
 import { FolderSection } from './project/FolderSection';
 import {
   scriptKindMeta,
@@ -85,6 +86,17 @@ export const ProjectPanel = memo(function ProjectPanel({
   onAddMediaToTimeline,
   onAddEmptyClip,
 }) {
+  // Bundled props/handlers passed to KIND_REGISTRY entries — see
+  // project/kindRegistry.js. Rebuilt each render (cheap: plain object of
+  // existing references, not a new computation) so registry calls always
+  // see current props without every call site re-destructuring them.
+  const registryCtx = {
+    mediaAssets, prefabs, scripts, sharedItems,
+    onRemoveMediaAsset, onRemovePrefab, onRemoveScript, onRemoveSharedItem,
+    onMoveMediaAsset, onMovePrefab, onMoveScript, onMoveSharedItem,
+    onRenameMediaAsset, onRenamePrefab, onRenameScript,
+  };
+ 
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'list'
   const [openFolders, setOpenFolders] = useState({
@@ -113,8 +125,18 @@ export const ProjectPanel = memo(function ProjectPanel({
   // Folder-tree state for all four sections (open subfolders, context-menu
   // folders, and the derived folder lists) lives in one hook now.
   // See project/useSectionFolders.js.
+  // Keyed by useSectionFolders' own section names ('prefabs', plural) —
+  // NOT the same vocabulary as KIND_REGISTRY's keys ('prefab', singular).
+  // Values are sourced from the registry so there's one place that knows
+  // "media" means mediaAssets etc.; the key names themselves stay as
+  // useSectionFolders expects them.
   const itemsBySection = useMemo(
-    () => ({ media: mediaAssets, prefabs, scripts, shared: sharedItems }),
+    () => ({
+      media: KIND_REGISTRY.media.getAllItems(registryCtx),
+      prefabs: KIND_REGISTRY.prefab.getAllItems(registryCtx),
+      scripts: KIND_REGISTRY.script.getAllItems(registryCtx),
+      shared: KIND_REGISTRY.shared.getAllItems(registryCtx),
+    }),
     [mediaAssets, prefabs, scripts, sharedItems],
   );
   const {
@@ -169,12 +191,18 @@ export const ProjectPanel = memo(function ProjectPanel({
   const isSelected = (kind, item) => selectedItems.has(selKey(kind, item.id));
  
   // Contiguous order of one section's visible items, used for shift-range.
+  // NOTE: filteredMedia/filteredPrefabs/filteredScripts/filteredShared carry
+  // kind-specific extra filters (media type, script kind) and are NOT part
+  // of KIND_REGISTRY by design (see project/kindRegistry.js header) — they
+  // stay as this local map instead.
   const sectionOrder = (kind) => {
-    if (kind === 'shared') return filteredShared.map((i) => selKey('shared', i.id));
-    if (kind === 'prefab') return filteredPrefabs.map((i) => selKey('prefab', i.id));
-    if (kind === 'media') return filteredMedia.map((i) => selKey('media', i.id));
-    if (kind === 'script') return filteredScripts.map((i) => selKey('script', i.id));
-    return [];
+    const filteredBySection = {
+      shared: filteredShared,
+      prefab: filteredPrefabs,
+      media: filteredMedia,
+      script: filteredScripts,
+    };
+    return (filteredBySection[kind] || []).map((i) => selKey(kind, i.id));
   };
  
   // Selection click policy: plain = select only this; Ctrl/Cmd = toggle;
@@ -213,10 +241,10 @@ export const ProjectPanel = memo(function ProjectPanel({
   // from deleted items are dropped).
   const resolveSelectionEntries = () => {
     const byId = {
-      media: new Map(mediaAssets.map((i) => [i.id, i])),
-      prefab: new Map(prefabs.map((i) => [i.id, i])),
-      script: new Map(scripts.map((i) => [i.id, i])),
-      shared: new Map(sharedItems.map((i) => [i.id, i])),
+      media: new Map(KIND_REGISTRY.media.getAllItems(registryCtx).map((i) => [i.id, i])),
+      prefab: new Map(KIND_REGISTRY.prefab.getAllItems(registryCtx).map((i) => [i.id, i])),
+      script: new Map(KIND_REGISTRY.script.getAllItems(registryCtx).map((i) => [i.id, i])),
+      shared: new Map(KIND_REGISTRY.shared.getAllItems(registryCtx).map((i) => [i.id, i])),
     };
     const out = [];
     selectedItems.forEach((key) => {
@@ -228,10 +256,7 @@ export const ProjectPanel = memo(function ProjectPanel({
   };
  
   const deleteItem = (kind, item) => {
-    if (kind === 'media') onRemoveMediaAsset?.(item.id);
-    else if (kind === 'prefab') onRemovePrefab?.(item.id);
-    else if (kind === 'script') onRemoveScript?.(item.id);
-    else if (kind === 'shared') onRemoveSharedItem?.(item.id);
+    KIND_REGISTRY[kind]?.deleteFn(item.id, registryCtx);
   };
  
   // Bulk delete for multi-selection (keyboard Delete/Backspace too). Deletes
@@ -388,10 +413,7 @@ export default class NewScript extends CanvasComponent {
   // ── Folder drag-and-drop (Feature 3, extended to prefabs/scripts by
   //    Feature 5) ───────────────────────────────────────────────────────────
   const moveItemToFolder = (kind, id, folderName) => {
-    if (kind === 'media') onMoveMediaAsset?.(id, folderName);
-    else if (kind === 'prefab') onMovePrefab?.(id, folderName);
-    else if (kind === 'script') onMoveScript?.(id, folderName);
-    else if (kind === 'shared') onMoveSharedItem?.(id, folderName);
+    KIND_REGISTRY[kind]?.moveFn(id, folderName, registryCtx);
   };
  
   const handleFolderDragOver = (e, itemKind, dropKey) => {
@@ -518,13 +540,17 @@ export default class NewScript extends CanvasComponent {
     if (name) {
       if (renaming.kind === 'folder') {
         commitFolderRename(renaming.section, renaming.id, name);
-      } else if (renaming.kind === 'media' && onRenameMediaAsset) onRenameMediaAsset(renaming.id, name);
-      else if (renaming.kind === 'prefab' && onRenamePrefab) onRenamePrefab(renaming.id, name);
-      else if (renaming.kind === 'script' && onRenameScript) {
+      } else {
+        // KIND_REGISTRY[kind].renameFn is null for 'shared' (renaming
+        // shared items isn't supported — see kindRegistry.js) so this is a
+        // no-op for that kind, same as the original's missing branch.
+        // Script rename is async and can throw (see registry comment); on
+        // failure we return early WITHOUT clearing `renaming`, same as the
+        // original, so the rename UI stays open for the user to retry.
         try {
-          await onRenameScript(renaming.id, name);
+          await KIND_REGISTRY[renaming.kind]?.renameFn?.(renaming.id, name, registryCtx);
         } catch (err) {
-          console.error('Could not rename script:', err);
+          console.error('Could not rename item:', err);
           return;
         }
       }
@@ -1420,3 +1446,4 @@ export default class NewScript extends CanvasComponent {
     </aside>
   );
 });
+ 

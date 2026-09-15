@@ -12,7 +12,8 @@ import {
 } from '../../engine/glTransitions';
 import { DragNumber } from '../DragNumber';
 import { OdinPropertyDrawer } from './OdinPropertyDrawer';
-
+import './transition-inspector.css';
+ 
 export const TransitionInspector = memo(function TransitionInspector({
   component,
   onChange,
@@ -21,15 +22,15 @@ export const TransitionInspector = memo(function TransitionInspector({
 }) {
   const transitionIn = component.transitionIn || { enabled: true, preset: 'glitchMemories', duration: 0.8, params: {} };
   const transitionOut = component.transitionOut || { enabled: false, preset: 'crossZoom', duration: 0.8, params: {} };
-
+ 
   const [activeTab, setActiveTab] = useState('in'); // 'in' | 'out'
   const currentConfig = activeTab === 'in' ? transitionIn : transitionOut;
   const currentPreset = getTransitionPreset(currentConfig.preset);
-
+ 
   const previewCanvasRef = useRef(null);
   const paramsRef = useRef(currentConfig.params);
   paramsRef.current = currentConfig.params;
-
+ 
   useEffect(() => {
     if (!previewCanvasRef.current) return;
     const cleanup = startTransitionPreviewLoop(
@@ -39,7 +40,7 @@ export const TransitionInspector = memo(function TransitionInspector({
     );
     return cleanup;
   }, [currentConfig.preset, activeTab]);
-
+ 
   const updateConfig = (tab, updates) => {
     if (tab === 'in') {
       onChange({
@@ -53,7 +54,7 @@ export const TransitionInspector = memo(function TransitionInspector({
       });
     }
   };
-
+ 
   const handleParamChange = (name, val) => {
     updateConfig(activeTab, {
       params: {
@@ -62,13 +63,13 @@ export const TransitionInspector = memo(function TransitionInspector({
       },
     });
   };
-
+ 
   const handleResetParams = () => {
     updateConfig(activeTab, {
       params: { ...(currentPreset.defaultParams || {}) },
     });
   };
-
+ 
   return (
     <div className="inspector-card-body transition-inspector-container">
       {/* Unity-Style Segmented Bar for Transition In / Out */}
@@ -90,7 +91,7 @@ export const TransitionInspector = memo(function TransitionInspector({
           <span>Transition Out</span>
         </button>
       </div>
-
+ 
       {/* Standard Unity Inspector Grid Rows */}
       <div className="inspector-row">
         <span className="row-label">Enabled</span>
@@ -100,7 +101,7 @@ export const TransitionInspector = memo(function TransitionInspector({
           onChange={(e) => updateConfig(activeTab, { enabled: e.target.checked })}
         />
       </div>
-
+ 
       {currentConfig.enabled && (
         <>
           {/* Live Interactive Shader Preview Card */}
@@ -119,7 +120,7 @@ export const TransitionInspector = memo(function TransitionInspector({
             </div>
             <p className="preview-desc">{currentPreset.description}</p>
           </div>
-
+ 
           {/* Preset Selector Dropdown + Browse Gallery Button */}
           <div className="inspector-row">
             <span className="row-label">Shader</span>
@@ -174,7 +175,7 @@ export const TransitionInspector = memo(function TransitionInspector({
               )}
             </div>
           </div>
-
+ 
           {/* Duration Slider / Scrubber */}
           <div className="inspector-row">
             <span className="row-label">Duration</span>
@@ -191,7 +192,7 @@ export const TransitionInspector = memo(function TransitionInspector({
               max={10}
             />
           </div>
-
+ 
           {/* Odin-Style Dynamic Shader Parameters Inspector */}
           <OdinPropertyDrawer
             paramsTypes={currentPreset.paramsTypes || {}}
@@ -203,7 +204,7 @@ export const TransitionInspector = memo(function TransitionInspector({
           />
         </>
       )}
-
+ 
       {/* Card actions */}
       <div className="transition-inspector-footer">
         <button

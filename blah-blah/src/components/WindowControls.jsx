@@ -1,7 +1,8 @@
 import { Minus, Square, X } from 'lucide-react';
 import { isTauri } from '../services/tauriFsAdapter';
 import { withCurrentWindow, toggleWindowMaximize } from '../services/windowChrome';
-
+import './window-controls.css';
+ 
 /**
  * WindowControls — minimize / maximize / close buttons for the custom
  * (frameless) title bar.
@@ -16,7 +17,7 @@ import { withCurrentWindow, toggleWindowMaximize } from '../services/windowChrom
  */
 export function WindowControls() {
   if (!isTauri()) return null;
-
+ 
   return (
     <div className="window-controls">
       <button
