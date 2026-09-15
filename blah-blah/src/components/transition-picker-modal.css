@@ -1,0 +1,207 @@
+/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/TransitionPickerModal.jsx and its markup.
+   A rule moves here when the narrowest class in its selector is used by this file
+   alone; generic modifier classes (.active/.danger/.disabled) travel with the
+   component that owns the rest of the selector.
+   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
+
+.transition-picker-modal.master-detail-layout {
+  width: 940px;
+  height: 640px;
+  max-width: 95vw;
+  max-height: 90vh;
+  background: var(--unity-dark, #1f1f1f);
+  border: 1px solid var(--unity-border-light, #3e3e3e);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  animation: modalFadeIn 0.15s ease-out;
+}
+ 
+.modal-slot-indicator {
+  font-size: 11px;
+  color: var(--unity-text-dim, #6e6e6e);
+  margin-left: 12px;
+  padding-left: 12px;
+  border-left: 1px solid var(--unity-border-light, #383838);
+}
+ 
+.modal-slot-indicator strong {
+  color: #38bdf8;
+}
+ 
+.master-category-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--unity-darkest, #191919);
+  border-bottom: 1px solid var(--unity-border, #1a1a1a);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+ 
+.master-category-bar::-webkit-scrollbar {
+  display: none;
+}
+ 
+.master-cat-pill {
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--unity-text-muted, #999999);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.1s;
+}
+ 
+.master-cat-pill:hover {
+  color: #fff;
+  background: var(--unity-hover, #3c3c3c);
+}
+ 
+.master-cat-pill.active {
+  color: #fff;
+  background: var(--unity-accent, #2c5d88);
+  border-color: #38bdf8;
+}
+ 
+.preset-param-badge {
+  font-size: 8px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 2px;
+  background: rgba(56, 189, 248, 0.12);
+  color: #38bdf8;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+ 
+.preset-item-desc {
+  font-size: 10px;
+  color: var(--unity-text-dim, #6e6e6e);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+ 
+.detail-canvas-box {
+  width: 100%;
+  max-width: 360px;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: 4px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.6);
+}
+ 
+.detail-preview-canvas {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+ 
+.detail-preview-toolbar {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px;
+}
+ 
+.detail-transport-btn {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--unity-subtle, #323232);
+  border: 1px solid var(--unity-border-light, #383838);
+  border-radius: 3px;
+  color: var(--unity-text, #d2d2d2);
+  cursor: pointer;
+  transition: all 0.12s;
+}
+ 
+.detail-transport-btn:hover {
+  background: var(--unity-hover, #3c3c3c);
+  color: #fff;
+}
+ 
+.detail-transport-btn.playing {
+  color: #38bdf8;
+  border-color: #38bdf8;
+}
+ 
+.detail-transport-btn.active {
+  color: #10b981;
+}
+ 
+.detail-scrubber-track {
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+ 
+.detail-progress-slider {
+  width: 100%;
+  height: 4px;
+  appearance: none;
+  background: var(--unity-subtle, #323232);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+ 
+.detail-progress-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #38bdf8;
+  cursor: pointer;
+  box-shadow: 0 0 4px rgba(56, 189, 248, 0.6);
+}
+ 
+.detail-progress-label {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--unity-text-dim, #94a3b8);
+  min-width: 36px;
+  text-align: right;
+}
+ 
+.detail-cat-badge {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(56, 189, 248, 0.12);
+  color: #38bdf8;
+}
+ 
+.detail-odin-container {
+  flex: 1;
+}
+ 
+.unity-btn-emerald {
+  background: #059669;
+  color: #fff;
+  border: 1px solid #10b981;
+}
+ 
+.unity-btn-emerald:hover {
+  background: #10b981;
+}

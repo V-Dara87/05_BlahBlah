@@ -33,6 +33,8 @@ import { WindowControls } from './components/WindowControls';
 import { toggleWindowMaximize } from './services/windowChrome';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './App.css';
+import './app-shell.css';
+import './styles/shared.css';
  
 /**
  * App — composition shell.

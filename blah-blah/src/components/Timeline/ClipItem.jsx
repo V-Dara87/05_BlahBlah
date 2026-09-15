@@ -4,6 +4,7 @@ import { WaveformCanvas } from '../WaveformCanvas';
 import { isScriptComponent, isVideoEntity, isAudioEntity } from '../../engine/ecs';
 import { dragHasItemKind, ITEM_KIND_SCRIPT, setDragPayload, ITEM_KIND_ENTITY } from '../../utils/dragData';
 import { ContextMenu } from '../ContextMenu';
+import './clip-item.css';
  
 /** Return true if candidateChild is a descendant of ancestorId (cycle guard). */
 function isDescendantOf(candidateChildId, ancestorId, allClips) {

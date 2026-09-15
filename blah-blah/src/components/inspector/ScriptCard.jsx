@@ -2,6 +2,7 @@ import { AlertCircle, Clock, Trash2, Sparkles, Boxes, FileCode } from 'lucide-re
 import { extractScriptProps, getScriptError, detectScriptKind, isScriptBundlePending } from '../../engine/scriptRunner';
 import { InspectorFieldList } from './InspectorField';
 import { InspectorCardHeader } from './InspectorCardHeader';
+import './script-card.css';
  
 // Per-kind display metadata for script cards (icon + color + label). The
 // kind comes from detectScriptKind at runtime — there is ONE component type

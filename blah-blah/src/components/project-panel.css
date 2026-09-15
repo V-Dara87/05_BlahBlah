@@ -1,0 +1,409 @@
+/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/ProjectPanel.jsx and its markup.
+   A rule moves here when the narrowest class in its selector is used by this file
+   alone; generic modifier classes (.active/.danger/.disabled) travel with the
+   component that owns the rest of the selector.
+   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
+
+.project-panel {
+  background-color: var(--unity-panel);
+  border-right: 1px solid var(--unity-border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+ 
+.panel-top-header {
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--unity-border);
+}
+ 
+.panel-title-text {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--unity-text);
+  letter-spacing: 0.5px;
+}
+ 
+.project-tree {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+ 
+.tree-folder-add-wrapper {
+  position: relative;
+}
+ 
+.tree-folder-add-btn {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  color: var(--unity-text-dim);
+}
+ 
+.tree-folder-add-btn:hover {
+  background: var(--unity-hover);
+  color: #fff;
+}
+ 
+.tree-add-popover {
+  position: absolute;
+  top: 22px;
+  right: 0;
+  background: var(--unity-panel);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+  padding: 4px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 140px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+ 
+.asset-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--unity-subtle);
+  border: 1px solid var(--unity-border);
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: grab;
+  transition: all 0.15s;
+}
+ 
+.asset-card:hover {
+  background: var(--unity-hover);
+  border-color: var(--unity-border-light);
+}
+ 
+.asset-icon-box {
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
+  background: var(--unity-dark);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  border: 1px solid var(--unity-border);
+}
+ 
+.duration-tag {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  font-size: 8px;
+  font-family: var(--font-mono);
+  background: rgba(0,0,0,0.85);
+  color: #fff;
+  padding: 1px 2px;
+  border-radius: 2px;
+}
+ 
+.asset-info-box {
+  flex: 1;
+  min-width: 0;
+}
+ 
+.asset-title-main {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--unity-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+ 
+.asset-subtitle {
+  font-size: 9px;
+  color: var(--unity-text-dim);
+}
+ 
+.asset-card-btns {
+  display: flex;
+  gap: 2px;
+}
+ 
+.card-action-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+ 
+.card-action-btn.add-btn {
+  background: rgba(99, 102, 241, 0.2);
+  color: #818cf8;
+}
+ 
+.card-action-btn.add-btn:hover {
+  background: #4f46e5;
+  color: #fff;
+}
+ 
+.card-action-btn.del-btn {
+  color: var(--unity-text-dim);
+}
+ 
+.card-action-btn.del-btn:hover {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+}
+ 
+.card-action-btn.share-btn {
+  background: rgba(167, 139, 250, 0.15);
+  color: #a78bfa;
+}
+ 
+.card-action-btn.share-btn:hover {
+  background: #7c3aed;
+  color: #fff;
+}
+ 
+.asset-card.shared-card {
+  cursor: default;
+}
+ 
+.asset-card.shared-card:hover {
+  background: var(--unity-hover);
+}
+ 
+.project-header-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+ 
+.project-view-toggle {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--unity-subtle);
+  border-radius: 4px;
+  padding: 2px;
+  flex-shrink: 0;
+}
+ 
+.view-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 20px;
+  border-radius: 3px;
+  color: var(--unity-text-dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+ 
+.view-toggle-btn:hover {
+  color: #fff;
+}
+ 
+.view-toggle-btn.active {
+  background: rgba(56, 189, 248, 0.25);
+  color: #38bdf8;
+}
+ 
+.asset-list-header,
+.asset-list-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  font-size: 10px;
+  min-width: 0;
+}
+ 
+.asset-list-header {
+  color: var(--unity-text-dim);
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.4px;
+  border-bottom: 1px solid var(--unity-border);
+  margin-top: 2px;
+}
+ 
+.asset-list-row {
+  border-radius: 4px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+ 
+.asset-list-row:hover {
+  background: rgba(56, 189, 248, 0.08);
+}
+ 
+.asset-row-icon {
+  width: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+ 
+.asset-row-name {
+  flex: 1;
+  min-width: 0;
+  color: #e2e8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+ 
+.asset-row-type {
+  width: 46px;
+  flex-shrink: 0;
+  color: var(--unity-text-dim);
+  text-transform: capitalize;
+}
+ 
+.asset-row-meta {
+  width: 62px;
+  flex-shrink: 0;
+  color: var(--unity-text-dim);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-align: right;
+}
+ 
+.asset-row-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+ 
+.asset-list-row:hover .asset-row-actions {
+  opacity: 1;
+}
+ 
+.asset-row-actions .card-action-btn {
+  width: 18px;
+  height: 18px;
+}
+ 
+.project-context-menu {
+  background: #1e1f26;
+  border: 1px solid var(--unity-border-light);
+  border-radius: 6px;
+  padding: 4px;
+}
+ 
+.project-context-menu .ctx-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+}
+ 
+.asset-card.selected {
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.6), 0 0 0 3px rgba(56, 189, 248, 0.18);
+  background: rgba(56, 189, 248, 0.08);
+}
+ 
+.asset-list-row.selected {
+  background: rgba(56, 189, 248, 0.14);
+  box-shadow: inset 2px 0 0 #38bdf8;
+}
+ 
+.sort-select {
+  background: var(--unity-dark);
+  color: var(--unity-text-muted);
+  border: 1px solid var(--unity-border);
+  border-radius: 3px;
+  font-size: 10px;
+  padding: 3px 4px;
+  max-width: 116px;
+  cursor: pointer;
+}
+ 
+.sort-select:hover {
+  color: #fff;
+  border-color: var(--unity-border-light);
+}
+ 
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 2px 0;
+}
+ 
+.filter-chip {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--unity-text-dim);
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border);
+  border-radius: 8px;
+  padding: 2px 7px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+ 
+.filter-chip:hover {
+  color: #fff;
+  border-color: var(--unity-border-light);
+}
+ 
+.filter-chip.active {
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.6);
+  background: rgba(56, 189, 248, 0.12);
+}
+ 
+.project-dupe-notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  line-height: 1.35;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+ 
+.project-dupe-notice button {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: #fbbf24;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 3px;
+  border-radius: 3px;
+}
+ 
+.project-dupe-notice button:hover {
+  background: rgba(251, 191, 36, 0.2);
+}
+ 
+.project-panel:focus {
+  outline: none;
+}

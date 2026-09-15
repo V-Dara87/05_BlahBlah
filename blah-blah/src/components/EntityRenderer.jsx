@@ -16,6 +16,7 @@ import { useCanvasScriptDriver } from '../hooks/useCanvasScriptDriver';
 import { VideoLayer } from './preview/VideoLayer';
 import { OverlayLayer } from './preview/OverlayLayer';
 import { PlaybackTransportBar } from './preview/PlaybackTransportBar';
+import './entity-renderer.css';
  
 /**
  * P0 #1 — Renderer unification.

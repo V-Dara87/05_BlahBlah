@@ -1,0 +1,246 @@
+/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/Timeline/ClipItem.jsx and its markup.
+   A rule moves here when the narrowest class in its selector is used by this file
+   alone; generic modifier classes (.active/.danger/.disabled) travel with the
+   component that owns the rest of the selector.
+   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
+
+.timeline-clip-card.is-locked {
+  opacity: 0.7;
+  cursor: not-allowed !important;
+  border-style: dashed;
+}
+ 
+.timeline-clip-card.is-locked::after {
+  content: '🔒';
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  font-size: 10px;
+  pointer-events: none;
+}
+ 
+.timeline-clip-card {
+  position: absolute;
+  top: 5px;
+  height: 54px;
+  border-radius: 4px;
+  background: #333946;
+  border: 1px solid #4a5265;
+  cursor: grab;
+  z-index: 10;
+  display: flex;
+  overflow: hidden;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+}
+ 
+.timeline-clip-card.video { background: #1a2744; border-left: 3px solid #3b82f6; }
+ 
+.timeline-clip-card.audio { background: #1a2233; border-left: 3px solid #8b5cf6; }
+ 
+.timeline-clip-card.text { background: #2a2218; border-left: 3px solid #f59e0b; }
+ 
+.timeline-clip-card.shape { background: #1a2a22; border-left: 3px solid #10b981; }
+ 
+.timeline-clip-card.prefab { background: #2a1a2a; border-left: 3px solid #ec4899; }
+ 
+.timeline-clip-card.selected {
+  border: 2px solid #38bdf8 !important;
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.4);
+  z-index: 15;
+}
+ 
+.timeline-clip-card.is-child {
+  border-top: 1px dashed rgba(56, 189, 248, 0.35);
+}
+ 
+.timeline-clip-card.is-linked-child:not(.selected) {
+  border: 1px dashed #38bdf8 !important;
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.4);
+}
+ 
+.timeline-clip-card.is-linked-parent:not(.selected) {
+  border: 1px dashed #f59e0b !important;
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.4);
+}
+ 
+.timeline-clip-card.link-drop-target {
+  border: 2px solid #22d3ee !important;
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.7) !important;
+  transform: scale(1.02);
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+  z-index: 25 !important;
+}
+ 
+.clip-pickwhip-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--unity-text-dim, #94a3b8);
+  padding: 1px 3px;
+  border-radius: 3px;
+  cursor: grab;
+  margin-left: 2px;
+  opacity: 0.6;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+ 
+.clip-pickwhip-btn:hover,
+.clip-pickwhip-btn.active {
+  opacity: 1;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.15);
+}
+ 
+.clip-parent-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: rgba(30, 41, 59, 0.85);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 9px;
+  font-weight: 500;
+  color: #38bdf8;
+  cursor: pointer;
+  max-width: 110px;
+  margin-left: 2px;
+  user-select: none;
+}
+ 
+.clip-parent-tag:hover {
+  background: rgba(56, 189, 248, 0.2);
+  border-color: #38bdf8;
+}
+ 
+.parent-tag-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+ 
+.parent-tag-unlink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: #94a3b8;
+  padding: 0;
+  margin-left: 1px;
+  cursor: pointer;
+  border-radius: 2px;
+}
+ 
+.parent-tag-unlink:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.2);
+}
+ 
+.pickwhip-drag-ghost {
+  position: fixed;
+  z-index: 99999;
+  pointer-events: none;
+  background: #0f172a;
+  border: 1px solid #38bdf8;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #f8fafc;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+ 
+.pickwhip-drag-ghost.valid {
+  border-color: #22d3ee;
+  background: #083344;
+  color: #67e8f9;
+}
+ 
+.clip-context-menu {
+  background: #1e1f26;
+  border: 1px solid var(--unity-border-light);
+  border-radius: 6px;
+  padding: 4px 0;
+}
+ 
+.clip-trim-handle {
+  width: 7px;
+  background: rgba(0,0,0,0.3);
+  cursor: col-resize;
+  z-index: 20;
+}
+ 
+.clip-trim-handle:hover { background: #38bdf8; }
+ 
+.clip-content-box {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 4px 6px;
+  pointer-events: none;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+}
+ 
+.clip-waveform-wrap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 0;
+}
+ 
+.clip-top-row,
+.clip-time-text {
+  position: relative;
+  z-index: 1;
+}
+ 
+.clip-top-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+ 
+.type-icon { opacity: 0.8; }
+ 
+.clip-title-text {
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+ 
+.script-tag {
+  font-size: 8px;
+  font-weight: 700;
+  background: rgba(16, 185, 129, 0.25);
+  color: #34d399;
+  padding: 1px 3px;
+  border-radius: 2px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+ 
+.clip-time-text {
+  font-size: 8px;
+  font-family: var(--font-mono);
+  color: var(--unity-text-dim);
+  align-self: flex-end;
+}
+ 
+.timeline-clip-card.script-drop-target {
+  outline: 2px solid #34d399;
+  outline-offset: 1px;
+  box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.25);
+}

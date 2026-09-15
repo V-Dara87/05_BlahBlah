@@ -1,0 +1,36 @@
+/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/Timeline/TrackLane.jsx and its markup.
+   A rule moves here when the narrowest class in its selector is used by this file
+   alone; generic modifier classes (.active/.danger/.disabled) travel with the
+   component that owns the rest of the selector.
+   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
+
+.track-lane-row.lane-locked {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(22, 22, 26, 0.6),
+    rgba(22, 22, 26, 0.6) 10px,
+    rgba(28, 28, 34, 0.6) 10px,
+    rgba(28, 28, 34, 0.6) 20px
+  );
+  cursor: not-allowed;
+}
+ 
+.track-lane-row.drag-target {
+  background: rgba(37, 99, 235, 0.15);
+  border-color: #2563eb;
+}
+ 
+.track-divider-line {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.14);
+  pointer-events: none;
+  z-index: 5;
+}
+ 
+.timeline-lane-main {
+  position: relative;
+  height: 64px;
+}

@@ -12,6 +12,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { TRACK_HEIGHT, clampTrackHeight } from '../../utils/timelineLayout';
+import './track-header.css';
  
 export const TrackHeader = memo(function TrackHeader({
   track,

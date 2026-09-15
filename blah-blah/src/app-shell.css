@@ -1,0 +1,64 @@
+/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/App.jsx and its markup.
+   A rule moves here when the narrowest class in its selector is used by this file
+   alone; generic modifier classes (.active/.danger/.disabled) travel with the
+   component that owns the rest of the selector.
+   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  background-color: var(--unity-darkest);
+  overflow: hidden;
+}
+ 
+.menubar-drag-fill {
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 32px;
+  -webkit-app-region: drag;
+  cursor: default;
+}
+ 
+.hub-window-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 28px;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  padding-left: 12px;
+  background: var(--unity-darkest);
+  border-bottom: 1px solid var(--unity-border);
+  -webkit-user-select: none;
+  user-select: none;
+}
+ 
+.hub-window-bar-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--unity-text-muted);
+}
+ 
+.hub-window-bar-fill {
+  flex: 1 1 auto;
+  align-self: stretch;
+  -webkit-app-region: drag;
+  cursor: default;
+}
+ 
+.hub-window-bar .window-controls {
+  height: 28px;
+  position: relative;
+  z-index: 10;
+  -webkit-app-region: no-drag;
+}
+ 
+.hub-window-bar .window-control-btn {
+  width: 42px;
+  -webkit-app-region: no-drag;
+  pointer-events: auto;
+}

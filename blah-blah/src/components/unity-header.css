@@ -1,0 +1,327 @@
+/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/UnityHeader.jsx and its markup.
+   A rule moves here when the narrowest class in its selector is used by this file
+   alone; generic modifier classes (.active/.danger/.disabled) travel with the
+   component that owns the rest of the selector.
+   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
+
+.unity-header {
+  height: 42px;
+  background-color: var(--unity-panel);
+  border-bottom: 1px solid var(--unity-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  flex-shrink: 0;
+  z-index: 50;
+}
+ 
+.unity-header-left, .unity-header-center, .unity-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+ 
+.unity-logo-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+ 
+.unity-app-title {
+  font-weight: 700;
+  font-size: 14px;
+  color: #fff;
+  letter-spacing: -0.2px;
+}
+ 
+.unity-version-tag {
+  font-size: 9px;
+  font-weight: 700;
+  background: rgba(99, 102, 241, 0.2);
+  color: #818cf8;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid rgba(99, 102, 241, 0.4);
+}
+ 
+.unity-divider-v {
+  width: 1px;
+  height: 16px;
+  background: var(--unity-border-light);
+  margin: 0 4px;
+}
+ 
+.unity-hdr-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+ 
+.unity-hdr-btn:hover {
+  background: var(--unity-subtle);
+  border-color: #38bdf8;
+}
+ 
+.unity-hdr-btn.active-folder, .unity-folder-btn.active-folder {
+  background: rgba(56, 189, 248, 0.1);
+  border-color: rgba(56, 189, 248, 0.4);
+}
+ 
+.folder-name-label {
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+ 
+.save-status-box {
+  display: flex;
+  align-items: center;
+  background: transparent;
+  border: none;
+  padding: 0 4px;
+}
+ 
+.save-status-saved {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #34d399;
+}
+ 
+.save-status-saving {
+  font-size: 10px;
+  font-weight: 600;
+  color: #fbbf24;
+  animation: pulse 1s infinite;
+}
+ 
+.save-status-memory {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--unity-text-dim);
+  padding: 0 4px;
+}
+ 
+.schema-warning-badge {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fbbf24;
+  padding: 0 4px;
+  cursor: help;
+}
+ 
+.unity-action-btn.save-btn {
+  background: #1e3a5f;
+  border: 1px solid #2d5588;
+  color: #93c5fd;
+}
+ 
+.unity-action-btn.save-btn:hover {
+  background: #254877;
+  color: #fff;
+}
+ 
+.unity-project-input {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--unity-text);
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  max-width: 130px;
+}
+ 
+.unity-project-input:hover, .unity-project-input:focus {
+  background: var(--unity-dark);
+  border-color: var(--unity-border-light);
+}
+ 
+.unity-transport-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border);
+  padding: 2px;
+  border-radius: 6px;
+}
+ 
+.unity-transport-btn {
+  width: 28px;
+  height: 26px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--unity-text-muted);
+}
+ 
+��
+.unity-transport-btn:hover {
+  background: var(--unity-subtle);
+  color: var(--unity-text);
+}
+ 
+.unity-transport-btn.play-btn.active-play {
+  background: #2563eb;
+  color: #fff;
+}
+ 
+.unity-transport-btn.active-loop {
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.15);
+}
+ 
+.unity-timecode-box {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--unity-darkest);
+  border: 1px solid var(--unity-border);
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+ 
+.timecode-current { color: #38bdf8; font-weight: 600; }
+ 
+.timecode-sep { color: var(--unity-text-dim); }
+ 
+.timecode-total { color: var(--unity-text-muted); }
+ 
+.unity-quick-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--unity-dark);
+  padding: 2px 4px;
+  border-radius: 6px;
+  border: 1px solid var(--unity-border);
+}
+ 
+.unity-tool-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--unity-text-muted);
+}
+ 
+.unity-tool-btn:hover:not(:disabled) {
+  background: var(--unity-subtle);
+  color: var(--unity-text);
+}
+ 
+.unity-tool-btn.danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.18);
+  color: #ef4444;
+}
+ 
+.unity-tool-btn.active-snap {
+  background: #2563eb;
+  color: #fff;
+}
+ 
+.unity-zoom-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 6px;
+  border-left: 1px solid var(--unity-border);
+}
+ 
+.unity-tool-btn-sm {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--unity-text-muted);
+}
+ 
+.unity-tool-btn-sm:hover {
+  background: var(--unity-subtle);
+  color: var(--unity-text);
+}
+ 
+.zoom-text {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  min-width: 32px;
+  text-align: center;
+  color: var(--unity-text-dim);
+}
+ 
+.unity-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--unity-border-light);
+}
+ 
+.unity-action-btn.code-btn {
+  background: var(--unity-subtle);
+  color: var(--unity-text);
+}
+ 
+.unity-action-btn.code-btn:hover {
+  background: var(--unity-hover);
+  border-color: #38bdf8;
+}
+ 
+.unity-action-btn.primary-btn {
+  background: #2563eb;
+  color: #fff;
+  border-color: #3b82f6;
+}
+ 
+.unity-action-btn.primary-btn:hover {
+  background: #1d4ed8;
+}
+ 
+.settings-hdr-btn {
+  color: var(--unity-text-muted);
+}
+ 
+.settings-hdr-btn:hover {
+  background: var(--unity-subtle);
+  color: #fff;
+}
+ 
+.unity-logo-hub-btn {
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 2px 4px;
+}
+ 
+.unity-logo-hub-btn:hover {
+  background: var(--unity-subtle);
+}

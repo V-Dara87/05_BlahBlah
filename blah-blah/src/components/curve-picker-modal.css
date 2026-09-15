@@ -1,0 +1,7 @@
+/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/CurvePickerModal.jsx and its markup.
+   A rule moves here when the narrowest class in its selector is used by this file
+   alone; generic modifier classes (.active/.danger/.disabled) travel with the
+   component that owns the rest of the selector.
+   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
+
+.preset-item-icon-box.cat-cyan { background: rgba(6, 182, 212, 0.15); color: #22d3ee; }

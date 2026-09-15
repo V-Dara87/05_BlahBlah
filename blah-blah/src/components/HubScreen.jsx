@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Layers, FolderPlus, FolderOpen, Clock, FolderClock, X, AlertCircle } from 'lucide-react';
 import { listRecentProjects, forgetProject } from '../services/recentProjects';
 import { pickProjectDirectory } from '../services/projectFileSystem';
+import './hub-screen.css';
  
 function formatDate(ts) {
   if (!ts) return '—';

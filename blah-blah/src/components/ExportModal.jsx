@@ -34,6 +34,7 @@ import {
   executeFfmpegExport,
   isFfmpegAvailable
 } from '../services/ffmpegExportRunner';
+import './export-modal.css';
  
 /**
  * P1 #11 — MP4 export. Video is the original deterministic frame-by-frame

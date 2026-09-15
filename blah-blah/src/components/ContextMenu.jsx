@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import './context-menu.css';
 
 /**
  * ContextMenu — shared shell for every right-click menu in the app

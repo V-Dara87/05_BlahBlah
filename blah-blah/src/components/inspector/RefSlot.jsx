@@ -9,6 +9,7 @@
 import { useState } from 'react';
 import { Link2, Film, Music, Image, X, SquareDashed } from 'lucide-react';
 import { readDragPayload } from '../../utils/dragData';
+import './ref-slot.css';
 
 // ─── EntityRefSlot ────────────────────────────────────────────────────────────
 

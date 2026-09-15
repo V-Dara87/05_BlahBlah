@@ -1,0 +1,139 @@
+/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/MenuBar.jsx and its markup.
+   A rule moves here when the narrowest class in its selector is used by this file
+   alone; generic modifier classes (.active/.danger/.disabled) travel with the
+   component that owns the rest of the selector.
+   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
+
+.menubar {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  background: var(--unity-darkest);
+  border-bottom: 1px solid var(--unity-border);
+  padding: 0 4px;
+  flex-shrink: 0;
+  z-index: 100;
+}
+ 
+.menubar-item {
+  position: relative;
+}
+ 
+.menubar-btn {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  background: none;
+  border: none;
+  color: var(--unity-text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.08s;
+  -webkit-app-region: no-drag;
+}
+ 
+.menubar-btn:hover,
+.menubar-btn.active {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+ 
+.menubar-dropdown {
+  position: absolute;
+  top: 24px;
+  left: 0;
+  min-width: 200px;
+  background: #1e1f26;
+  border: 1px solid var(--unity-border-light);
+  border-radius: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  padding: 4px 0;
+  z-index: 200;
+}
+ 
+.menubar-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 12px;
+  background: none;
+  border: none;
+  color: var(--unity-text);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  transition: background 0.06s;
+}
+ 
+.menubar-dropdown-item:hover {
+  background: rgba(56, 189, 248, 0.15);
+  color: #fff;
+}
+ 
+.menubar-dropdown-item.disabled {
+  color: var(--unity-text-dim);
+  cursor: default;
+  opacity: 0.5;
+}
+ 
+.menubar-dropdown-item.disabled:hover {
+  background: none;
+  color: var(--unity-text-dim);
+}
+ 
+.menubar-dropdown-item.danger {
+  color: #ef4444;
+}
+ 
+.menubar-dropdown-item.danger:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+}
+ 
+.menubar-item-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  width: 16px;
+  color: var(--unity-text-dim);
+}
+ 
+.menubar-dropdown-item:hover .menubar-item-icon {
+  color: inherit;
+}
+ 
+.menubar-item-label {
+  flex: 1;
+}
+ 
+.menubar-item-shortcut {
+  font-size: 10px;
+  color: var(--unity-text-dim);
+  margin-left: 16px;
+  font-variant-numeric: tabular-nums;
+}
+ 
+.menubar-separator {
+  height: 1px;
+  background: var(--unity-border-light);
+  margin: 4px 8px;
+}
+ 
+.menubar {
+  -webkit-user-select: none;
+  user-select: none;
+}
+ 
+.menubar-trailing {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  min-width: 0;
+}

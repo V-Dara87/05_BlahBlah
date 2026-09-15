@@ -1,0 +1,38 @@
+/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/inspector/InspectorCardHeader.jsx and its markup.
+   A rule moves here when the narrowest class in its selector is used by this file
+   alone; generic modifier classes (.active/.danger/.disabled) travel with the
+   component that owns the rest of the selector.
+   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
+
+.inspector-card-header {
+  height: 26px;
+  background: #383838;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+}
+ 
+.inspector-card-header.drag-over {
+  box-shadow: inset 0 0 0 1px #38bdf8;
+  background: #40474f;
+}
+ 
+.card-title-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+ 
+.card-title-text {
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+}
+ 
+.card-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}

@@ -1,0 +1,73 @@
+/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/ScriptEditorModal.jsx and its markup.
+   A rule moves here when the narrowest class in its selector is used by this file
+   alone; generic modifier classes (.active/.danger/.disabled) travel with the
+   component that owns the rest of the selector.
+   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
+
+.script-modal-card {
+  width: 90%;
+  max-width: 680px;
+  background: var(--unity-panel);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+ 
+.script-modal-body {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+ 
+.script-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--unity-text-muted);
+}
+ 
+.script-code-textarea {
+  width: 100%;
+  height: 380px;
+  background: var(--unity-darkest);
+  border: 1px solid var(--unity-border-light);
+  color: #38bdf8;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 10px;
+  border-radius: 4px;
+  line-height: 1.5;
+  resize: vertical;
+}
+ 
+.script-code-textarea {
+  color: #86efac;
+}
+ 
+.script-title-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+ 
+.script-name-input {
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border-light);
+  color: #fff;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+ 
+.script-badge {
+  font-size: 9px;
+  font-weight: 700;
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  padding: 2px 5px;
+  border-radius: 3px;
+}

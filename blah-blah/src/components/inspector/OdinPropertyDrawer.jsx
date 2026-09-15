@@ -1,6 +1,7 @@
 import { memo, useMemo } from 'react';
 import { RotateCcw, Sliders } from 'lucide-react';
 import { DragNumber } from '../DragNumber';
+import './odin-property-drawer.css';
 
 /**
  * Utility to convert RGB / RGBA array ([r, g, b, a] in 0..1) to #rrggbb hex string

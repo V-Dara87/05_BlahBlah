@@ -13,6 +13,7 @@ const HEADER_WIDTH = 180;
 // unit-tested). Re-exported here so existing importers stay unchanged.
 export { TRACK_HEIGHT } from '../../utils/timelineLayout';
 import { TRACK_HEIGHT, computeTrackLanes } from '../../utils/timelineLayout';
+import './timeline.css';
  
 export const Timeline = memo(function Timeline({
   tracks,

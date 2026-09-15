@@ -1,6 +1,7 @@
 import { useRef, memo } from 'react';
 import { formatTimecode } from '../../utils/timeFormat';
 import { getTickIntervalSeconds } from '../../utils/timelineLayout';
+import './time-ruler.css';
  
 export const TimeRuler = memo(function TimeRuler({
   totalDuration,

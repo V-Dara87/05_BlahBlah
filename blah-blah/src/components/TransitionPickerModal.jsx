@@ -24,6 +24,7 @@ import {
   renderTransitionFrame,
 } from '../engine/glTransitions';
 import { OdinPropertyDrawer } from './inspector/OdinPropertyDrawer';
+import './transition-picker-modal.css';
 
 // Map categories to visual icons and color accents
 function getCategoryMeta(category) {

@@ -21,6 +21,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FALLBACK_FONT_FAMILIES, queryInstalledFontFamilies } from '../../utils/systemFonts';
 import { SearchBar } from './SearchBar';
+import './font-family-picker.css';
 
 const POPOVER_WIDTH = 260;
 const POPOVER_MAX_HEIGHT = 320;

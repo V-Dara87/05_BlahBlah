@@ -1,0 +1,226 @@
+/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/HubScreen.jsx and its markup.
+   A rule moves here when the narrowest class in its selector is used by this file
+   alone; generic modifier classes (.active/.danger/.disabled) travel with the
+   component that owns the rest of the selector.
+   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
+
+.hub-screen {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(circle at 20% 15%, rgba(99, 102, 241, 0.12), transparent 45%),
+    radial-gradient(circle at 80% 85%, rgba(56, 189, 248, 0.1), transparent 45%),
+    var(--unity-darkest);
+  overflow-y: auto;
+  padding: 40px 20px;
+}
+ 
+.hub-container {
+  width: 100%;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+ 
+.hub-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+ 
+.hub-icon-box {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+}
+ 
+.hub-title {
+  font-size: 22px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -0.3px;
+}
+ 
+.hub-subtitle {
+  font-size: 12px;
+  color: var(--unity-text-muted);
+  margin-top: 2px;
+}
+ 
+.hub-alert {
+  width: 100%;
+}
+ 
+.hub-actions-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+ 
+.hub-action-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  background: var(--unity-panel);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 10px;
+  padding: 16px 16px;
+  text-align: left;
+  transition: all 0.15s;
+}
+ 
+.hub-action-card:hover {
+  border-color: #38bdf8;
+  background: var(--unity-subtle);
+  transform: translateY(-1px);
+}
+ 
+.hub-action-card.primary:hover {
+  border-color: #34d399;
+}
+ 
+.hub-action-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+}
+ 
+.hub-action-sub {
+  font-size: 10.5px;
+  color: var(--unity-text-dim);
+}
+ 
+.hub-recent-section {
+  background: var(--unity-panel);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 10px;
+  padding: 14px 16px 8px;
+}
+ 
+.hub-recent-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--unity-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 10px;
+}
+ 
+.hub-empty-text {
+  font-size: 11.5px;
+  color: var(--unity-text-dim);
+  padding: 6px 0 14px;
+}
+ 
+.hub-recent-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 340px;
+  overflow-y: auto;
+}
+ 
+.hub-recent-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 4px;
+  border-bottom: 1px solid var(--unity-border);
+  text-align: left;
+  border-radius: 6px;
+}
+ 
+.hub-recent-item:last-child {
+  border-bottom: none;
+}
+ 
+.hub-recent-item:hover:not(:disabled) {
+  background: var(--unity-subtle);
+}
+ 
+.hub-recent-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #f59e0b;
+  flex-shrink: 0;
+}
+ 
+.hub-recent-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+ 
+.hub-recent-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+ 
+.hub-recent-path {
+  font-size: 10px;
+  color: var(--unity-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  max-width: 480px;
+}
+ 
+.hub-recent-dates {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--unity-text-dim);
+}
+ 
+.hub-recent-dates-sep {
+  margin: 0 2px;
+}
+ 
+.hub-recent-status {
+  font-size: 10.5px;
+  color: #38bdf8;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+ 
+.hub-recent-forget {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--unity-text-dim);
+  flex-shrink: 0;
+}
+ 
+.hub-recent-forget:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+ 
+.hub-screen {
+  padding-top: calc(40px + 28px);
+}

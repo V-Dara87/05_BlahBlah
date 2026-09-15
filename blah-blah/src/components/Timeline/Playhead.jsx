@@ -1,5 +1,6 @@
 import { useRef, useEffect, memo } from 'react';
 import { usePlaybackStore } from '../../hooks/PlaybackContext';
+import './playhead.css';
 
 // Track header column width — clips/lanes start after this, so anything
 // positioned from the lanes-surface's own left edge needs the same offset

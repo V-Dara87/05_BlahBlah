@@ -1,0 +1,67 @@
+/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/EntityRenderer.jsx and its markup.
+   A rule moves here when the narrowest class in its selector is used by this file
+   alone; generic modifier classes (.active/.danger/.disabled) travel with the
+   component that owns the rest of the selector.
+   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
+
+.preview-panel {
+  display: flex;
+  flex-direction: column;
+  background-color: var(--unity-darkest);
+  border-right: 1px solid var(--unity-border);
+  overflow: hidden;
+  position: relative;
+  height: 100%;
+}
+ 
+.preview-viewport-box {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at center, #1e2028 0%, #0d0e12 100%);
+  padding: 16px;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+ 
+.preview-canvas-frame {
+  max-width: 100%;
+  max-height: 100%;
+  flex-shrink: 0;
+  aspect-ratio: 16 / 9;
+  position: relative;
+  background: #090a0f;
+  border: 1px solid var(--unity-border-light);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255,255,255,0.05);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 6px;
+}
+ 
+.preview-canvas-frame--extended {
+  box-shadow: none;
+  border-radius: 0;
+  border-color: transparent;
+}
+ 
+.preview-frame-bounds-outline {
+  border-style: dashed;
+  border-color: #facc15;
+  pointer-events: none;
+  /* Always above every entity AND its selection gizmo, regardless of
+     track count or selection state. Entities stack at 100 + trackIndex
+     (see layerZIndexOf in EntityRenderer.jsx), with a selected one adding
+     +1000 on top of that, and its selection-gizmo overlay matches that
+     same +1000 band -- so 999 here used to lose to any selected entity
+     (1000+) the moment something was selected, letting the gizmo/border
+     render over this frame-edge marker instead of under it. 9999 sits
+     comfortably above that whole band (track count would need to reach
+     ~8900 tracks to catch up), so the real exported frame edge stays
+     visibly on top no matter what's selected. */
+  z-index: 9999;
+  box-sizing: border-box;
+}

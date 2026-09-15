@@ -1,4 +1,5 @@
 import { Folder, FolderOpen, ChevronDown, ChevronRight } from 'lucide-react';
+import './folder-section.css';
  
 /**
  * One top-level tree section in the Project panel (Shared Library / prefabs

@@ -31,6 +31,7 @@ import { MediaSettingsCard } from './inspector/MediaSettingsCard';
 import { TransitionCard } from './inspector/TransitionCard';
 import { SubtitleTrackCard } from './inspector/SubtitleTrackCard';
 import { ScriptCard, scriptKindMeta } from './inspector/ScriptCard';
+import './unity-inspector.css';
  
 /**
  * P0 #3 — Unified Inspector field rendering.

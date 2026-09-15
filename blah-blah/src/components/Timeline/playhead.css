@@ -1,0 +1,50 @@
+/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/Timeline/Playhead.jsx and its markup.
+   A rule moves here when the narrowest class in its selector is used by this file
+   alone; generic modifier classes (.active/.danger/.disabled) travel with the
+   component that owns the rest of the selector.
+   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
+
+.timeline-playhead {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  z-index: 40;
+  pointer-events: none;
+}
+ 
+.playhead-handle {
+  position: absolute;
+  top: -2px;
+  width: 18px;
+  height: 18px;
+  margin-left: -8px;
+  cursor: grab;
+  pointer-events: auto;
+  display: flex;
+  justify-content: center;
+  z-index: 41;
+}
+ 
+.playhead-handle:active {
+  cursor: grabbing;
+}
+ 
+.playhead-triangle {
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 12px solid #ef4444;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.6));
+}
+ 
+.playhead-line {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  bottom: 0;
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.8);
+}

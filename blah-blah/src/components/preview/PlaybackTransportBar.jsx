@@ -11,6 +11,7 @@ import {
   Expand,
 } from 'lucide-react';
 import { formatSimpleTime } from '../../utils/timeFormat';
+import './playback-transport-bar.css';
  
 /**
  * Bottom playback transport bar — play/pause, step, loop, timecode, the

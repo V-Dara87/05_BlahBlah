@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
+import './drag-number.css';
 
 /**
  * DragNumber – Unity-style drag-to-scrub number input.

@@ -2,6 +2,7 @@ import { useState, useMemo, memo } from 'react';
 import { X, Search, Waves, Check, RotateCcw } from 'lucide-react';
 import { CurveEditor } from './CurveEditor';
 import { CURVE_PRESETS } from '../engine/keyframes';
+import './curve-picker-modal.css';
  
 /**
  * CurvePickerModal — the "browse all curve presets" gallery, opened from

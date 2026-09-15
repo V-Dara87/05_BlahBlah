@@ -1,0 +1,102 @@
+/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/project/AssetPreviewPopover.jsx and its markup.
+   A rule moves here when the narrowest class in its selector is used by this file
+   alone; generic modifier classes (.active/.danger/.disabled) travel with the
+   component that owns the rest of the selector.
+   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
+
+.asset-hover-preview {
+  position: fixed;
+  z-index: 9000;
+  width: 270px;
+  max-height: 220px;
+  overflow: hidden;
+  background: #16171d;
+  border: 1px solid var(--unity-border-light);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+}
+ 
+.asset-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--unity-border);
+  background: rgba(255, 255, 255, 0.02);
+}
+ 
+.asset-preview-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+ 
+.asset-preview-meta {
+  font-size: 9px;
+  color: var(--unity-text-dim);
+  padding: 4px 8px 6px;
+  font-family: var(--font-mono);
+}
+ 
+.asset-preview-media {
+  width: 100%;
+  max-height: 150px;
+  background: #000;
+  display: block;
+}
+ 
+.asset-preview-audio {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 8px;
+}
+ 
+.asset-preview-audio audio {
+  width: 100%;
+  height: 30px;
+}
+ 
+.asset-preview-code {
+  margin: 0;
+  padding: 8px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.45;
+  color: #a5b4fc;
+  overflow: auto;
+  max-height: 160px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+ 
+.asset-preview-breakdown {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  overflow: auto;
+}
+ 
+.preview-entity-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+ 
+.preview-entity-name {
+  font-size: 10px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+ 
+.preview-entity-comps {
+  font-size: 9px;
+  color: var(--unity-text-dim);
+}

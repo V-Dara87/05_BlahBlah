@@ -1,0 +1,187 @@
+/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/SettingsModal.jsx and its markup.
+   A rule moves here when the narrowest class in its selector is used by this file
+   alone; generic modifier classes (.active/.danger/.disabled) travel with the
+   component that owns the rest of the selector.
+   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
+
+.settings-body {
+  gap: 18px;
+}
+ 
+.settings-select {
+  cursor: pointer;
+}
+ 
+.level-meter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+ 
+.level-meter-track {
+  flex: 1;
+  height: 10px;
+  background: var(--unity-darkest);
+  border: 1px solid var(--unity-border);
+  border-radius: 5px;
+  overflow: hidden;
+}
+ 
+.level-meter-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #10b981, #38bdf8);
+  transition: width 0.05s linear;
+}
+ 
+.level-meter-fill.hot {
+  background: linear-gradient(90deg, #f59e0b, #ef4444);
+}
+ 
+.level-meter-value {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--unity-text-dim);
+  min-width: 32px;
+  text-align: right;
+}
+ 
+.settings-modal {
+  max-width: 560px;
+}
+ 
+.settings-tab-bar {
+  display: flex;
+  gap: 2px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--unity-border);
+  flex-shrink: 0;
+}
+ 
+.settings-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--unity-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+ 
+.settings-tab-btn:hover {
+  color: #fff;
+}
+ 
+.settings-tab-btn.active {
+  color: var(--unity-accent, #38bdf8);
+  border-bottom-color: var(--unity-accent, #38bdf8);
+}
+ 
+.shortcuts-body {
+  max-height: 420px;
+  overflow-y: auto;
+}
+ 
+.shortcuts-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+ 
+.shortcut-conflict-box {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 8px;
+}
+ 
+.shortcut-conflict-actions {
+  display: flex;
+  gap: 8px;
+  align-self: flex-end;
+}
+ 
+.shortcut-group {
+  gap: 8px;
+}
+ 
+.shortcut-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+ 
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 2px;
+}
+ 
+.shortcut-row-label {
+  font-size: 12px;
+  color: var(--unity-text);
+}
+ 
+.shortcut-row-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+ 
+.shortcut-key-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--unity-darkest);
+  border: 1px solid var(--unity-border);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  border-radius: 5px;
+  cursor: pointer;
+  min-width: 96px;
+  justify-content: center;
+  transition: all 0.12s;
+}
+ 
+.shortcut-key-chip:hover {
+  border-color: var(--unity-accent, #38bdf8);
+}
+ 
+.shortcut-key-chip.listening {
+  border-color: var(--unity-accent, #38bdf8);
+  color: var(--unity-accent, #38bdf8);
+  background: rgba(56, 189, 248, 0.1);
+}
+ 
+.shortcut-key-chip svg {
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+ 
+.shortcut-reset-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: none;
+  border: 1px solid transparent;
+  color: var(--unity-text-dim);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+ 
+.shortcut-reset-btn:hover {
+  color: #fff;
+  border-color: var(--unity-border);
+}

@@ -2,6 +2,7 @@ import { useState, memo, useMemo } from 'react';
 import { ClipItem } from './ClipItem';
 import { TRACK_HEIGHT, computeClipSubLanes, getTickIntervalSeconds } from '../../utils/timelineLayout';
 import { importMediaFiles } from '../../services/mediaImport';
+import './track-lane.css';
  
 /**
  * TrackLane — the time-area half of one timeline track row.

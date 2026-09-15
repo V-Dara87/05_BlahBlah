@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, Check, Save, FileCode } from 'lucide-react';
 import { detectScriptKind } from '../engine/scriptRunner';
+import './script-editor-modal.css';
 
 // Per-kind display metadata for the editor header badge (see detectScriptKind).
 const SCRIPT_KIND_META = {

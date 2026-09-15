@@ -1,0 +1,75 @@
+/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/inspector/RefSlot.jsx and its markup.
+   A rule moves here when the narrowest class in its selector is used by this file
+   alone; generic modifier classes (.active/.danger/.disabled) travel with the
+   component that owns the rest of the selector.
+   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
+
+.ref-slot {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 6px;
+  background: var(--unity-dark, #1f2026);
+  border: 1px solid var(--unity-border, rgba(255, 255, 255, 0.12));
+  border-radius: 3px;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.1s, background 0.1s;
+}
+ 
+.ref-slot:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+ 
+.ref-slot.ref-slot-dragover {
+  border-color: #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+  box-shadow: 0 0 0 1px #38bdf8;
+}
+ 
+.ref-slot.ref-slot-assigned {
+  border-color: rgba(56, 189, 248, 0.35);
+}
+ 
+.ref-slot-icon {
+  flex-shrink: 0;
+}
+ 
+.ref-slot-select {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--unity-text, #e2e8f0);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 4px;
+  min-width: 0;
+  width: 100%;
+}
+ 
+.ref-slot-select option {
+  background: #181920;
+  color: #fff;
+  padding: 4px;
+}
+ 
+.ref-slot-clear {
+  background: none;
+  border: none;
+  color: var(--unity-text-muted, #94a3b8);
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+ 
+.ref-slot-clear:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.15);
+}

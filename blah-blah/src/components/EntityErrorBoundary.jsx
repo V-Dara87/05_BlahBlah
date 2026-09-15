@@ -1,6 +1,7 @@
  
 import { Component } from 'react';
 import { AlertTriangle } from 'lucide-react';
+import './entity-error-boundary.css';
  
 /**
  * P0 #5 — Error boundary around per-entity rendering.

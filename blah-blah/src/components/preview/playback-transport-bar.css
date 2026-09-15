@@ -1,0 +1,70 @@
+/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/preview/PlaybackTransportBar.jsx and its markup.
+   A rule moves here when the narrowest class in its selector is used by this file
+   alone; generic modifier classes (.active/.danger/.disabled) travel with the
+   component that owns the rest of the selector.
+   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
+
+.preview-transport-bar {
+  height: 44px;
+  background: var(--unity-panel);
+  border-top: 1px solid var(--unity-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  flex-shrink: 0;
+}
+ 
+.transport-btns {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+ 
+.ctrl-icon-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--unity-text-muted);
+}
+ 
+.ctrl-icon-btn:hover {
+  background: var(--unity-subtle);
+  color: var(--unity-text);
+}
+ 
+.ctrl-icon-btn.active {
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.15);
+}
+ 
+.play-btn-circle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #2563eb;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+ 
+.play-btn-circle:hover {
+  filter: brightness(1.15);
+  transform: scale(1.05);
+}
+ 
+.transport-timecode {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+ 
+.current-time { color: #38bdf8; font-weight: 700; }
+ 
+.dur-time { color: var(--unity-text-dim); }

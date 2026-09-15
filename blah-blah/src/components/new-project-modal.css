@@ -1,0 +1,136 @@
+/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/NewProjectModal.jsx and its markup.
+   A rule moves here when the narrowest class in its selector is used by this file
+   alone; generic modifier classes (.active/.danger/.disabled) travel with the
+   component that owns the rest of the selector.
+   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
+
+.new-project-modal {
+  max-width: 520px;
+  background: var(--unity-panel);
+  border: 1px solid var(--unity-border);
+  border-radius: 10px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
+  overflow: hidden;
+}
+ 
+.new-project-body {
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+ 
+.custom-resolution-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+ 
+.custom-resolution-input {
+  width: 0; /* let flex: 1 own the sizing, not the input's intrinsic size */
+  flex: 1;
+  text-align: center;
+  /* Hide the native up/down spinner so the × separator + "px" suffix read
+     as one compact control instead of two number inputs bolted together. */
+  -moz-appearance: textfield;
+}
+ 
+.custom-resolution-input::-webkit-outer-spin-button,
+.custom-resolution-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+ 
+.custom-resolution-sep {
+  color: var(--unity-text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+ 
+.custom-resolution-unit {
+  color: var(--unity-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+ 
+.location-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+ 
+.location-display-box {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--unity-darkest);
+  border: 1px solid var(--unity-border);
+  padding: 8px 12px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+ 
+.location-path-text {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--unity-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+ 
+.browse-folder-btn {
+  padding: 8px 14px;
+  background: var(--unity-subtle);
+  border: 1px solid var(--unity-border);
+  color: #fff;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+ 
+.browse-folder-btn:hover {
+  background: var(--unity-hover);
+  border-color: #38bdf8;
+}
+ 
+.scaffold-preview-box {
+  background: #111218;
+  border: 1px solid var(--unity-border);
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+ 
+.scaffold-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--unity-text-dim);
+  text-transform: uppercase;
+}
+ 
+.scaffold-tree {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #38bdf8;
+  line-height: 1.6;
+}
+ 
+.tree-sub {
+  padding-left: 12px;
+  color: #94a3b8;
+}
+ 
+.tree-dim {
+  color: var(--unity-text-dim);
+  font-size: 10px;
+}

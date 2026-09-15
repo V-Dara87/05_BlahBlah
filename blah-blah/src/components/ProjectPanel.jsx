@@ -38,6 +38,7 @@ import {
   MEDIA_SORT_OPTIONS,
   selKey,
 } from './project/projectPanelConstants';
+import './project-panel.css';
  
  
 /**
@@ -87,15 +88,23 @@ export const ProjectPanel = memo(function ProjectPanel({
   onAddEmptyClip,
 }) {
   // Bundled props/handlers passed to KIND_REGISTRY entries — see
-  // project/kindRegistry.js. Rebuilt each render (cheap: plain object of
-  // existing references, not a new computation) so registry calls always
-  // see current props without every call site re-destructuring them.
-  const registryCtx = {
-    mediaAssets, prefabs, scripts, sharedItems,
-    onRemoveMediaAsset, onRemovePrefab, onRemoveScript, onRemoveSharedItem,
-    onMoveMediaAsset, onMovePrefab, onMoveScript, onMoveSharedItem,
-    onRenameMediaAsset, onRenamePrefab, onRenameScript,
-  };
+  // project/kindRegistry.js. Memoized so the registry calls always see
+  // current props without every call site re-destructuring them, while
+  // still giving itemsBySection below a single, lint-visible dependency.
+  const registryCtx = useMemo(
+    () => ({
+      mediaAssets, prefabs, scripts, sharedItems,
+      onRemoveMediaAsset, onRemovePrefab, onRemoveScript, onRemoveSharedItem,
+      onMoveMediaAsset, onMovePrefab, onMoveScript, onMoveSharedItem,
+      onRenameMediaAsset, onRenamePrefab, onRenameScript,
+    }),
+    [
+      mediaAssets, prefabs, scripts, sharedItems,
+      onRemoveMediaAsset, onRemovePrefab, onRemoveScript, onRemoveSharedItem,
+      onMoveMediaAsset, onMovePrefab, onMoveScript, onMoveSharedItem,
+      onRenameMediaAsset, onRenamePrefab, onRenameScript,
+    ],
+  );
  
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'list'
@@ -137,7 +146,7 @@ export const ProjectPanel = memo(function ProjectPanel({
       scripts: KIND_REGISTRY.script.getAllItems(registryCtx),
       shared: KIND_REGISTRY.shared.getAllItems(registryCtx),
     }),
-    [mediaAssets, prefabs, scripts, sharedItems],
+    [registryCtx],
   );
   const {
     openSubfolders,

@@ -1,6 +1,7 @@
 import { Fragment } from 'react';
 import { EntityErrorBoundary } from '../EntityErrorBoundary';
 import { getSharedGLTransitionRenderer } from '../../engine/glTransitions';
+import './video-layer.css';
  
 /**
  * Background video layer — one <video> (plus an optional GL-transition

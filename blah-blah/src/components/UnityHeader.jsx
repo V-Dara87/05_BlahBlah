@@ -25,6 +25,7 @@ import {
 import { formatTimecode } from '../utils/timeFormat';
 import { isTauri } from '../services/tauriFsAdapter';
 import { openProjectInVsCode, openProjectInExplorer } from '../services/ideLauncher';
+import './unity-header.css';
  
 export function UnityHeader({
   projectName,

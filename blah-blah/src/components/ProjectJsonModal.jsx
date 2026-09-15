@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Code, Copy, Check, CheckCircle2, AlertCircle, X, Sparkles } from 'lucide-react';
+import './project-json-modal.css';
 
 export function ProjectJsonModal({
   isOpen,

@@ -1,0 +1,323 @@
+/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/UnityInspector.jsx and its markup.
+   A rule moves here when the narrowest class in its selector is used by this file
+   alone; generic modifier classes (.active/.danger/.disabled) travel with the
+   component that owns the rest of the selector.
+   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
+
+.inspector-sidebar {
+  background-color: var(--unity-panel);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  transition: box-shadow 0.1s, background-color 0.1s;
+}
+ 
+.inspector-sidebar.drop-target {
+  background-color: rgba(56, 189, 248, 0.08);
+  box-shadow: inset 0 0 0 2px #38bdf8;
+}
+ 
+.inspector-sidebar.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+ 
+.inspector-empty-msg {
+  text-align: center;
+  padding: 24px;
+  color: var(--unity-text-dim);
+}
+ 
+.inspector-empty-msg h4 {
+  font-size: 13px;
+  color: var(--unity-text-muted);
+  margin: 6px 0 4px;
+}
+ 
+.inspector-header-box {
+  flex-shrink: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--unity-border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+ 
+.inspector-header-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+ 
+.field-label-sm {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--unity-text-muted);
+}
+ 
+.inspector-lock-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: transparent;
+  border: 1px solid var(--unity-border-light);
+  border-radius: 3px;
+  color: var(--unity-text-dim);
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 1px 5px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+ 
+.inspector-lock-btn:hover {
+  background: var(--unity-subtle);
+  color: #fff;
+  border-color: var(--unity-border);
+}
+ 
+.inspector-lock-btn.locked {
+  background: rgba(56, 189, 248, 0.15);
+  border-color: rgba(56, 189, 248, 0.5);
+  color: #38bdf8;
+}
+ 
+.inspector-name-input, .inspector-track-select {
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+ 
+.inspector-track-select:focus, .inspector-name-input:focus {
+  border-color: #38bdf8;
+  outline: none;
+}
+ 
+.inspector-scroll-area {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+ 
+.inspector-auto-key-bar {
+  flex-shrink: 0;
+}
+ 
+.inspector-auto-key-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--unity-text-muted);
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+ 
+.inspector-auto-key-btn:hover {
+  background: var(--unity-subtle);
+  color: var(--unity-text);
+}
+ 
+.inspector-auto-key-btn.active {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.4);
+  color: #38bdf8;
+}
+ 
+.auto-key-state {
+  margin-left: auto;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--unity-subtle);
+  color: var(--unity-text-dim);
+}
+ 
+.inspector-auto-key-btn.active .auto-key-state {
+  background: rgba(56, 189, 248, 0.2);
+  color: #38bdf8;
+}
+ 
+.inspector-scroll-area::-webkit-scrollbar {
+  width: 8px;
+}
+ 
+.inspector-scroll-area::-webkit-scrollbar-track {
+  background: var(--unity-dark);
+}
+ 
+.inspector-scroll-area::-webkit-scrollbar-thumb {
+  background: var(--unity-border-light);
+  border-radius: 4px;
+}
+ 
+.inspector-scroll-area::-webkit-scrollbar-thumb:hover {
+  background: var(--unity-text-dim);
+}
+ 
+.inspector-footer {
+  flex-shrink: 0;
+  padding: 8px;
+  border-top: 1px solid var(--unity-border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--unity-panel);
+}
+ 
+.add-comp-wrapper {
+  position: relative;
+}
+ 
+.comp-dropdown-popover {
+  position: absolute;
+  bottom: 34px;
+  left: 0;
+  right: 0;
+  background: var(--unity-panel);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+  padding: 4px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+ 
+.popover-kind-tag {
+  margin-left: auto;
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+}
+ 
+.popover-item:hover .popover-kind-tag {
+  opacity: 0.9;
+}
+ 
+.popover-empty-hint {
+  font-size: 11px;
+  color: var(--unity-text-dim);
+  padding: 6px 8px;
+}
+ 
+.unity-btn-prefab {
+  background: #1e3a5f;
+  border: 1px solid #2d5588;
+  color: #93c5fd;
+}
+ 
+.unity-btn-prefab:hover { background: #254877; }
+ 
+.add-component-popover {
+  width: 240px;
+  max-height: 340px;
+  display: flex;
+  flex-direction: column;
+}
+ 
+.add-comp-search {
+  flex-shrink: 0;
+  margin: 6px 6px 2px;
+}
+ 
+.add-comp-scroll {
+  overflow-y: auto;
+  padding: 2px 0 4px;
+}
+ 
+.comp-category {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+ 
+.comp-category:last-child {
+  border-bottom: none;
+}
+ 
+.comp-category-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  color: #cbd5e1;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  text-align: left;
+}
+ 
+.comp-category-header:hover {
+  background: rgba(56, 189, 248, 0.1);
+}
+ 
+.comp-category-items {
+  padding-bottom: 3px;
+}
+ 
+.comp-kind-group .popover-item {
+  padding-left: 24px;
+}
+ 
+.popover-kind-heading {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 2px 14px;
+  font-size: 9px;
+  color: var(--unity-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+ 
+.popover-item-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+ 
+.popover-kind-tag {
+  font-size: 8px;
+  color: var(--unity-text-dim);
+  margin-left: auto;
+  flex-shrink: 0;
+  padding-left: 6px;
+}
+ 
+.inspector-sidebar.script-drop-zone {
+  outline: 2px solid #34d399;
+  outline-offset: -2px;
+  box-shadow: inset 0 0 0 3px rgba(52, 211, 153, 0.15);
+}

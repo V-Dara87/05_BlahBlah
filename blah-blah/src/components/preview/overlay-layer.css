@@ -1,0 +1,37 @@
+/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/preview/OverlayLayer.jsx and its markup.
+   A rule moves here when the narrowest class in its selector is used by this file
+   alone; generic modifier classes (.active/.danger/.disabled) travel with the
+   component that owns the rest of the selector.
+   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
+
+.preview-render-layer {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform-origin: center center;
+  cursor: pointer;
+}
+ 
+.preview-render-layer.gizmo-draggable.selected {
+  cursor: move;
+}
+ 
+.rendered-text-node {
+  white-space: pre-wrap;
+  font-weight: 800;
+  user-select: none;
+  text-align: center;
+}
+ 
+.rendered-shape-node {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+ 
+.canvas-render-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

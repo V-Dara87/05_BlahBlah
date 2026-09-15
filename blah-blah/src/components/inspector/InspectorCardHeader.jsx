@@ -1,4 +1,5 @@
 import { ChevronDown, ChevronRight, GripVertical } from 'lucide-react';
+import './inspector-card-header.css';
  
 /**
  * Shared foldout + drag-handle chrome for every Inspector component card.

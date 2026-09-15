@@ -398,6 +398,7 @@ import 'pkg';           // npm package, cached offline after first fetch
 import './local.js';     // relative, resolved against scripts/
 \`\`\`
 `;
+import './script-docs-modal.css';
  
 export function ScriptDocsModal({ isOpen, onClose }) {
   const [copied, setCopied] = useState(false);

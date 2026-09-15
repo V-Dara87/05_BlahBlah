@@ -1,0 +1,169 @@
+/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/ScriptDocsModal.jsx and its markup.
+   A rule moves here when the narrowest class in its selector is used by this file
+   alone; generic modifier classes (.active/.danger/.disabled) travel with the
+   component that owns the rest of the selector.
+   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
+
+.docs-modal-card {
+  width: 92%;
+  max-width: 860px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--unity-panel);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+ 
+.docs-modal-body {
+  display: flex;
+  flex-direction: row;
+  gap: 0;
+  padding: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+ 
+.docs-toc {
+  flex-shrink: 0;
+  width: 170px;
+  padding: 14px 10px;
+  border-right: 1px solid var(--unity-border);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+ 
+.docs-toc-link {
+  display: block;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--unity-text-muted);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.08s;
+}
+ 
+.docs-toc-link:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+ 
+.docs-content {
+  flex: 1;
+  min-width: 0;
+  padding: 18px 22px;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--unity-text);
+}
+ 
+.docs-heading {
+  color: #fff;
+  font-weight: 600;
+  margin: 18px 0 8px;
+  line-height: 1.3;
+}
+ 
+.docs-heading:first-child {
+  margin-top: 0;
+}
+ 
+.docs-content h2.docs-heading { font-size: 16px; }
+ 
+.docs-content h3.docs-heading { font-size: 13px; }
+ 
+.docs-content h4.docs-heading { font-size: 12px; color: var(--unity-text); }
+ 
+.docs-paragraph {
+  margin: 0 0 10px;
+  color: var(--unity-text-muted);
+}
+ 
+.docs-paragraph code,
+.docs-list code {
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 11px;
+  color: #7dd3fc;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+ 
+.docs-list {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  color: var(--unity-text-muted);
+}
+ 
+.docs-list li {
+  margin-bottom: 4px;
+}
+ 
+.docs-hr {
+  border: none;
+  border-top: 1px solid var(--unity-border);
+  margin: 18px 0;
+}
+ 
+.docs-code-block {
+  background: var(--unity-darkest);
+  border: 1px solid var(--unity-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 0 0 12px;
+  overflow-x: auto;
+}
+ 
+.docs-code-block code {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #d4d4d8;
+  white-space: pre;
+}
+ 
+.docs-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 14px;
+  font-size: 11px;
+}
+ 
+.docs-table th,
+.docs-table td {
+  border: 1px solid var(--unity-border);
+  padding: 5px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+ 
+.docs-table th {
+  background: var(--unity-dark);
+  color: #fff;
+  font-weight: 600;
+}
+ 
+.docs-table td {
+  color: var(--unity-text-muted);
+}
+ 
+.docs-modal-footer {
+  border-top: 1px solid var(--unity-border);
+  padding: 10px 16px;
+  align-items: center;
+  justify-content: space-between;
+}
+ 
+.docs-copy-hint {
+  flex: 1;
+}

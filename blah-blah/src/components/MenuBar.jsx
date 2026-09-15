@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, memo } from 'react';
+import './menu-bar.css';
 
 /**
  * MenuBar — Unity-style top menu bar with dropdown menus.

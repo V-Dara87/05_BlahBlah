@@ -2,6 +2,7 @@ import { Package, Music, Film as FilmIcon } from 'lucide-react';
 import { detectScriptKind } from '../../engine/scriptRunner';
 import { isScriptComponent } from '../../engine/ecs';
 import { COMPONENT_TYPE_LABEL, scriptKindMeta, shortDuration } from './projectPanelConstants';
+import './asset-preview-popover.css';
  
 /**
  * Hover/click asset previews for the Project panel.

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { FolderPlus, FolderOpen, X, AlertCircle } from 'lucide-react';
 import { pickProjectDirectory, createNewProjectFolder } from '../services/projectFileSystem';
 import { RESOLUTION_PRESETS, DEFAULT_RESOLUTION } from '../types';
+import './new-project-modal.css';
  
 export function NewProjectModal({
   isOpen,

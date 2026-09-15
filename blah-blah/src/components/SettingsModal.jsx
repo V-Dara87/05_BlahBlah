@@ -13,6 +13,7 @@ import {
   findConflict,
   getDefaultBinding,
 } from '../services/keybindSettings';
+import './settings-modal.css';
  
 const TABS = [
   { id: 'audio', label: 'Audio', icon: Mic },
