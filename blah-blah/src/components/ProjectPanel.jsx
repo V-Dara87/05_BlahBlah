@@ -29,6 +29,7 @@ import { setDragPayload, readDragPayload, dragHasItemKind, ITEM_KIND_MEDIA, ITEM
 import { ContextMenu } from './ContextMenu';
 import { AssetPreviewPopover } from './project/AssetPreviewPopover';
 import { useSectionFolders } from './project/useSectionFolders';
+import { FolderSection } from './project/FolderSection';
 import {
   scriptKindMeta,
   shortDuration,
@@ -1164,180 +1165,84 @@ export default class NewScript extends CanvasComponent {
  
       {/* Folder Tree */}
       <div className="project-tree">
-        {/* ========== Shared Library (app-wide, outside any project) ========== */}
-        <div className="tree-folder-group" data-section="shared">
-          <div
-            className={`tree-folder-header${dragOverKey === 'shared:__root__' ? ' drag-over' : ''}`}
-            onClick={() => toggleFolder('shared')}
-            onDragOver={(e) => handleFolderDragOver(e, ITEM_KIND_SHARED, 'shared:__root__')}
-            onDragLeave={handleFolderDragLeave}
-            onDrop={(e) => handleFolderDrop(e, 'shared', null, ITEM_KIND_SHARED)}
-          >
-            {openFolders.shared ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            {openFolders.shared ? <FolderOpen size={13} className="text-violet" /> : <Folder size={13} className="text-violet" />}
-            <span className="tree-folder-name">Shared Library</span>
-            <span className="tree-folder-count">{filteredShared.length}</span>
-          </div>
+        <FolderSection
+          sectionKey="shared"
+          dropKind="shared"
+          itemKind={ITEM_KIND_SHARED}
+          label="Shared Library"
+          colorClass="text-violet"
+          isOpen={openFolders.shared}
+          onToggleOpen={() => toggleFolder('shared')}
+          count={filteredShared.length}
+          dragOverKey={dragOverKey}
+          onFolderDragOver={handleFolderDragOver}
+          onFolderDragLeave={handleFolderDragLeave}
+          onFolderDrop={handleFolderDrop}
+          emptyHint="App-wide library — use the share button on a prefab or script below to keep it available across every project."
+          subfolderNames={sharedSubfolderNames}
+          openSubfolders={openSharedSubfolders}
+          onToggleSubfolder={toggleSharedSubfolder}
+          onOpenFolderMenu={(e, folderName) => openFolderMenu(e, 'shared', folderName)}
+          folderRenameInput={(folderName) => folderRenameInput('shared', folderName)}
+          itemsInFolder={(folderName) => filteredShared.filter((s) => s.folder === folderName)}
+          emptyFolderHint="Empty folder — drop shared items here."
+          isGridView={isGridView}
+          renderListHeader={renderListHeader}
+          renderItem={renderSharedItem}
+          rootItems={rootShared}
+          creatingFolder={creatingFolder}
+          newFolderName={newFolderName}
+          setNewFolderName={setNewFolderName}
+          commitNewFolder={commitNewFolder}
+          setCreatingFolder={setCreatingFolder}
+        />
  
-          {openFolders.shared && (
-            <div className="tree-folder-contents">
-              {filteredShared.length === 0 && sharedExtraFolders.length === 0 && (
-                <p className="tree-empty-hint">
-                  App-wide library — use the share button on a prefab or script below to keep it
-                  available across every project.
-                </p>
-              )}
+        <FolderSection
+          sectionKey="prefabs"
+          dropKind="prefab"
+          itemKind={ITEM_KIND_PREFAB}
+          label="prefabs"
+          colorClass="text-cyan"
+          isOpen={openFolders.prefabs}
+          onToggleOpen={() => toggleFolder('prefabs')}
+          count={filteredPrefabs.length}
+          dragOverKey={dragOverKey}
+          onFolderDragOver={handleFolderDragOver}
+          onFolderDragLeave={handleFolderDragLeave}
+          onFolderDrop={handleFolderDrop}
+          emptyHint="No prefabs yet. Save a GameObject as a Prefab from the Inspector."
+          subfolderNames={prefabSubfolderNames}
+          openSubfolders={openPrefabSubfolders}
+          onToggleSubfolder={togglePrefabSubfolder}
+          onOpenFolderMenu={(e, folderName) => openFolderMenu(e, 'prefabs', folderName)}
+          folderRenameInput={(folderName) => folderRenameInput('prefabs', folderName)}
+          itemsInFolder={(folderName) => filteredPrefabs.filter((p) => p.folder === folderName)}
+          emptyFolderHint="Empty folder — save prefabs into it or drop them here."
+          isGridView={isGridView}
+          renderListHeader={renderListHeader}
+          renderItem={(p) => (isGridView ? renderPrefabCard(p) : renderPrefabRow(p))}
+          rootItems={rootPrefabs}
+          creatingFolder={creatingFolder}
+          newFolderName={newFolderName}
+          setNewFolderName={setNewFolderName}
+          commitNewFolder={commitNewFolder}
+          setCreatingFolder={setCreatingFolder}
+        />
  
-              {/* Shared-library subfolders */}
-              {sharedSubfolderNames.map((folderName) => {
-                const isOpen = !!openSharedSubfolders[folderName];
-                const itemsInFolder = filteredShared.filter((s) => s.folder === folderName);
-                return (
-                  <div key={folderName} className="tree-folder-group nested">
-                    <div
-                      className={`tree-folder-header${dragOverKey === `shared:${folderName}` ? ' drag-over' : ''}`}
-                      onClick={() => toggleSharedSubfolder(folderName)}
-                      onContextMenu={(e) => openFolderMenu(e, 'shared', folderName)}
-                      onDragOver={(e) => handleFolderDragOver(e, ITEM_KIND_SHARED, `shared:${folderName}`)}
-                      onDragLeave={handleFolderDragLeave}
-                      onDrop={(e) => handleFolderDrop(e, 'shared', folderName, ITEM_KIND_SHARED)}
-                    >
-                      {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                      {isOpen ? <FolderOpen size={13} className="text-violet" /> : <Folder size={13} className="text-violet" />}
-                      {folderRenameInput('shared', folderName) || <span className="tree-folder-name">{folderName}</span>}
-                      <span className="tree-folder-count">{itemsInFolder.length}</span>
-                    </div>
-                    {isOpen && (
-                      <div className="tree-folder-contents">
-                        {itemsInFolder.length === 0 && (
-                          <p className="tree-empty-hint">Empty folder — drop shared items here.</p>
-                        )}
-                        {!isGridView && itemsInFolder.length > 0 && renderListHeader()}
-                        {itemsInFolder.map(renderSharedItem)}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
- 
-              {/* New shared-library folder inline creation */}
-              {creatingFolder === 'shared' && (
-                <div className="tree-folder-group nested new-folder-row">
-                  <Folder size={13} className="text-violet" />
-                  <input
-                    type="text"
-                    className="asset-rename-input"
-                    placeholder="Folder name"
-                    value={newFolderName}
-                    autoFocus
-                    onChange={(e) => setNewFolderName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') commitNewFolder();
-                      else if (e.key === 'Escape') { setCreatingFolder(null); setNewFolderName(''); }
-                    }}
-                    onBlur={commitNewFolder}
-                  />
-                </div>
-              )}
- 
-              {!isGridView && rootShared.length > 0 && renderListHeader()}
-              {rootShared.map(renderSharedItem)}
-            </div>
-          )}
-        </div>
- 
-        {/* ========== prefabs/ ========== */}
-        <div className="tree-folder-group" data-section="prefabs">
-          <div
-            className={`tree-folder-header${dragOverKey === 'prefab:__root__' ? ' drag-over' : ''}`}
-            onClick={() => toggleFolder('prefabs')}
-            onDragOver={(e) => handleFolderDragOver(e, ITEM_KIND_PREFAB, 'prefab:__root__')}
-            onDragLeave={handleFolderDragLeave}
-            onDrop={(e) => handleFolderDrop(e, 'prefab', null, ITEM_KIND_PREFAB)}
-          >
-            {openFolders.prefabs ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            {openFolders.prefabs ? <FolderOpen size={13} className="text-cyan" /> : <Folder size={13} className="text-cyan" />}
-            <span className="tree-folder-name">prefabs</span>
-            <span className="tree-folder-count">{filteredPrefabs.length}</span>
-          </div>
- 
-          {openFolders.prefabs && (
-            <div className="tree-folder-contents">
-              {filteredPrefabs.length === 0 && prefabExtraFolders.length === 0 && (
-                <p className="tree-empty-hint">No prefabs yet. Save a GameObject as a Prefab from the Inspector.</p>
-              )}
- 
-              {/* Prefab subfolders (Feature 5) */}
-              {prefabSubfolderNames.map((folderName) => {
-                const isOpen = !!openPrefabSubfolders[folderName];
-                const itemsInFolder = filteredPrefabs.filter((p) => p.folder === folderName);
-                return (
-                  <div key={folderName} className="tree-folder-group nested">
-                    <div
-                      className={`tree-folder-header${dragOverKey === `prefab:${folderName}` ? ' drag-over' : ''}`}
-                      onClick={() => togglePrefabSubfolder(folderName)}
-                      onContextMenu={(e) => openFolderMenu(e, 'prefabs', folderName)}
-                      onDragOver={(e) => handleFolderDragOver(e, ITEM_KIND_PREFAB, `prefab:${folderName}`)}
-                      onDragLeave={handleFolderDragLeave}
-                      onDrop={(e) => handleFolderDrop(e, 'prefab', folderName, ITEM_KIND_PREFAB)}
-                    >
-                      {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                      {isOpen ? <FolderOpen size={13} className="text-cyan" /> : <Folder size={13} className="text-cyan" />}
-                      {folderRenameInput('prefabs', folderName) || <span className="tree-folder-name">{folderName}</span>}
-                      <span className="tree-folder-count">{itemsInFolder.length}</span>
-                    </div>
-                    {isOpen && (
-                      <div className="tree-folder-contents">
-                        {itemsInFolder.length === 0 && (
-                          <p className="tree-empty-hint">Empty folder — save prefabs into it or drop them here.</p>
-                        )}
-                        {!isGridView && itemsInFolder.length > 0 && renderListHeader()}
-                        {itemsInFolder.map((p) => (isGridView ? renderPrefabCard(p) : renderPrefabRow(p)))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
- 
-              {/* New prefab folder inline creation */}
-              {creatingFolder === 'prefabs' && (
-                <div className="tree-folder-group nested new-folder-row">
-                  <Folder size={13} className="text-cyan" />
-                  <input
-                    type="text"
-                    className="asset-rename-input"
-                    placeholder="Folder name"
-                    value={newFolderName}
-                    autoFocus
-                    onChange={(e) => setNewFolderName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') commitNewFolder();
-                      else if (e.key === 'Escape') { setCreatingFolder(null); setNewFolderName(''); }
-                    }}
-                    onBlur={commitNewFolder}
-                  />
-                </div>
-              )}
- 
-              {!isGridView && rootPrefabs.length > 0 && renderListHeader()}
-              {rootPrefabs.map((prefab) => (isGridView ? renderPrefabCard(prefab) : renderPrefabRow(prefab)))}
-            </div>
-          )}
-        </div>
- 
-        {/* ========== media/ ========== */}
-        <div className="tree-folder-group" data-section="media">
-          <div
-            className={`tree-folder-header${dragOverKey === 'media:__root__' ? ' drag-over' : ''}`}
-            onClick={() => toggleFolder('media')}
-            onDragOver={(e) => handleFolderDragOver(e, ITEM_KIND_MEDIA, 'media:__root__')}
-            onDragLeave={handleFolderDragLeave}
-            onDrop={(e) => handleFolderDrop(e, 'media', null, ITEM_KIND_MEDIA)}
-          >
-            {openFolders.media ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            {openFolders.media ? <FolderOpen size={13} className="text-indigo" /> : <Folder size={13} className="text-indigo" />}
-            <span className="tree-folder-name">media</span>
-            <span className="tree-folder-count">{filteredMedia.length}</span>
+        <FolderSection
+          sectionKey="media"
+          dropKind="media"
+          itemKind={ITEM_KIND_MEDIA}
+          label="media"
+          colorClass="text-indigo"
+          isOpen={openFolders.media}
+          onToggleOpen={() => toggleFolder('media')}
+          count={filteredMedia.length}
+          dragOverKey={dragOverKey}
+          onFolderDragOver={handleFolderDragOver}
+          onFolderDragLeave={handleFolderDragLeave}
+          onFolderDrop={handleFolderDrop}
+          headerAddon={(
             <div className="tree-folder-add-wrapper">
               <button
                 className="tree-folder-add-btn"
@@ -1355,93 +1260,46 @@ export default class NewScript extends CanvasComponent {
                 </div>
               )}
             </div>
-          </div>
- 
-          {openFolders.media && (
-            <div className="tree-folder-contents">
-              {filteredMedia.length === 0 && extraFolders.length === 0 && (
-                <p className="tree-empty-hint">No media yet. Use + to import a clip.</p>
-              )}
- 
-              {/* Duplicate-import notice (Feature 8) */}
-              {dupeNotice != null && (
-                <div className="project-dupe-notice">
-                  <span>{dupeNotice} file(s) look like duplicates of existing assets — imported as new entries.</span>
-                  <button onClick={() => setDupeNotice(null)} title="Dismiss">×</button>
-                </div>
-              )}
- 
-              {/* Media subfolders (asset folders like "Recordings" + context-menu folders) */}
-              {mediaSubfolderNames.map((folderName) => {
-                const isOpen = !!openMediaSubfolders[folderName];
-                const assetsInFolder = filteredMedia.filter((m) => m.folder === folderName);
-                return (
-                  <div key={folderName} className="tree-folder-group nested">
-                    <div
-                      className={`tree-folder-header${dragOverKey === `media:${folderName}` ? ' drag-over' : ''}`}
-                      onClick={() => toggleMediaSubfolder(folderName)}
-                      onContextMenu={(e) => openFolderMenu(e, 'media', folderName)}
-                      onDragOver={(e) => handleFolderDragOver(e, ITEM_KIND_MEDIA, `media:${folderName}`)}
-                      onDragLeave={handleFolderDragLeave}
-                      onDrop={(e) => handleFolderDrop(e, 'media', folderName, ITEM_KIND_MEDIA)}
-                    >
-                      {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                      {isOpen ? <FolderOpen size={13} className="text-amber" /> : <Folder size={13} className="text-amber" />}
-                      {folderRenameInput('media', folderName) || <span className="tree-folder-name">{folderName}</span>}
-                      <span className="tree-folder-count">{assetsInFolder.length}</span>
-                    </div>
-                    {isOpen && (
-                      <div className="tree-folder-contents">
-                        {assetsInFolder.length === 0 && (
-                          <p className="tree-empty-hint">Empty folder — import media into it or drop files here.</p>
-                        )}
-                        {!isGridView && assetsInFolder.length > 0 && renderListHeader()}
-                        {assetsInFolder.map((m) => (isGridView ? renderMediaCard(m) : renderMediaRow(m)))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
- 
-              {/* New media folder inline creation */}
-              {creatingFolder === 'media' && (
-                <div className="tree-folder-group nested new-folder-row">
-                  <Folder size={13} className="text-amber" />
-                  <input
-                    type="text"
-                    className="asset-rename-input"
-                    placeholder="Folder name"
-                    value={newFolderName}
-                    autoFocus
-                    onChange={(e) => setNewFolderName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') commitNewFolder();
-                      else if (e.key === 'Escape') { setCreatingFolder(null); setNewFolderName(''); }
-                    }}
-                    onBlur={commitNewFolder}
-                  />
-                </div>
-              )}
- 
-              {!isGridView && rootMedia.length > 0 && renderListHeader()}
-              {rootMedia.map((m) => (isGridView ? renderMediaCard(m) : renderMediaRow(m)))}
+          )}
+          emptyHint="No media yet. Use + to import a clip."
+          extraContent={dupeNotice != null && (
+            <div className="project-dupe-notice">
+              <span>{dupeNotice} file(s) look like duplicates of existing assets — imported as new entries.</span>
+              <button onClick={() => setDupeNotice(null)} title="Dismiss">×</button>
             </div>
           )}
-        </div>
+          subfolderNames={mediaSubfolderNames}
+          openSubfolders={openMediaSubfolders}
+          onToggleSubfolder={toggleMediaSubfolder}
+          onOpenFolderMenu={(e, folderName) => openFolderMenu(e, 'media', folderName)}
+          folderRenameInput={(folderName) => folderRenameInput('media', folderName)}
+          itemsInFolder={(folderName) => filteredMedia.filter((m) => m.folder === folderName)}
+          emptyFolderHint="Empty folder — import media into it or drop files here."
+          isGridView={isGridView}
+          renderListHeader={renderListHeader}
+          renderItem={(m) => (isGridView ? renderMediaCard(m) : renderMediaRow(m))}
+          rootItems={rootMedia}
+          creatingFolder={creatingFolder}
+          newFolderName={newFolderName}
+          setNewFolderName={setNewFolderName}
+          commitNewFolder={commitNewFolder}
+          setCreatingFolder={setCreatingFolder}
+        />
  
-        {/* ========== scripts/ ========== */}
-        <div className="tree-folder-group" data-section="scripts">
-          <div
-            className={`tree-folder-header${dragOverKey === 'script:__root__' ? ' drag-over' : ''}`}
-            onClick={() => toggleFolder('scripts')}
-            onDragOver={(e) => handleFolderDragOver(e, ITEM_KIND_SCRIPT, 'script:__root__')}
-            onDragLeave={handleFolderDragLeave}
-            onDrop={(e) => handleFolderDrop(e, 'script', null, ITEM_KIND_SCRIPT)}
-          >
-            {openFolders.scripts ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            {openFolders.scripts ? <FolderOpen size={13} className="text-emerald" /> : <Folder size={13} className="text-emerald" />}
-            <span className="tree-folder-name">scripts</span>
-            <span className="tree-folder-count">{filteredScripts.length}</span>
+        <FolderSection
+          sectionKey="scripts"
+          dropKind="script"
+          itemKind={ITEM_KIND_SCRIPT}
+          label="scripts"
+          colorClass="text-emerald"
+          isOpen={openFolders.scripts}
+          onToggleOpen={() => toggleFolder('scripts')}
+          count={filteredScripts.length}
+          dragOverKey={dragOverKey}
+          onFolderDragOver={handleFolderDragOver}
+          onFolderDragLeave={handleFolderDragLeave}
+          onFolderDrop={handleFolderDrop}
+          headerAddon={(
             <div className="tree-folder-add-wrapper">
               {projectFolderHandle?.path && isTauri() && (
                 <button
@@ -1469,71 +1327,25 @@ export default class NewScript extends CanvasComponent {
                 </div>
               )}
             </div>
-          </div>
- 
-          {openFolders.scripts && (
-            <div className="tree-folder-contents">
-              {filteredScripts.length === 0 && scriptExtraFolders.length === 0 && (
-                <p className="tree-empty-hint">No scripts yet. Use + to create a new script.</p>
-              )}
- 
-              {/* Script subfolders (Feature 5) */}
-              {scriptSubfolderNames.map((folderName) => {
-                const isOpen = !!openScriptSubfolders[folderName];
-                const itemsInFolder = filteredScripts.filter((s) => s.folder === folderName);
-                return (
-                  <div key={folderName} className="tree-folder-group nested">
-                    <div
-                      className={`tree-folder-header${dragOverKey === `script:${folderName}` ? ' drag-over' : ''}`}
-                      onClick={() => toggleScriptSubfolder(folderName)}
-                      onContextMenu={(e) => openFolderMenu(e, 'scripts', folderName)}
-                      onDragOver={(e) => handleFolderDragOver(e, ITEM_KIND_SCRIPT, `script:${folderName}`)}
-                      onDragLeave={handleFolderDragLeave}
-                      onDrop={(e) => handleFolderDrop(e, 'script', folderName, ITEM_KIND_SCRIPT)}
-                    >
-                      {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                      {isOpen ? <FolderOpen size={13} className="text-emerald" /> : <Folder size={13} className="text-emerald" />}
-                      {folderRenameInput('scripts', folderName) || <span className="tree-folder-name">{folderName}</span>}
-                      <span className="tree-folder-count">{itemsInFolder.length}</span>
-                    </div>
-                    {isOpen && (
-                      <div className="tree-folder-contents">
-                        {itemsInFolder.length === 0 && (
-                          <p className="tree-empty-hint">Empty folder — create scripts into it or drop them here.</p>
-                        )}
-                        {!isGridView && itemsInFolder.length > 0 && renderListHeader()}
-                        {itemsInFolder.map((s) => (isGridView ? renderScriptCard(s) : renderScriptRow(s)))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
- 
-              {/* New script folder inline creation */}
-              {creatingFolder === 'scripts' && (
-                <div className="tree-folder-group nested new-folder-row">
-                  <Folder size={13} className="text-emerald" />
-                  <input
-                    type="text"
-                    className="asset-rename-input"
-                    placeholder="Folder name"
-                    value={newFolderName}
-                    autoFocus
-                    onChange={(e) => setNewFolderName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') commitNewFolder();
-                      else if (e.key === 'Escape') { setCreatingFolder(null); setNewFolderName(''); }
-                    }}
-                    onBlur={commitNewFolder}
-                  />
-                </div>
-              )}
- 
-              {!isGridView && rootScripts.length > 0 && renderListHeader()}
-              {rootScripts.map((script) => (isGridView ? renderScriptCard(script) : renderScriptRow(script)))}
-            </div>
           )}
-        </div>
+          emptyHint="No scripts yet. Use + to create a new script."
+          subfolderNames={scriptSubfolderNames}
+          openSubfolders={openScriptSubfolders}
+          onToggleSubfolder={toggleScriptSubfolder}
+          onOpenFolderMenu={(e, folderName) => openFolderMenu(e, 'scripts', folderName)}
+          folderRenameInput={(folderName) => folderRenameInput('scripts', folderName)}
+          itemsInFolder={(folderName) => filteredScripts.filter((s) => s.folder === folderName)}
+          emptyFolderHint="Empty folder — create scripts into it or drop them here."
+          isGridView={isGridView}
+          renderListHeader={renderListHeader}
+          renderItem={(s) => (isGridView ? renderScriptCard(s) : renderScriptRow(s))}
+          rootItems={rootScripts}
+          creatingFolder={creatingFolder}
+          newFolderName={newFolderName}
+          setNewFolderName={setNewFolderName}
+          commitNewFolder={commitNewFolder}
+          setCreatingFolder={setCreatingFolder}
+        />
       </div>
  
       {/* ── Right-click context menu ─────────────────────────────────────── */}

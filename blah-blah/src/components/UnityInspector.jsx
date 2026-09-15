@@ -1,54 +1,36 @@
 import { useState, memo, useMemo } from 'react';
-import { 
-  Sliders, 
-  Plus, 
-  Trash2, 
-  FileCode, 
-  ChevronDown, 
-  ChevronRight, 
-  Package, 
-  Type, 
-  Square, 
+import {
+  Sliders,
+  Plus,
+  Package,
   Check,
-  Volume2,
-  AlertCircle,
-  Sparkles,
-  Boxes,
-  GripVertical,
   Key,
-  Clock,
   Search,
   FolderOpen,
   Folder,
-  Film,
   Lock,
   Unlock,
+  Trash2,
+  ChevronDown,
+  ChevronRight,
+  Type,
+  Square,
+  Volume2,
+  Sparkles,
+  Captions,
+  Film,
 } from 'lucide-react';
-import { extractScriptProps, getScriptError, detectScriptKind, isScriptBundlePending } from '../engine/scriptRunner';
-import { DragNumber } from './DragNumber';
-import { InspectorFieldList, TRANSFORM_FIELD_GROUPS, TEXT_RENDERER_FIELDS } from './inspector/InspectorField';
-import { FontFamilyPicker } from './inspector/FontFamilyPicker';
-import { EntityRefSlot } from './inspector/RefSlot';
 import { getFieldKeyframes, setKeyframe, evaluateField } from '../engine/keyframes';
-import { isScriptComponent, createTransitionComponent } from '../engine/ecs';
-import { readDragPayload, dragHasItemKind, ITEM_KIND_SCRIPT } from '../utils/dragData';
-import { TransitionInspector } from './inspector/TransitionInspector';
-import { TransitionPickerModal } from './TransitionPickerModal';
-import { SubtitleTrackInspector } from './inspector/SubtitleTrackInspector';
-import { createSubtitleTrackComponent } from '../engine/subtitleTrack';
-import { isTextDrivenBySubtitle } from '../engine/textRenderer';
-import { Captions } from 'lucide-react';
- 
-// Per-kind display metadata for script cards (icon + color + label). The
-// kind comes from detectScriptKind at runtime — there is ONE component type
-// (ScriptComponent) and the script's own code decides how it executes.
-const SCRIPT_KIND_META = {
-  react: { icon: Sparkles, className: 'text-cyan', label: 'React Component' },
-  canvas: { icon: Boxes, className: 'text-violet', label: 'Canvas Component' },
-  motion: { icon: FileCode, className: 'text-emerald', label: 'Motion Script' },
-  shader: { icon: Sparkles, className: 'text-amber', label: 'GL Transition' },
-};
-const scriptKindMeta = (kind) => SCRIPT_KIND_META[kind] || SCRIPT_KIND_META.motion;
+import { isScriptComponent } from '../engine/ecs';
+import { useReferencePicker } from './inspector/ReferencePickerHost';
+import { useComponentCardActions, scriptKindLabel, SCRIPT_KINDS } from '../hooks/useComponentCardActions';
+import { TransformCard } from './inspector/TransformCard';
+import { TextRendererCard } from './inspector/TextRendererCard';
+import { ShapeRendererCard } from './inspector/ShapeRendererCard';
+import { MediaSettingsCard } from './inspector/MediaSettingsCard';
+import { TransitionCard } from './inspector/TransitionCard';
+import { SubtitleTrackCard } from './inspector/SubtitleTrackCard';
+import { ScriptCard, scriptKindMeta } from './inspector/ScriptCard';
  
 /**
  * P0 #3 — Unified Inspector field rendering.
@@ -72,7 +54,7 @@ const scriptKindMeta = (kind) => SCRIPT_KIND_META[kind] || SCRIPT_KIND_META.moti
  * and a half-written script ('unknown') is never hidden while being
  * written.
  *
- * Bugfix (this pass) — two issues reported together:
+ * Bugfix (earlier pass) — two issues reported together:
  *  1. Only the Transform card could collapse/expand; every other card
  *     (React/Canvas/Script/Text/Shape/Media) had a header with no chevron
  *     and no click handler, so its body was always force-rendered. A tall
@@ -88,51 +70,14 @@ const scriptKindMeta = (kind) => SCRIPT_KIND_META[kind] || SCRIPT_KIND_META.moti
  *     `selectedEntity.components` directly (Transform is excluded from
  *     drag/drop — it always stays pinned first, matching how Transform is
  *     already treated as the one non-removable, always-present component).
+ *
+ * Step 9 — each card's body (Transform / TextRenderer / ShapeRenderer /
+ * media settings / TransitionComponent / SubtitleTrack / ScriptComponent)
+ * now lives in its own file under ./inspector/, sharing the
+ * ./inspector/InspectorCardHeader.jsx chrome. This file wires them up:
+ * per-entity derived data (transformComp, textComp, ...), the update/
+ * keyframe helpers each card needs, and the overall card order.
  */
-function InspectorCardHeader({
-  icon,
-  title,
-  isOpen,
-  onToggle,
-  actions,
-  draggable = false,
-  onDragStart,
-  onDragOver,
-  onDrop,
-  onDragEnd,
-  isDragOver = false
-}) {
-  return (
-    <div
-      className={`inspector-card-header${isDragOver ? ' drag-over' : ''}`}
-      onClick={onToggle}
-      onDragOver={draggable ? onDragOver : undefined}
-      onDrop={draggable ? onDrop : undefined}
-    >
-      <div className="card-title-group">
-        {draggable && (
-          <span
-            className="card-drag-handle"
-            draggable
-            onClick={(e) => e.stopPropagation()}
-            onDragStart={onDragStart}
-            onDragEnd={onDragEnd}
-          >
-            <GripVertical size={12} />
-          </span>
-        )}
-        {isOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-        {icon}
-        <span className="card-title-text">{title}</span>
-      </div>
-      {actions && (
-        <div className="card-actions-group" onClick={(e) => e.stopPropagation()}>
-          {actions}
-        </div>
-      )}
-    </div>
-  );
-}
  
 export const UnityInspector = memo(function UnityInspector({
   selectedEntity,
@@ -157,17 +102,33 @@ export const UnityInspector = memo(function UnityInspector({
     Shape: true,
     Media: true
   });
-  const [showAddComponent, setShowAddComponent] = useState(false);
-  const [componentSearch, setComponentSearch] = useState('');
-  const [openCompCategories, setOpenCompCategories] = useState({ renderers: true, scripts: true });
-  const [isScriptDragOver, setIsScriptDragOver] = useState(false);
   const [savedPrefab, setSavedPrefab] = useState(false);
-  const [dragCompType, setDragCompType] = useState(null); // component `type` (or scriptId for scripts) currently being dragged
-  const [dragOverCompType, setDragOverCompType] = useState(null);
-  const [showPickerModal, setShowPickerModal] = useState(false);
-  const [pickerSlot, setPickerSlot] = useState('in');
-  const [pickerCallback, setPickerCallback] = useState(null);
-  const [pickerInitialParams, setPickerInitialParams] = useState(null);
+ 
+  const {
+    showAddComponent,
+    setShowAddComponent,
+    componentSearch,
+    setComponentSearch,
+    openCompCategories,
+    toggleCompCategory,
+    isScriptDragOver,
+    handleInspectorDragOver,
+    handleInspectorDrop,
+    dragOverCompType,
+    handleCardDragStart,
+    handleCardDragOver,
+    handleCardDrop,
+    handleCardDragEnd,
+    removeComponent,
+    handleAddComponent,
+    handleAttachScript,
+    allScripts,
+    scriptsByKind,
+    searchTerm,
+    matchesSearch,
+  } = useComponentCardActions({ selectedEntity, onUpdateEntity, scripts });
+ 
+  const { openPicker, pickerModal } = useReferencePicker({ selectedEntity, onUpdateEntity });
  
   const eligibleParentEntities = useMemo(() => {
     if (!entities || !selectedEntity) return [];
@@ -360,146 +321,34 @@ export const UnityInspector = memo(function UnityInspector({
     onUpdateEntity(selectedEntity.id, { components: updatedComponents });
   };
  
-  // Components after the pinned Transform can be freely reordered. Each
-  // draggable card is keyed by its component `type`, except ScriptComponent
-  // (there can be several) which is keyed by `script:<scriptId>` instead so
-  // multiple motion scripts on the same entity can be reordered relative to
-  // each other, not just as a block.
-  const dragKeyFor = (c) => (isScriptComponent(c) ? `script:${c.scriptId}` : c.type);
- 
-  const reorderComponents = (draggedKey, targetKey) => {
-    if (!draggedKey || !targetKey || draggedKey === targetKey) return;
-    const comps = [...selectedEntity.components];
-    const fromIdx = comps.findIndex(c => dragKeyFor(c) === draggedKey);
-    const toIdx = comps.findIndex(c => dragKeyFor(c) === targetKey);
-    if (fromIdx === -1 || toIdx === -1) return;
-    const [moved] = comps.splice(fromIdx, 1);
-    comps.splice(toIdx, 0, moved);
-    onUpdateEntity(selectedEntity.id, { components: comps });
-  };
- 
-  const handleCardDragStart = (key) => (e) => {
-    setDragCompType(key);
-    e.dataTransfer.effectAllowed = 'move';
-  };
-  const handleCardDragOver = (key) => (e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    if (dragOverCompType !== key) setDragOverCompType(key);
-  };
-  const handleCardDrop = (key) => (e) => {
-    e.preventDefault();
-    reorderComponents(dragCompType, key);
-    setDragCompType(null);
-    setDragOverCompType(null);
-  };
-  const handleCardDragEnd = () => {
-    setDragCompType(null);
-    setDragOverCompType(null);
-  };
- 
-  const removeComponent = (compType, scriptId = null) => {
-    const updatedComponents = selectedEntity.components.filter(c => {
-      if ((compType === 'ScriptComponent' || compType === 'MonoBehaviour') && scriptId) {
-        return !(isScriptComponent(c) && c.scriptId === scriptId);
-      }
-      return c.type !== compType;
-    });
-    onUpdateEntity(selectedEntity.id, { components: updatedComponents });
-  };
- 
-  const handleAddComponent = (type, scriptId = null) => {
-    setShowAddComponent(false);
-    let newComp;
- 
-    if (type === 'TextRenderer') {
-      newComp = { type: 'TextRenderer', text: 'New Text', fontSize: 36, fontColor: '#ffffff', fontFamily: 'Inter', subtitleSourceId: null };
-    } else if (type === 'ShapeRenderer') {
-      newComp = { type: 'ShapeRenderer', shapeType: 'rect', width: 140, height: 140, color: '#ffffff', strokeColor: '#38bdf8', strokeWidth: 0, borderRadius: 0 };
-    } else if (type === 'VideoRenderer') {
-      // A bare VideoRenderer (no src) is inert until a media source is
-      // assigned — harmless, and matches the existing media-settings card.
-      newComp = { type: 'VideoRenderer', src: '', volume: 0, speed: 1, mediaOffset: 0 };
-    } else if (type === 'AudioSource') {
-      newComp = { type: 'AudioSource', src: '', volume: 1, speed: 1, mediaOffset: 0 };
-    } else if (type === 'TransitionComponent') {
-      newComp = createTransitionComponent();
-    } else if (type === 'SubtitleTrack') {
-      newComp = createSubtitleTrackComponent();
-    } else if (type === 'ScriptComponent' && scriptId) {
-      // ONE script component type — the runtime dispatches per the
-      // script's detected kind (motion / react / canvas).
-      const scriptDef = scripts.find(s => s.id === scriptId);
-      if (scriptDef) {
-        const fields = extractScriptProps(scriptDef.code);
-        const initialProps = {};
-        fields.forEach(f => { initialProps[f.name] = f.defaultVal; });
-        newComp = { type: 'ScriptComponent', scriptId: scriptDef.id, scriptName: scriptDef.name, enabled: true, props: initialProps };
-      }
-    }
- 
-    if (newComp) {
-      onUpdateEntity(selectedEntity.id, { components: [...selectedEntity.components, newComp] });
-    }
-  };
- 
-  // Attach a script by id (Add Component click or a Project-panel script
-  // card dropped onto the Inspector).
-  const handleAttachScript = (scriptId) => {
-    if (scriptId) handleAddComponent('ScriptComponent', scriptId);
-  };
- 
-  // HTML5 drop zone: a script card dragged from the Project panel (scripts/
-  // or shared/) lands on the Inspector and attaches to the selected clip.
-  const handleInspectorDragOver = (e) => {
-    if (!selectedEntity || !dragHasItemKind(e.dataTransfer, ITEM_KIND_SCRIPT)) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'copy';
-    if (!isScriptDragOver) setIsScriptDragOver(true);
-  };
- 
-  const handleInspectorDrop = (e) => {
-    if (!selectedEntity) return;
-    const payload = readDragPayload(e.dataTransfer);
-    if (!payload || payload.itemType !== 'script' || !payload.itemData?.id) return;
-    e.preventDefault();
-    setIsScriptDragOver(false);
-    handleAttachScript(payload.itemData.id);
-  };
- 
   const handleSavePrefabClick = () => {
     onSaveAsPrefab(selectedEntity);
     setSavedPrefab(true);
     setTimeout(() => setSavedPrefab(false), 2000);
   };
  
-  // ── Add Component catalog ───────────────────────────────────────────────
-  // Organized into collapsible category folders (Renderers / Scripts with
-  // per-kind subfolders Motion / React / Canvas), filtered live by the
-  // search box at the top of the popover. Scripts attach as the ONE
-  // ScriptComponent type and the runtime dispatches by detected kind, so a
-  // half-written script ('unknown') is never hidden while being written.
-  const allScripts = scripts.map(s => ({ ...s, kind: detectScriptKind(s.code) }));
-  const scriptKindLabel = (kind) => (SCRIPT_KIND_META[kind] || SCRIPT_KIND_META.motion).label;
- 
-  const searchTerm = componentSearch.trim().toLowerCase();
-  const matchesSearch = (name) => !searchTerm || name.toLowerCase().includes(searchTerm);
- 
-  const rendererItems = [
-    { type: 'TextRenderer', icon: <Type size={12} className="text-amber" />, label: 'Text Component', present: !!textComp },
-    { type: 'ShapeRenderer', icon: <Square size={12} className="text-cyan" />, label: 'Shape Component', present: !!shapeComp },
-    { type: 'VideoRenderer', icon: <Film size={12} className="text-indigo" />, label: 'Video Component', present: !!videoComp },
-    { type: 'AudioSource', icon: <Volume2 size={12} className="text-emerald" />, label: 'Audio Component', present: !!audioComp },
-    { type: 'TransitionComponent', icon: <Sparkles size={12} className="text-amber" />, label: 'GL Transition', present: !!transitionComp },
-    { type: 'SubtitleTrack', icon: <Captions size={12} className="text-cyan" />, label: 'Subtitle Track', present: !!subtitleComp },
-  ].filter((it) => matchesSearch(it.label) || matchesSearch(it.type));
- 
-  const scriptKinds = ['motion', 'react', 'canvas', 'shader'];
-  const scriptsByKind = (kind) => allScripts.filter((s) => s.kind === kind && matchesSearch(s.name));
- 
-  const toggleCompCategory = (name) => {
-    setOpenCompCategories(prev => ({ ...prev, [name]: !prev[name] }));
+  // Presentation-only: icons live here (JSX), the underlying catalog logic
+  // (search filtering, kind grouping) is owned by useComponentCardActions.
+  const RENDERER_ICONS = {
+    TextRenderer: <Type size={12} className="text-amber" />,
+    ShapeRenderer: <Square size={12} className="text-cyan" />,
+    VideoRenderer: <Film size={12} className="text-indigo" />,
+    AudioSource: <Volume2 size={12} className="text-emerald" />,
+    TransitionComponent: <Sparkles size={12} className="text-amber" />,
+    SubtitleTrack: <Captions size={12} className="text-cyan" />,
   };
+  const rendererItems = useMemo(() => ([
+    { type: 'TextRenderer', label: 'Text Component', present: !!textComp },
+    { type: 'ShapeRenderer', label: 'Shape Component', present: !!shapeComp },
+    { type: 'VideoRenderer', label: 'Video Component', present: !!videoComp },
+    { type: 'AudioSource', label: 'Audio Component', present: !!audioComp },
+    { type: 'TransitionComponent', label: 'GL Transition', present: !!transitionComp },
+    { type: 'SubtitleTrack', label: 'Subtitle Track', present: !!subtitleComp },
+  ]), [textComp, shapeComp, videoComp, audioComp, transitionComp, subtitleComp]);
+ 
+  const visibleRendererItems = rendererItems.filter((it) => matchesSearch(it.label) || matchesSearch(it.type));
+ 
+  const scriptKinds = SCRIPT_KINDS;
  
   return (
     <aside
@@ -583,479 +432,154 @@ export const UnityInspector = memo(function UnityInspector({
         </div>
  
         {/* ========== TRANSFORM ========== */}
-        {/* Transform is pinned first and not draggable/reorderable -- it's
-            always present (synthesized above if missing), so reordering it
-            relative to other components isn't meaningful. */}
-        <div className="inspector-card">
-          <InspectorCardHeader
-            title="Transform"
-            isOpen={openFoldouts.Transform}
-            onToggle={() => toggleFoldout('Transform')}
-          />
- 
-          {openFoldouts.Transform && (
-            <div className="inspector-card-body">
-              {TRANSFORM_FIELD_GROUPS.map((group) => (
-                <div key={group.label} className="inspector-row">
-                  <span className="row-label">{group.label}</span>
-                  {group.fields.length > 1 ? (
-                    <div className="drag-number-group">
-                      <InspectorFieldList
-                        fields={group.fields}
-                        values={resolveComponentValues('Transform', transformComp)}
-                        onFieldChange={(name, v) => updateTransform({ [name]: v })}
-                        bare
-                        trackKey="Transform"
-                        selectedEntity={selectedEntity}
-                        currentTime={currentTime}
-                        onUpdateEntity={onUpdateEntity}
-                      />
-                    </div>
-                  ) : (
-                    <InspectorFieldList
-                      fields={group.fields}
-                      values={resolveComponentValues('Transform', transformComp)}
-                      onFieldChange={(name, v) => updateTransform({ [name]: v })}
-                      trackKey="Transform"
-                      selectedEntity={selectedEntity}
-                      currentTime={currentTime}
-                      onUpdateEntity={onUpdateEntity}
-                    />
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <TransformCard
+          transformComp={transformComp}
+          isOpen={openFoldouts.Transform}
+          onToggle={() => toggleFoldout('Transform')}
+          resolveComponentValues={resolveComponentValues}
+          updateTransform={updateTransform}
+          selectedEntity={selectedEntity}
+          currentTime={currentTime}
+          onUpdateEntity={onUpdateEntity}
+        />
  
         {/* ========== TEXT RENDERER ========== */}
         {textComp && (
-          <div className="inspector-card">
-            <InspectorCardHeader
-              icon={<Type size={13} className="text-amber" />}
-              title="Text Component"
-              isOpen={openFoldouts.Text}
-              onToggle={() => toggleFoldout('Text')}
-              draggable
-              isDragOver={dragOverCompType === 'TextRenderer'}
-              onDragStart={handleCardDragStart('TextRenderer')}
-              onDragOver={handleCardDragOver('TextRenderer')}
-              onDrop={handleCardDrop('TextRenderer')}
-              onDragEnd={handleCardDragEnd}
-              actions={
-                <button className="del-btn-sm" onClick={() => removeComponent('TextRenderer')}>
-                  <Trash2 size={11} />
-                </button>
-              }
-            />
- 
-            {openFoldouts.Text && (() => {
-              const resolvedText = resolveComponentValues('TextRenderer', textComp);
-              const subtitleEntities = entities.filter((e) =>
-                e.components?.some((c) => c.type === 'SubtitleTrack')
-              );
-              const drivenBySubtitle = isTextDrivenBySubtitle(textComp, selectedEntity);
-              const updateTextField = (name, v) => {
-                const newKfs = tryWriteKeyframe(selectedEntity, 'TextRenderer', name, v);
-                if (newKfs) {
-                  onUpdateEntity(selectedEntity.id, { keyframes: newKfs });
-                } else {
-                  updateComponent('TextRenderer', { [name]: v });
-                }
-              };
-              return (
-              <div className="inspector-card-body">
-                <textarea
-                  className="inspector-textarea"
-                  rows={2}
-                  value={drivenBySubtitle ? '' : (textComp.text || '')}
-                  placeholder={drivenBySubtitle ? 'Text comes from Subtitle Track' : ''}
-                  disabled={drivenBySubtitle}
-                  onChange={(e) => updateComponent('TextRenderer', { text: e.target.value })}
-                />
-
-                <div className="inspector-row">
-                  <span className="row-label">Subtitle Source</span>
-                  <EntityRefSlot
-                    value={textComp.subtitleSourceId || null}
-                    onChange={(id) => updateComponent('TextRenderer', { subtitleSourceId: id || null })}
-                    entities={subtitleEntities}
-                    emptyLabel="None"
-                  />
-                </div>
-                {subtitleComp && !textComp.subtitleSourceId && (
-                  <p className="hint-text-sm">Using this clip&apos;s Subtitle Track.</p>
-                )}
-
-                <InspectorFieldList
-                  fields={TEXT_RENDERER_FIELDS}
-                  values={resolvedText}
-                  onFieldChange={updateTextField}
-                  trackKey="TextRenderer"
-                  selectedEntity={selectedEntity}
-                  currentTime={currentTime}
-                  onUpdateEntity={onUpdateEntity}
-                />
-
-                <div className="inspector-row">
-                  <span className="row-label">Font</span>
-                  <FontFamilyPicker
-                    value={textComp.fontFamily || 'Inter'}
-                    onChange={(family) => updateComponent('TextRenderer', { fontFamily: family })}
-                  />
-                </div>
-              </div>
-              );
-            })()}
-          </div>
+          <TextRendererCard
+            textComp={textComp}
+            subtitleComp={subtitleComp}
+            entities={entities}
+            selectedEntity={selectedEntity}
+            isOpen={openFoldouts.Text}
+            onToggle={() => toggleFoldout('Text')}
+            dragOverCompType={dragOverCompType}
+            handleCardDragStart={handleCardDragStart}
+            handleCardDragOver={handleCardDragOver}
+            handleCardDrop={handleCardDrop}
+            handleCardDragEnd={handleCardDragEnd}
+            removeComponent={removeComponent}
+            resolveComponentValues={resolveComponentValues}
+            tryWriteKeyframe={tryWriteKeyframe}
+            updateComponent={updateComponent}
+            currentTime={currentTime}
+            onUpdateEntity={onUpdateEntity}
+          />
         )}
  
         {/* ========== SHAPE RENDERER ========== */}
         {shapeComp && (
-          <div className="inspector-card">
-            <InspectorCardHeader
-              icon={<Square size={13} className="text-cyan" />}
-              title="Shape Component"
-              isOpen={openFoldouts.Shape}
-              onToggle={() => toggleFoldout('Shape')}
-              draggable
-              isDragOver={dragOverCompType === 'ShapeRenderer'}
-              onDragStart={handleCardDragStart('ShapeRenderer')}
-              onDragOver={handleCardDragOver('ShapeRenderer')}
-              onDrop={handleCardDrop('ShapeRenderer')}
-              onDragEnd={handleCardDragEnd}
-              actions={
-                <button className="del-btn-sm" onClick={() => removeComponent('ShapeRenderer')}>
-                  <Trash2 size={11} />
-                </button>
-              }
-            />
- 
-            {openFoldouts.Shape && (
-              <div className="inspector-card-body">
-                <div className="inspector-row">
-                  <span className="row-label">Type</span>
-                  <select
-                    className="inspector-select"
-                    value={shapeComp.shapeType || 'rect'}
-                    onChange={(e) => updateComponent('ShapeRenderer', { shapeType: e.target.value })}
-                  >
-                    <option value="rounded-rect">Rounded Rect</option>
-                    <option value="circle">Circle</option>
-                    <option value="rect">Rectangle</option>
-                  </select>
-                </div>
- 
-                <div className="inspector-row">
-                  <span className="row-label">Size</span>
-                  <div className="drag-number-group">
-                    <DragNumber
-                      label="W"
-                      value={shapeComp.width ?? 140}
-                      step={1}
-                      min={1}
-                      onChange={(v) => updateComponent('ShapeRenderer', { width: Math.round(v) })}
-                    />
-                    <DragNumber
-                      label="H"
-                      value={shapeComp.height ?? 140}
-                      step={1}
-                      min={1}
-                      onChange={(v) => updateComponent('ShapeRenderer', { height: Math.round(v) })}
-                    />
-                  </div>
-                </div>
- 
-                <div className="inspector-row">
-                  <span className="row-label">Fill Color</span>
-                  <input
-                    type="color"
-                    className="inspector-color-input"
-                    value={shapeComp.color || '#ffffff'}
-                    onChange={(e) => updateComponent('ShapeRenderer', { color: e.target.value })}
-                  />
-                </div>
- 
-                {shapeComp.shapeType !== 'circle' && (
-                  <div className="inspector-row">
-                    <span className="row-label">Roundness</span>
-                    <DragNumber
-                      label="px"
-                      value={shapeComp.borderRadius ?? 0}
-                      step={1}
-                      min={0}
-                      max={Math.min(shapeComp.width ?? 140, shapeComp.height ?? 140) / 2}
-                      onChange={(v) => updateComponent('ShapeRenderer', { borderRadius: Math.round(v) })}
-                    />
-                  </div>
-                )}
- 
-                <div className="inspector-row">
-                  <span className="row-label">Stroke Color</span>
-                  <input
-                    type="color"
-                    className="inspector-color-input"
-                    value={shapeComp.strokeColor || '#38bdf8'}
-                    onChange={(e) => updateComponent('ShapeRenderer', { strokeColor: e.target.value })}
-                  />
-                </div>
- 
-                <div className="inspector-row">
-                  <span className="row-label">Stroke W</span>
-                  <DragNumber
-                    label="px"
-                    value={shapeComp.strokeWidth ?? 0}
-                    step={0.5}
-                    min={0}
-                    onChange={(v) => updateComponent('ShapeRenderer', { strokeWidth: v })}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
+          <ShapeRendererCard
+            shapeComp={shapeComp}
+            isOpen={openFoldouts.Shape}
+            onToggle={() => toggleFoldout('Shape')}
+            dragOverCompType={dragOverCompType}
+            handleCardDragStart={handleCardDragStart}
+            handleCardDragOver={handleCardDragOver}
+            handleCardDrop={handleCardDrop}
+            handleCardDragEnd={handleCardDragEnd}
+            removeComponent={removeComponent}
+            updateComponent={updateComponent}
+          />
         )}
  
         {/* ========== MEDIA SETTINGS (VideoRenderer / AudioSource volume) ========== */}
         {videoComp && (
-          <div className="inspector-card">
-            <InspectorCardHeader
-              icon={<Volume2 size={13} className="text-emerald" />}
-              title={audioComp ? 'Video Media Settings' : 'Media Settings'}
-              isOpen={openFoldouts.VideoMedia !== undefined ? openFoldouts.VideoMedia : openFoldouts.Media}
-              onToggle={() => toggleFoldout(audioComp ? 'VideoMedia' : 'Media')}
-              draggable
-              isDragOver={dragOverCompType === 'VideoRenderer'}
-              onDragStart={handleCardDragStart('VideoRenderer')}
-              onDragOver={handleCardDragOver('VideoRenderer')}
-              onDrop={handleCardDrop('VideoRenderer')}
-              onDragEnd={handleCardDragEnd}
-            />
-            {(openFoldouts.VideoMedia !== undefined ? openFoldouts.VideoMedia : openFoldouts.Media) && (
-              <div className="inspector-card-body">
-                <div className="inspector-row">
-                  <span className="row-label">Volume</span>
-                  <DragNumber
-                    label="vol"
-                    value={parseFloat((videoComp.volume ?? 0).toFixed(2))}
-                    step={0.01}
-                    min={0}
-                    max={100}
-                    onChange={(v) => {
-                      updateComponent('VideoRenderer', { volume: v });
-                    }}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
+          <MediaSettingsCard
+            compType="VideoRenderer"
+            comp={videoComp}
+            title={audioComp ? 'Video Media Settings' : 'Media Settings'}
+            isOpen={openFoldouts.VideoMedia !== undefined ? openFoldouts.VideoMedia : openFoldouts.Media}
+            onToggle={() => toggleFoldout(audioComp ? 'VideoMedia' : 'Media')}
+            dragOverCompType={dragOverCompType}
+            handleCardDragStart={handleCardDragStart}
+            handleCardDragOver={handleCardDragOver}
+            handleCardDrop={handleCardDrop}
+            handleCardDragEnd={handleCardDragEnd}
+            updateComponent={updateComponent}
+          />
         )}
  
         {audioComp && (
-          <div className="inspector-card">
-            <InspectorCardHeader
-              icon={<Volume2 size={13} className="text-emerald" />}
-              title={videoComp ? 'Audio Media Settings' : 'Media Settings'}
-              isOpen={openFoldouts.AudioMedia !== undefined ? openFoldouts.AudioMedia : openFoldouts.Media}
-              onToggle={() => toggleFoldout(videoComp ? 'AudioMedia' : 'Media')}
-              draggable
-              isDragOver={dragOverCompType === 'AudioSource'}
-              onDragStart={handleCardDragStart('AudioSource')}
-              onDragOver={handleCardDragOver('AudioSource')}
-              onDrop={handleCardDrop('AudioSource')}
-              onDragEnd={handleCardDragEnd}
-            />
-            {(openFoldouts.AudioMedia !== undefined ? openFoldouts.AudioMedia : openFoldouts.Media) && (
-              <div className="inspector-card-body">
-                <div className="inspector-row">
-                  <span className="row-label">Volume</span>
-                  <DragNumber
-                    label="vol"
-                    value={parseFloat((audioComp.volume ?? 1).toFixed(2))}
-                    step={0.01}
-                    min={0}
-                    max={100}
-                    onChange={(v) => {
-                      updateComponent('AudioSource', { volume: v });
-                    }}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
+          <MediaSettingsCard
+            compType="AudioSource"
+            comp={audioComp}
+            title={videoComp ? 'Audio Media Settings' : 'Media Settings'}
+            isOpen={openFoldouts.AudioMedia !== undefined ? openFoldouts.AudioMedia : openFoldouts.Media}
+            onToggle={() => toggleFoldout(videoComp ? 'AudioMedia' : 'Media')}
+            dragOverCompType={dragOverCompType}
+            handleCardDragStart={handleCardDragStart}
+            handleCardDragOver={handleCardDragOver}
+            handleCardDrop={handleCardDrop}
+            handleCardDragEnd={handleCardDragEnd}
+            updateComponent={updateComponent}
+          />
         )}
  
         {/* ========== GL TRANSITION COMPONENT ========== */}
         {transitionComp && (
-          <div className="inspector-card">
-            <InspectorCardHeader
-              icon={<Sparkles size={13} className="text-amber" />}
-              title="GL Transition"
-              isOpen={openFoldouts.Transition !== false}
-              onToggle={() => toggleFoldout('Transition')}
-              draggable
-              isDragOver={dragOverCompType === 'TransitionComponent'}
-              onDragStart={handleCardDragStart('TransitionComponent')}
-              onDragOver={handleCardDragOver('TransitionComponent')}
-              onDrop={handleCardDrop('TransitionComponent')}
-              onDragEnd={handleCardDragEnd}
-              actions={
-                <button className="del-btn-sm" onClick={() => removeComponent('TransitionComponent')}>
-                  <Trash2 size={11} />
-                </button>
-              }
-            />
-            {openFoldouts.Transition !== false && (
-              <TransitionInspector
-                component={transitionComp}
-                onChange={(updates) => updateComponent('TransitionComponent', updates)}
-                onRemove={() => removeComponent('TransitionComponent')}
-                onOpenPicker={(slot, onApply, currentParams) => {
-                  setPickerSlot(slot);
-                  setPickerCallback(() => onApply);
-                  setPickerInitialParams(currentParams);
-                  setShowPickerModal(true);
-                }}
-              />
-            )}
-          </div>
+          <TransitionCard
+            transitionComp={transitionComp}
+            isOpen={openFoldouts.Transition !== false}
+            onToggle={() => toggleFoldout('Transition')}
+            dragOverCompType={dragOverCompType}
+            handleCardDragStart={handleCardDragStart}
+            handleCardDragOver={handleCardDragOver}
+            handleCardDrop={handleCardDrop}
+            handleCardDragEnd={handleCardDragEnd}
+            removeComponent={removeComponent}
+            updateComponent={updateComponent}
+            openPicker={openPicker}
+          />
         )}
  
         {/* ========== SUBTITLE TRACK — data-only timed phrases ========== */}
-        {/* Presentation is deliberately NOT here — this card only edits
-            the phrase list/timing (and SRT import/export). Drawing the
-            text on screen is a CanvasRenderer script's job, reading this
-            data via EntityRef.getPhraseAt/getCurrentText — see the
-            subtitle-track feature scope doc for why that split exists. */}
         {subtitleComp && (
-          <div className="inspector-card">
-            <InspectorCardHeader
-              icon={<Captions size={13} className="text-cyan" />}
-              title="Subtitle Track"
-              isOpen={openFoldouts.SubtitleTrack !== false}
-              onToggle={() => toggleFoldout('SubtitleTrack')}
-              draggable
-              isDragOver={dragOverCompType === 'SubtitleTrack'}
-              onDragStart={handleCardDragStart('SubtitleTrack')}
-              onDragOver={handleCardDragOver('SubtitleTrack')}
-              onDrop={handleCardDrop('SubtitleTrack')}
-              onDragEnd={handleCardDragEnd}
-              actions={
-                <button className="del-btn-sm" onClick={() => removeComponent('SubtitleTrack')}>
-                  <Trash2 size={11} />
-                </button>
-              }
-            />
-            {openFoldouts.SubtitleTrack !== false && (
-              <div className="inspector-card-body">
-                <SubtitleTrackInspector
-                  component={subtitleComp}
-                  onUpdateEntity={onUpdateEntity}
-                  selectedEntity={selectedEntity}
-                  currentTime={currentTime}
-                />
-              </div>
-            )}
-          </div>
+          <SubtitleTrackCard
+            subtitleComp={subtitleComp}
+            selectedEntity={selectedEntity}
+            currentTime={currentTime}
+            onUpdateEntity={onUpdateEntity}
+            isOpen={openFoldouts.SubtitleTrack !== false}
+            onToggle={() => toggleFoldout('SubtitleTrack')}
+            dragOverCompType={dragOverCompType}
+            handleCardDragStart={handleCardDragStart}
+            handleCardDragOver={handleCardDragOver}
+            handleCardDrop={handleCardDrop}
+            handleCardDragEnd={handleCardDragEnd}
+            removeComponent={removeComponent}
+          />
         )}
  
         {/* ========== SCRIPTS (motion / React / Canvas — one component type) ========== */}
         {scriptComps.map((scriptComp) => {
-          const scriptDef = scripts.find(s => s.id === scriptComp.scriptId);
-          const kind = scriptDef ? detectScriptKind(scriptDef.code) : 'unknown';
-          const Meta = scriptKindMeta(kind);
-          const fields = scriptDef ? extractScriptProps(scriptDef.code) : [];
-          const scriptError = scriptDef ? getScriptError(scriptDef.code) : null;
-          const bundlePending = scriptDef ? isScriptBundlePending(scriptDef.code) : false;
           const foldoutKey = `Script:${scriptComp.scriptId}`;
-          const dragKey = `script:${scriptComp.scriptId}`;
           // Per-script foldout state defaults to open until the user
           // collapses it, same as every other card.
           const isOpen = openFoldouts[foldoutKey] !== false;
  
           return (
-            <div key={scriptComp.scriptId} className="inspector-card script-highlight">
-              <InspectorCardHeader
-                icon={<Meta.icon size={13} className={Meta.className} />}
-                title={scriptComp.scriptName || Meta.label}
-                isOpen={isOpen}
-                onToggle={() => toggleFoldout(foldoutKey)}
-                draggable
-                isDragOver={dragOverCompType === dragKey}
-                onDragStart={handleCardDragStart(dragKey)}
-                onDragOver={handleCardDragOver(dragKey)}
-                onDrop={handleCardDrop(dragKey)}
-                onDragEnd={handleCardDragEnd}
-                actions={
-                  <>
-                    <button className="edit-cs-btn" onClick={() => scriptDef && onOpenScriptEditor(scriptDef)}>
-                      Edit JS
-                    </button>
-                    <button className="del-btn-sm" onClick={() => removeComponent('ScriptComponent', scriptComp.scriptId)}>
-                      <Trash2 size={11} />
-                    </button>
-                  </>
-                }
-              />
- 
-              {isOpen && (
-                <div className="inspector-card-body">
-                  {scriptError && (
-                    <div className="script-error-badge">
-                      <AlertCircle size={12} />
-                      <span>{scriptError}</span>
-                    </div>
-                  )}
-                  {!scriptError && bundlePending && (
-                    <div className="script-pending-badge">
-                      <Clock size={12} />
-                      <span>Resolving imports…</span>
-                    </div>
-                  )}
- 
-                  <div className="inspector-row">
-                    <span className="row-label">Enabled</span>
-                    <input
-                      type="checkbox"
-                      checked={scriptComp.enabled !== false}
-                      onChange={(e) => updateScriptComp(scriptComp.scriptId, { enabled: e.target.checked })}
-                    />
-                  </div>
- 
-                  {/* Motion-kind scripts follow the Transform's Speed
-                      (clip-level rate) by default. ignoreParentSpeed is the
-                      per-script opt-out: when checked, this script's
-                      localTime stays on raw timeline time while media and
-                      sibling scripts run sped up. A ScriptComponent-level
-                      field (like Enabled), NOT a script prop — saved with
-                      the component, no migration needed (absent = false).
-                      Only meaningful for motion kind; react/canvas kinds are
-                      visual outputs driven by the caller and unaffected. */}
-                  {kind === 'motion' && (
-                    <div className="inspector-row">
-                      <span className="row-label">Ignore Parent Speed</span>
-                      <input
-                        type="checkbox"
-                        checked={scriptComp.ignoreParentSpeed === true}
-                        onChange={(e) => updateScriptComp(scriptComp.scriptId, { ignoreParentSpeed: e.target.checked })}
-                      />
-                    </div>
-                  )}
- 
-                  <InspectorFieldList
-                    fields={fields}
-                    values={resolveComponentValues(`script:${scriptComp.scriptId}`, scriptComp.props)}
-                    onFieldChange={(name, v) => updateScriptProps(scriptComp.scriptId, name, v)}
-                    emptyHint={<>Expose props with <code>static props = &#123; ... &#125;</code></>}
-                    trackKey={`script:${scriptComp.scriptId}`}
-                    selectedEntity={selectedEntity}
-                    currentTime={currentTime}
-                    onUpdateEntity={onUpdateEntity}
-                    entities={entities}
-                    mediaAssets={mediaAssets}
-                  />
-                </div>
-              )}
-            </div>
+            <ScriptCard
+              key={scriptComp.scriptId}
+              scriptComp={scriptComp}
+              scripts={scripts}
+              isOpen={isOpen}
+              onToggle={() => toggleFoldout(foldoutKey)}
+              dragOverCompType={dragOverCompType}
+              handleCardDragStart={handleCardDragStart}
+              handleCardDragOver={handleCardDragOver}
+              handleCardDrop={handleCardDrop}
+              handleCardDragEnd={handleCardDragEnd}
+              removeComponent={removeComponent}
+              onOpenScriptEditor={onOpenScriptEditor}
+              resolveComponentValues={resolveComponentValues}
+              updateScriptProps={updateScriptProps}
+              updateScriptComp={updateScriptComp}
+              selectedEntity={selectedEntity}
+              currentTime={currentTime}
+              onUpdateEntity={onUpdateEntity}
+              entities={entities}
+              mediaAssets={mediaAssets}
+            />
           );
         })}
       </div>
@@ -1107,7 +631,7 @@ export const UnityInspector = memo(function UnityInspector({
                   </button>
                   {openCompCategories.renderers && (
                     <div className="comp-category-items">
-                      {rendererItems.map((item) => (
+                      {visibleRendererItems.map((item) => (
                         <button
                           key={item.type}
                           className="popover-item"
@@ -1115,12 +639,12 @@ export const UnityInspector = memo(function UnityInspector({
                           title={item.present ? 'Already attached to this clip' : `Add ${item.label}`}
                           disabled={item.present}
                         >
-                          {item.icon}
+                          {RENDERER_ICONS[item.type]}
                           <span>{item.label}</span>
                           {item.present && <span className="popover-kind-tag">added</span>}
                         </button>
                       ))}
-                      {rendererItems.length === 0 && (
+                      {visibleRendererItems.length === 0 && (
                         <div className="popover-empty-hint">No renderers match your search.</div>
                       )}
                     </div>
@@ -1194,28 +718,8 @@ export const UnityInspector = memo(function UnityInspector({
         </button>
       </div>
  
-      <TransitionPickerModal
-        isOpen={showPickerModal}
-        onClose={() => setShowPickerModal(false)}
-        targetSlot={pickerSlot}
-        currentPresetId={pickerSlot === 'out' ? transitionComp?.transitionOut?.preset : transitionComp?.transitionIn?.preset}
-        initialParams={pickerInitialParams || (pickerSlot === 'out' ? transitionComp?.transitionOut?.params : transitionComp?.transitionIn?.params)}
-        onApplyPreset={(presetId, slot, params) => {
-          if (pickerCallback) {
-            pickerCallback(presetId, params);
-          } else if (transitionComp) {
-            if (slot === 'out') {
-              updateComponent('TransitionComponent', {
-                transitionOut: { ...transitionComp.transitionOut, preset: presetId, params, enabled: true },
-              });
-            } else {
-              updateComponent('TransitionComponent', {
-                transitionIn: { ...transitionComp.transitionIn, preset: presetId, params, enabled: true },
-              });
-            }
-          }
-        }}
-      />
+      {pickerModal}
     </aside>
   );
 });
+ 
