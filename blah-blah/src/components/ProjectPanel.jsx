@@ -7,7 +7,6 @@ import {
   Plus,
   Upload,
   Trash2,
-  Sparkles,
   Search,
   Folder,
   FolderOpen,
@@ -20,54 +19,24 @@ import {
   Pencil,
   FolderPlus,
   Layers,
-  Film as FilmIcon
 } from 'lucide-react';
 import { formatTimecode } from '../utils/timeFormat';
 import { detectScriptKind } from '../engine/scriptRunner';
 import { importMediaFiles } from '../services/mediaImport';
 import { isTauri } from '../services/tauriFsAdapter';
 import { openProjectInVsCode } from '../services/ideLauncher';
-import { isScriptComponent } from '../engine/ecs';
 import { setDragPayload, readDragPayload, dragHasItemKind, ITEM_KIND_MEDIA, ITEM_KIND_PREFAB, ITEM_KIND_SCRIPT, ITEM_KIND_SHARED } from '../utils/dragData';
 import { ContextMenu } from './ContextMenu';
+import { AssetPreviewPopover } from './project/AssetPreviewPopover';
+import { useSectionFolders } from './project/useSectionFolders';
+import {
+  scriptKindMeta,
+  shortDuration,
+  SORT_OPTIONS,
+  MEDIA_SORT_OPTIONS,
+  selKey,
+} from './project/projectPanelConstants';
  
-// Per-kind display metadata for script cards (see detectScriptKind).
-const SCRIPT_KIND_META = {
-  react: { icon: Sparkles, className: 'text-cyan', label: 'React Component' },
-  canvas: { icon: Sparkles, className: 'text-violet', label: 'Canvas Component' },
-  motion: { icon: FileCode, className: 'text-emerald', label: 'Motion Script' },
-};
-const scriptKindMeta = (kind) => SCRIPT_KIND_META[kind] || SCRIPT_KIND_META.motion;
- 
-const COMPONENT_TYPE_LABEL = {
-  TextRenderer: 'Text',
-  ShapeRenderer: 'Shape',
-  VideoRenderer: 'Video',
-  AudioSource: 'Audio',
-  ScriptComponent: 'Script',
-  MonoBehaviour: 'Script',
-  Transform: 'Transform',
-};
- 
-// Short display duration (drop the leading hours part like the old cards).
-const shortDuration = (sec) => formatTimecode(sec).slice(3);
- 
-// Sort control options (Feature 6). Duration/size are media-only keys;
-// they no-op for sections whose items don't carry those fields.
-const SORT_OPTIONS = [
-  { value: 'date-desc', label: 'Newest first' },
-  { value: 'date-asc', label: 'Oldest first' },
-  { value: 'name-asc', label: 'Name A–Z' },
-  { value: 'name-desc', label: 'Name Z–A' },
-];
-const MEDIA_SORT_OPTIONS = [
-  ...SORT_OPTIONS,
-  { value: 'duration-desc', label: 'Duration (longest)' },
-  { value: 'size-desc', label: 'Size (largest)' },
-];
- 
-// Composite selection key `${kind}:${id}` (Feature 1).
-const selKey = (kind, id) => `${kind}:${id}`;
  
 /**
  * Project file explorer — the single project navigation surface (the old
@@ -123,10 +92,6 @@ export const ProjectPanel = memo(function ProjectPanel({
     media: true,
     scripts: true,
   });
-  const [openMediaSubfolders, setOpenMediaSubfolders] = useState({});
-  const [openPrefabSubfolders, setOpenPrefabSubfolders] = useState({});
-  const [openScriptSubfolders, setOpenScriptSubfolders] = useState({});
-  const [openSharedSubfolders, setOpenSharedSubfolders] = useState({});
   const [mediaMenuOpen, setMediaMenuOpen] = useState(false);
   const [scriptsMenuOpen, setScriptsMenuOpen] = useState(false);
   const fileInputRef = useRef(null);
@@ -144,34 +109,34 @@ export const ProjectPanel = memo(function ProjectPanel({
   // Section-aware folder creation: null (off) | 'media' | 'prefabs' | 'scripts'
   const [creatingFolder, setCreatingFolder] = useState(null);
   const [newFolderName, setNewFolderName] = useState('');
-  // Extra empty subfolders created via the context menu, per section. Kept
-  // in panel state (assets carry a folder field; an empty folder has no
-  // assets to derive from, so it lives here until something lands in it).
-  const [extraFolders, setExtraFolders] = useState([]); // media
-  const [prefabExtraFolders, setPrefabExtraFolders] = useState([]);
-  const [scriptExtraFolders, setScriptExtraFolders] = useState([]);
-  const [sharedExtraFolders, setSharedExtraFolders] = useState([]);
+  // Folder-tree state for all four sections (open subfolders, context-menu
+  // folders, and the derived folder lists) lives in one hook now.
+  // See project/useSectionFolders.js.
+  const itemsBySection = useMemo(
+    () => ({ media: mediaAssets, prefabs, scripts, shared: sharedItems }),
+    [mediaAssets, prefabs, scripts, sharedItems],
+  );
+  const {
+    openSubfolders,
+    extraFolders: extraFoldersBySection,
+    foldersBySection,
+    setExtraFoldersFor,
+    setOpenSubfoldersFor,
+    toggleSubfolder,
+  } = useSectionFolders({ projectFolderHandle, itemsBySection });
  
-  // Empty folders have no asset metadata from which to reconstruct their
-  // tree row. Read their real on-disk entries whenever a project is attached.
-  useEffect(() => {
-    if (!projectFolderHandle) return;
-    let cancelled = false;
-    const scan = async (section, dirName, setter) => {
-      try {
-        const root = await projectFolderHandle.getDirectoryHandle(dirName, { create: false });
-        const names = [];
-        for await (const entry of root.values()) {
-          if (entry.kind === 'directory' && !entry.name.startsWith('.')) names.push(entry.name);
-        }
-        if (!cancelled) setter((previous) => Array.from(new Set([...previous, ...names])));
-      } catch { /* folder may not exist in an older project */ }
-    };
-    scan('media', 'media', setExtraFolders);
-    scan('prefabs', 'prefabs', setPrefabExtraFolders);
-    scan('scripts', 'scripts', setScriptExtraFolders);
-    return () => { cancelled = true; };
-  }, [projectFolderHandle]);
+  const openMediaSubfolders = openSubfolders.media;
+  const openPrefabSubfolders = openSubfolders.prefabs;
+  const openScriptSubfolders = openSubfolders.scripts;
+  const openSharedSubfolders = openSubfolders.shared;
+  const allMediaFolders = foldersBySection.media;
+  const allPrefabFolders = foldersBySection.prefabs;
+  const allScriptFolders = foldersBySection.scripts;
+  const allSharedFolders = foldersBySection.shared;
+  const extraFolders = extraFoldersBySection.media;
+  const prefabExtraFolders = extraFoldersBySection.prefabs;
+  const scriptExtraFolders = extraFoldersBySection.scripts;
+  const sharedExtraFolders = extraFoldersBySection.shared;
  
   // ── Multi-select (Feature 1) ─────────────────────────────────────────────
   // Set of composite keys `${kind}:${id}`. Can span kinds via Ctrl+click,
@@ -323,21 +288,10 @@ export const ProjectPanel = memo(function ProjectPanel({
     setOpenFolders((prev) => ({ ...prev, [name]: !prev[name] }));
   };
  
-  const toggleMediaSubfolder = (name) => {
-    setOpenMediaSubfolders((prev) => ({ ...prev, [name]: !prev[name] }));
-  };
- 
-  const togglePrefabSubfolder = (name) => {
-    setOpenPrefabSubfolders((prev) => ({ ...prev, [name]: !prev[name] }));
-  };
- 
-  const toggleScriptSubfolder = (name) => {
-    setOpenScriptSubfolders((prev) => ({ ...prev, [name]: !prev[name] }));
-  };
- 
-  const toggleSharedSubfolder = (name) => {
-    setOpenSharedSubfolders((prev) => ({ ...prev, [name]: !prev[name] }));
-  };
+  const toggleMediaSubfolder = (name) => toggleSubfolder('media', name);
+  const togglePrefabSubfolder = (name) => toggleSubfolder('prefabs', name);
+  const toggleScriptSubfolder = (name) => toggleSubfolder('scripts', name);
+  const toggleSharedSubfolder = (name) => toggleSubfolder('shared', name);
  
   const handleFileUpload = (files) => {
     // Shared import helper (same probe + asset shape as OS file drops,
@@ -577,26 +531,11 @@ export default class NewScript extends CanvasComponent {
     setRenaming(null);
   };
  
-  // ── Folder helpers (per-section state; media / prefabs / scripts / shared) ──
-  const setExtraFoldersFor = (section, updater) => {
-    if (section === 'prefabs') setPrefabExtraFolders(updater);
-    else if (section === 'scripts') setScriptExtraFolders(updater);
-    else if (section === 'shared') setSharedExtraFolders(updater);
-    else setExtraFolders(updater);
-  };
- 
-  const itemsForSection = (section) =>
-    section === 'prefabs' ? prefabs : section === 'scripts' ? scripts : section === 'shared' ? sharedItems : mediaAssets;
+  // ── Folder helpers (section state comes from useSectionFolders) ─────────
+  const itemsForSection = (section) => itemsBySection[section] || itemsBySection.media;
  
   const sectionKindForFolder = (section) =>
     section === 'prefabs' ? 'prefab' : section === 'scripts' ? 'script' : section === 'shared' ? 'shared' : 'media';
- 
-  const setOpenSubfoldersFor = (section, updater) => {
-    if (section === 'prefabs') setOpenPrefabSubfolders(updater);
-    else if (section === 'scripts') setOpenScriptSubfolders(updater);
-    else if (section === 'shared') setOpenSharedSubfolders(updater);
-    else setOpenMediaSubfolders(updater);
-  };
  
   // Move every item of a folder to another folder (null = root). Used by
   // folder delete (contents → root) and rename (contents → new name,
@@ -718,32 +657,6 @@ export default class NewScript extends CanvasComponent {
     setCreatingFolder(null);
     setNewFolderName('');
   };
- 
-  // Folders per section: derive from item `folder` fields + context-menu
-  // folders. Separate namespaces (media / prefabs / scripts).
-  const allMediaFolders = useMemo(() => {
-    const fromAssets = new Set(mediaAssets.filter((m) => m.folder).map((m) => m.folder));
-    extraFolders.forEach((f) => fromAssets.add(f));
-    return Array.from(fromAssets);
-  }, [mediaAssets, extraFolders]);
- 
-  const allPrefabFolders = useMemo(() => {
-    const fromItems = new Set(prefabs.filter((p) => p.folder).map((p) => p.folder));
-    prefabExtraFolders.forEach((f) => fromItems.add(f));
-    return Array.from(fromItems);
-  }, [prefabs, prefabExtraFolders]);
- 
-  const allScriptFolders = useMemo(() => {
-    const fromItems = new Set(scripts.filter((s) => s.folder).map((s) => s.folder));
-    scriptExtraFolders.forEach((f) => fromItems.add(f));
-    return Array.from(fromItems);
-  }, [scripts, scriptExtraFolders]);
- 
-  const allSharedFolders = useMemo(() => {
-    const fromItems = new Set(sharedItems.filter((s) => s.folder).map((s) => s.folder));
-    sharedExtraFolders.forEach((f) => fromItems.add(f));
-    return Array.from(fromItems);
-  }, [sharedItems, sharedExtraFolders]);
  
   // ── Search + type filters + sort (Features 6 & 7) ───────────────────────
   const query = searchQuery.toLowerCase();
@@ -1695,103 +1608,3 @@ export default class NewScript extends CanvasComponent {
     </aside>
   );
 });
- 
-// ── Compact hover preview ---------------------------------------------------
- 
-function AssetPreviewPopover({ x, y, kind, item }) {
-  return (
-    <div className="asset-hover-preview" style={{ left: Math.min(x + 16, window.innerWidth - 300), top: Math.min(y + 16, window.innerHeight - 200) }} onMouseLeave={() => {}}>
-      {kind === 'media' && <MediaPreview asset={item} />}
-      {kind === 'script' && <ScriptPreview script={item} />}
-      {kind === 'prefab' && <PrefabPreview prefab={item} />}
-    </div>
-  );
-}
- 
-function MediaPreview({ asset }) {
-  if (asset?.type === 'video') {
-    return (
-      <>
-        <div className="asset-preview-head">
-          <FilmIcon size={12} className="text-indigo" />
-          <span className="asset-preview-title">{asset.name}</span>
-        </div>
-        <video
-          className="asset-preview-media"
-          src={asset.url}
-          muted
-          autoPlay
-          loop
-          playsInline
-          preload="metadata"
-          onError={(e) => { e.currentTarget.style.display = 'none'; }}
-        />
-        <div className="asset-preview-meta">Video · {shortDuration(asset.duration)}</div>
-      </>
-    );
-  }
-  return (
-    <>
-      <div className="asset-preview-head">
-        <Music size={12} className="text-emerald" />
-        <span className="asset-preview-title">{asset?.name}</span>
-      </div>
-      <div className="asset-preview-audio">
-        <audio src={asset?.url} muted autoPlay loop controls preload="metadata" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
-      </div>
-      <div className="asset-preview-meta">Audio · {shortDuration(asset?.duration)}</div>
-    </>
-  );
-}
- 
-function ScriptPreview({ script }) {
-  const Meta = scriptKindMeta(detectScriptKind(script?.code || ''));
-  const snippet = (script?.code || '').slice(0, 900);
-  return (
-    <>
-      <div className="asset-preview-head">
-        <Meta.icon size={12} className={Meta.className} />
-        <span className="asset-preview-title">{script?.name}</span>
-      </div>
-      <pre className="asset-preview-code">
-        {snippet}
-        {(script?.code || '').length > 900 ? '\n…' : ''}
-      </pre>
-    </>
-  );
-}
- 
-// Prefab breakdown: component summary of every snapshot.
-function PrefabPreview({ prefab }) {
-  const snapshots = (Array.isArray(prefab?.entities) && prefab.entities.length > 0 ? prefab.entities : null);
-  const roots = snapshots || (prefab ? [{ components: prefab.components || [], name: prefab.name }] : []);
-  return (
-    <>
-      <div className="asset-preview-head">
-        <Package size={12} className="text-cyan" />
-        <span className="asset-preview-title">{prefab?.name}</span>
-      </div>
-      <div className="asset-preview-breakdown">
-        {roots.map((entity) => {
-          const comps = Array.isArray(entity.components) ? entity.components : [];
-          const kinds = comps
-            .filter((c) => c.type !== 'Transform')
-            .map((c) => {
-              if (isScriptComponent(c)) return `Script · ${c.scriptName || ''}`;
-              return COMPONENT_TYPE_LABEL[c.type] || c.type;
-            });
-          return (
-            <div key={entity.id || entity.name} className="preview-entity-row">
-              <span className="preview-entity-name">{entity.name || prefab?.name}</span>
-              <span className="preview-entity-comps">{kinds.length ? kinds.join(' · ') : 'empty'}</span>
-            </div>
-          );
-        })}
-        {snapshots && snapshots.length > 1 && (
-          <div className="asset-preview-meta">{snapshots.length} objects · hierarchical</div>
-        )}
-      </div>
-    </>
-  );
-}
- 

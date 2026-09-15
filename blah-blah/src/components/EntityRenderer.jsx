@@ -21,7 +21,6 @@ import { resolveTextRendererText, cssFontFamily, DEFAULT_TEXT_FONT_SIZE, DEFAULT
 import { updateCanvasComponent, pruneCanvasComponents } from '../engine/canvasRunner';
 import { isScriptComponent, isVideoEntity, isAudioEntity } from '../engine/ecs';
 import { computeActiveEntitiesAtTime } from '../engine/renderPipeline';
-import { trackKeyFor, getFieldKeyframes, setKeyframe } from '../engine/keyframes';
 import { getSharedGLTransitionRenderer } from '../engine/glTransitions';
 import {
   setMediaElementVolume,
@@ -30,6 +29,8 @@ import {
   disconnectMediaGainChain,
 } from '../utils/mediaAudio';
 import { EntityErrorBoundary } from './EntityErrorBoundary';
+import { usePreviewViewport } from '../hooks/usePreviewViewport';
+import { useGizmoDrag } from '../hooks/useGizmoDrag';
  
 /**
  * P0 #1 — Renderer unification.
@@ -83,243 +84,25 @@ export function EntityRenderer({
   autoKeyEnabled = false,
 }) {
   const containerRef = useRef(null);
-  const viewportBoxRef = useRef(null);
-  const canvasFrameRef = useRef(null);
   const videoRefs = useRef({});
   const audioRefs = useRef({});
   const canvasContainerRefs = useRef({});
   const wasPlayingRef = useRef(isPlaying);
   const gizmoDragRef = useRef(null);
  
-  // Coordinate-system fix -- entity x/y/width/height/fontSize/etc. are
-  // authored (and stored) as literal project-resolution pixels (e.g. `x:
-  // 700` means 700px out of a 1080px-wide canvas), the same units export's
-  // `exportRunner.js` draws onto its full-resolution canvas with. But
-  // `.preview-canvas-frame` itself renders at whatever on-screen size fits
-  // the viewport (CSS `max-width`/`max-height` + `aspect-ratio` -- see
-  // App.css), which for a portrait/large-resolution project is almost
-  // always *smaller* than the real resolution. Previously every entity's
-  // transform was applied as raw CSS px directly inside that shrunk frame,
-  // so the same `width: 700` shape that's correctly ~65% of a 1080px-wide
-  // export canvas ended up looking enormous relative to, say, a 380px-wide
-  // on-screen frame -- a live-preview-vs-export size mismatch that grew
-  // with how much smaller the frame rendered than the true resolution.
-  //
-  // Fix: track how much smaller the frame currently renders vs the real
-  // resolution (`frameScale`), and apply that as a single CSS
-  // `transform: scale(frameScale)` on a wrapper sized to the *real*
-  // resolution in px -- every entity's own x/y/width/etc. stay untouched,
-  // literal project-pixel math (identical to what export does), and this
-  // one wrapper scale is what makes it visually fit the smaller on-screen
-  // frame. At `frameScale === 1` (frame rendered at its true resolution
-  // size) this is a no-op, which is exactly export's situation.
-  const [frameDimensions, setFrameDimensions] = useState({
-    width: 0,
-    height: 0,
-    scale: 1,
-  });
- 
-  const frameScale = frameDimensions.scale;
- 
-  // Extended mode -- 'normal' clips entity content to the frame border,
-  // exactly like the exported video will. 'extended' lets content past
-  // the border stay visible (overflow: visible on the frame instead of
-  // hidden), so you can see and work with entities positioned or
-  // animating from outside the visible canvas -- e.g. a clip sliding in
-  // from off-screen -- without it being invisibly clipped while you're
-  // setting it up. Purely a viewing aid; export always clips to the real
-  // resolution regardless of this setting.
-  const [previewMode, setPreviewMode] = useState('normal');
- 
-  // Extended-mode pan/zoom -- lets you navigate the space around the
-  // frame (Alt + right-mouse drag to pan, Ctrl + scroll to zoom) instead
-  // of the fixed 1:1 fit-to-box view. Screen-space px offset + a
-  // multiplier on top of frameScale; both reset whenever extended mode
-  // is turned off so leaving it always lands back on the true,
-  // un-panned/zoomed frame.
-  const [viewTransform, setViewTransform] = useState({ panX: 0, panY: 0, zoom: 1 });
-  const viewTransformRef = useRef(viewTransform);
-  viewTransformRef.current = viewTransform;
-  const [isPanning, setIsPanning] = useState(false);
-  const isAltRightPanningRef = useRef(false);
-  const panStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
- 
-  useEffect(() => {
-    if (previewMode !== 'extended') {
-      setViewTransform({ panX: 0, panY: 0, zoom: 1 });
-    }
-  }, [previewMode]);
- 
-  // Kept as a ref (not just a local closure) so the pointerdown re-measure
-  // effect further down can force a fresh updateDimensions() call right
-  // before any drag starts -- see that effect's comment for why this is
-  // needed on top of the ResizeObserver below.
-  const updateDimensionsRef = useRef(null);
- 
-  useEffect(() => {
-    const box = viewportBoxRef.current;
-    if (!box) return;
- 
-    const resWidth = resolution?.width > 0 ? resolution.width : FALLBACK_RESOLUTION.width;
-    const resHeight = resolution?.height > 0 ? resolution.height : FALLBACK_RESOLUTION.height;
- 
-    const updateDimensions = () => {
-      // Available box area minus padding (16px on each side = 32px)
-      const availW = Math.max(10, box.clientWidth - 32);
-      const availH = Math.max(10, box.clientHeight - 32);
- 
-      // Strict aspect-ratio preserving fit
-      const scale = Math.min(availW / resWidth, availH / resHeight);
-      const width = Math.max(1, Math.round(resWidth * scale));
-      const height = Math.max(1, Math.round(resHeight * scale));
- 
-      setFrameDimensions({ width, height, scale });
-    };
- 
-    updateDimensionsRef.current = updateDimensions;
-    updateDimensions();
- 
-    const observer = new ResizeObserver(updateDimensions);
-    observer.observe(box);
-    return () => {
-      observer.disconnect();
-      updateDimensionsRef.current = null;
-    };
-  }, [resolution?.width, resolution?.height]);
- 
-  // dockview keeps every dock tab's content permanently mounted and just
-  // hides the inactive ones (not unmount/remount) -- see dock/DockLayout.jsx.
-  // Some hide/show mechanics (visibility toggling, off-screen positioning,
-  // or a display:none <-> display:flex flip that happens to land back on
-  // the *same* pixel size the box already had) don't reliably fire
-  // ResizeObserver either while hidden or the instant they become visible
-  // again. If the outer window was resized at all while this preview panel
-  // was the inactive "View"/"Game" tab, `frameScale` can silently go stale
-  // until *something* else happens to trigger a resize callback -- and
-  // every gizmo drag divides by that same stale frameScale (see
-  // handleMoveGizmoPointerDown / handleScaleGizmoPointerDown /
-  // handleRotateGizmoPointerDown's getScale()), so a drag right after
-  // switching back to this tab could track the cursor at the wrong rate or
-  // even divide by a near-zero leftover scale from while the panel was
-  // hidden at 0x0. Forcing one fresh measurement on the very first
-  // pointerdown inside the viewport -- before React has even run the
-  // gizmo's own pointerdown handler -- guarantees frameScale is correct
-  // for that drag regardless of what dockview did while this tab was
-  // inactive. Capture phase so it always runs first, and it's a pure
-  // synchronous re-measure + setState, not a listener that blocks or
-  // interferes with the actual drag handlers that fire right after it.
-  useEffect(() => {
-    const box = viewportBoxRef.current;
-    if (!box) return;
-    const handlePointerDownCapture = () => {
-      updateDimensionsRef.current?.();
-    };
-    box.addEventListener('pointerdown', handlePointerDownCapture, { capture: true });
-    return () => box.removeEventListener('pointerdown', handlePointerDownCapture, { capture: true });
-  }, []);
- 
-  // Extended-mode navigation -- scroll to zoom, hold right-mouse and drag
-  // to pan. Native listeners (not onWheel/onContextMenu React props)
-  // because zoom needs `{ passive: false }` to preventDefault the browser's
-  // own page-scroll, and pan needs to preventDefault the context menu for
-  // the duration of a right-drag without suppressing normal right-clicks
-  // elsewhere. Both are no-ops outside extended mode.
-  useEffect(() => {
-    const box = viewportBoxRef.current;
-    const frame = canvasFrameRef.current;
-    if (!box) return;
- 
-    const handleWheel = (e) => {
-      if (previewMode !== 'extended') return;
-      e.preventDefault();
-      if (!frame) return;
- 
-      const frameRect = frame.getBoundingClientRect();
-      // Zoom centers on the mouse position when it's over the frame; if
-      // the mouse is out in the surrounding pan space (outside the
-      // frame's own bounds -- normal in extended mode, since content can
-      // now render past the frame edge), center on the frame's own
-      // center instead of an arbitrary/undefined point.
-      const overFrame =
-        e.clientX >= frameRect.left && e.clientX <= frameRect.right &&
-        e.clientY >= frameRect.top && e.clientY <= frameRect.bottom;
-      const pointerX = overFrame ? e.clientX : frameRect.left + frameRect.width / 2;
-      const pointerY = overFrame ? e.clientY : frameRect.top + frameRect.height / 2;
- 
-      setViewTransform((prev) => {
-        const zoomFactor = Math.exp(-e.deltaY * 0.0015);
-        const nextZoom = Math.min(8, Math.max(0.1, prev.zoom * zoomFactor));
-        // .preview-entities-layer sits at the frame's top-left (top:0;
-        // left:0 inside .preview-canvas-frame) and is transformed as
-        // `translate(pan) scale(s)` with transformOrigin top-left, so a
-        // point that's `localX` px into the *untransformed* layer lands
-        // on screen at: frameRect.left + pan + localX * s. Solving that
-        // for localX using the CURRENT (prev) transform gives the layer
-        // point currently sitting under the mouse; keeping that same
-        // point under the mouse after zoom means solving the same
-        // equation for the NEW pan with the NEW scale, holding localX
-        // fixed.
-        const prevScale = frameScale * prev.zoom || 1;
-        const localX = (pointerX - frameRect.left - prev.panX) / prevScale;
-        const localY = (pointerY - frameRect.top - prev.panY) / prevScale;
-        const nextScale = frameScale * nextZoom;
-        return {
-          zoom: nextZoom,
-          panX: pointerX - frameRect.left - localX * nextScale,
-          panY: pointerY - frameRect.top - localY * nextScale,
-        };
-      });
-    };
- 
-    const handleContextMenu = (e) => {
-      if (previewMode === 'extended') e.preventDefault();
-    };
- 
-    const handlePointerDown = (e) => {
-      if (previewMode !== 'extended' || e.button !== 2) return;
-      e.preventDefault();
-      isAltRightPanningRef.current = true;
-      setIsPanning(true);
-      panStartRef.current = {
-        x: e.clientX,
-        y: e.clientY,
-        panX: viewTransformRef.current.panX,
-        panY: viewTransformRef.current.panY,
-      };
-      box.setPointerCapture?.(e.pointerId);
-    };
- 
-    const handlePointerMove = (e) => {
-      if (!isAltRightPanningRef.current) return;
-      const dx = e.clientX - panStartRef.current.x;
-      const dy = e.clientY - panStartRef.current.y;
-      setViewTransform((prev) => ({
-        ...prev,
-        panX: panStartRef.current.panX + dx,
-        panY: panStartRef.current.panY + dy,
-      }));
-    };
- 
-    const handlePointerUp = (e) => {
-      if (!isAltRightPanningRef.current) return;
-      isAltRightPanningRef.current = false;
-      setIsPanning(false);
-      box.releasePointerCapture?.(e.pointerId);
-    };
- 
-    box.addEventListener('wheel', handleWheel, { passive: false });
-    box.addEventListener('contextmenu', handleContextMenu);
-    box.addEventListener('pointerdown', handlePointerDown);
-    box.addEventListener('pointermove', handlePointerMove);
-    box.addEventListener('pointerup', handlePointerUp);
-    return () => {
-      box.removeEventListener('wheel', handleWheel);
-      box.removeEventListener('contextmenu', handleContextMenu);
-      box.removeEventListener('pointerdown', handlePointerDown);
-      box.removeEventListener('pointermove', handlePointerMove);
-      box.removeEventListener('pointerup', handlePointerUp);
-    };
-  }, [previewMode]);
+  // Preview frame measurement + extended-mode pan/zoom.
+  // See hooks/usePreviewViewport.js.
+  const {
+    viewportBoxRef,
+    canvasFrameRef,
+    frameDimensions,
+    frameScale,
+    previewMode,
+    setPreviewMode,
+    viewTransform,
+    viewTransformRef,
+    isPanning,
+  } = usePreviewViewport({ resolution });
  
   // Real `import` support: scripts with import statements are compiled
   // ASYNC by the bundler (engine/scriptBundler.js) and fill a module-level
@@ -614,300 +397,25 @@ export function EntityRenderer({
   // screen-space drag deltas are divided by the frame's actual on-screen
   // size vs its intrinsic logical width to stay accurate at any zoom.
   //
-  // Keyframe-aware write — mirrors UnityInspector.jsx's tryWriteKeyframe:
-  // a field that already has ANY keyframes gets overwritten every render
-  // by resolveKeyframedComponents (engine/keyframes.js) evaluating the
-  // interpolated value at the current playhead time, so writing a plain
-  // static value here for that field is silently discarded the very next
-  // frame — the gizmo would visually snap back and look "stuck"/unmovable.
-  // The fix: if the field has keyframes (or Auto Key is on), write/move a
-  // keyframe AT THE CURRENT TIME instead of the static prop, exactly like
-  // the Inspector's own number fields already do. Only fields with no
-  // keyframes and Auto Key off fall through to the old static-prop write.
-  const localTime = selectedEntity => Math.max(0, currentTime - selectedEntity.startTime);
-  const snapToFrame = (t) => Math.round(t * fps) / fps;
-  const updateSelectedTransform = (entityId, updates) => {
-    if (!onUpdateEntity) return;
-    const entity = entities.find((e) => e.id === entityId);
-    if (!entity) return;
-    const trackKey = trackKeyFor({ type: 'Transform' });
-    const snappedTime = snapToFrame(localTime(entity));
- 
-    const staticUpdates = {};
-    let keyframesSnapshot = entity.keyframes || {};
-    let keyframesChanged = false;
- 
-    Object.entries(updates).forEach(([fieldName, value]) => {
-      const kfs = getFieldKeyframes({ ...entity, keyframes: keyframesSnapshot }, trackKey, fieldName);
-      if (kfs.length > 0 || autoKeyEnabled) {
-        keyframesSnapshot = setKeyframe({ ...entity, keyframes: keyframesSnapshot }, trackKey, fieldName, snappedTime, value);
-        keyframesChanged = true;
-      } else {
-        staticUpdates[fieldName] = value;
-      }
-    });
- 
-    const patch = {};
-    if (keyframesChanged) patch.keyframes = keyframesSnapshot;
-    if (Object.keys(staticUpdates).length > 0) {
-      const hasTransform = entity.components.some((c) => c.type === 'Transform');
-      patch.components = hasTransform
-        ? entity.components.map((c) => (c.type === 'Transform' ? { ...c, ...staticUpdates } : c))
-        : [{ type: 'Transform', x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1, ...staticUpdates }, ...entity.components];
-    }
-    if (Object.keys(patch).length > 0) onUpdateEntity(entityId, patch);
-  };
- 
-  const handleMoveGizmoPointerDown = (e, entity, transform, localTransform) => {
-    if (!onUpdateEntity) return;
-    e.stopPropagation();
-    e.preventDefault();
-    onSelectEntity(entity.id);
- 
-    // Screen px -> project px: entities now render in true project-pixel
-    // space (see preview-entities-layer's scale(frameScale) wrapper above),
-    // so a screen-space drag delta must be divided by that same
-    // frameScale to land as the correct project-pixel delta. Previously
-    // this computed frameRect.width / frameEl.clientWidth, which measures
-    // the same element two ways and is always ~1 regardless of how much
-    // smaller the frame renders than the real resolution -- that never
-    // actually captured the project-vs-screen scale difference.
-    //
-    // Extended mode additionally scales the layer by viewTransform.zoom
-    // (see the transform on .preview-entities-layer), so the drag's
-    // screen-to-project conversion has to include that too -- otherwise,
-    // zoomed out, a small on-screen mouse move would still only divide by
-    // the un-zoomed frameScale and undershoot massively, so the dragged
-    // object visibly lags behind the cursor instead of sticking to it.
-    // Zoomed in, the inverse: it would overshoot. Read zoom live off the
-    // ref (not the closed-over `viewTransform`) so a zoom change mid-drag
-    // is picked up on the very next pointermove rather than needing a new
-    // drag to start.
-    const getScale = () =>
-      (frameScale || 1) * (previewMode === 'extended' ? (viewTransformRef.current.zoom || 1) : 1);
- 
-    // Every entity is a flat timeline clip (no parent-child hierarchy), so
-    // the Transform IS the world pose and the gizmo drag is a plain
-    // world-space delta with no local-space conversion needed.
-    const lx = localTransform || {};
-    let toLocal = (dx, dy) => ({ x: dx, y: dy });
-    if (entity.parentId) {
-      const parentItem = computedEntities.find((c) => c.entity.id === entity.parentId);
-      if (parentItem?.transform) {
-        const pt = parentItem.transform;
-        const parentRotRad = -((pt.rotation || 0) * Math.PI) / 180;
-        const pScaleX = pt.scaleX || 1;
-        const pScaleY = pt.scaleY || 1;
-        const cos = Math.cos(parentRotRad);
-        const sin = Math.sin(parentRotRad);
-        toLocal = (dx, dy) => ({
-          x: (dx * cos - dy * sin) / pScaleX,
-          y: (dx * sin + dy * cos) / pScaleY,
-        });
-      }
-    }
- 
-    gizmoDragRef.current = {
-      mode: 'move',
-      entityId: entity.id,
-      startClientX: e.clientX,
-      startClientY: e.clientY,
-      startX: lx.x ?? transform.x,
-      startY: lx.y ?? transform.y,
-      toLocal,
-    };
- 
-    const handlePointerMove = (moveEvent) => {
-      const drag = gizmoDragRef.current;
-      if (!drag || drag.mode !== 'move') return;
-      const scale = getScale();
-      const dx = (moveEvent.clientX - drag.startClientX) / (scale || 1);
-      const dy = (moveEvent.clientY - drag.startClientY) / (scale || 1);
-      const local = drag.toLocal(dx, dy);
-      updateSelectedTransform(drag.entityId, { x: drag.startX + local.x, y: drag.startY + local.y });
-    };
-    const handlePointerUp = () => {
-      gizmoDragRef.current = null;
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', handlePointerUp);
-    };
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', handlePointerUp);
-  };
- 
-  const handleRotateGizmoPointerDown = (e, entity, transform, localTransform, baseWidth = 0, baseHeight = 0) => {
-    if (!onUpdateEntity) return;
-    e.stopPropagation();
-    e.preventDefault();
-    onSelectEntity(entity.id);
- 
-    const frameEl = canvasFrameRef.current;
-    if (!frameEl) return;
-    const frameRect = frameEl.getBoundingClientRect();
-    // Rotation pivot is the entity's pivot point on screen. In normal
-    // mode the entities layer is centered in the frame at scale
-    // frameScale, so screen center = frame center + entity pos * scale.
-    // In extended mode the layer is instead pinned to the frame's
-    // top-left and offset/scaled by pan/zoom (see the transform on
-    // .preview-entities-layer + the zoom-to-cursor math in the wheel
-    // handler above), so the pivot has to go through that same mapping
-    // instead of assuming frame-centered placement -- otherwise a
-    // panned/zoomed rotate grabs the wrong pivot and the clip visibly
-    // swings from the wrong point.
-    //
-    // pivotOffsetX/Y: normalized pivot → frame-space pixel offset from
-    // entity center. Default (0, 0) → 0, 0 → identical to old behavior.
-    const pivotOffsetX = (transform.pivotX ?? 0) * baseWidth;
-    const pivotOffsetY = (transform.pivotY ?? 0) * baseHeight;
-    let pivotX;
-    let pivotY;
-    if (previewMode === 'extended') {
-      const vt = viewTransformRef.current;
-      const scale = (frameScale || 1) * (vt.zoom || 1);
-      const originX = safeResWidth / 2 + transform.x + pivotOffsetX;
-      const originY = safeResHeight / 2 + transform.y + pivotOffsetY;
-      pivotX = frameRect.left + vt.panX + originX * scale;
-      pivotY = frameRect.top + vt.panY + originY * scale;
-    } else {
-      const scale = frameScale || 1;
-      pivotX = frameRect.left + frameRect.width / 2 + (transform.x + pivotOffsetX) * scale;
-      pivotY = frameRect.top + frameRect.height / 2 + (transform.y + pivotOffsetY) * scale;
-    }
- 
-    const startAngle = Math.atan2(e.clientY - pivotY, e.clientX - pivotX) * (180 / Math.PI);
- 
-    gizmoDragRef.current = {
-      mode: 'rotate',
-      entityId: entity.id,
-      pivotX,
-      pivotY,
-      startAngle,
-      startRotation: (localTransform ? localTransform.rotation : transform.rotation) || 0,
-    };
- 
-    const handlePointerMove = (moveEvent) => {
-      const drag = gizmoDragRef.current;
-      if (!drag || drag.mode !== 'rotate') return;
-      const angle = Math.atan2(moveEvent.clientY - drag.pivotY, moveEvent.clientX - drag.pivotX) * (180 / Math.PI);
-      let nextRotation = drag.startRotation + (angle - drag.startAngle);
-      // Shift snaps to 15-degree increments, same modifier convention as
-      // most design tools (Figma, Unity's rotate gizmo with Shift held).
-      if (moveEvent.shiftKey) nextRotation = Math.round(nextRotation / 15) * 15;
-      updateSelectedTransform(drag.entityId, { rotation: nextRotation });
-    };
-    const handlePointerUp = () => {
-      gizmoDragRef.current = null;
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', handlePointerUp);
-    };
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', handlePointerUp);
-  };
- 
-  // `corner` is one of 'tl' | 'tr' | 'bl' | 'br' -- which of the clip's 4
-  // corners this drag started from. Each corner has its own "outward"
-  // direction (top-left grows by moving up-left, bottom-right grows by
-  // moving down-right, etc.), so the sign of the local-space delta applied
-  // to scaleX/scaleY is flipped per corner below. Defaults to 'br' so any
-  // existing caller that doesn't pass a corner keeps the original
-  // bottom-right-only behavior.
-  // `baseSizeOverride` — optional `{ baseWidth, baseHeight }`, used by
-  // video clips (see activeVideoItems.map above): video has no authored
-  // width/height component (it fills the frame via object-fit: contain at
-  // its native aspect ratio), so "the box this entity renders at Scale=1"
-  // isn't `entity.components.find((c) => c.width)` the way it is for a
-  // shape/text entity — it's the project's own resolution instead. When
-  // omitted, falls back to the original component-width/height lookup
-  // unchanged, so shape/text/script entities behave exactly as before.
-  const handleScaleGizmoPointerDown = (e, entity, transform, localTransform, corner = 'br', baseSizeOverride = null) => {
-    if (!onUpdateEntity) return;
-    e.stopPropagation();
-    e.preventDefault();
-    onSelectEntity(entity.id);
- 
-    const lx = localTransform || {};
-    const startScaleX = lx.scaleX ?? transform.scaleX ?? 1;
-    const startScaleY = lx.scaleY ?? transform.scaleY ?? 1;
-    // Same screen-px -> project-px factor as the move gizmo (frameScale,
-    // plus the extended-mode zoom multiplier) -- read live off the ref
-    // each move so a zoom mid-drag is picked up immediately, same as the
-    // move gizmo above.
-    const getScale = () =>
-      (frameScale || 1) * (previewMode === 'extended' ? (viewTransformRef.current.zoom || 1) : 1);
-    // Drag direction needs to be measured in the entity's own rotated
-    // local space, not raw screen axes -- otherwise dragging "outward"
-    // along a rotated clip's actual corner would scale the wrong axis.
-    const rotRad = ((transform.rotation || 0) * Math.PI) / 180;
-    const cos = Math.cos(rotRad);
-    const sin = Math.sin(rotRad);
-    const toLocal = (dx, dy) => ({
-      x: dx * cos + dy * sin,
-      y: -dx * sin + dy * cos,
-    });
- 
-    // Sign flip per corner: left-side corners (tl/bl) grow scaleX when
-    // dragged toward negative local X (leftward/outward from center), so
-    // their local.x contribution is negated relative to the right-side
-    // corners (tr/br), which grow scaleX moving toward positive local X.
-    // Same idea vertically: top corners (tl/tr) grow scaleY moving toward
-    // negative local Y (upward/outward), bottom corners (bl/br) grow
-    // scaleY moving toward positive local Y.
-    const signX = corner === 'tl' || corner === 'bl' ? -1 : 1;
-    const signY = corner === 'tl' || corner === 'tr' ? -1 : 1;
- 
-    gizmoDragRef.current = {
-      mode: 'scale',
-      entityId: entity.id,
-      startClientX: e.clientX,
-      startClientY: e.clientY,
-      startScaleX,
-      startScaleY,
-      toLocal,
-      signX,
-      signY,
-    };
- 
-    const handlePointerMove = (moveEvent) => {
-      const drag = gizmoDragRef.current;
-      if (!drag || drag.mode !== 'scale') return;
-      const scale = getScale();
-      const dxScreen = (moveEvent.clientX - drag.startClientX) / (scale || 1);
-      const dyScreen = (moveEvent.clientY - drag.startClientY) / (scale || 1);
-      const local = drag.toLocal(dxScreen, dyScreen);
-      // Handle sits at one corner of a 1x1-scale box half as wide/tall as
-      // the rendered size, so moving that corner's handle by `local.x`
-      // project-px away from center changes scale by `local.x /
-      // (halfWidth)` -- using the entity's rendered box size at scale 1
-      // (width/height component values) keeps the drag 1:1 with the
-      // corner under the cursor. `signX`/`signY` account for which corner
-      // was grabbed, so every corner grows the clip when dragged away
-      // from its own center and shrinks it when dragged toward center,
-      // the same way the original bottom-right-only handle always did.
-      const baseWidth = baseSizeOverride?.baseWidth || (entity.components.find((c) => c.width))?.width || 180;
-      const baseHeight = baseSizeOverride?.baseHeight || (entity.components.find((c) => c.height))?.height || 180;
-      let nextScaleX = drag.startScaleX + (drag.signX * local.x) / (baseWidth / 2);
-      let nextScaleY = drag.startScaleY + (drag.signY * local.y) / (baseHeight / 2);
-      // Shift keeps the aspect ratio locked to whatever it was at drag
-      // start, matching the rotate gizmo's Shift convention elsewhere.
-      if (moveEvent.shiftKey) {
-        const uniform = Math.max(nextScaleX / drag.startScaleX, nextScaleY / drag.startScaleY);
-        nextScaleX = drag.startScaleX * uniform;
-        nextScaleY = drag.startScaleY * uniform;
-      }
-      // Keep at least a sliver visible/draggable-back-from instead of
-      // collapsing through zero or flipping sign underneath the cursor.
-      nextScaleX = Math.max(0.02, nextScaleX);
-      nextScaleY = Math.max(0.02, nextScaleY);
-      updateSelectedTransform(drag.entityId, { scaleX: nextScaleX, scaleY: nextScaleY });
-    };
-    const handlePointerUp = () => {
-      gizmoDragRef.current = null;
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', handlePointerUp);
-    };
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', handlePointerUp);
-  };
+  // Gizmo drag handlers (move/rotate/scale) + the keyframe-aware
+  // transform writer they funnel through (which mirrors
+  // UnityInspector.jsx's tryWriteKeyframe: a field that already has ANY
+  // keyframes must be written as a keyframe at the current playhead time,
+  // not a static prop, or resolveKeyframedComponents overwrites it back
+  // every render). See hooks/useGizmoDrag.js.
+  const { handleMoveGizmoPointerDown, handleRotateGizmoPointerDown, handleScaleGizmoPointerDown } = useGizmoDrag({
+    entities,
+    onUpdateEntity,
+    onSelectEntity,
+    computedEntities,
+    currentTime,
+    fps,
+    autoKeyEnabled,
+    resolution,
+    fallbackResolution: FALLBACK_RESOLUTION,
+    viewportRefs: { canvasFrameRef, frameScale, previewMode, viewTransformRef },
+    gizmoDragRef,
+  });
  
   const toggleFullscreen = () => {
     if (!containerRef.current) return;
