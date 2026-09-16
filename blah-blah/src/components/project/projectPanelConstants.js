@@ -44,3 +44,78 @@ export const MEDIA_SORT_OPTIONS = [
  
 // Composite selection key `${kind}:${id}` (Feature 1).
 export const selKey = (kind, id) => `${kind}:${id}`;
+
+export const ROOT_LOCATION = Object.freeze({ section: null, folder: null });
+
+export const isSameLocation = (a, b) =>
+  Boolean(a && b && a.section === b.section && a.folder === b.folder);
+
+export const formatFileSize = (bytes) => {
+  if (!bytes || typeof bytes !== 'number' || isNaN(bytes)) return '—';
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(1)} MB`;
+  const gb = mb / 1024;
+  return `${gb.toFixed(2)} GB`;
+};
+
+export const formatDate = (timestamp) => {
+  if (!timestamp) return '—';
+  try {
+    const d = new Date(timestamp);
+    if (isNaN(d.getTime())) return '—';
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const hours = String(d.getHours()).padStart(2, '0');
+    const mins = String(d.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day} ${hours}:${mins}`;
+  } catch {
+    return '—';
+  }
+};
+
+export const SECTIONS_CONFIG = {
+  prefabs: {
+    key: 'prefabs',
+    dropKind: 'prefab',
+    label: 'prefabs',
+    title: 'Prefabs',
+    colorClass: 'text-cyan',
+    accentColor: '#38bdf8',
+    emptyHint: 'No prefabs yet. Save a GameObject as a Prefab from the Inspector.',
+    subfolderEmptyHint: 'Empty folder — save prefabs into it or drop them here.',
+  },
+  media: {
+    key: 'media',
+    dropKind: 'media',
+    label: 'media',
+    title: 'Media',
+    colorClass: 'text-indigo',
+    accentColor: '#818cf8',
+    emptyHint: 'No media yet. Click + New > Import Media or drop files here.',
+    subfolderEmptyHint: 'Empty folder — import media into it or drop files here.',
+  },
+  scripts: {
+    key: 'scripts',
+    dropKind: 'script',
+    label: 'scripts',
+    title: 'Scripts',
+    colorClass: 'text-emerald',
+    accentColor: '#34d399',
+    emptyHint: 'No scripts yet. Click + New > Script to create one.',
+    subfolderEmptyHint: 'Empty folder — create scripts into it or drop them here.',
+  },
+  shared: {
+    key: 'shared',
+    dropKind: 'shared',
+    label: 'Shared Library',
+    title: 'Shared Library',
+    colorClass: 'text-violet',
+    accentColor: '#a78bfa',
+    emptyHint: 'App-wide library — share a prefab or script to keep it available across every project.',
+    subfolderEmptyHint: 'Empty folder — drop shared items here.',
+  },
+};

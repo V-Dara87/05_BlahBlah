@@ -338,14 +338,14 @@ export const UnityInspector = memo(function UnityInspector({
     TransitionComponent: <Sparkles size={12} className="text-amber" />,
     SubtitleTrack: <Captions size={12} className="text-cyan" />,
   };
-  const rendererItems = useMemo(() => ([
+  const rendererItems = [
     { type: 'TextRenderer', label: 'Text Component', present: !!textComp },
     { type: 'ShapeRenderer', label: 'Shape Component', present: !!shapeComp },
     { type: 'VideoRenderer', label: 'Video Component', present: !!videoComp },
     { type: 'AudioSource', label: 'Audio Component', present: !!audioComp },
     { type: 'TransitionComponent', label: 'GL Transition', present: !!transitionComp },
     { type: 'SubtitleTrack', label: 'Subtitle Track', present: !!subtitleComp },
-  ]), [textComp, shapeComp, videoComp, audioComp, transitionComp, subtitleComp]);
+  ];
  
   const visibleRendererItems = rendererItems.filter((it) => matchesSearch(it.label) || matchesSearch(it.type));
  

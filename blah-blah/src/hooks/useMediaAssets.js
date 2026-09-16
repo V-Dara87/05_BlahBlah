@@ -1,5 +1,9 @@
 import { useState } from 'react';
-import { saveMediaFileToFolder } from '../services/projectFileSystem';
+import {
+  saveMediaFileToFolder,
+  deleteMediaFileFromFolder,
+  moveMediaFileOnDisk,
+} from '../services/projectFileSystem';
 import { probeFileDuration, MEDIA_FALLBACK_DURATION } from '../services/mediaImport';
 
 /**
@@ -56,14 +60,42 @@ export function useMediaAssets({ projectFolderHandle } = {}) {
     }
   };
 
-  const handleRemoveMediaAsset = (assetId) => {
-    setMediaAssets(prev => prev.filter(a => a.id !== assetId));
+  const handleRemoveMediaAsset = async (assetId) => {
+    const asset = mediaAssets.find((a) => a.id === assetId);
+    setMediaAssets((prev) => prev.filter((a) => a.id !== assetId));
+    if (projectFolderHandle && asset) {
+      await deleteMediaFileFromFolder(
+        projectFolderHandle,
+        asset.name,
+        asset.folder || null,
+        asset.path || null
+      ).catch((err) => {
+        console.warn('Could not delete media file from disk:', err);
+      });
+    }
   };
 
   // Reassign an asset's folder (null = root media folder). Used by the
   // Project panel folder drag-and-drop.
-  const handleMoveMediaAsset = (assetId, targetFolderName) => {
-    setMediaAssets(prev => prev.map(a => a.id === assetId ? { ...a, folder: targetFolderName || null } : a));
+  const handleMoveMediaAsset = async (assetId, targetFolderName) => {
+    const asset = mediaAssets.find((a) => a.id === assetId);
+    setMediaAssets((prev) =>
+      prev.map((a) => (a.id === assetId ? { ...a, folder: targetFolderName || null } : a))
+    );
+    if (projectFolderHandle && asset) {
+      const newPath = await moveMediaFileOnDisk(
+        projectFolderHandle,
+        asset.name,
+        asset.folder || null,
+        targetFolderName || null,
+        asset.path || null
+      ).catch(() => null);
+      if (newPath) {
+        setMediaAssets((prev) =>
+          prev.map((a) => (a.id === assetId ? { ...a, path: newPath } : a))
+        );
+      }
+    }
   };
 
   // Replace the underlying file of an existing asset. The id is preserved

@@ -4,6 +4,8 @@ import {
 import {
   writeScriptFile,
   renameScriptFile,
+  deleteScriptFileFromFolder,
+  deletePrefabFileFromFolder,
 } from '../services/projectFileSystem';
  
 /**
@@ -55,15 +57,22 @@ export function usePrefabScriptActions({ scripts, setPrefabs, setScripts, projec
     setScripts(prev => prev.map(s => s.id === scriptId ? { ...s, folder: targetFolderName || null } : s));
   };
  
-  const handleRemovePrefab = (prefabId) => {
-    setPrefabs(prev => prev.filter(p => p.id !== prefabId));
+  const handleRemovePrefab = async (prefabId) => {
+    const prefab = prefabs.find((p) => p.id === prefabId);
+    setPrefabs((prev) => prev.filter((p) => p.id !== prefabId));
+    if (projectFolderHandle && prefab) {
+      await deletePrefabFileFromFolder(projectFolderHandle, prefab.name, prefab.folder || null).catch(() => {});
+    }
   };
- 
+
   // Remove a script from the project's script list (Project panel context
-  // menu). In-memory only — scripts already attached to clips keep their
-  // component but lose their runtime definition.
-  const handleRemoveScript = (scriptId) => {
-    setScripts(prev => prev.filter(s => s.id !== scriptId));
+  // menu) and delete from disk if project folder is attached.
+  const handleRemoveScript = async (scriptId) => {
+    const script = scripts.find((s) => s.id === scriptId);
+    setScripts((prev) => prev.filter((s) => s.id !== scriptId));
+    if (projectFolderHandle && script) {
+      await deleteScriptFileFromFolder(projectFolderHandle, script.name, script.folder || null).catch(() => {});
+    }
   };
  
   // Rename both the record and its scripts/ file. Do the disk operation first

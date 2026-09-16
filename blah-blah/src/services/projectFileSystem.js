@@ -737,6 +737,198 @@ export async function saveMediaFileToFolder(dirHandle, file, subfolder = null, t
   // can stream it via convertFileSrc instead of keeping a blob in memory.
   return mediaDirHandle?.path ? joinPath(mediaDirHandle.path, fileName) : null;
 }
+
+/**
+ * Delete a media file from the media/ directory on disk.
+ */
+export async function deleteMediaFileFromFolder(dirHandle, fileName, subfolder = null, assetPath = null) {
+  if (!dirHandle || !fileName) return;
+
+  // Tauri direct removal
+  if (isTauri() && assetPath) {
+    try {
+      const { remove, exists } = await import('@tauri-apps/plugin-fs');
+      if (await exists(assetPath)) {
+        await remove(assetPath);
+        return;
+      }
+    } catch (err) {
+      console.warn('Tauri direct remove failed, falling back to directory handle:', err);
+    }
+  }
+
+  // Directory handle removal
+  try {
+    await verifyPermission(dirHandle, true);
+    const mediaDirHandle = await dirHandle.getDirectoryHandle('media', { create: false });
+    const targetDir = subfolder
+      ? await mediaDirHandle.getDirectoryHandle(subfolder, { create: false })
+      : mediaDirHandle;
+    await targetDir.removeEntry(fileName);
+  } catch (err) {
+    console.warn(`Could not remove ${fileName} from media folder:`, err);
+  }
+}
+
+/**
+ * Move a media file between media root and subfolders on disk.
+ */
+export async function moveMediaFileOnDisk(dirHandle, fileName, oldFolder = null, newFolder = null, assetPath = null) {
+  if (!dirHandle || !fileName || oldFolder === newFolder) return assetPath;
+
+  if (isTauri() && dirHandle.path) {
+    try {
+      const { rename, exists, mkdir } = await import('@tauri-apps/plugin-fs');
+      const mediaPath = joinPath(dirHandle.path, 'media');
+      const sourcePath = assetPath || (oldFolder ? joinPath(mediaPath, oldFolder, fileName) : joinPath(mediaPath, fileName));
+      const targetDir = newFolder ? joinPath(mediaPath, newFolder) : mediaPath;
+      const targetPath = joinPath(targetDir, fileName);
+
+      if (await exists(sourcePath)) {
+        if (!(await exists(targetDir))) {
+          await mkdir(targetDir, { recursive: true });
+        }
+        await rename(sourcePath, targetPath);
+        return targetPath;
+      }
+    } catch (err) {
+      console.warn('Tauri direct move failed, falling back to directory handle:', err);
+    }
+  }
+
+  try {
+    await verifyPermission(dirHandle, true);
+    const mediaDirHandle = await dirHandle.getDirectoryHandle('media', { create: true });
+    const sourceDir = oldFolder
+      ? await mediaDirHandle.getDirectoryHandle(oldFolder, { create: false })
+      : mediaDirHandle;
+    const targetDir = newFolder
+      ? await mediaDirHandle.getDirectoryHandle(newFolder, { create: true })
+      : mediaDirHandle;
+
+    const sourceFileHandle = await sourceDir.getFileHandle(fileName, { create: false });
+    const file = await sourceFileHandle.getFile();
+
+    const destFileHandle = await targetDir.getFileHandle(fileName, { create: true });
+    const writable = await destFileHandle.createWritable();
+    await writable.write(file);
+    await writable.close();
+
+    await sourceDir.removeEntry(fileName);
+    return targetDir?.path ? joinPath(targetDir.path, fileName) : null;
+  } catch (err) {
+    console.warn(`Could not move ${fileName} on disk:`, err);
+    return assetPath;
+  }
+}
+
+/**
+ * Delete an entire folder directory from a project section on disk.
+ */
+export async function deleteFolderFromProject(dirHandle, section, folderName) {
+  if (!dirHandle || !section || !folderName || section === 'shared') return;
+  const rootName = section === 'prefabs' ? 'prefabs' : section;
+
+  if (isTauri() && dirHandle.path) {
+    try {
+      const { remove, exists } = await import('@tauri-apps/plugin-fs');
+      const targetPath = joinPath(dirHandle.path, rootName, folderName);
+      if (await exists(targetPath)) {
+        await remove(targetPath, { recursive: true });
+        return;
+      }
+    } catch (err) {
+      console.warn('Tauri direct folder remove failed, falling back to handle:', err);
+    }
+  }
+
+  try {
+    await verifyPermission(dirHandle, true);
+    const rootDir = await dirHandle.getDirectoryHandle(rootName, { create: false });
+    await rootDir.removeEntry(folderName, { recursive: true });
+  } catch (err) {
+    console.warn(`Could not remove folder ${rootName}/${folderName}:`, err);
+  }
+}
+
+/**
+ * Rename a folder directory in a project section on disk.
+ */
+export async function renameFolderInProject(dirHandle, section, oldName, newName) {
+  if (!dirHandle || !section || !oldName || !newName || section === 'shared' || oldName === newName) return;
+  const rootName = section === 'prefabs' ? 'prefabs' : section;
+
+  if (isTauri() && dirHandle.path) {
+    try {
+      const { rename, exists } = await import('@tauri-apps/plugin-fs');
+      const oldPath = joinPath(dirHandle.path, rootName, oldName);
+      const newPath = joinPath(dirHandle.path, rootName, newName);
+      if (await exists(oldPath)) {
+        await rename(oldPath, newPath);
+        return;
+      }
+    } catch (err) {
+      console.warn('Tauri direct folder rename failed, falling back to handle:', err);
+    }
+  }
+
+  try {
+    await verifyPermission(dirHandle, true);
+    const rootDir = await dirHandle.getDirectoryHandle(rootName, { create: false });
+    const oldDir = await rootDir.getDirectoryHandle(oldName, { create: false });
+    const newDir = await rootDir.getDirectoryHandle(newName, { create: true });
+
+    for await (const entry of oldDir.values()) {
+      if (entry.kind === 'file') {
+        const file = await entry.getFile();
+        const newFileHandle = await newDir.getFileHandle(entry.name, { create: true });
+        const writable = await newFileHandle.createWritable();
+        await writable.write(file);
+        await writable.close();
+      }
+    }
+    await rootDir.removeEntry(oldName, { recursive: true });
+  } catch (err) {
+    console.warn(`Could not rename folder ${rootName}/${oldName} to ${newName}:`, err);
+  }
+}
+
+/**
+ * Delete a script file from scripts/ on disk.
+ */
+export async function deleteScriptFileFromFolder(dirHandle, scriptName, subfolder = null) {
+  if (!dirHandle || !scriptName) return;
+  try {
+    await verifyPermission(dirHandle, true);
+    let scriptsDir = await dirHandle.getDirectoryHandle('scripts', { create: false });
+    if (subfolder) {
+      scriptsDir = await scriptsDir.getDirectoryHandle(subfolder, { create: false });
+    }
+    const fileName = toScriptFileName(scriptName);
+    await scriptsDir.removeEntry(fileName);
+  } catch (err) {
+    console.warn(`Could not remove script ${scriptName} from disk:`, err);
+  }
+}
+
+/**
+ * Delete a prefab file from prefabs/ on disk.
+ */
+export async function deletePrefabFileFromFolder(dirHandle, prefabName, subfolder = null) {
+  if (!dirHandle || !prefabName) return;
+  try {
+    await verifyPermission(dirHandle, true);
+    let prefabsDir = await dirHandle.getDirectoryHandle('prefabs', { create: false });
+    if (subfolder) {
+      prefabsDir = await prefabsDir.getDirectoryHandle(subfolder, { create: false });
+    }
+    const fileName = prefabName.endsWith('.json') ? prefabName : `${prefabName}.prefab.json`;
+    await prefabsDir.removeEntry(fileName);
+  } catch (err) {
+    console.warn(`Could not remove prefab ${prefabName} from disk:`, err);
+  }
+}
+
  
 /**
  * Check scripts/ directory for external changes (e.g. edited in VS Code) for hot-reload.
