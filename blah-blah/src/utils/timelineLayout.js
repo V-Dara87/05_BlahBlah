@@ -9,7 +9,7 @@
  * visible already persist per-track state.
  */
  
-export const TRACK_HEIGHT = 64;      // Default/normal track height (px)
+export const TRACK_HEIGHT = 128;      // Default/normal track height (px)
 export const MIN_TRACK_HEIGHT = 40;  // Collapsed floor — stays tall enough for the header controls row
 export const MAX_TRACK_HEIGHT = 320; // Ceiling — plenty tall for full-detail waveforms without one track eating the whole timeline
  

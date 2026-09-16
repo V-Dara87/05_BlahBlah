@@ -219,10 +219,13 @@ export const ClipItem = memo(function ClipItem({
       onRangeSelect(clip.id);
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && onToggleSelect) {
-      onToggleSelect(clip.id);
-      return;
-    }
+    // NOTE: Ctrl/Cmd is now overloaded for two things:
+    //   - Ctrl+click (no movement)   -> toggle multi-select (existing behavior)
+    //   - Ctrl+drag  (with movement) -> drag-to-parent onto another clip
+    // We can't tell which one this is yet at pointerdown time, so the
+    // actual toggle-select call is deferred into handlePointerUp below,
+    // gated on whether the pointer ever moved (draggedMovedRef).
+    const ctrlHeldOnDown = e.ctrlKey || e.metaKey;
  
     // ── Alt/Option + drag = duplicate ─────────────────────────────────────
     // The copy is created immediately and parked exactly on top of the
@@ -247,10 +250,13 @@ export const ClipItem = memo(function ClipItem({
  
     // If this clip is part of a multi-selection, keep the multi-selection
     // active (alt-drag always starts from just the pointer-down clip).
-    if (!isAltDuplicate && !isSelectedMulti) {
+    // Skipped when Ctrl is held on down: a Ctrl+drag should not disturb
+    // selection, and a plain Ctrl+click's toggle is handled in
+    // handlePointerUp below instead of here.
+    if (!isAltDuplicate && !isSelectedMulti && !ctrlHeldOnDown) {
       onSelectClip(clip.id);
     }
- 
+
     if (isLocked) return;
  
     isDraggingRef.current = true;
@@ -289,15 +295,96 @@ export const ClipItem = memo(function ClipItem({
     const minStartTime = Math.min(...moveOriginals.map((mo) => mo.origStartTime));
     const origTrackIdx = tracks.findIndex((t) => t.id === clip.trackId);
  
+    // -- Ctrl+drag = drag-to-parent --------------------------------------
+    // Reuses the same "find clip under cursor + cycle guard" approach as
+    // the pickwhip handle (handlePickwhipPointerDown above), but is
+    // triggered by holding Ctrl/Cmd while dragging the clip body itself,
+    // instead of grabbing the dedicated pickwhip button. While active we
+    // skip the normal move/track-retarget updates entirely, so the clip's
+    // startTime/trackId are never touched -- on release we either set
+    // parentId (valid target) or do nothing; either way the clip visually
+    // stays exactly where it started (it never moved to begin with).
+    let ctrlParentTargetEl = null;
+    let ctrlParentBadge = null;
+    let ctrlParentActive = false;
+
+    const updateCtrlParentBadgePos = (ev) => {
+      if (ctrlParentBadge) {
+        ctrlParentBadge.style.left = `${ev.clientX + 14}px`;
+        ctrlParentBadge.style.top = `${ev.clientY + 14}px`;
+      }
+    };
+
     const handlePointerMove = (moveEvent) => {
       if (!isDraggingRef.current) return;
       const deltaPx = moveEvent.clientX - startX;
       const deltaTime = deltaPx / pixelsPerSecond;
- 
+
       if (Math.abs(deltaPx) > 4 || Math.abs(moveEvent.clientY - e.clientY) > 4) {
         draggedMovedRef.current = true;
       }
- 
+
+      // Re-check ctrlKey on every move (not just at pointerdown) so
+      // pressing/releasing Ctrl mid-drag is respected in both directions.
+      if (moveEvent.ctrlKey || moveEvent.metaKey) {
+        ctrlParentActive = true;
+        if (!ctrlParentBadge) {
+          ctrlParentBadge = document.createElement('div');
+          ctrlParentBadge.className = 'pickwhip-drag-ghost';
+          document.body.appendChild(ctrlParentBadge);
+        }
+        updateCtrlParentBadgePos(moveEvent);
+
+        const els = document.elementsFromPoint(moveEvent.clientX, moveEvent.clientY);
+        let foundCard = null;
+        for (const el of els) {
+          const card = el.closest && el.closest('.timeline-clip-card');
+          if (card && card.getAttribute('data-clip-id') !== clip.id) {
+            foundCard = card;
+            break;
+          }
+        }
+
+        if (ctrlParentTargetEl && ctrlParentTargetEl !== foundCard) {
+          ctrlParentTargetEl.classList.remove('link-drop-target');
+          ctrlParentTargetEl = null;
+        }
+
+        if (foundCard) {
+          const targetId = foundCard.getAttribute('data-clip-id');
+          const isCycle = isDescendantOf(targetId, clip.id, allClips);
+          if (!isCycle) {
+            ctrlParentTargetEl = foundCard;
+            ctrlParentTargetEl.classList.add('link-drop-target');
+            const targetClip = allClips.find((c) => c.id === targetId);
+            ctrlParentBadge.textContent = `🔗 Set parent: "${targetClip?.name || 'Clip'}"`;
+            ctrlParentBadge.classList.add('valid');
+          } else {
+            ctrlParentBadge.textContent = `⚠️ Cannot link to descendant (Circular)`;
+            ctrlParentBadge.classList.remove('valid');
+          }
+        } else {
+          ctrlParentBadge.textContent = `🔗 Drag onto another clip to set parent`;
+          ctrlParentBadge.classList.remove('valid');
+        }
+
+        // Skip all normal move/track logic below while Ctrl is held --
+        // the clip stays put; only the hover highlight/badge update.
+        return;
+      } else if (ctrlParentBadge) {
+        // Ctrl was released mid-drag: clean up the ctrl-parent visuals
+        // and fall through to normal move behavior below (note:
+        // ctrlParentActive stays true so pointerup still knows this
+        // gesture started as a ctrl-drag, in case that matters later --
+        // currently it doesn't since a normal move already took over).
+        ctrlParentBadge.remove();
+        ctrlParentBadge = null;
+        if (ctrlParentTargetEl) {
+          ctrlParentTargetEl.classList.remove('link-drop-target');
+          ctrlParentTargetEl = null;
+        }
+      }
+
       // Auto-scroll when dragging near timeline edges
       const scrollEl = document.querySelector('.lanes-wrapper');
       if (scrollEl) {
@@ -368,7 +455,32 @@ export const ClipItem = memo(function ClipItem({
     const handlePointerUp = () => {
       isDraggingRef.current = false;
       const didDrag = draggedMovedRef.current;
- 
+
+      // Finalize a ctrl-drag-to-parent gesture: set parentId on the
+      // hovered target (if any/valid), clean up visuals. The clip's
+      // own startTime/trackId were never touched during the drag, so
+      // there's nothing to "snap back" -- it's still exactly where it
+      // started.
+      if (ctrlParentBadge) {
+        ctrlParentBadge.remove();
+        ctrlParentBadge = null;
+      }
+      if (ctrlParentTargetEl) {
+        ctrlParentTargetEl.classList.remove('link-drop-target');
+        const targetId = ctrlParentTargetEl.getAttribute('data-clip-id');
+        if (targetId && targetId !== clip.id && !isDescendantOf(targetId, clip.id, allClips)) {
+          onUpdateClip(clip.id, { parentId: targetId });
+        }
+        ctrlParentTargetEl = null;
+      }
+
+      // A plain Ctrl+click (held on pointerdown, but never actually
+      // dragged) still means "toggle multi-select", same as before this
+      // feature existed.
+      if (ctrlHeldOnDown && !ctrlParentActive && !didDrag && onToggleSelect) {
+        onToggleSelect(clip.id);
+      }
+
       if (isAltDuplicate) {
         // Cleanup a click-with-Alt that never became a drag: the copies
         // parked on top of the originals are removed again.
@@ -376,7 +488,7 @@ export const ClipItem = memo(function ClipItem({
           dupIds.forEach((id) => onUpdateClip(id, { _delete: true }));
         }
       }
- 
+
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
