@@ -7,6 +7,7 @@ import { Timeline } from '../components/Timeline/Timeline';
 import { PrefabModeBar } from '../components/Timeline/PrefabModeBar';
 import { Dopesheet } from '../components/Dopesheet/Dopesheet';
 import { CurveEditorTab } from '../components/CurveEditor';
+import { SilenceRemoverPanel } from '../components/SilenceRemoverPanel';
 import { setKeyframeCurve, findKeyframeById, DEFAULT_CP1, DEFAULT_CP2 } from '../engine/keyframes';
 import { useEditorContext } from './EditorContext';
 import { useCurrentTime, useIsPlaying, useIsLooping, usePlaybackStore } from '../hooks/PlaybackContext';
@@ -176,10 +177,13 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
     handleAddTrack, handleAddEmptyClip,
     handleDropItemOnTrack, handleAttachScriptToEntity,
     onAddMediaAsset,
-    recordingTrackId, onToggleRecordTrack,
+    recordingTrackId, recordingStartTime, recordingLevel, onToggleRecordTrack,
     onZoomIn, onZoomOut, setPixelsPerSecond,
     exportRange, setExportRange,
     onSplitVideoAndAudio,
+    onOpenSilenceRemover,
+    onOpenSilenceRemoverForTrack,
+    silencePreviewData,
     isPrefabMode,
     editingPrefab,
     onExitPrefabMode,
@@ -234,6 +238,8 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
         selectedClipId={selectedEntityId}
         snappingEnabled={snappingEnabled}
         recordingTrackId={recordingTrackId}
+        recordingStartTime={recordingStartTime}
+        recordingLevel={recordingLevel}
         onSeek={(t) => store.seek(t)}
         onSelectClip={setSelectedEntityId}
         onUpdateClip={handleUpdateEntity}
@@ -247,6 +253,9 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
         onAttachScriptToEntity={handleAttachScriptToEntity}
         onAddMediaAsset={onAddMediaAsset}
         onSplitVideoAndAudio={onSplitVideoAndAudio}
+        onOpenSilenceRemover={onOpenSilenceRemover}
+        onOpenSilenceRemoverForTrack={onOpenSilenceRemoverForTrack}
+        silencePreviewData={silencePreviewData}
         onToggleRecordTrack={onToggleRecordTrack}
         onZoomIn={onZoomIn}
         onZoomOut={onZoomOut}
@@ -358,6 +367,30 @@ export const CurveEditorDockPanel = memo(function CurveEditorDockPanel() {
       onReset={handleReset}
       selectedKeyId={hasOutgoingSegment ? selectedKeyId : null}
       keyframeInfo={hasOutgoingSegment ? { trackKey: found.trackKey, fieldName: found.fieldName, time: found.keyframe.time } : null}
+    />
+  );
+});
+
+export const SilenceRemoverDockPanel = memo(function SilenceRemoverDockPanel() {
+  const {
+    entities,
+    tracks,
+    mediaAssets,
+    selectedEntityId,
+    silenceTarget,
+    handleCutSilence,
+    setSilencePreviewCuts,
+  } = useEditorContext();
+
+  return (
+    <SilenceRemoverPanel
+      activeTargetType={silenceTarget?.type || 'clip'}
+      activeTargetId={silenceTarget?.id || selectedEntityId}
+      allEntities={entities}
+      allTracks={tracks}
+      mediaAssets={mediaAssets}
+      onApplyCutSilence={handleCutSilence}
+      onUpdatePreviewCuts={setSilencePreviewCuts}
     />
   );
 });

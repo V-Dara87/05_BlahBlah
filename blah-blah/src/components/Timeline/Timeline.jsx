@@ -24,6 +24,8 @@ export const Timeline = memo(function Timeline({
   selectedClipId,
   snappingEnabled,
   recordingTrackId,
+  recordingStartTime = 0,
+  recordingLevel = 0,
   onSeek,
   onSelectClip,
   onUpdateClip,
@@ -49,6 +51,9 @@ export const Timeline = memo(function Timeline({
   onAttachScriptToEntity,
   onAddMediaAsset,
   onSplitVideoAndAudio,
+  onOpenSilenceRemover,
+  onOpenSilenceRemoverForTrack,
+  silencePreviewData = null,
 }) {
   const [boxSelect, setBoxSelect] = useState(null); // { startX, startY, endX, endY } for lasso
   const playbackStore = usePlaybackStore();
@@ -772,8 +777,11 @@ export const Timeline = memo(function Timeline({
                       canDeleteTrack={tracks.length > 1}
                       onAddEmptyClip={onAddEmptyClip}
                       isRecordingTarget={recordingTrackId === row.track.id}
+                      recordingStartTime={recordingStartTime}
+                      recordingLevel={recordingLevel}
                       isAnyTrackRecording={!!recordingTrackId}
                       onToggleRecordTrack={onToggleRecordTrack}
+                      onOpenSilenceRemoverForTrack={onOpenSilenceRemoverForTrack}
                     />
                   </div>
                   <TrackLane
@@ -784,6 +792,9 @@ export const Timeline = memo(function Timeline({
                     allClips={clips}
                     rowHeight={row.rowHeight}
                     pixelsPerSecond={pixelsPerSecond}
+                    isRecordingTarget={recordingTrackId === row.track.id}
+                    recordingStartTime={recordingStartTime}
+                    recordingLevel={recordingLevel}
                     selectedClipId={selectedClipId}
                     selectedIds={[...new Set([...selectedIds, ...boxSelectedIds])]}
                     onSelectClip={onSelectClip}
@@ -796,6 +807,8 @@ export const Timeline = memo(function Timeline({
                     onDropItemOnTrack={onDropItemOnTrack}
                     onAddMediaAsset={onAddMediaAsset}
                     onSplitVideoAndAudio={onSplitVideoAndAudio}
+                    onOpenSilenceRemover={onOpenSilenceRemover}
+                    silencePreviewData={silencePreviewData}
                     snappingPoints={snappingPoints}
                     snappingEnabled={snappingEnabled}
                     totalWidth={totalWidth}

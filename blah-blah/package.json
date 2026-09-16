@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "oxlint",
-    "test": "node tests/canvas-runner.test.mjs && node tests/parent-child.test.mjs && node tests/transitions.test.mjs && node tests/ffmpeg-runner.test.mjs && node tests/ffmpeg-export.test.mjs && node tests/text-renderer.test.mjs && node tests/prefab-hierarchy.test.mjs && node tests/prefab-portable-instance.test.mjs",
+    "test": "node tests/canvas-runner.test.mjs && node tests/parent-child.test.mjs && node tests/transitions.test.mjs && node tests/ffmpeg-runner.test.mjs && node tests/ffmpeg-export.test.mjs && node tests/text-renderer.test.mjs && node tests/prefab-hierarchy.test.mjs && node tests/prefab-portable-instance.test.mjs && node tests/silence-detector.test.mjs",
     "test:timeline": "node tests/run-timeline-layout-tests.mjs",
     "preview": "vite preview",
     "tauri": "tauri"

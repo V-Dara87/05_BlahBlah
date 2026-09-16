@@ -9,9 +9,11 @@ import {
   Layers,
   Mic,
   Square,
-  Trash2
+  Trash2,
+  Scissors,
 } from 'lucide-react';
 import { TRACK_HEIGHT, clampTrackHeight } from '../../utils/timelineLayout';
+import { usePlaybackStore } from '../../hooks/PlaybackContext';
 import './track-header.css';
  
 export const TrackHeader = memo(function TrackHeader({
@@ -22,10 +24,28 @@ export const TrackHeader = memo(function TrackHeader({
   canDeleteTrack = false,
   onAddEmptyClip,
   isRecordingTarget,
+  recordingStartTime = 0,
   isAnyTrackRecording,
   onToggleRecordTrack,
+  onOpenSilenceRemoverForTrack,
 }) {
   const recording = !!isRecordingTarget;
+  const store = usePlaybackStore();
+  const recordingTimerRef = useRef(null);
+
+  useEffect(() => {
+    if (!recording) return;
+    const update = (time) => {
+      if (!recordingTimerRef.current) return;
+      const elapsed = Math.max(0, time - recordingStartTime);
+      const m = Math.floor(elapsed / 60);
+      const s = Math.floor(elapsed % 60);
+      const tenths = Math.floor((elapsed % 1) * 10);
+      recordingTimerRef.current.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${tenths}`;
+    };
+    update(store.getCurrentTime());
+    return store.registerFrameCallback(update);
+  }, [recording, recordingStartTime, store]);
   const [isEditing, setIsEditing] = useState(false);
   const [tempName, setTempName] = useState(track.name);
   const [prevName, setPrevName] = useState(track.name);
@@ -169,6 +189,13 @@ export const TrackHeader = memo(function TrackHeader({
               {recording ? <Square size={9} /> : <Mic size={10} />}
             </button>
           )}
+
+          {recording && (
+            <span className="track-header-rec-badge" title="Recording in progress">
+              <span className="rec-pulse-dot" />
+              <span ref={recordingTimerRef}>00:00.0</span>
+            </span>
+          )}
  
           <button
             className="track-btn add-clip-track-btn"
@@ -179,6 +206,17 @@ export const TrackHeader = memo(function TrackHeader({
           >
             <span style={{ fontSize: '8px', fontWeight: 700, color: '#38bdf8' }}>+C</span>
           </button>
+
+          {onOpenSilenceRemoverForTrack && (
+            <button
+              className="track-btn cut-silence-track-btn"
+              title={`Cut Silence in ${track.name}...`}
+              onClick={() => onOpenSilenceRemoverForTrack(track.id)}
+              disabled={track.locked}
+            >
+              <Scissors size={10} />
+            </button>
+          )}
  
           <button
             className={`track-btn ${!track.visible ? 'active-off' : ''}`}

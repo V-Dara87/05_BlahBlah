@@ -232,6 +232,27 @@
   gap: 2px;
 }
  
+.clip-title-text {
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+ 
+.script-tag {
+  font-size: 8px;
+  font-weight: 700;
+  background: rgba(16, 185, 129, 0.25);
+  color: #34d399;
+  padding: 1px 3px;
+  border-radius: 2px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+ 
 .clip-time-text {
   font-size: 8px;
   font-family: var(--font-mono);
@@ -243,4 +264,30 @@
   outline: 2px solid #34d399;
   outline-offset: 1px;
   box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.25);
+}
+
+/* Live Silence Cut Overlay on actual Timeline */
+.clip-silence-cut-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  overflow: hidden;
+  border-radius: 3px;
+}
+
+.clip-silence-cut-slice {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(239, 68, 68, 0.45),
+    rgba(239, 68, 68, 0.45) 4px,
+    rgba(185, 28, 28, 0.65) 4px,
+    rgba(185, 28, 28, 0.65) 8px
+  );
+  border-left: 1.5px solid #ef4444;
+  border-right: 1.5px solid #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.4);
 }

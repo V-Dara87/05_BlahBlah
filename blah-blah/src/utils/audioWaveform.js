@@ -22,7 +22,7 @@ const bufferCache = new Map();
 /**
  * Decode audio from a URL and return an AudioBuffer. Cached by URL.
  */
-function decodeAudio(url) {
+export function decodeAudio(url) {
   if (bufferCache.has(url)) return bufferCache.get(url);
  
   const promise = (async () => {

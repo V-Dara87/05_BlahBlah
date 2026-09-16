@@ -112,7 +112,11 @@ async fn run_ffmpeg(
         ));
     }
 
-    Ok(stdout)
+    if stdout.trim().is_empty() && !stderr.trim().is_empty() {
+        Ok(stderr)
+    } else {
+        Ok(stdout)
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

@@ -9,6 +9,7 @@ export function createPlaybackStore(initialTotalDuration = 60) {
   let currentTime = 0;
   let playbackRate = 1;
   let isLooping = false;
+  let isRecording = false;
   let totalDuration = initialTotalDuration;
 
   let lastFrameTime = null;
@@ -72,6 +73,14 @@ export function createPlaybackStore(initialTotalDuration = 60) {
     const maxDur = totalDuration;
 
     if (nextTime >= maxDur) {
+      if (isRecording) {
+        totalDuration = Math.max(totalDuration + 30, nextTime + 10);
+        currentTime = nextTime;
+        runFrameCallbacks(nextTime);
+        notify();
+        animFrameId = requestAnimationFrame(tick);
+        return;
+      }
       if (isLooping) {
         nextTime = 0;
         intentionalJump = true;
@@ -146,9 +155,17 @@ export function createPlaybackStore(initialTotalDuration = 60) {
       runFrameCallbacks(clamped);
     },
 
+    setIsRecording(rec) {
+      isRecording = !!rec;
+    },
+
+    getIsRecording() {
+      return isRecording;
+    },
+
     play() {
       if (totalDuration <= 0) return;
-      if (currentTime >= totalDuration && totalDuration > 0) {
+      if (!isRecording && currentTime >= totalDuration && totalDuration > 0) {
         intentionalJump = true;
         setCurrentTimeInternal(0);
         runFrameCallbacks(0);

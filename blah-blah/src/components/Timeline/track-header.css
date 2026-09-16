@@ -1,60 +1,37 @@
-/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/Timeline/TrackHeader.jsx and its markup.
-   A rule moves here when the narrowest class in its selector is used by this file
-   alone; generic modifier classes (.active/.danger/.disabled) travel with the
-   component that owns the rest of the selector.
-   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
-
-.track-name-input {
-  background: var(--unity-darkest, #141416);
-  border: 1px solid var(--unity-accent, #38bdf8);
-  border-radius: 3px;
-  color: #fff;
-  font-size: 11px;
-  font-weight: 500;
-  padding: 1px 4px;
-  width: 100%;
-  max-width: 125px;
-  box-sizing: border-box;
-  outline: none;
-}
- 
-.track-header-row.track-locked {
-  background: rgba(245, 158, 11, 0.05);
-}
- 
-.delete-track-btn:hover {
-  background: rgba(239, 68, 68, 0.2) !important;
-  color: #ef4444 !important;
-}
- 
-.track-btn.add-clip-track-btn:hover {
-  background: rgba(56, 189, 248, 0.15);
-  color: #38bdf8;
-}
- 
-.track-header-row {
-  height: 64px;
-  width: 180px;
+﻿.track-header-row {
+  display: flex;
+  align-items: center;
+  background: var(--unity-panel);
   border-bottom: 1px solid var(--unity-border);
+  box-sizing: border-box;
+  user-select: none;
+  transition: background 0.15s ease;
+}
+
+.track-header-row.track-locked {
+  opacity: 0.75;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.track-header-controls {
+  width: 180px;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 4px;
   padding: 5px 8px;
   background: var(--unity-panel);
-  box-sizing: border-box;
-  overflow: hidden;
+  border-bottom: 1px solid var(--unity-border);
 }
- 
+
 .track-header-top-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  min-width: 0;
-  height: 17px;
 }
- 
+
 .track-header-title-box {
   display: flex;
   align-items: center;
@@ -64,12 +41,12 @@
   cursor: pointer;
   overflow: hidden;
 }
- 
+
 .track-icon {
   color: var(--unity-accent-blue);
   flex-shrink: 0;
 }
- 
+
 .track-name {
   font-size: 10px;
   font-weight: 600;
@@ -80,7 +57,33 @@
   max-width: 130px;
   display: block;
 }
- 
+
+.track-name-input {
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+  background: #1e1e1e;
+  border: 1px solid #38bdf8;
+  border-radius: 2px;
+  padding: 1px 4px;
+  outline: none;
+  width: 100px;
+}
+
+.delete-track-btn {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  color: #f87171 !important;
+}
+
+.track-header-row:hover .delete-track-btn {
+  opacity: 1;
+}
+
+.delete-track-btn:hover {
+  background: rgba(239, 68, 68, 0.2) !important;
+}
+
 .track-header-btns {
   display: flex;
   align-items: center;
@@ -88,7 +91,7 @@
   width: 100%;
   height: 17px;
 }
- 
+
 .track-btn {
   width: 17px;
   height: 17px;
@@ -99,33 +102,33 @@
   color: var(--unity-text-dim);
   background: var(--unity-subtle);
 }
- 
+
 .track-btn:hover { background: var(--unity-hover); color: #fff; }
- 
+
 .track-btn.active-off { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
- 
+
 .track-btn.active-lock { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
- 
+
 .track-btn.record-track-btn {
   color: #f87171;
 }
- 
+
 .track-btn.record-track-btn:hover {
   background: rgba(239, 68, 68, 0.18);
   color: #ef4444;
 }
- 
+
 .track-btn.record-track-btn.active-record {
   background: #ef4444;
   color: #fff;
   animation: record-pulse 1.2s infinite;
 }
- 
+
 .track-header-row.recording-active {
   background: rgba(239, 68, 68, 0.08);
   box-shadow: inset 2px 0 0 #ef4444;
 }
- 
+
 .track-header-row {
   height: 100%;
   justify-content: flex-start;
@@ -134,7 +137,7 @@
   overflow: visible;
   position: relative;
 }
- 
+
 .track-resize-handle {
   position: absolute;
   left: 0;
@@ -146,10 +149,8 @@
   background: transparent;
   touch-action: none;
 }
- 
+
 .track-resize-handle::after {
-  /* Small centered grip line so the handle is visible even at a tiny
-     collapsed track height, not just discoverable by hover-hunting. */
   content: '';
   position: absolute;
   left: 50%;
@@ -161,25 +162,50 @@
   transform: translateX(-50%);
   pointer-events: none;
 }
- 
+
 .track-resize-handle:hover::after,
 .track-resize-handle.is-dragging::after {
   background: rgba(56, 189, 248, 0.9);
 }
- 
+
 .track-resize-handle:hover,
 .track-resize-handle:active {
   background: rgba(56, 189, 248, 0.35);
 }
- 
-.track-header-controls {
-  width: 180px;
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
+
+.track-header-rec-badge {
+  display: inline-flex;
+  align-items: center;
   gap: 4px;
-  padding: 5px 8px;
-  background: var(--unity-panel);
-  border-bottom: 1px solid var(--unity-border);
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-family: var(--font-mono, monospace);
+  font-size: 9px;
+  font-weight: 700;
+  color: #fca5a5;
+  height: 17px;
+  box-sizing: border-box;
+}
+
+.rec-pulse-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: #ef4444;
+  box-shadow: 0 0 4px #ef4444;
+  animation: recBadgeDotPulse 1s infinite alternate;
+  flex-shrink: 0;
+}
+
+@keyframes recBadgeDotPulse {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0.3;
+    transform: scale(0.7);
+  }
 }

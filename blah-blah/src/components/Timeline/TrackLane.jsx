@@ -1,5 +1,6 @@
 import { useState, memo, useMemo } from 'react';
 import { ClipItem } from './ClipItem';
+import { LiveRecordingClipPreview } from './LiveRecordingClipPreview';
 import { TRACK_HEIGHT, computeClipSubLanes, getTickIntervalSeconds } from '../../utils/timelineLayout';
 import { importMediaFiles } from '../../services/mediaImport';
 import './track-lane.css';
@@ -21,6 +22,9 @@ export const TrackLane = memo(function TrackLane({
   allClips = [],
   rowHeight = TRACK_HEIGHT,
   pixelsPerSecond,
+  isRecordingTarget = false,
+  recordingStartTime = 0,
+  recordingLevel = 0,
   selectedClipId,
   selectedIds,
   onSelectClip,
@@ -33,6 +37,8 @@ export const TrackLane = memo(function TrackLane({
   onDropItemOnTrack,
   onAddMediaAsset,
   onSplitVideoAndAudio,
+  onOpenSilenceRemover,
+  silencePreviewData = null,
   snappingPoints,
   snappingEnabled,
   totalWidth,
@@ -135,6 +141,7 @@ export const TrackLane = memo(function TrackLane({
     onDuplicateClips,
     onAttachScriptToEntity,
     onSplitVideoAndAudio,
+    onOpenSilenceRemover,
     snappingPoints,
     snappingEnabled,
   };
@@ -162,16 +169,43 @@ export const TrackLane = memo(function TrackLane({
       >
         {clips.map((clip) => {
           const lane = subLanes.get(clip.id) || { laneIndex: 0, laneCount: 1 };
+          let clipSilenceCuts = null;
+          if (silencePreviewData && silencePreviewData.cuts?.length > 0) {
+            if (silencePreviewData.targetType === 'clip') {
+              if (
+                clip.id === silencePreviewData.targetId ||
+                clip.parentId === silencePreviewData.targetId ||
+                (fullClipList.find((c) => c.id === silencePreviewData.targetId)?.parentId === clip.id)
+              ) {
+                clipSilenceCuts = silencePreviewData.cuts;
+              }
+            } else if (silencePreviewData.targetType === 'track') {
+              if (clip.trackId === silencePreviewData.targetId) {
+                clipSilenceCuts = silencePreviewData.cuts;
+              }
+            }
+          }
+
           return (
             <ClipItem
               key={clip.id}
               clip={clip}
               laneIndex={lane.laneIndex}
               laneCount={lane.laneCount}
+              silencePreviewCuts={clipSilenceCuts}
               {...sharedProps}
             />
           );
         })}
+
+        {isRecordingTarget && (
+          <LiveRecordingClipPreview
+            startTime={recordingStartTime}
+            pixelsPerSecond={pixelsPerSecond}
+            rowHeight={rowHeight}
+            level={recordingLevel}
+          />
+        )}
       </div>
     </div>
   );

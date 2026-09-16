@@ -228,13 +228,16 @@ export function App() {
   const [isScriptDocsOpen, setIsScriptDocsOpen] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [silenceTarget, setSilenceTarget] = useState({ type: 'clip', id: null });
+  const [silencePreviewData, setSilencePreviewData] = useState(null);
  
   // Voice Recording: which track (if any) is currently armed/recording,
   // and the selected input device (persisted via Settings modal).
   const [recordingTrackId, setRecordingTrackId] = useState(null);
+  const [recordingStartTime, setRecordingStartTime] = useState(0);
   const [audioInputDeviceId, setAudioInputDeviceId] = useState(() => loadAudioSettings().inputDeviceId);
   const recordingStartTimeRef = useRef(0);
-  const { startRecording, stopRecording } = useAudioRecorder({ inputDeviceId: audioInputDeviceId });
+  const { startRecording, stopRecording, level: recordingLevel } = useAudioRecorder({ inputDeviceId: audioInputDeviceId });
  
   // Playback: App owns no playback state (PlaybackProvider/playbackStore
   // do, so panels don't re-render every frame) — this hook just provides
@@ -303,6 +306,7 @@ export function App() {
     undo, redo, canUndo, canRedo,
     handleUpdateEntity, handleUpdateClips, handleDuplicateClips,
     handleDeleteEntity, handleRippleTrimToPlayhead, handleSplitEntity,
+    handleCutSilence,
     handleAddEmptyClip,
     handleAddPrefabToTimeline, handleAddMediaToTimeline,
     handleSplitVideoAndAudio,
@@ -334,20 +338,24 @@ export function App() {
   // from the Settings-selected input device); clicking again (or the
   // Square/stop icon) stops, saves the clip into Media > Recordings,
   // and drops it onto that same track at the time recording started.
-  const handleToggleRecordTrack = useCallback(async (trackId) => {
+   const handleToggleRecordTrack = useCallback(async (trackId) => {
     if (recordingTrackId === trackId) {
       // Stop & finalize this track's recording
-      const result = await stopRecording();
+      playbackStoreRef.current?.setIsRecording(false);
+      playbackStoreRef.current?.pause();
+      const startTime = recordingStartTimeRef.current;
       setRecordingTrackId(null);
+      setRecordingStartTime(0);
+      const result = await stopRecording();
       if (!result || !result.blob || result.durationSec < 0.15) return;
- 
+
       const { blob, durationSec, mimeType } = result;
       const ext = mimeType.includes('webm') ? 'webm' : 'wav';
       const takeNumber = mediaAssets.filter(m => m.folder === 'Recordings').length + 1;
       const fileName = `Recording_${String(takeNumber).padStart(3, '0')}.${ext}`;
       const url = URL.createObjectURL(blob);
       const file = new File([blob], fileName, { type: mimeType });
- 
+
       const asset = {
         id: `asset-recording-${Date.now()}`,
         name: fileName,
@@ -358,19 +366,36 @@ export function App() {
         folder: 'Recordings',
         createdAt: Date.now(),
       };
- 
+
       await handleAddMediaAsset(asset, file);
-      handleAddMediaToTimeline(asset, trackId, recordingStartTimeRef.current);
+      handleAddMediaToTimeline(asset, trackId, startTime);
       return;
     }
- 
+
     if (recordingTrackId) return; // another track is already recording
- 
+
     // Arm this track and start capturing at the current playhead position
-    recordingStartTimeRef.current = getPlaybackTime();
-    await startRecording();
+    const startTime = getPlaybackTime();
+    recordingStartTimeRef.current = startTime;
+    setRecordingStartTime(startTime);
     setRecordingTrackId(trackId);
-  }, [recordingTrackId, getPlaybackTime, mediaAssets, startRecording, stopRecording]);
+    await startRecording();
+    playbackStoreRef.current?.setIsRecording(true);
+    playbackStoreRef.current?.play();
+  }, [recordingTrackId, getPlaybackTime, mediaAssets, startRecording, stopRecording, handleAddMediaAsset, handleAddMediaToTimeline]);
+
+  // Synchronize playback stopping (spacebar / pause) with active recording
+  useEffect(() => {
+    if (!recordingTrackId) return;
+    const store = playbackStoreRef.current;
+    if (!store) return;
+    const unsub = store.subscribe(() => {
+      if (!store.getIsPlaying() && recordingTrackId) {
+        handleToggleRecordTrack(recordingTrackId);
+      }
+    });
+    return unsub;
+  }, [recordingTrackId, handleToggleRecordTrack]);
  
   const handleAudioSettingsChanged = useCallback((settings) => {
     setAudioInputDeviceId(settings.inputDeviceId);
@@ -380,6 +405,16 @@ export function App() {
     setEditingScript(script);
     setIsScriptEditorOpen(true);
   };
+
+  const handleOpenSilenceRemover = useCallback((clipId) => {
+    setSilenceTarget({ type: 'clip', id: clipId });
+    openOrFocusPanel('silenceRemover', 'Silence Remover');
+  }, [openOrFocusPanel]);
+
+  const handleOpenSilenceRemoverForTrack = useCallback((trackId) => {
+    setSilenceTarget({ type: 'track', id: trackId });
+    openOrFocusPanel('silenceRemover', 'Silence Remover');
+  }, [openOrFocusPanel]);
  
   // Project explorer renames (Project panel context menu). Media/prefab
   // renames are in-memory record renames; scripts rename the record too
@@ -719,6 +754,7 @@ export function App() {
         { label: 'Redo', shortcut: keybinds.redo, icon: <Redo2 size={13} />, onClick: redo, disabled: !canRedo },
         { type: 'separator' },
         { label: 'Split Clip (Cut)', shortcut: keybinds.splitSelected, icon: <Scissors size={13} />, onClick: () => selectedEntityId && (isPrefabMode ? prefabEntityActions.handleSplitEntity(selectedEntityId) : handleSplitEntity(selectedEntityId)), disabled: !selectedEntityId },
+        { label: 'Cut Silence...', icon: <Scissors size={13} />, onClick: () => handleOpenSilenceRemover(selectedEntityId), disabled: !selectedEntityId },
         { label: 'Delete Clip', shortcut: keybinds.deleteSelected, icon: <Trash2 size={13} />, onClick: () => selectedEntityId && (isPrefabMode ? prefabEntityActions.handleDeleteEntity(selectedEntityId) : handleDeleteEntity(selectedEntityId)), disabled: !selectedEntityId, danger: true },
       ],
     },
@@ -740,6 +776,7 @@ export function App() {
         { label: 'Timeline', icon: <Clock size={13} />, onClick: () => openOrFocusPanel('timeline', 'Timeline') },
         { label: 'Dopesheet', icon: <Layers size={13} />, onClick: () => openOrFocusPanel('dopesheet', 'Dopesheet') },
         { label: 'Curves', icon: <Activity size={13} />, onClick: () => openOrFocusPanel('curveEditor', 'Curves') },
+        { label: 'Silence Remover', icon: <Scissors size={13} />, onClick: () => openOrFocusPanel('silenceRemover', 'Silence Remover') },
         { type: 'separator' },
         { label: 'New Inspector Tab', icon: <Copy size={13} />, onClick: () => addNewPanelInstance('inspector', 'Inspector') },
         { label: 'New Preview Tab', icon: <Copy size={13} />, onClick: () => addNewPanelInstance('preview', 'Preview') },
@@ -752,7 +789,7 @@ export function App() {
     },
   ], [
     canUndo, canRedo, undo, redo, selectedEntityId, keybinds,
-    handleSplitEntity, handleDeleteEntity, prefabEntityActions, handleOpenProjectFolder,
+    handleSplitEntity, handleOpenSilenceRemover, handleDeleteEntity, prefabEntityActions, handleOpenProjectFolder,
     handleSaveProjectToDisk, handleSaveCurrentPrefab,
     projectFolderHandle, isPrefabMode,
     openOrFocusPanel, addNewPanelInstance, popoutActivePanel, floatActivePanel, handleResetLayout,
@@ -969,6 +1006,8 @@ export function App() {
           selectedKeyId, setSelectedKeyId,
           selectedIds, setSelectedIds,
           recordingTrackId,
+          recordingStartTime,
+          recordingLevel,
           onToggleRecordTrack: handleToggleRecordTrack,
           onAddMediaAsset: handleAddMediaAsset,
           onRemoveMediaAsset: handleRemoveMediaAsset,
@@ -987,6 +1026,13 @@ export function App() {
           onAddMediaToTimeline: isPrefabMode ? prefabEntityActions.handleAddMediaToTimeline : handleAddMediaToTimeline,
           handleSplitVideoAndAudio: isPrefabMode ? prefabEntityActions.handleSplitVideoAndAudio : handleSplitVideoAndAudio,
           onSplitVideoAndAudio: isPrefabMode ? prefabEntityActions.handleSplitVideoAndAudio : handleSplitVideoAndAudio,
+          onOpenSilenceRemover: handleOpenSilenceRemover,
+          onOpenSilenceRemoverForTrack: handleOpenSilenceRemoverForTrack,
+          handleCutSilence: isPrefabMode ? prefabEntityActions.handleCutSilence : handleCutSilence,
+          silenceTarget,
+          setSilenceTarget,
+          silencePreviewData,
+          setSilencePreviewCuts: setSilencePreviewData,
           // App-wide Shared Library (project-panel "shared" folder)
           sharedLibraryItems: sharedLibrary.items,
           onSharePrefab: handleSharePrefab,

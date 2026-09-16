@@ -316,6 +316,260 @@ export function useEntityActions({
       setSelectedEntityId(toAdd[0].id);
     }
   }, [entities, selectedEntityId, getPlaybackTime, setEntities, setSelectedEntityId]);
+
+  // Cut silence from a clip (or clips in a track), with ripple shift and video-audio sync
+  const handleCutSilence = useCallback(({ targetType = 'clip', targetId, keptSegments, cutsByClipId, ripple = true }) => {
+    if (!targetId) return;
+
+    if (targetType === 'clip') {
+      const target = entities.find((e) => e.id === targetId);
+      if (!target) return;
+
+      // Identify companion video/audio entities
+      let primaryEntity = target;
+      let childEntities = [];
+
+      if (target.parentId) {
+        const parent = entities.find((e) => e.id === target.parentId);
+        if (parent && (parent.type === 'video' || parent.components?.some((c) => c.type === 'VideoRenderer'))) {
+          primaryEntity = parent;
+          childEntities = entities.filter((e) => e.parentId === parent.id);
+        }
+      } else {
+        childEntities = entities.filter((e) => e.parentId === target.id);
+      }
+
+      const allGroupEntities = [primaryEntity, ...childEntities];
+      const origStart = primaryEntity.startTime;
+      const origDur = primaryEntity.duration;
+
+      const segments = Array.isArray(keptSegments) ? keptSegments : [];
+      if (segments.length === 0) {
+        // Entire clip was silent -> remove all in group
+        const groupIds = new Set(allGroupEntities.map((e) => e.id));
+        setEntities((prev) => {
+          let updated = prev.filter((e) => !groupIds.has(e.id));
+          if (ripple) {
+            const affectedTrackIds = new Set(allGroupEntities.map((e) => e.trackId));
+            updated = updated.map((e) => {
+              if (affectedTrackIds.has(e.trackId) && e.startTime >= origStart + origDur - 0.05) {
+                return { ...e, startTime: Math.max(origStart, e.startTime - origDur) };
+              }
+              return e;
+            });
+          }
+          return updated;
+        });
+        return;
+      }
+
+      // Generate replacement segments
+      const toAdd = [];
+      const updatedMap = new Map();
+      let rippleAccumTime = 0;
+
+      for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        const segStartTime = ripple ? origStart + rippleAccumTime : origStart + seg.start;
+        const segDur = seg.duration;
+        rippleAccumTime += segDur;
+
+        // Primary entity slice
+        const isFirst = i === 0;
+        const primaryId = isFirst ? primaryEntity.id : `go-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+
+        const primaryComponents = primaryEntity.components?.map((c) => {
+          if (c.type === 'VideoRenderer' || c.type === 'AudioSource') {
+            const origOffset = c.mediaOffset || 0;
+            const speed = c.speed || 1;
+            return { ...c, mediaOffset: origOffset + seg.start * speed };
+          }
+          return JSON.parse(JSON.stringify(c));
+        }) || [];
+
+        const primarySlice = {
+          ...primaryEntity,
+          id: primaryId,
+          name: isFirst ? primaryEntity.name : `${primaryEntity.name}_${String(i + 1).padStart(3, '0')}`,
+          startTime: segStartTime,
+          duration: segDur,
+          components: primaryComponents,
+        };
+
+        if (isFirst) {
+          updatedMap.set(primaryEntity.id, primarySlice);
+        } else {
+          toAdd.push(primarySlice);
+        }
+
+        // Child entities slices (e.g. linked audio or callouts)
+        for (const child of childEntities) {
+          const childId = isFirst ? child.id : `go-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+          const childComponents = child.components?.map((c) => {
+            if (c.type === 'VideoRenderer' || c.type === 'AudioSource') {
+              const origOffset = c.mediaOffset || 0;
+              const speed = c.speed || 1;
+              return { ...c, mediaOffset: origOffset + seg.start * speed };
+            }
+            return JSON.parse(JSON.stringify(c));
+          }) || [];
+
+          const childSlice = {
+            ...child,
+            id: childId,
+            parentId: primaryId,
+            name: isFirst ? child.name : `${child.name}_${String(i + 1).padStart(3, '0')}`,
+            startTime: segStartTime,
+            duration: segDur,
+            components: childComponents,
+          };
+
+          if (isFirst) {
+            updatedMap.set(child.id, childSlice);
+          } else {
+            toAdd.push(childSlice);
+          }
+        }
+      }
+
+      const totalKept = segments.reduce((sum, s) => sum + s.duration, 0);
+      const totalCut = Math.max(0, origDur - totalKept);
+      const affectedTrackIds = new Set(allGroupEntities.map((e) => e.trackId));
+      const groupIds = new Set(allGroupEntities.map((e) => e.id));
+
+      setEntities((prev) => {
+        const next = prev.map((e) => {
+          if (updatedMap.has(e.id)) {
+            return updatedMap.get(e.id);
+          }
+          if (ripple && totalCut > 0 && affectedTrackIds.has(e.trackId) && !groupIds.has(e.id)) {
+            if (e.startTime >= origStart + origDur - 0.05) {
+              return { ...e, startTime: Math.max(origStart + totalKept, e.startTime - totalCut) };
+            }
+          }
+          return e;
+        });
+        return next.concat(toAdd);
+      });
+      return;
+    }
+
+    if (targetType === 'track') {
+      const trackClips = entities
+        .filter((e) => e.trackId === targetId && !e.parentId)
+        .sort((a, b) => a.startTime - b.startTime);
+
+      if (trackClips.length === 0) return;
+
+      const clipMap = cutsByClipId instanceof Map ? cutsByClipId : new Map(Object.entries(cutsByClipId || {}));
+      let currentEntities = [...entities];
+
+      for (const clip of trackClips) {
+        const segs = clipMap.get(clip.id);
+        if (segs && Array.isArray(segs)) {
+          // Re-query clip in currentEntities in case its startTime changed from previous ripple
+          const liveClip = currentEntities.find((e) => e.id === clip.id);
+          if (!liveClip) continue;
+
+          // Apply cut to this single clip within currentEntities
+          let childEntities = currentEntities.filter((e) => e.parentId === liveClip.id);
+          const allGroup = [liveClip, ...childEntities];
+          const origStart = liveClip.startTime;
+          const origDur = liveClip.duration;
+          const groupIds = new Set(allGroup.map((e) => e.id));
+
+          if (segs.length === 0) {
+            currentEntities = currentEntities.filter((e) => !groupIds.has(e.id));
+            if (ripple) {
+              const affTrackIds = new Set(allGroup.map((e) => e.trackId));
+              currentEntities = currentEntities.map((e) => {
+                if (affTrackIds.has(e.trackId) && e.startTime >= origStart + origDur - 0.05) {
+                  return { ...e, startTime: Math.max(origStart, e.startTime - origDur) };
+                }
+                return e;
+              });
+            }
+            continue;
+          }
+
+          const toAdd = [];
+          const updatedMap = new Map();
+          let accum = 0;
+
+          for (let i = 0; i < segs.length; i++) {
+            const seg = segs[i];
+            const segStartTime = ripple ? origStart + accum : origStart + seg.start;
+            const segDur = seg.duration;
+            accum += segDur;
+            const isFirst = i === 0;
+            const primaryId = isFirst ? liveClip.id : `go-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+
+            const compPrim = liveClip.components?.map((c) => {
+              if (c.type === 'VideoRenderer' || c.type === 'AudioSource') {
+                const origOffset = c.mediaOffset || 0;
+                const speed = c.speed || 1;
+                return { ...c, mediaOffset: origOffset + seg.start * speed };
+              }
+              return JSON.parse(JSON.stringify(c));
+            }) || [];
+
+            const pSlice = {
+              ...liveClip,
+              id: primaryId,
+              name: isFirst ? liveClip.name : `${liveClip.name}_${String(i + 1).padStart(3, '0')}`,
+              startTime: segStartTime,
+              duration: segDur,
+              components: compPrim,
+            };
+
+            if (isFirst) updatedMap.set(liveClip.id, pSlice);
+            else toAdd.push(pSlice);
+
+            for (const ch of childEntities) {
+              const chId = isFirst ? ch.id : `go-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+              const compCh = ch.components?.map((c) => {
+                if (c.type === 'VideoRenderer' || c.type === 'AudioSource') {
+                  const origOffset = c.mediaOffset || 0;
+                  const speed = c.speed || 1;
+                  return { ...c, mediaOffset: origOffset + seg.start * speed };
+                }
+                return JSON.parse(JSON.stringify(c));
+              }) || [];
+
+              const chSlice = {
+                ...ch,
+                id: chId,
+                parentId: primaryId,
+                name: isFirst ? ch.name : `${ch.name}_${String(i + 1).padStart(3, '0')}`,
+                startTime: segStartTime,
+                duration: segDur,
+                components: compCh,
+              };
+
+              if (isFirst) updatedMap.set(ch.id, chSlice);
+              else toAdd.push(chSlice);
+            }
+          }
+
+          const totKept = segs.reduce((s, x) => s + x.duration, 0);
+          const totCut = Math.max(0, origDur - totKept);
+          const affTracks = new Set(allGroup.map((e) => e.trackId));
+
+          currentEntities = currentEntities.map((e) => {
+            if (updatedMap.has(e.id)) return updatedMap.get(e.id);
+            if (ripple && totCut > 0 && affTracks.has(e.trackId) && !groupIds.has(e.id)) {
+              if (e.startTime >= origStart + origDur - 0.05) {
+                return { ...e, startTime: Math.max(origStart + totKept, e.startTime - totCut) };
+              }
+            }
+            return e;
+          }).concat(toAdd);
+        }
+      }
+
+      setEntities(currentEntities);
+    }
+  }, [entities, setEntities]);
  
   // Create an Empty Clip with Transform & Shape / Renderer
   const handleAddEmptyClip = useCallback((targetTrackId = 'track-1', startTime) => {
@@ -862,6 +1116,7 @@ export function useEntityActions({
     handleDeleteEntity,
     handleRippleTrimToPlayhead,
     handleSplitEntity,
+    handleCutSilence,
     handleAddEmptyClip,
     handleAddPrefabToTimeline,
     handleAddMediaToTimeline,

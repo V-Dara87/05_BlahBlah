@@ -9,6 +9,7 @@ import {
   TimelineDockPanel,
   DopesheetDockPanel,
   CurveEditorDockPanel,
+  SilenceRemoverDockPanel,
 } from './panels';
 import { useEditorContext } from './EditorContext';
 import 'dockview-react/dist/styles/dockview.css';
@@ -28,6 +29,7 @@ const DOCK_COMPONENTS = {
   timeline: TimelineDockPanel,
   dopesheet: DopesheetDockPanel,
   curveEditor: CurveEditorDockPanel,
+  silenceRemover: SilenceRemoverDockPanel,
   // Fallbacks for removed tabs from previous builds
   clips: FallbackPanel,
 };
@@ -89,7 +91,16 @@ function buildDefaultLayout(api) {
     title: 'Curves',
     position: { direction: 'within', referencePanel: dopesheetPanel },
   });
-}const DockHeaderActions = memo(function DockHeaderActions({
+
+  api.addPanel({
+    id: 'silenceRemover',
+    component: 'silenceRemover',
+    title: 'Silence Remover',
+    position: { direction: 'within', referencePanel: dopesheetPanel },
+  });
+}
+
+const DockHeaderActions = memo(function DockHeaderActions({
   api,
   containerApi,
   group,

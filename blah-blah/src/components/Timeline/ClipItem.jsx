@@ -49,6 +49,8 @@ export const ClipItem = memo(function ClipItem({
   onDuplicateClips,
   onAttachScriptToEntity,
   onSplitVideoAndAudio,
+  onOpenSilenceRemover,
+  silencePreviewCuts = null,
   snappingPoints = [],
   snappingEnabled = true,
 }) {
@@ -728,6 +730,27 @@ export const ClipItem = memo(function ClipItem({
             />
           </div>
         )}
+
+        {/* Live Silence Cut Overlay on Timeline */}
+        {silencePreviewCuts && silencePreviewCuts.length > 0 && (
+          <div className="clip-silence-cut-overlay">
+            {silencePreviewCuts.map((cut, idx) => {
+              const leftRatio = Math.max(0, cut.start / clip.duration);
+              const widthRatio = Math.max(0, cut.duration / clip.duration);
+              return (
+                <div
+                  key={idx}
+                  className="clip-silence-cut-slice"
+                  style={{
+                    left: `${leftRatio * 100}%`,
+                    width: `${widthRatio * 100}%`,
+                  }}
+                  title={`Cut Silence: ${cut.duration.toFixed(2)}s`}
+                />
+              );
+            })}
+          </div>
+        )}
  
         <div className="clip-top-row">
           <span
@@ -825,6 +848,11 @@ export const ClipItem = memo(function ClipItem({
         {showSplitAudio && (
           <button className="ctx-menu-item" onClick={handleSplitAudio}>
             <Scissors size={12} /> Split Video &amp; Audio
+          </button>
+        )}
+        {onOpenSilenceRemover && !isLocked && (hasAudio || hasVideo) && (
+          <button className="ctx-menu-item" onClick={() => { closeCtxMenu(); onOpenSilenceRemover(clip.id); }}>
+            <Scissors size={12} /> Cut Silence...
           </button>
         )}
         {!isLocked && clip.parentId && (
