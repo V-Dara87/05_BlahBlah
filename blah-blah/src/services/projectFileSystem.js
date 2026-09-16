@@ -599,14 +599,19 @@ export async function saveProjectToDirectory(dirHandle, projectState) {
     resolution: sanitizeResolution(projectState.resolution),
     tracks: projectState.tracks,
     entities: (projectState.entities || []).map(e => ({
+      ...e,
       id: e.id,
       name: e.name,
+      parentId: e.parentId || null,
       trackId: e.trackId,
       startTime: e.startTime,
       duration: e.duration,
       type: e.type,
       src: e.src,
       active: e.active !== false,
+      color: e.color,
+      tag: e.tag || 'Untagged',
+      layer: e.layer || 'Default',
       components: e.components,
       keyframes: e.keyframes,
     })),
@@ -926,6 +931,27 @@ export async function deletePrefabFileFromFolder(dirHandle, prefabName, subfolde
     await prefabsDir.removeEntry(fileName);
   } catch (err) {
     console.warn(`Could not remove prefab ${prefabName} from disk:`, err);
+  }
+}
+
+/**
+ * Write a prefab file to prefabs/ on disk.
+ */
+export async function writePrefabFile(dirHandle, prefabName, prefabData, subfolder = null) {
+  if (!dirHandle || !prefabName || !prefabData) return;
+  try {
+    await verifyPermission(dirHandle, true);
+    let prefabsDir = await dirHandle.getDirectoryHandle('prefabs', { create: true });
+    if (subfolder) {
+      prefabsDir = await prefabsDir.getDirectoryHandle(subfolder, { create: true });
+    }
+    const fileName = prefabName.endsWith('.json') ? prefabName : `${prefabName}.prefab.json`;
+    const fileHandle = await prefabsDir.getFileHandle(fileName, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(JSON.stringify(prefabData, null, 2));
+    await writable.close();
+  } catch (err) {
+    console.warn(`Could not write prefab ${prefabName} to disk:`, err);
   }
 }
 

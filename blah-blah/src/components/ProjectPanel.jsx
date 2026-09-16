@@ -8,6 +8,7 @@ import {
   Layers,
   Share2,
   Pencil,
+  Plus,
 } from 'lucide-react';
 import { detectScriptKind } from '../engine/scriptRunner';
 import { importMediaFiles } from '../services/mediaImport';
@@ -84,6 +85,7 @@ export const ProjectPanel = memo(function ProjectPanel({
   onAddPrefabToTimeline,
   onAddMediaToTimeline,
   onAddEmptyClip,
+  onEnterPrefabMode,
 }) {
   const registryCtx = useMemo(
     () => ({
@@ -387,10 +389,21 @@ export const ProjectPanel = memo(function ProjectPanel({
     } else if (kind === 'media') {
       onAddMediaToTimeline(item);
     } else if (kind === 'prefab') {
-      onAddPrefabToTimeline(item);
+      if (onEnterPrefabMode) {
+        onEnterPrefabMode(item.id);
+      } else {
+        onAddPrefabToTimeline(item);
+      }
     } else if (kind === 'shared') {
-      if (item.type === 'prefab') onAddPrefabToTimeline(item.data);
-      else onImportSharedItem(item);
+      if (item.type === 'prefab') {
+        if (onEnterPrefabMode && item.data?.id) {
+          onEnterPrefabMode(item.data.id);
+        } else {
+          onAddPrefabToTimeline(item.data);
+        }
+      } else {
+        onImportSharedItem(item);
+      }
     }
   };
 
@@ -789,6 +802,16 @@ export default class NewScript extends CanvasComponent {
         navigateTo({ section: target.section, folder: target.name });
       } else if (target.item) {
         handleItemDoubleClick(target.kind, target.item);
+      }
+    } else if (action === 'edit-prefab') {
+      setCtxMenu(null);
+      if (target.item) {
+        onEnterPrefabMode?.(target.item.id);
+      }
+    } else if (action === 'add-to-timeline') {
+      setCtxMenu(null);
+      if (target.item) {
+        onAddPrefabToTimeline?.(target.item);
       }
     } else if (action === 'rename') {
       if (target.kind === 'folder') startFolderRename(target.section, target.name);
@@ -1205,12 +1228,29 @@ export default class NewScript extends CanvasComponent {
             ctxMenu.target.kind !== 'folder' &&
             ctxMenu.target.kind !== 'multi' && (
               <>
-                <button
-                  className="ctx-menu-item"
-                  onClick={() => handleContextAction('open')}
-                >
-                  <Package size={13} /> Open
-                </button>
+                {ctxMenu.target.kind === 'prefab' ? (
+                  <>
+                    <button
+                      className="ctx-menu-item"
+                      onClick={() => handleContextAction('edit-prefab')}
+                    >
+                      <Layers size={13} /> Edit in Prefab Mode
+                    </button>
+                    <button
+                      className="ctx-menu-item"
+                      onClick={() => handleContextAction('add-to-timeline')}
+                    >
+                      <Plus size={13} /> Add to Timeline
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="ctx-menu-item"
+                    onClick={() => handleContextAction('open')}
+                  >
+                    <Package size={13} /> Open
+                  </button>
+                )}
                 {ctxMenu.target.kind !== 'shared' && (
                   <button
                     className="ctx-menu-item"

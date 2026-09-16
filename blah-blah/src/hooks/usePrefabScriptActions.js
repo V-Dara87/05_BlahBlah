@@ -1,67 +1,157 @@
 import {
   precompileWithBundler,
 } from '../engine/scriptRunner';
+import { isScriptComponent } from '../engine/ecs';
 import {
   writeScriptFile,
   renameScriptFile,
   deleteScriptFileFromFolder,
   deletePrefabFileFromFolder,
+  writePrefabFile,
 } from '../services/projectFileSystem';
- 
+
 /**
  * usePrefabScriptActions — prefab and script CRUD (save/move/remove/create/
- * rename/save-code), plus their scripts/ file-system round-trips.
+ * rename/save-code/update), plus their file-system round-trips.
  *
- * Extracted from useProjectStore.js: this slice only ever touches
- * `setPrefabs` / `setScripts` (never entities or tracks), so it's a clean
- * cut — no shared local state with the rest of the store beyond the params
- * below. A faithful move: no logic changes, useCallback dep arrays are not
- * used here because none of the originals were (these handlers were plain
- * functions in useProjectStore too — not memoized), so identity/cadence is
- * unchanged for callers.
+ * Supports hierarchical prefabs: saving an entity captures the root entity
+ * and all its descendant children, mapping relative start times and preserving
+ * parent-child links.
  *
  * @param {object} args
- * @param {Array}  args.scripts             current scripts slice (for lookups)
- * @param {Function} args.setPrefabs        undo-scoped prefabs setter
- * @param {Function} args.setScripts        undo-scoped scripts setter
+ * @param {Array}  args.entities           current entities slice (for hierarchy lookups)
+ * @param {Array}  args.prefabs            current prefabs slice (for lookups)
+ * @param {Array}  args.scripts            current scripts slice (for lookups)
+ * @param {Function} args.setPrefabs       undo-scoped prefabs setter
+ * @param {Function} args.setScripts       undo-scoped scripts setter
  * @param {object} args.projectFolderHandle FileSystemDirectoryHandle | null
  */
-export function usePrefabScriptActions({ scripts, setPrefabs, setScripts, projectFolderHandle }) {
-  // Save a GameObject as a Prefab — a single-entity snapshot (flat model:
-  // no child hierarchy to carry along). Legacy group/parent fields from
-  // old saved entities are stripped.
-  const handleSaveAsPrefab = (entity) => {
-    const { linkGroupId: _linkGroupId, parentId: _parentId, ...snapshot } = JSON.parse(JSON.stringify(entity));
+export function usePrefabScriptActions({
+  entities = [],
+  prefabs = [],
+  scripts = [],
+  setPrefabs,
+  setScripts,
+  projectFolderHandle,
+}) {
+  // Save a GameObject as a Prefab — captures the root entity and all of its
+  // children/descendants in a multi-object hierarchy snapshot.
+  const handleSaveAsPrefab = async (entity) => {
+    if (!entity) return;
+
+    // 1. Find all descendants of entity in entities array
+    const descendants = [];
+    const collectDescendants = (parentId) => {
+      const children = (entities || []).filter((e) => e.parentId === parentId);
+      for (const child of children) {
+        descendants.push(child);
+        collectDescendants(child.id);
+      }
+    };
+    collectDescendants(entity.id);
+
+    const rootStartTime = entity.startTime || 0;
+    const allObjects = [entity, ...descendants];
+
+    // Snapshot each object, normalizing start times relative to rootStartTime
+    const snapshots = allObjects.map((obj) => {
+      const clone = JSON.parse(JSON.stringify(obj));
+      // Root entity in the prefab has parentId = null
+      if (clone.id === entity.id) {
+        clone.parentId = null;
+      }
+      clone.startTime = Math.max(0, (obj.startTime || 0) - rootStartTime);
+      return clone;
+    });
+
+    const rootSnapshot = snapshots[0];
+
+    // Collect all referenced scripts from components across all snapshots
+    const usedScriptIds = new Set();
+    snapshots.forEach((snap) => {
+      (snap.components || []).forEach((c) => {
+        if (isScriptComponent(c) && c.scriptId) {
+          usedScriptIds.add(c.scriptId);
+        }
+      });
+    });
+
+    const embeddedScripts = (scripts || [])
+      .filter((s) => usedScriptIds.has(s.id))
+      .map((s) => ({
+        id: s.id,
+        name: s.name,
+        description: s.description || '',
+        code: s.code || '',
+      }));
+
     const newPrefab = {
       id: `prefab-${Date.now()}`,
       name: `${entity.name}.prefab`,
       type: entity.type,
-      components: snapshot.components || [],
-      // Folder tree: null = root prefabs folder. createdAt powers the
-      // "Date Added" sort option (falls back to 0 for legacy items).
+      rootId: entity.id,
+      entities: snapshots,
+      components: rootSnapshot.components || [],
+      embeddedScripts,
       folder: null,
       createdAt: Date.now(),
     };
-    setPrefabs(prev => [...prev, newPrefab]);
+
+    setPrefabs((prev) => [...prev, newPrefab]);
+
+    if (projectFolderHandle) {
+      await writePrefabFile(projectFolderHandle, newPrefab.name, newPrefab).catch(() => {});
+    }
   };
- 
+
+  // Update an existing prefab's snapshots, components, or metadata
+  const handleUpdatePrefab = async (prefabId, updatedData) => {
+    const existing = (prefabs || []).find((p) => p.id === prefabId);
+    const updatedPrefab = existing
+      ? { ...existing, ...updatedData, lastModified: Date.now() }
+      : { id: prefabId, ...updatedData, lastModified: Date.now() };
+
+    setPrefabs((prev) =>
+      prev.map((p) => (p.id === prefabId ? updatedPrefab : p))
+    );
+
+    if (projectFolderHandle && updatedPrefab && updatedPrefab.name) {
+      await writePrefabFile(
+        projectFolderHandle,
+        updatedPrefab.name,
+        updatedPrefab,
+        updatedPrefab.folder || null
+      ).catch((err) => {
+        console.warn('Could not write updated prefab file:', err);
+      });
+    }
+
+    return updatedPrefab;
+  };
+
   // Reassign a prefab's folder (null = root prefabs folder) — Project
   // panel folder drag-and-drop + folder rename/delete.
   const handleMovePrefab = (prefabId, targetFolderName) => {
-    setPrefabs(prev => prev.map(p => p.id === prefabId ? { ...p, folder: targetFolderName || null } : p));
+    setPrefabs((prev) =>
+      prev.map((p) => (p.id === prefabId ? { ...p, folder: targetFolderName || null } : p))
+    );
   };
- 
+
   // Reassign a script's folder (null = root scripts folder) — Project
   // panel folder drag-and-drop + folder rename/delete.
   const handleMoveScript = (scriptId, targetFolderName) => {
-    setScripts(prev => prev.map(s => s.id === scriptId ? { ...s, folder: targetFolderName || null } : s));
+    setScripts((prev) =>
+      prev.map((s) => (s.id === scriptId ? { ...s, folder: targetFolderName || null } : s))
+    );
   };
- 
+
   const handleRemovePrefab = async (prefabId) => {
     const prefab = prefabs.find((p) => p.id === prefabId);
     setPrefabs((prev) => prev.filter((p) => p.id !== prefabId));
     if (projectFolderHandle && prefab) {
-      await deletePrefabFileFromFolder(projectFolderHandle, prefab.name, prefab.folder || null).catch(() => {});
+      await deletePrefabFileFromFolder(projectFolderHandle, prefab.name, prefab.folder || null).catch(
+        () => {}
+      );
     }
   };
 
@@ -71,10 +161,12 @@ export function usePrefabScriptActions({ scripts, setPrefabs, setScripts, projec
     const script = scripts.find((s) => s.id === scriptId);
     setScripts((prev) => prev.filter((s) => s.id !== scriptId));
     if (projectFolderHandle && script) {
-      await deleteScriptFileFromFolder(projectFolderHandle, script.name, script.folder || null).catch(() => {});
+      await deleteScriptFileFromFolder(projectFolderHandle, script.name, script.folder || null).catch(
+        () => {}
+      );
     }
   };
- 
+
   // Rename both the record and its scripts/ file. Do the disk operation first
   // so a failed/colliding rename never makes the Project panel claim success.
   const handleRenameScript = async (scriptId, newName) => {
@@ -83,41 +175,30 @@ export function usePrefabScriptActions({ scripts, setPrefabs, setScripts, projec
     if (projectFolderHandle) {
       await renameScriptFile(projectFolderHandle, script.name, newName, script.code);
     }
-    setScripts(prev => prev.map(s => s.id === scriptId ? { ...s, name: newName } : s));
+    setScripts((prev) => prev.map((s) => (s.id === scriptId ? { ...s, name: newName } : s)));
   };
- 
+
   // Create & Save Script
   const handleCreateScript = async (newScript) => {
-    // Stamp folder (root) + createdAt (sort key) — callers may provide
-    // either, but the defaults keep new scripts consistent.
-    setScripts(prev => [...prev, {
-      ...newScript,
-      folder: newScript.folder ?? null,
-      createdAt: newScript.createdAt ?? Date.now(),
-    }]);
+    setScripts((prev) => [...prev, newScript]);
     if (projectFolderHandle) {
       await writeScriptFile(projectFolderHandle, newScript.name, newScript.code).catch(() => {});
-    }
-    // Real-import support: kick off the async bundle right away so the
-    // script is compiled (or shows its error) by the time it's scrubbed to.
-    if (newScript.code) {
       precompileWithBundler(newScript.code, projectFolderHandle).catch(() => {});
     }
   };
- 
-  const handleSaveScript = async (scriptId, updates) => {
-    setScripts(prev => prev.map(s => s.id === scriptId ? { ...s, ...updates } : s));
-    const scriptObj = scripts.find(s => s.id === scriptId);
+
+  const handleSaveScript = async (name, code) => {
+    const scriptObj = scripts.find((s) => s.name === name);
+    setScripts((prev) => prev.map((s) => (s.name === name ? { ...s, code } : s)));
     if (projectFolderHandle && scriptObj) {
-      const code = updates.code !== undefined ? updates.code : scriptObj.code;
-      const name = updates.name || scriptObj.name;
       await writeScriptFile(projectFolderHandle, name, code).catch(() => {});
       precompileWithBundler(code, projectFolderHandle).catch(() => {});
     }
   };
- 
+
   return {
     handleSaveAsPrefab,
+    handleUpdatePrefab,
     handleMovePrefab,
     handleMoveScript,
     handleRemovePrefab,

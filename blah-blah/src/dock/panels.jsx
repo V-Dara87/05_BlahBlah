@@ -1,15 +1,16 @@
  
-import { memo, useState, useRef, useCallback, useMemo } from 'react';
+import { memo, useState, useCallback, useMemo } from 'react';
 import { ProjectPanel } from '../components/ProjectPanel';
 import { EntityRenderer } from '../components/EntityRenderer';
 import { UnityInspector } from '../components/UnityInspector';
 import { Timeline } from '../components/Timeline/Timeline';
+import { PrefabModeBar } from '../components/Timeline/PrefabModeBar';
 import { Dopesheet } from '../components/Dopesheet/Dopesheet';
 import { CurveEditorTab } from '../components/CurveEditor';
 import { setKeyframeCurve, findKeyframeById, DEFAULT_CP1, DEFAULT_CP2 } from '../engine/keyframes';
 import { useEditorContext } from './EditorContext';
 import { useCurrentTime, useIsPlaying, useIsLooping, usePlaybackStore } from '../hooks/PlaybackContext';
- 
+
 export const ProjectDockPanel = memo(function ProjectDockPanel() {
   const {
     mediaAssets, prefabs, scripts,
@@ -22,8 +23,9 @@ export const ProjectDockPanel = memo(function ProjectDockPanel() {
     onAddPrefabToTimeline, onAddMediaToTimeline,
     onMoveMediaAsset, onReplaceMediaAsset, onMovePrefab, onMoveScript,
     handleAddEmptyClip,
+    onEnterPrefabMode,
   } = useEditorContext();
- 
+
   return (
     <ProjectPanel
       mediaAssets={mediaAssets}
@@ -52,6 +54,7 @@ export const ProjectDockPanel = memo(function ProjectDockPanel() {
       onMovePrefab={onMovePrefab}
       onMoveScript={onMoveScript}
       onAddEmptyClip={handleAddEmptyClip}
+      onEnterPrefabMode={onEnterPrefabMode}
     />
   );
 });
@@ -96,13 +99,17 @@ export const PreviewDockPanel = memo(function PreviewDockPanel() {
  
 export const InspectorDockPanel = memo(function InspectorDockPanel() {
   const {
-    entities, selectedEntityId, tracks, scripts,
+    entities, selectedEntityId, tracks, scripts, prefabs,
     handleUpdateEntity, handleDeleteEntity,
     onOpenScriptEditor, handleSaveAsPrefab,
     handleAttachScriptToEntity,
     autoKeyEnabled, setAutoKeyEnabled,
     mediaAssets,
     resolution,
+    onEnterPrefabMode,
+    onDetachPrefab,
+    onRevertToPrefab,
+    onApplyToPrefab,
   } = useEditorContext();
  
   const [isLocked, setIsLocked] = useState(false);
@@ -137,11 +144,16 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
         entities={entities}
         tracks={tracks}
         scripts={scripts}
+        prefabs={prefabs}
         onUpdateEntity={handleUpdateEntity}
         onDeleteEntity={handleDeleteEntity}
         onOpenScriptEditor={onOpenScriptEditor}
         onSaveAsPrefab={handleSaveAsPrefab}
         onAttachScriptToEntity={handleAttachScriptToEntity}
+        onEnterPrefabMode={onEnterPrefabMode}
+        onDetachPrefab={onDetachPrefab}
+        onRevertToPrefab={onRevertToPrefab}
+        onApplyToPrefab={onApplyToPrefab}
         currentTime={currentTime}
         autoKeyEnabled={autoKeyEnabled}
         setAutoKeyEnabled={setAutoKeyEnabled}
@@ -168,6 +180,13 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
     onZoomIn, onZoomOut, setPixelsPerSecond,
     exportRange, setExportRange,
     onSplitVideoAndAudio,
+    isPrefabMode,
+    editingPrefab,
+    onExitPrefabMode,
+    onSaveCurrentPrefab,
+    onSyncPrefabToSceneInstances,
+    isPrefabSaved,
+    isPrefabSynced,
   } = useEditorContext();
  
   const store = usePlaybackStore();
@@ -195,41 +214,53 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
   }, [setSelectedIds]);
  
   return (
-    <Timeline
-      tracks={tracks}
-      clips={entities}
-      mediaAssets={mediaAssets}
-      totalDuration={calculatedDuration}
-      pixelsPerSecond={pixelsPerSecond}
-      selectedClipId={selectedEntityId}
-      snappingEnabled={snappingEnabled}
-      recordingTrackId={recordingTrackId}
-      onSeek={(t) => store.seek(t)}
-      onSelectClip={setSelectedEntityId}
-      onUpdateClip={handleUpdateEntity}
-      onUpdateClips={handleUpdateClips}
-      onDuplicateClips={handleDuplicateClips}
-      onUpdateTrack={handleUpdateTrack}
-      onDeleteTrack={handleDeleteTrack}
-      onAddTrack={handleAddTrack}
-      onAddEmptyClip={handleAddEmptyClip}
-      onDropItemOnTrack={handleDropItemOnTrack}
-      onAttachScriptToEntity={handleAttachScriptToEntity}
-      onAddMediaAsset={onAddMediaAsset}
-      onSplitVideoAndAudio={onSplitVideoAndAudio}
-      onToggleRecordTrack={onToggleRecordTrack}
-      onZoomIn={onZoomIn}
-      onZoomOut={onZoomOut}
-      onSetPixelsPerSecond={setPixelsPerSecond}
-      exportRange={exportRange}
-      onSetExportRange={setExportRange}
-      selectedIds={selectedIds}
-      onToggleSelect={handleToggleSelect}
-      onRangeSelect={handleRangeSelect}
-      onClearSelection={handleClearSelection}
-      setSelectedIds={setSelectedIds}
-      setSelectedEntityId={setSelectedEntityId}
-    />
+    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', overflow: 'hidden' }}>
+      {isPrefabMode && (
+        <PrefabModeBar
+          prefab={editingPrefab}
+          onExit={onExitPrefabMode}
+          onSave={onSaveCurrentPrefab}
+          onSyncToScene={onSyncPrefabToSceneInstances}
+          isSaved={isPrefabSaved}
+          isSynced={isPrefabSynced}
+        />
+      )}
+      <Timeline
+        tracks={tracks}
+        clips={entities}
+        mediaAssets={mediaAssets}
+        totalDuration={calculatedDuration}
+        pixelsPerSecond={pixelsPerSecond}
+        selectedClipId={selectedEntityId}
+        snappingEnabled={snappingEnabled}
+        recordingTrackId={recordingTrackId}
+        onSeek={(t) => store.seek(t)}
+        onSelectClip={setSelectedEntityId}
+        onUpdateClip={handleUpdateEntity}
+        onUpdateClips={handleUpdateClips}
+        onDuplicateClips={handleDuplicateClips}
+        onUpdateTrack={handleUpdateTrack}
+        onDeleteTrack={handleDeleteTrack}
+        onAddTrack={handleAddTrack}
+        onAddEmptyClip={handleAddEmptyClip}
+        onDropItemOnTrack={handleDropItemOnTrack}
+        onAttachScriptToEntity={handleAttachScriptToEntity}
+        onAddMediaAsset={onAddMediaAsset}
+        onSplitVideoAndAudio={onSplitVideoAndAudio}
+        onToggleRecordTrack={onToggleRecordTrack}
+        onZoomIn={onZoomIn}
+        onZoomOut={onZoomOut}
+        onSetPixelsPerSecond={setPixelsPerSecond}
+        exportRange={exportRange}
+        onSetExportRange={setExportRange}
+        selectedIds={selectedIds}
+        onToggleSelect={handleToggleSelect}
+        onRangeSelect={handleRangeSelect}
+        onClearSelection={handleClearSelection}
+        setSelectedIds={setSelectedIds}
+        setSelectedEntityId={setSelectedEntityId}
+      />
+    </div>
   );
 });
  

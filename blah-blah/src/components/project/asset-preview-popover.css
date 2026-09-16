@@ -100,3 +100,181 @@
   font-size: 9px;
   color: var(--unity-text-dim);
 }
+
+/* Prefab Semi-Timeline Preview styles */
+.asset-hover-preview.is-prefab {
+  width: 340px;
+  max-height: 340px;
+}
+
+.prefab-semi-timeline {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.prefab-badge-duration {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.prefab-preview-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  background: rgba(0, 0, 0, 0.25);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 9px;
+}
+
+.prefab-obj-count {
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.prefab-hierarchy-tag {
+  background: rgba(168, 85, 247, 0.15);
+  color: #c084fc;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 8.5px;
+}
+
+.prefab-hint-edit {
+  margin-left: auto;
+  font-size: 8.5px;
+  color: var(--unity-text-dim);
+  font-style: italic;
+}
+
+.prefab-timeline-stage {
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+  max-height: 250px;
+}
+
+.prefab-time-ruler {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  color: var(--unity-text-dim);
+  padding: 0 4px 2px;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.08);
+}
+
+.prefab-tracks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.prefab-track-row {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border-radius: 4px;
+}
+
+.prefab-track-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.prefab-track-info {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.prefab-child-arrow {
+  color: #a855f7;
+  flex-shrink: 0;
+}
+
+.prefab-track-name {
+  font-size: 9.5px;
+  font-weight: 500;
+  color: #f1f5f9;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prefab-role-pill {
+  font-size: 7.5px;
+  padding: 0 4px;
+  border-radius: 2px;
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+}
+
+.prefab-role-pill.parent {
+  background: rgba(56, 189, 248, 0.2);
+  color: #38bdf8;
+}
+
+.prefab-role-pill.child {
+  background: rgba(168, 85, 247, 0.2);
+  color: #c084fc;
+}
+
+.prefab-bar-lane {
+  position: relative;
+  height: 16px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.prefab-clip-bar {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  border-radius: 2px;
+  display: flex;
+  align-items: center;
+  padding: 0 4px;
+  font-size: 8px;
+  font-family: var(--font-mono);
+  color: rgba(255, 255, 255, 0.9);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.prefab-clip-bar.root-bar {
+  background: linear-gradient(90deg, #0284c7, #0ea5e9);
+  border: 1px solid #38bdf8;
+}
+
+.prefab-clip-bar.child-bar {
+  background: linear-gradient(90deg, #7c3aed, #a855f7);
+  border: 1px solid #c084fc;
+}
+
+.prefab-clip-bar-text {
+  font-weight: 600;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}

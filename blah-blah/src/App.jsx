@@ -1,6 +1,7 @@
  
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useProjectStore } from './hooks/useProjectStore';
+import { useEntityActions } from './hooks/useEntityActions';
 import { usePlaybackController } from './hooks/usePlaybackController';
 import { useMediaAssets } from './hooks/useMediaAssets';
 import { useSharedLibrary } from './hooks/useSharedLibrary';
@@ -25,7 +26,7 @@ import { loadAudioSettings } from './services/audioSettings';
 import { loadKeybindSettings } from './services/keybindSettings';
 import { saveProjectToDirectory } from './services/projectFileSystem';
 import { precompileAllProjectScripts } from './engine/scriptRunner';
-import { removeEntitiesByIds } from './engine/ecs';
+import { isScriptComponent, syncPrefabInstances } from './engine/ecs';
 import { isTauri } from './services/tauriFsAdapter';
 import { importMediaFiles } from './services/mediaImport';
 import { openProjectInExplorer, openProjectInVsCode, openProjectInCursor } from './services/ideLauncher';
@@ -298,7 +299,7 @@ export function App() {
   // Project document model + undo + load paths (the undo-scoped half).
   const {
     entities, tracks, scripts, prefabs,
-    setEntities, setPrefabs,
+    setEntities, setTracks, setPrefabs,
     undo, redo, canUndo, canRedo,
     handleUpdateEntity, handleUpdateClips, handleDuplicateClips,
     handleDeleteEntity, handleRippleTrimToPlayhead, handleSplitEntity,
@@ -307,8 +308,9 @@ export function App() {
     handleSplitVideoAndAudio,
     handleDropItemOnTrack, handleAttachScriptToEntity,
     handleAddTrack, handleUpdateTrack, handleDeleteTrack,
-    handleSaveAsPrefab, handleMovePrefab, handleMoveScript,
+    handleSaveAsPrefab, handleUpdatePrefab, handleMovePrefab, handleMoveScript,
     handleRemovePrefab, handleCreateScript, handleRemoveScript, handleRenameScript, handleSaveScript,
+    handleDetachPrefab, handleRevertToPrefab, handleApplyToPrefab,
     handleApplyProjectJson,
     handleProjectCreated,
     handleOpenProjectFolder, handleOpenRecentProject,
@@ -425,13 +427,191 @@ export function App() {
       handleOpenScriptEditor(newScript);
     } else if (sharedItem.type === 'prefab') {
       if (!data || typeof data !== 'object' || !data.name) return;
+      if (Array.isArray(data.embeddedScripts)) {
+        for (const scr of data.embeddedScripts) {
+          const exists = (scripts || []).some((s) => s.name === scr.name || s.id === scr.id);
+          if (!exists) {
+            await handleCreateScript({
+              id: scr.id || `script-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+              name: scr.name,
+              description: scr.description || `Imported with ${data.name}`,
+              code: scr.code || '',
+            });
+          }
+        }
+      }
       setPrefabs((prev) => [
         ...prev,
         { ...JSON.parse(JSON.stringify(data)), id: `prefab-${Date.now()}` },
       ]);
     }
-  }, [handleCreateScript, setPrefabs]);
- 
+  }, [handleCreateScript, setPrefabs, scripts]);
+
+  // ── Prefab Editing Mode State & Handlers ──────────────────────────────────
+  const [editingPrefabId, setEditingPrefabId] = useState(null);
+  const [prefabEntities, setPrefabEntities] = useState([]);
+  const [isPrefabSaved, setIsPrefabSaved] = useState(true);
+  const [isPrefabSynced, setIsPrefabSynced] = useState(false);
+
+  const editingPrefab = useMemo(() => {
+    if (!editingPrefabId) return null;
+    return prefabs.find((p) => p.id === editingPrefabId) || null;
+  }, [editingPrefabId, prefabs]);
+
+  const isPrefabMode = Boolean(editingPrefabId && editingPrefab);
+
+  const setPrefabEntitiesWithDirty = useCallback((updater) => {
+    setPrefabEntities((prev) => (typeof updater === 'function' ? updater(prev) : updater));
+    setIsPrefabSaved(false);
+    setIsPrefabSynced(false);
+  }, []);
+
+  const prefabEntityActions = useEntityActions({
+    entities: prefabEntities,
+    tracks,
+    scripts,
+    prefabs,
+    mediaAssets,
+    setEntities: setPrefabEntitiesWithDirty,
+    setTracks,
+    setProjectHistoryState: (updater) => {
+      if (typeof updater === 'function') {
+        const next = updater({ tracks, entities: prefabEntities });
+        if (next.tracks) setTracks(next.tracks);
+        if (next.entities) setPrefabEntitiesWithDirty(next.entities);
+      }
+    },
+    selectedEntityId,
+    setSelectedEntityId,
+    getPlaybackTime,
+  });
+
+  const handleEnterPrefabMode = useCallback((prefabId) => {
+    const p = prefabs.find((item) => item.id === prefabId);
+    if (!p) return;
+    setEditingPrefabId(prefabId);
+    let initialEntities = [];
+    if (Array.isArray(p.entities) && p.entities.length > 0) {
+      initialEntities = JSON.parse(JSON.stringify(p.entities));
+    } else {
+      initialEntities = [{
+        id: p.rootId || `prefab-root-${Date.now()}`,
+        name: p.name ? p.name.replace(/ Prefab$/, '') : 'Prefab Root',
+        trackId: tracks[0]?.id || 'track-1',
+        startTime: 0,
+        duration: p.duration || 5,
+        components: JSON.parse(JSON.stringify(p.components || [])),
+        parentId: null,
+      }];
+    }
+    // Ensure all entities have a valid trackId
+    const trackIds = new Set(tracks.map((t) => t.id));
+    initialEntities.forEach((ent) => {
+      if (!ent.trackId || !trackIds.has(ent.trackId)) {
+        ent.trackId = tracks[0]?.id || 'track-1';
+      }
+    });
+    setPrefabEntities(initialEntities);
+    setIsPrefabSaved(true);
+    setSelectedEntityId(initialEntities[0]?.id || null);
+    setSelectedIds([]);
+  }, [prefabs, tracks]);
+
+  const handleSaveCurrentPrefab = useCallback(async () => {
+    if (!editingPrefabId || !editingPrefab) return;
+    const maxDuration = Math.max(
+      ...prefabEntities.map((e) => (e.startTime || 0) + (e.duration || 0)),
+      1
+    );
+    const rootEntity = prefabEntities.find((e) => !e.parentId) || prefabEntities[0];
+
+    // Collect all referenced scripts
+    const usedScriptIds = new Set();
+    prefabEntities.forEach((snap) => {
+      (snap.components || []).forEach((c) => {
+        if (isScriptComponent(c) && c.scriptId) {
+          usedScriptIds.add(c.scriptId);
+        }
+      });
+    });
+    const embeddedScripts = (scripts || [])
+      .filter((s) => usedScriptIds.has(s.id))
+      .map((s) => ({
+        id: s.id,
+        name: s.name,
+        description: s.description || '',
+        code: s.code || '',
+      }));
+
+    const updatedData = {
+      rootId: rootEntity ? rootEntity.id : editingPrefab.rootId,
+      entities: prefabEntities,
+      duration: maxDuration,
+      components: rootEntity ? rootEntity.components : (editingPrefab.components || []),
+      embeddedScripts,
+    };
+    await handleUpdatePrefab(editingPrefabId, updatedData);
+    setIsPrefabSaved(true);
+  }, [editingPrefabId, editingPrefab, prefabEntities, scripts, handleUpdatePrefab]);
+
+  // Sync Prefab changes to all instances across the scene timeline
+  const handleSyncPrefabToSceneInstances = useCallback(async () => {
+    if (!editingPrefabId || !editingPrefab) return;
+    const maxDuration = Math.max(
+      ...prefabEntities.map((e) => (e.startTime || 0) + (e.duration || 0)),
+      1
+    );
+    const rootEntity = prefabEntities.find((e) => !e.parentId) || prefabEntities[0];
+
+    // Collect all referenced scripts
+    const usedScriptIds = new Set();
+    prefabEntities.forEach((snap) => {
+      (snap.components || []).forEach((c) => {
+        if (isScriptComponent(c) && c.scriptId) {
+          usedScriptIds.add(c.scriptId);
+        }
+      });
+    });
+    const embeddedScripts = (scripts || [])
+      .filter((s) => usedScriptIds.has(s.id))
+      .map((s) => ({
+        id: s.id,
+        name: s.name,
+        description: s.description || '',
+        code: s.code || '',
+      }));
+
+    const updatedData = {
+      rootId: rootEntity ? rootEntity.id : editingPrefab.rootId,
+      entities: prefabEntities,
+      duration: maxDuration,
+      components: rootEntity ? rootEntity.components : (editingPrefab.components || []),
+      embeddedScripts,
+    };
+    await handleUpdatePrefab(editingPrefabId, updatedData);
+    setIsPrefabSaved(true);
+
+    // Sync all timeline instances
+    setEntities((prev) =>
+      syncPrefabInstances(prev, editingPrefabId, prefabEntities, rootEntity ? rootEntity.id : null)
+    );
+
+    setIsPrefabSynced(true);
+    setTimeout(() => setIsPrefabSynced(false), 2500);
+  }, [editingPrefabId, editingPrefab, prefabEntities, scripts, handleUpdatePrefab, setEntities]);
+
+  const handleExitPrefabMode = useCallback(() => {
+    if (editingPrefabId && !isPrefabSaved) {
+      handleSaveCurrentPrefab();
+    }
+    setEditingPrefabId(null);
+    setPrefabEntities([]);
+    setSelectedEntityId(null);
+    setSelectedIds([]);
+    setIsPrefabSaved(true);
+    setIsPrefabSynced(false);
+  }, [editingPrefabId, isPrefabSaved, handleSaveCurrentPrefab]);
+
   // Calculate timeline duration based on entity placements
   // BUG FIX -- this used to return a fabricated `30` when there were no
   // clips at all, which useTimelinePlayback then treated as a completely
@@ -447,6 +627,16 @@ export function App() {
     const maxEnd = Math.max(...entities.map((e) => e.startTime + e.duration));
     return Math.max(30, Math.ceil(maxEnd + 5));
   }, [entities]);
+
+  const activeEntities = isPrefabMode ? prefabEntities : entities;
+  const activeDuration = useMemo(() => {
+    if (isPrefabMode) {
+      if (prefabEntities.length === 0) return 0;
+      const maxEnd = Math.max(...prefabEntities.map((e) => (e.startTime || 0) + (e.duration || 0)));
+      return Math.max(10, Math.ceil(maxEnd + 2));
+    }
+    return calculatedDuration;
+  }, [isPrefabMode, prefabEntities, calculatedDuration]);
  
   // Current project state object
   const projectState = useMemo(() => ({
@@ -513,7 +703,7 @@ export function App() {
       items: [
         { label: 'New Project', shortcut: 'Ctrl+N', icon: <FilePlus size={13} />, onClick: () => setIsNewProjectOpen(true) },
         { label: 'Open Project...', shortcut: 'Ctrl+O', icon: <FolderOpen size={13} />, onClick: handleOpenProjectFolder },
-        { label: 'Save Project', shortcut: keybinds.saveProject, icon: <Save size={13} />, onClick: handleSaveProjectToDisk, disabled: !projectFolderHandle },
+        { label: isPrefabMode ? 'Save Prefab' : 'Save Project', shortcut: keybinds.saveProject, icon: <Save size={13} />, onClick: isPrefabMode ? handleSaveCurrentPrefab : handleSaveProjectToDisk, disabled: isPrefabMode ? false : !projectFolderHandle },
         { type: 'separator' },
         { label: 'Export Render...', shortcut: 'Ctrl+E', icon: <Download size={13} />, onClick: () => setIsExportOpen(true) },
         { type: 'separator' },
@@ -528,8 +718,8 @@ export function App() {
         { label: 'Undo', shortcut: keybinds.undo, icon: <Undo2 size={13} />, onClick: undo, disabled: !canUndo },
         { label: 'Redo', shortcut: keybinds.redo, icon: <Redo2 size={13} />, onClick: redo, disabled: !canRedo },
         { type: 'separator' },
-        { label: 'Split Clip (Cut)', shortcut: keybinds.splitSelected, icon: <Scissors size={13} />, onClick: () => selectedEntityId && handleSplitEntity(selectedEntityId), disabled: !selectedEntityId },
-        { label: 'Delete Clip', shortcut: keybinds.deleteSelected, icon: <Trash2 size={13} />, onClick: () => selectedEntityId && handleDeleteEntity(selectedEntityId), disabled: !selectedEntityId, danger: true },
+        { label: 'Split Clip (Cut)', shortcut: keybinds.splitSelected, icon: <Scissors size={13} />, onClick: () => selectedEntityId && (isPrefabMode ? prefabEntityActions.handleSplitEntity(selectedEntityId) : handleSplitEntity(selectedEntityId)), disabled: !selectedEntityId },
+        { label: 'Delete Clip', shortcut: keybinds.deleteSelected, icon: <Trash2 size={13} />, onClick: () => selectedEntityId && (isPrefabMode ? prefabEntityActions.handleDeleteEntity(selectedEntityId) : handleDeleteEntity(selectedEntityId)), disabled: !selectedEntityId, danger: true },
       ],
     },
     {
@@ -562,9 +752,9 @@ export function App() {
     },
   ], [
     canUndo, canRedo, undo, redo, selectedEntityId, keybinds,
-    handleSplitEntity, handleDeleteEntity, handleOpenProjectFolder,
-    handleSaveProjectToDisk,
-    projectFolderHandle,
+    handleSplitEntity, handleDeleteEntity, prefabEntityActions, handleOpenProjectFolder,
+    handleSaveProjectToDisk, handleSaveCurrentPrefab,
+    projectFolderHandle, isPrefabMode,
     openOrFocusPanel, addNewPanelInstance, popoutActivePanel, floatActivePanel, handleResetLayout,
   ]);
  
@@ -624,20 +814,27 @@ export function App() {
  
   return (
     <ErrorBoundary>
-    <PlaybackProvider totalDuration={calculatedDuration}>
+     <PlaybackProvider totalDuration={activeDuration}>
       <PlaybackStoreBridge storeRef={playbackStoreRef} />
       <EditorPlaybackShortcuts
-        entities={entities}
+        entities={activeEntities}
         selectedEntityId={selectedEntityId}
         selectedIds={selectedIds}
         onSplitSelected={() => {
           const ids = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
-          if (ids.length > 0) handleSplitEntity(ids);
+          if (ids.length > 0) {
+            if (isPrefabMode) prefabEntityActions.handleSplitEntity(ids);
+            else handleSplitEntity(ids);
+          }
         }}
         onDeleteSelected={() => {
           const idsToDelete = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
           if (idsToDelete.length > 0) {
-            setEntities((prev) => removeEntitiesByIds(prev, Array.from(new Set(idsToDelete))));
+            if (isPrefabMode) {
+              prefabEntityActions.handleDeleteEntity(idsToDelete);
+            } else {
+              handleDeleteEntity(idsToDelete);
+            }
             setSelectedIds([]);
             setSelectedEntityId(null);
           }
@@ -645,17 +842,28 @@ export function App() {
         onDeleteMultiple={() => {
           const idsToDelete = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
           if (idsToDelete.length > 0) {
-            setEntities((prev) => removeEntitiesByIds(prev, Array.from(new Set(idsToDelete))));
+            if (isPrefabMode) {
+              prefabEntityActions.handleDeleteEntity(idsToDelete);
+            } else {
+              handleDeleteEntity(idsToDelete);
+            }
             setSelectedIds([]);
             setSelectedEntityId(null);
           }
         }}
-        onRippleDeleteBefore={(anchorId) => handleRippleTrimToPlayhead(anchorId, 'before')}
-        onRippleDeleteAfter={(anchorId) => handleRippleTrimToPlayhead(anchorId, 'after')}
+        onRippleDeleteBefore={(anchorId) => {
+          if (isPrefabMode) prefabEntityActions.handleRippleTrimToPlayhead(anchorId, 'before');
+          else handleRippleTrimToPlayhead(anchorId, 'before');
+        }}
+        onRippleDeleteAfter={(anchorId) => {
+          if (isPrefabMode) prefabEntityActions.handleRippleTrimToPlayhead(anchorId, 'after');
+          else handleRippleTrimToPlayhead(anchorId, 'after');
+        }}
         onDuplicateSelected={() => {
           const ids = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
           if (ids.length > 0) {
-            const newIds = handleDuplicateClips(ids);
+            const handler = isPrefabMode ? prefabEntityActions.handleDuplicateClips : handleDuplicateClips;
+            const newIds = handler(ids);
             if (newIds && newIds.length > 0) {
               setSelectedIds(newIds);
               setSelectedEntityId(newIds[0]);
@@ -663,7 +871,7 @@ export function App() {
           }
         }}
         onSelectAll={() => {
-          const allIds = entities.map(e => e.id);
+          const allIds = activeEntities.map(e => e.id);
           setSelectedIds(allIds);
           setSelectedEntityId(allIds[0] || null);
         }}
@@ -671,7 +879,7 @@ export function App() {
           setSelectedIds([]);
           setSelectedEntityId(null);
         }}
-        onSaveProject={handleSaveProjectToDisk}
+        onSaveProject={isPrefabMode ? handleSaveCurrentPrefab : handleSaveProjectToDisk}
         onUndo={undo}
         onRedo={redo}
         onToggleSnapping={() => setSnappingEnabled((prev) => !prev)}
@@ -679,42 +887,42 @@ export function App() {
         onZoomOut={handleZoomOut}
         onSetExportRange={setExportRange}
         exportRange={exportRange}
-        totalDuration={calculatedDuration}
+        totalDuration={activeDuration}
       />
       <div className="app-container">
       {/* Top Menu Bar — Unity-style File/Edit/View menus. In the
           frameless desktop build the right end carries window controls
           and a drag region (see framelessChrome above). */}
       <MenuBar menus={menuBarConfig} trailing={framelessChrome} />
- 
+
       {/* Top Navigation Bar */}
       <EditorHeader
         projectName={projectName}
         setProjectName={setProjectName}
-        totalDuration={calculatedDuration}
+        totalDuration={activeDuration}
         pixelsPerSecond={pixelsPerSecond}
         snappingEnabled={snappingEnabled}
         hasSelectedEntity={!!selectedEntityId}
         projectFolderHandle={projectFolderHandle}
-        saveStatus={saveStatus}
+        saveStatus={isPrefabMode ? (isPrefabSaved ? 'saved' : 'in-memory') : saveStatus}
         schemaWarning={schemaWarning}
         canUndo={canUndo}
         canRedo={canRedo}
         onSetPixelsPerSecond={setPixelsPerSecond}
         onSetSnappingEnabled={setSnappingEnabled}
-        onSplitSelected={() => selectedEntityId && handleSplitEntity(selectedEntityId)}
-        onDeleteSelected={() => selectedEntityId && handleDeleteEntity(selectedEntityId)}
+        onSplitSelected={() => selectedEntityId && (isPrefabMode ? prefabEntityActions.handleSplitEntity(selectedEntityId) : handleSplitEntity(selectedEntityId))}
+        onDeleteSelected={() => selectedEntityId && (isPrefabMode ? prefabEntityActions.handleDeleteEntity(selectedEntityId) : handleDeleteEntity(selectedEntityId))}
         onUndo={undo}
         onRedo={redo}
         onOpenProjectJson={() => setIsProjectJsonOpen(true)}
         onOpenExport={() => setIsExportOpen(true)}
         onNewProject={() => setIsNewProjectOpen(true)}
         onOpenProjectFolder={handleOpenProjectFolder}
-        onSaveProjectToDisk={handleSaveProjectToDisk}
+        onSaveProjectToDisk={isPrefabMode ? handleSaveCurrentPrefab : handleSaveProjectToDisk}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onGoToHub={() => setScreen('hub')}
       />
- 
+
       {/* Unity-style dockable workspace: every panel below (Project,
           Preview, Inspector, Timeline) can be dragged to any edge,
           split, or merged into tabs, same as Unity's editor windows.
@@ -723,12 +931,17 @@ export function App() {
       <EditorContext.Provider
         value={{
           // data
-          entities, tracks, scripts, prefabs, mediaAssets,
+          entities: activeEntities,
+          tracks, scripts, prefabs, mediaAssets,
           projectFolderHandle,
-          calculatedDuration,
+          calculatedDuration: activeDuration,
           selectedEntityId, pixelsPerSecond, snappingEnabled, resolution,
           fps: projectState.fps,
           autoKeyEnabled,
+          isPrefabMode,
+          editingPrefab,
+          isPrefabSaved,
+          isPrefabSynced,
           // setters
           setSelectedEntityId,
           setAutoKeyEnabled,
@@ -736,10 +949,23 @@ export function App() {
           setSnappingEnabled,
           // handlers
           undo, redo, canUndo, canRedo,
-          handleUpdateEntity, handleUpdateClips, handleDuplicateClips,
-          handleDeleteEntity, handleSplitEntity, handleSaveAsPrefab,
-          handleUpdateTrack, handleDeleteTrack, handleAddTrack, handleAddEmptyClip,
-          handleDropItemOnTrack, handleAttachScriptToEntity,
+          handleUpdateEntity: isPrefabMode ? prefabEntityActions.handleUpdateEntity : handleUpdateEntity,
+          handleUpdateClips: isPrefabMode ? prefabEntityActions.handleUpdateClips : handleUpdateClips,
+          handleDuplicateClips: isPrefabMode ? prefabEntityActions.handleDuplicateClips : handleDuplicateClips,
+          handleDeleteEntity: isPrefabMode ? prefabEntityActions.handleDeleteEntity : handleDeleteEntity,
+          handleSplitEntity: isPrefabMode ? prefabEntityActions.handleSplitEntity : handleSplitEntity,
+          handleSaveAsPrefab,
+          handleUpdateTrack, handleDeleteTrack, handleAddTrack,
+          handleAddEmptyClip: isPrefabMode ? prefabEntityActions.handleAddEmptyClip : handleAddEmptyClip,
+          handleDropItemOnTrack: isPrefabMode ? prefabEntityActions.handleDropItemOnTrack : handleDropItemOnTrack,
+          handleAttachScriptToEntity: isPrefabMode ? prefabEntityActions.handleAttachScriptToEntity : handleAttachScriptToEntity,
+          onEnterPrefabMode: handleEnterPrefabMode,
+          onExitPrefabMode: handleExitPrefabMode,
+          onSaveCurrentPrefab: handleSaveCurrentPrefab,
+          onSyncPrefabToSceneInstances: handleSyncPrefabToSceneInstances,
+          onDetachPrefab: handleDetachPrefab,
+          onRevertToPrefab: handleRevertToPrefab,
+          onApplyToPrefab: handleApplyToPrefab,
           selectedKeyId, setSelectedKeyId,
           selectedIds, setSelectedIds,
           recordingTrackId,
@@ -757,10 +983,10 @@ export function App() {
           onRenameScript: handleRenameScript,
           onRenameMediaAsset: handleRenameMediaAsset,
           onOpenScriptEditor: handleOpenScriptEditor,
-          onAddPrefabToTimeline: handleAddPrefabToTimeline,
-          onAddMediaToTimeline: handleAddMediaToTimeline,
-          handleSplitVideoAndAudio,
-          onSplitVideoAndAudio: handleSplitVideoAndAudio,
+          onAddPrefabToTimeline: isPrefabMode ? prefabEntityActions.handleAddPrefabToTimeline : handleAddPrefabToTimeline,
+          onAddMediaToTimeline: isPrefabMode ? prefabEntityActions.handleAddMediaToTimeline : handleAddMediaToTimeline,
+          handleSplitVideoAndAudio: isPrefabMode ? prefabEntityActions.handleSplitVideoAndAudio : handleSplitVideoAndAudio,
+          onSplitVideoAndAudio: isPrefabMode ? prefabEntityActions.handleSplitVideoAndAudio : handleSplitVideoAndAudio,
           // App-wide Shared Library (project-panel "shared" folder)
           sharedLibraryItems: sharedLibrary.items,
           onSharePrefab: handleSharePrefab,

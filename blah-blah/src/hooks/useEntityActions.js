@@ -3,6 +3,7 @@ import {
   createGameObject,
   createDefaultTransform,
   removeEntitiesByIds,
+  syncPrefabInstances,
 } from '../engine/ecs';
 import { detectScriptKind, extractScriptProps } from '../engine/scriptRunner';
  
@@ -49,6 +50,7 @@ export function useEntityActions({
   selectedEntityId,
   setSelectedEntityId,
   getPlaybackTime,
+  handleUpdatePrefab,
 }) {
   // Update entity properties / components. Coalesced: this fires on every
   // intermediate value while dragging a clip or scrubbing an Inspector
@@ -133,9 +135,10 @@ export function useEntityActions({
   }, [setEntities, selectedEntityId, setSelectedEntityId]);
  
   // Delete entity.
-  const handleDeleteEntity = useCallback((entityId) => {
+  const handleDeleteEntity = useCallback((entityIdOrIds) => {
+    const ids = Array.isArray(entityIdOrIds) ? entityIdOrIds : [entityIdOrIds];
     setEntities((prev) => {
-      const next = removeEntitiesByIds(prev, [entityId]);
+      const next = removeEntitiesByIds(prev, ids);
       if (selectedEntityId && !next.some((e) => e.id === selectedEntityId)) {
         setSelectedEntityId(null);
       }
@@ -184,7 +187,7 @@ export function useEntityActions({
   // Batch update multiple entities atomically
   const handleUpdateClips = useCallback((updatesList) => {
     if (!updatesList || updatesList.length === 0) return;
-    const updatesMap = new Map(updatesList.map(u => [u.id, u.updates]));
+    const updatesMap = new Map(updatesList.map(u => [u.id, u.updates !== undefined ? u.updates : u]));
     setEntities(prev => prev.map(e => {
       const u = updatesMap.get(e.id);
       return u ? { ...e, ...u } : e;
@@ -378,6 +381,8 @@ export function useEntityActions({
       ? prefab.entities
       : null;
  
+    const prefabInstanceId = `pinst-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+
     if (!snapshots) {
       const newGO = createGameObject({
         name: prefab.name.replace(/\.prefab(\.json)?$/i, ''),
@@ -385,7 +390,10 @@ export function useEntityActions({
         startTime: startTime ?? getPlaybackTime(),
         duration: 5,
         type: prefab.type || 'text',
-        components: JSON.parse(JSON.stringify(prefab.components || []))
+        components: JSON.parse(JSON.stringify(prefab.components || [])),
+        prefabAssetId: prefab.id,
+        prefabInstanceId,
+        prefabSourceSnapId: prefab.rootId || 'root',
       });
       setEntities(prev => [...prev, newGO]);
       setSelectedEntityId(newGO.id);
@@ -408,12 +416,16 @@ export function useEntityActions({
       const trackId = isSnapRoot
         ? targetTrackId
         : (trackIds.has(snap.trackId) ? snap.trackId : targetTrackId);
-      // Strip any legacy group/parent fields from old saved prefabs.
+      const mappedParentId = snap.parentId ? (oldToNew.get(snap.parentId) || null) : null;
       const { linkGroupId: _linkGroupId, parentId: _parentId, ...rest } = snap;
       return {
         ...rest,
         id: oldToNew.get(snap.id),
+        prefabAssetId: prefab.id,
+        prefabInstanceId,
+        prefabSourceSnapId: snap.id,
         trackId,
+        parentId: isSnapRoot ? null : mappedParentId,
         startTime: isSnapRoot
           ? Math.max(0, start)
           : Math.max(0, start + ((snap.startTime ?? rootStart) - rootStart)),
@@ -423,10 +435,162 @@ export function useEntityActions({
           : [],
       };
     });
- 
+
+    // If the prefab has embeddedScripts that are missing from the project, auto-restore them!
+    const missingScripts = (prefab.embeddedScripts || []).filter(
+      (es) => !scripts.some((s) => s.id === es.id || s.name === es.name)
+    );
+
+    if (missingScripts.length > 0 && setProjectHistoryState) {
+      const newScriptsToAdd = missingScripts.map((es) => ({
+        id: es.id || `script-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        name: es.name,
+        description: es.description || `Auto-imported from ${prefab.name}`,
+        code: es.code || '',
+      }));
+      setProjectHistoryState((prev) => ({
+        ...prev,
+        scripts: [...(prev.scripts || []), ...newScriptsToAdd],
+        entities: [...(prev.entities || []), ...newClips],
+      }));
+      setSelectedEntityId(newClips[0]?.id || null);
+      return;
+    }
+
     setEntities(prev => [...prev, ...newClips]);
     setSelectedEntityId(newClips[0]?.id || null);
   };
+
+  // Detach / Unpack Prefab: breaks the link to the prefab asset, turning it into regular clips
+  const handleDetachPrefab = useCallback((entityId) => {
+    if (!entityId) return;
+    setEntities((prev) => {
+      const target = prev.find((e) => e.id === entityId);
+      if (!target) return prev;
+      const instId = target.prefabInstanceId;
+      return prev.map((e) => {
+        if ((instId && e.prefabInstanceId === instId) || e.id === entityId) {
+          const { prefabAssetId: _pa, prefabInstanceId: _pi, prefabSourceSnapId: _ps, ...rest } = e;
+          return rest;
+        }
+        return e;
+      });
+    });
+  }, [setEntities]);
+
+  // Revert timeline instance to original prefab snapshot values
+  const handleRevertToPrefab = useCallback((entityId) => {
+    if (!entityId) return;
+    const target = entities.find((e) => e.id === entityId);
+    if (!target || !target.prefabAssetId) return;
+    const prefab = prefabs.find((p) => p.id === target.prefabAssetId);
+    if (!prefab) return;
+
+    const snapshots = Array.isArray(prefab.entities) && prefab.entities.length > 0
+      ? prefab.entities
+      : [{ id: prefab.rootId || 'root', name: prefab.name.replace(/\.prefab(\.json)?$/i, ''), components: prefab.components || [] }];
+
+    const snapRoot = snapshots.find((e) => e.id === prefab.rootId) || snapshots[0];
+    const instId = target.prefabInstanceId;
+
+    setEntities((prev) => {
+      return prev.map((e) => {
+        if (instId ? e.prefabInstanceId === instId : e.id === entityId) {
+          const snap = snapshots.find((s) => s.id === e.prefabSourceSnapId) ||
+            (e.id === target.id ? snapRoot : null);
+          if (snap) {
+            return {
+              ...e,
+              name: snap.name || e.name,
+              duration: snap.duration ?? e.duration,
+              components: JSON.parse(JSON.stringify(snap.components || [])),
+            };
+          }
+        }
+        return e;
+      });
+    });
+  }, [entities, prefabs, setEntities]);
+
+  // Apply timeline instance changes back to the source Prefab asset
+  const handleApplyToPrefab = useCallback(async (entityId) => {
+    if (!entityId || !handleUpdatePrefab) return;
+    const target = entities.find((e) => e.id === entityId);
+    if (!target || !target.prefabAssetId) return;
+    const prefab = prefabs.find((p) => p.id === target.prefabAssetId);
+    if (!prefab) return;
+
+    const instId = target.prefabInstanceId;
+    const instanceClips = instId
+      ? entities.filter((e) => e.prefabInstanceId === instId)
+      : [target];
+
+    // Find the root clip of this instance group
+    const rootClip = instanceClips.find((e) => !e.parentId) || target;
+    const rootStartTime = rootClip.startTime || 0;
+
+    // Map clip.id to snapId to preserve existing snapshot IDs
+    const clipIdToSnapId = new Map();
+    instanceClips.forEach((obj) => {
+      const snapId = obj.prefabSourceSnapId || obj.id;
+      clipIdToSnapId.set(obj.id, snapId);
+    });
+
+    const rootSnapId = clipIdToSnapId.get(rootClip.id);
+
+    // Snapshot each object in the instance group, normalizing relative start times
+    const updatedSnapshots = instanceClips.map((obj) => {
+      const clone = JSON.parse(JSON.stringify(obj));
+      const snapId = clipIdToSnapId.get(obj.id);
+      clone.id = snapId;
+      if (obj.id === rootClip.id || !obj.parentId) {
+        clone.parentId = null;
+      } else {
+        clone.parentId = clipIdToSnapId.get(obj.parentId) || null;
+      }
+      clone.startTime = Math.max(0, (obj.startTime || 0) - rootStartTime);
+      delete clone.prefabAssetId;
+      delete clone.prefabInstanceId;
+      delete clone.prefabSourceSnapId;
+      return clone;
+    });
+
+    const maxDuration = Math.max(
+      ...updatedSnapshots.map((s) => (s.startTime || 0) + (s.duration || 0)),
+      1
+    );
+
+    // Extract any scripts referenced
+    const usedScriptIds = new Set();
+    updatedSnapshots.forEach((snap) => {
+      (snap.components || []).forEach((c) => {
+        if (isScriptComponent(c) && c.scriptId) {
+          usedScriptIds.add(c.scriptId);
+        }
+      });
+    });
+    const embeddedScripts = (scripts || [])
+      .filter((s) => usedScriptIds.has(s.id))
+      .map((s) => ({
+        id: s.id,
+        name: s.name,
+        description: s.description || '',
+        code: s.code || '',
+      }));
+
+    const updatedData = {
+      rootId: rootSnapId,
+      entities: updatedSnapshots,
+      components: rootClip.components ? JSON.parse(JSON.stringify(rootClip.components)) : [],
+      duration: maxDuration,
+      embeddedScripts,
+    };
+
+    await handleUpdatePrefab(prefab.id, updatedData);
+
+    // Sync all instances of this prefab on the timeline so they receive the applied changes!
+    setEntities((prev) => syncPrefabInstances(prev, prefab.id, updatedSnapshots, rootSnapId));
+  }, [entities, prefabs, scripts, handleUpdatePrefab, setEntities]);
  
   // Add Media to Timeline. When placing a video asset, split into Video and Audio clips,
   // where the Audio clip is always parented to the Video clip.
@@ -707,5 +871,8 @@ export function useEntityActions({
     handleAddTrack,
     handleUpdateTrack,
     handleDeleteTrack,
+    handleDetachPrefab,
+    handleRevertToPrefab,
+    handleApplyToPrefab,
   };
 }

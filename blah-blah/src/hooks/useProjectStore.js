@@ -102,6 +102,15 @@ export function useProjectStore({
     }), options);
   }, [setProjectHistoryState]);
  
+  const prefabScriptActions = usePrefabScriptActions({
+    entities,
+    prefabs,
+    scripts,
+    setPrefabs,
+    setScripts,
+    projectFolderHandle,
+  });
+
   const entityActions = useEntityActions({
     entities,
     tracks,
@@ -114,13 +123,7 @@ export function useProjectStore({
     selectedEntityId,
     setSelectedEntityId,
     getPlaybackTime,
-  });
- 
-  const prefabScriptActions = usePrefabScriptActions({
-    scripts,
-    setPrefabs,
-    setScripts,
-    projectFolderHandle,
+    handleUpdatePrefab: prefabScriptActions.handleUpdatePrefab,
   });
  
   const projectFileActions = useProjectFileActions({

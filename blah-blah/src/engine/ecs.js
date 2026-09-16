@@ -315,5 +315,130 @@ export function removeEntitiesByIds(entities, idsToRemove) {
  
   return list.filter((e) => !doomed.has(e.id));
 }
+
+/**
+ * Synchronize timeline instances of a prefab with its updated snapshots.
+ * - Updates components, duration, name, and keyframes of existing instance clips.
+ * - Spawns newly added child snapshots into existing instance groups.
+ * - Removes any child clips whose source snapshot was deleted.
+ * - Preserves timeline placement (startTime, trackId), instance links, and unrelated clips.
+ */
+export function syncPrefabInstances(entities, prefabAssetId, prefabSnapshots, rootId = null) {
+  if (!Array.isArray(entities) || !prefabAssetId || !Array.isArray(prefabSnapshots) || prefabSnapshots.length === 0) {
+    return entities;
+  }
+
+  const snapMap = new Map();
+  prefabSnapshots.forEach((s) => snapMap.set(s.id, s));
+  const snapRoot = (rootId ? snapMap.get(rootId) : null) ||
+    prefabSnapshots.find((s) => !s.parentId) ||
+    prefabSnapshots[0];
+
+  const validSnapIds = new Set(prefabSnapshots.map((s) => s.id));
+
+  // Group entities by prefabInstanceId (or fallback to entity.id)
+  const instanceGroups = new Map();
+  entities.forEach((e) => {
+    if (e.prefabAssetId === prefabAssetId) {
+      const key = e.prefabInstanceId || e.id;
+      if (!instanceGroups.has(key)) instanceGroups.set(key, []);
+      instanceGroups.get(key).push(e);
+    }
+  });
+
+  if (instanceGroups.size === 0) return entities;
+
+  const newEntities = [];
+  const handledInstanceIds = new Set();
+
+  for (const e of entities) {
+    if (e.prefabAssetId !== prefabAssetId) {
+      newEntities.push(e);
+      continue;
+    }
+
+    const instId = e.prefabInstanceId || e.id;
+    if (handledInstanceIds.has(instId)) {
+      continue;
+    }
+    handledInstanceIds.add(instId);
+
+    const groupClips = instanceGroups.get(instId) || [e];
+    const rootClip = groupClips.find((c) => !c.parentId) || groupClips[0];
+    const rootStartTime = rootClip.startTime || 0;
+
+    // Map existing clips by snapId
+    const existingBySnap = new Map();
+    const clipIdBySnapId = new Map();
+
+    groupClips.forEach((c) => {
+      let snapId = c.prefabSourceSnapId;
+      if (!snapId && c.id === rootClip.id && snapRoot) {
+        snapId = snapRoot.id;
+      }
+      if (snapId && validSnapIds.has(snapId)) {
+        existingBySnap.set(snapId, c);
+        clipIdBySnapId.set(snapId, c.id);
+      }
+    });
+
+    if (snapRoot && !clipIdBySnapId.has(snapRoot.id)) {
+      clipIdBySnapId.set(snapRoot.id, rootClip.id);
+    }
+
+    // Allocate IDs for any new snapshots
+    prefabSnapshots.forEach((snap) => {
+      if (!clipIdBySnapId.has(snap.id)) {
+        clipIdBySnapId.set(snap.id, `go-${crypto.randomUUID()}`);
+      }
+    });
+
+    // Output synchronized clips for each snapshot in the prefab
+    prefabSnapshots.forEach((snap) => {
+      const existing = existingBySnap.get(snap.id);
+      const isRoot = snap.id === (snapRoot ? snapRoot.id : null);
+      const clipId = clipIdBySnapId.get(snap.id);
+      const parentClipId = isRoot ? null : (snap.parentId ? (clipIdBySnapId.get(snap.parentId) || rootClip.id) : null);
+
+      if (existing) {
+        newEntities.push({
+          ...existing,
+          id: clipId,
+          name: snap.name || existing.name,
+          duration: snap.duration ?? existing.duration,
+          parentId: parentClipId,
+          components: JSON.parse(JSON.stringify(snap.components || [])),
+          keyframes: snap.keyframes ? JSON.parse(JSON.stringify(snap.keyframes)) : existing.keyframes,
+          prefabAssetId,
+          prefabInstanceId: instId,
+          prefabSourceSnapId: snap.id,
+        });
+      } else {
+        // Newly added snapshot in Prefab: spawn child into this instance group
+        newEntities.push({
+          id: clipId,
+          name: snap.name || 'Prefab Child',
+          trackId: snap.trackId || rootClip.trackId,
+          startTime: Math.max(0, rootStartTime + (snap.startTime || 0)),
+          duration: snap.duration ?? 5,
+          type: snap.type || 'video',
+          src: snap.src || '',
+          active: snap.active !== false,
+          color: snap.color || rootClip.color,
+          tag: snap.tag || 'Untagged',
+          layer: snap.layer || 'Default',
+          parentId: parentClipId,
+          components: JSON.parse(JSON.stringify(snap.components || [])),
+          keyframes: snap.keyframes ? JSON.parse(JSON.stringify(snap.keyframes)) : {},
+          prefabAssetId,
+          prefabInstanceId: instId,
+          prefabSourceSnapId: snap.id,
+        });
+      }
+    });
+  }
+
+  return newEntities;
+}
  
  

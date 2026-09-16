@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { removeEntitiesByIds, createGameObject } from '../src/engine/ecs.js';
+import { removeEntitiesByIds, createGameObject, migrateEntities } from '../src/engine/ecs.js';
 import { computeActiveEntitiesAtTime, composeTransform2D } from '../src/engine/renderPipeline.js';
 
 let passed = 0;
@@ -463,6 +463,93 @@ test('speed sync: changing parent speed syncs children speed, duration, and rela
   assert.equal(nextGrandchild.startTime, 3);
   assert.equal(nextGrandchild.duration, 2); // 4 * 0.5 = 2s
   assert.equal(nextGrandchild.components[0].speed, 2);
+});
+
+// ─── 5. Persistence across Save / Load (project.json serialization) ───────────
+
+test('persistence: parentId, color, and prefab metadata survive project.json serialization and reload', () => {
+  const originalEntities = [
+    {
+      id: 'parent-1',
+      name: 'Parent GameObject',
+      trackId: 'track-1',
+      startTime: 0,
+      duration: 10,
+      type: 'video',
+      src: 'test.mp4',
+      active: true,
+      color: '#ff0000',
+      tag: 'Player',
+      layer: 'Characters',
+      parentId: null,
+      prefabAssetId: 'prefab-123',
+      prefabInstanceId: 'inst-999',
+      prefabSourceSnapId: 'snap-1',
+      components: [{ type: 'Transform', x: 100, y: 50 }],
+      keyframes: {},
+    },
+    {
+      id: 'child-1',
+      name: 'Child GameObject',
+      trackId: 'track-2',
+      startTime: 2,
+      duration: 5,
+      type: 'audio',
+      src: 'test.mp3',
+      active: true,
+      color: '#00ff00',
+      tag: 'Sound',
+      layer: 'Audio',
+      parentId: 'parent-1',
+      prefabAssetId: 'prefab-123',
+      prefabInstanceId: 'inst-999',
+      prefabSourceSnapId: 'snap-2',
+      components: [{ type: 'Transform', x: 10, y: 20 }],
+      keyframes: {},
+    },
+  ];
+
+  // Emulate saveProjectToDirectory entity mapping
+  const savedProjectJson = {
+    entities: originalEntities.map((e) => ({
+      ...e,
+      id: e.id,
+      name: e.name,
+      parentId: e.parentId || null,
+      trackId: e.trackId,
+      startTime: e.startTime,
+      duration: e.duration,
+      type: e.type,
+      src: e.src,
+      active: e.active !== false,
+      color: e.color,
+      tag: e.tag || 'Untagged',
+      layer: e.layer || 'Default',
+      components: e.components,
+      keyframes: e.keyframes,
+    })),
+  };
+
+  const serialized = JSON.parse(JSON.stringify(savedProjectJson));
+  const reloadedEntities = migrateEntities(serialized.entities);
+
+  assert.equal(reloadedEntities.length, 2);
+  const reloadedParent = reloadedEntities.find((e) => e.id === 'parent-1');
+  const reloadedChild = reloadedEntities.find((e) => e.id === 'child-1');
+
+  assert.ok(reloadedParent);
+  assert.equal(reloadedParent.parentId, null);
+  assert.equal(reloadedParent.color, '#ff0000');
+  assert.equal(reloadedParent.tag, 'Player');
+  assert.equal(reloadedParent.prefabAssetId, 'prefab-123');
+  assert.equal(reloadedParent.prefabInstanceId, 'inst-999');
+
+  assert.ok(reloadedChild);
+  assert.equal(reloadedChild.parentId, 'parent-1');
+  assert.equal(reloadedChild.color, '#00ff00');
+  assert.equal(reloadedChild.tag, 'Sound');
+  assert.equal(reloadedChild.prefabAssetId, 'prefab-123');
+  assert.equal(reloadedChild.prefabInstanceId, 'inst-999');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

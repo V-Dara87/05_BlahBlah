@@ -19,6 +19,9 @@ import {
   Sparkles,
   Captions,
   Film,
+  ExternalLink,
+  RotateCcw,
+  Unlink,
 } from 'lucide-react';
 import { getFieldKeyframes, setKeyframe, evaluateField } from '../engine/keyframes';
 import { isScriptComponent } from '../engine/ecs';
@@ -85,10 +88,15 @@ export const UnityInspector = memo(function UnityInspector({
   entities = [],
   tracks = [],
   scripts = [],
+  prefabs = [],
   onUpdateEntity,
   onDeleteEntity,
   onOpenScriptEditor,
   onSaveAsPrefab,
+  onEnterPrefabMode,
+  onDetachPrefab,
+  onRevertToPrefab,
+  onApplyToPrefab,
   currentTime = 0,
   autoKeyEnabled = false,
   setAutoKeyEnabled,
@@ -104,6 +112,8 @@ export const UnityInspector = memo(function UnityInspector({
     Media: true
   });
   const [savedPrefab, setSavedPrefab] = useState(false);
+  const [appliedPrefab, setAppliedPrefab] = useState(false);
+  const [revertedPrefab, setRevertedPrefab] = useState(false);
  
   const {
     showAddComponent,
@@ -362,6 +372,70 @@ export const UnityInspector = memo(function UnityInspector({
     >
       {/* GameObject Name & Track */}
       <div className="inspector-header-box">
+        {selectedEntity.prefabAssetId && (
+          <div className="inspector-prefab-bar">
+            <div className="inspector-prefab-info">
+              <div className="inspector-prefab-title">
+                <Package size={12} className="text-cyan" />
+                <span className="inspector-prefab-name" title={prefabs.find((p) => p.id === selectedEntity.prefabAssetId)?.name}>
+                  {prefabs.find((p) => p.id === selectedEntity.prefabAssetId)?.name?.replace(/\.prefab(\.json)?$/i, '') || 'Prefab'}
+                </span>
+                <span className="inspector-prefab-pill">Instance</span>
+              </div>
+              <div className="inspector-prefab-actions">
+                <button
+                  type="button"
+                  className="prefab-action-btn"
+                  onClick={() => onEnterPrefabMode && onEnterPrefabMode(selectedEntity.prefabAssetId)}
+                  title="Open Prefab in Prefab Editing Mode"
+                >
+                  <ExternalLink size={11} />
+                  <span>Open</span>
+                </button>
+                <button
+                  type="button"
+                  className={`prefab-action-btn${appliedPrefab ? ' success' : ''}`}
+                  onClick={async () => {
+                    if (onApplyToPrefab) {
+                      await onApplyToPrefab(selectedEntity.id);
+                      setAppliedPrefab(true);
+                      setTimeout(() => setAppliedPrefab(false), 2000);
+                    }
+                  }}
+                  title="Apply changes to original Prefab asset"
+                >
+                  <Check size={11} />
+                  <span>{appliedPrefab ? 'Applied!' : 'Apply'}</span>
+                </button>
+                <button
+                  type="button"
+                  className={`prefab-action-btn${revertedPrefab ? ' success' : ''}`}
+                  onClick={() => {
+                    if (onRevertToPrefab) {
+                      onRevertToPrefab(selectedEntity.id);
+                      setRevertedPrefab(true);
+                      setTimeout(() => setRevertedPrefab(false), 2000);
+                    }
+                  }}
+                  title="Revert overrides back to Prefab asset state"
+                >
+                  <RotateCcw size={11} />
+                  <span>{revertedPrefab ? 'Reverted!' : 'Revert'}</span>
+                </button>
+                <button
+                  type="button"
+                  className="prefab-action-btn detach"
+                  onClick={() => onDetachPrefab && onDetachPrefab(selectedEntity.id)}
+                  title="Detach from Prefab (Unpack into independent clip)"
+                >
+                  <Unlink size={11} />
+                  <span>Detach</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="inspector-header-field">
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '2px' }}>
             <label className="field-label-sm">GameObject Name</label>
