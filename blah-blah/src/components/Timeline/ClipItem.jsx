@@ -3,6 +3,7 @@ import { Film, Music, Type, Square, FileCode, Link2, X, Copy, Scissors, Unlink }
 import { WaveformCanvas } from '../WaveformCanvas';
 import { isScriptComponent, isVideoEntity, isAudioEntity } from '../../engine/ecs';
 import { dragHasItemKind, ITEM_KIND_SCRIPT, setDragPayload, ITEM_KIND_ENTITY } from '../../utils/dragData';
+import { computeTrimmedOffset } from '../../utils/mediaOffset';
 import { ContextMenu } from '../ContextMenu';
 import './clip-item.css';
  
@@ -259,7 +260,7 @@ export const ClipItem = memo(function ClipItem({
     if (!isAltDuplicate && !isSelectedMulti && !ctrlHeldOnDown) {
       onSelectClip(clip.id);
     }
-
+ 
     if (isLocked) return;
  
     isDraggingRef.current = true;
@@ -310,23 +311,23 @@ export const ClipItem = memo(function ClipItem({
     let ctrlParentTargetEl = null;
     let ctrlParentBadge = null;
     let ctrlParentActive = false;
-
+ 
     const updateCtrlParentBadgePos = (ev) => {
       if (ctrlParentBadge) {
         ctrlParentBadge.style.left = `${ev.clientX + 14}px`;
         ctrlParentBadge.style.top = `${ev.clientY + 14}px`;
       }
     };
-
+ 
     const handlePointerMove = (moveEvent) => {
       if (!isDraggingRef.current) return;
       const deltaPx = moveEvent.clientX - startX;
       const deltaTime = deltaPx / pixelsPerSecond;
-
+ 
       if (Math.abs(deltaPx) > 4 || Math.abs(moveEvent.clientY - e.clientY) > 4) {
         draggedMovedRef.current = true;
       }
-
+ 
       // Re-check ctrlKey on every move (not just at pointerdown) so
       // pressing/releasing Ctrl mid-drag is respected in both directions.
       if (moveEvent.ctrlKey || moveEvent.metaKey) {
@@ -337,7 +338,7 @@ export const ClipItem = memo(function ClipItem({
           document.body.appendChild(ctrlParentBadge);
         }
         updateCtrlParentBadgePos(moveEvent);
-
+ 
         const els = document.elementsFromPoint(moveEvent.clientX, moveEvent.clientY);
         let foundCard = null;
         for (const el of els) {
@@ -347,12 +348,12 @@ export const ClipItem = memo(function ClipItem({
             break;
           }
         }
-
+ 
         if (ctrlParentTargetEl && ctrlParentTargetEl !== foundCard) {
           ctrlParentTargetEl.classList.remove('link-drop-target');
           ctrlParentTargetEl = null;
         }
-
+ 
         if (foundCard) {
           const targetId = foundCard.getAttribute('data-clip-id');
           const isCycle = isDescendantOf(targetId, clip.id, allClips);
@@ -370,7 +371,7 @@ export const ClipItem = memo(function ClipItem({
           ctrlParentBadge.textContent = `🔗 Drag onto another clip to set parent`;
           ctrlParentBadge.classList.remove('valid');
         }
-
+ 
         // Skip all normal move/track logic below while Ctrl is held --
         // the clip stays put; only the hover highlight/badge update.
         return;
@@ -387,7 +388,7 @@ export const ClipItem = memo(function ClipItem({
           ctrlParentTargetEl = null;
         }
       }
-
+ 
       // Auto-scroll when dragging near timeline edges
       const scrollEl = document.querySelector('.lanes-wrapper');
       if (scrollEl) {
@@ -458,7 +459,7 @@ export const ClipItem = memo(function ClipItem({
     const handlePointerUp = () => {
       isDraggingRef.current = false;
       const didDrag = draggedMovedRef.current;
-
+ 
       // Finalize a ctrl-drag-to-parent gesture: set parentId on the
       // hovered target (if any/valid), clean up visuals. The clip's
       // own startTime/trackId were never touched during the drag, so
@@ -476,14 +477,14 @@ export const ClipItem = memo(function ClipItem({
         }
         ctrlParentTargetEl = null;
       }
-
+ 
       // A plain Ctrl+click (held on pointerdown, but never actually
       // dragged) still means "toggle multi-select", same as before this
       // feature existed.
       if (ctrlHeldOnDown && !ctrlParentActive && !didDrag && onToggleSelect) {
         onToggleSelect(clip.id);
       }
-
+ 
       if (isAltDuplicate) {
         // Cleanup a click-with-Alt that never became a drag: the copies
         // parked on top of the originals are removed again.
@@ -491,7 +492,7 @@ export const ClipItem = memo(function ClipItem({
           dupIds.forEach((id) => onUpdateClip(id, { _delete: true }));
         }
       }
-
+ 
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
@@ -533,13 +534,17 @@ export const ClipItem = memo(function ClipItem({
       const newDuration = origDuration - appliedDeltaTime;
  
       if (newDuration >= 0.2) {
-        // Adjust mediaOffset for VideoRenderer / AudioSource components
+        // Adjust mediaOffset for VideoRenderer / AudioSource components.
+        // appliedDeltaTime is a TIMELINE delta, so it must be scaled by the
+        // component's own speed to get the correct SOURCE-time offset —
+        // see utils/mediaOffset.js for why this matters.
         const updatedComps = clip.components?.map((c) => {
           if (c.type === 'VideoRenderer' || c.type === 'AudioSource') {
             const origOffset = c.mediaOffset || 0;
+            const speed = c.speed || 1;
             return {
               ...c,
-              mediaOffset: Math.max(0, origOffset + appliedDeltaTime),
+              mediaOffset: computeTrimmedOffset(origOffset, appliedDeltaTime, speed),
             };
           }
           return c;
@@ -619,23 +624,23 @@ export const ClipItem = memo(function ClipItem({
     if (!onAdjustSilenceCutEdge) return;
     e.stopPropagation();
     e.preventDefault();
-
+ 
     const startX = e.clientX;
     const cut = (silencePreviewCuts || []).find((c) => (c.id ?? silencePreviewCuts.indexOf(c)) === cutId);
     const origValue = edge === 'start' ? cut?.start ?? 0 : cut?.end ?? clip.duration;
-
+ 
     const handlePointerMove = (moveEvent) => {
       const deltaPx = moveEvent.clientX - startX;
       const deltaTime = deltaPx / pixelsPerSecond;
       const newTime = Math.max(0, Math.min(clip.duration, origValue + deltaTime));
       onAdjustSilenceCutEdge(cutId, edge, newTime);
     };
-
+ 
     const handlePointerUp = () => {
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
-
+ 
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
   };
@@ -646,7 +651,7 @@ export const ClipItem = memo(function ClipItem({
     const audioComp = clip.components?.find((c) => c.type === 'AudioSource' || c.type === 'VideoRenderer');
     return audioComp?.src || null;
   }, [clip.src, clip.components]);
-
+ 
   // mediaOffset is the clip's in-point into the source file — updated by
   // handleLeftTrimPointerDown/handleRightTrimPointerDown above (and by
   // applying silence-cut results) every time the clip is trimmed. Without
@@ -697,19 +702,19 @@ export const ClipItem = memo(function ClipItem({
   // its own duplicated close-on-outside-click/Escape listeners.
   const [ctxMenu, setCtxMenu] = useState(null); // { x, y } | null
   const closeCtxMenu = () => setCtxMenu(null);
-
+ 
   const handleContextMenu = (e) => {
     e.preventDefault();
     e.stopPropagation();
-
+ 
     // Ensure this clip is selected
     if (!isSelectedCard && !isSelectedMulti) {
       onSelectClip(clip.id);
     }
-
+ 
     setCtxMenu({ x: e.clientX, y: e.clientY });
   };
-
+ 
   const activeTargetIds = isSelectedMulti ? selectedIds : [clip.id];
   const hasAudioChild = allClips.some((c) => c.parentId === clip.id && isAudioEntity(c));
   const showSplitAudio = !isLocked && isVideoEntity(clip) && !hasAudioChild && onSplitVideoAndAudio;
@@ -717,7 +722,7 @@ export const ClipItem = memo(function ClipItem({
     (c) => c.id !== clip.id && c.id !== clip.parentId && !isDescendantOf(c.id, clip.id, allClips)
   );
   const showQuickLinks = !isLocked && eligibleParents.length > 0 && eligibleParents.length <= 6;
-
+ 
   const handleDuplicate = () => {
     const newIds = onDuplicateClips(activeTargetIds);
     if (newIds && newIds.length > 0 && onSelectClip) onSelectClip(newIds[0]);
@@ -779,7 +784,7 @@ export const ClipItem = memo(function ClipItem({
             />
           </div>
         )}
-
+ 
         {/* Live Silence Cut Overlay on Timeline */}
         {silencePreviewCuts && silencePreviewCuts.length > 0 && (
           <div className="clip-silence-cut-overlay">
@@ -902,7 +907,7 @@ export const ClipItem = memo(function ClipItem({
         />
       )}
     </div>
-
+ 
     {ctxMenu && (
       <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onClose={closeCtxMenu} className="clip-context-menu" minWidth={140}>
         {onDuplicateClips && !isLocked && (

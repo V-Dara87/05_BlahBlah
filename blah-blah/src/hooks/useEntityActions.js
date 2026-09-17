@@ -6,6 +6,7 @@ import {
   syncPrefabInstances,
 } from '../engine/ecs';
 import { detectScriptKind, extractScriptProps } from '../engine/scriptRunner';
+import { computeTrimmedOffset } from '../utils/mediaOffset';
  
 /**
  * useEntityActions — entity/clip editing, splitting, media/prefab/script
@@ -164,11 +165,14 @@ export function useEntityActions({
     if (playhead <= start + 0.001 || playhead >= end - 0.001) return;
  
     if (direction === 'before') {
+      // trimmedAmount is a TIMELINE delta; scale by each component's own
+      // speed to get the correct SOURCE-time mediaOffset shift.
       const trimmedAmount = playhead - start;
       const newComponents = target.components?.map((c) => {
         if (c.type === 'VideoRenderer' || c.type === 'AudioSource') {
           const origOffset = c.mediaOffset || 0;
-          return { ...c, mediaOffset: origOffset + trimmedAmount };
+          const speed = c.speed || 1;
+          return { ...c, mediaOffset: computeTrimmedOffset(origOffset, trimmedAmount, speed) };
         }
         return c;
       }) || [];
@@ -279,10 +283,13 @@ export function useEntityActions({
       const part1Dur = splitPoint - start;
       const part2Dur = end - splitPoint;
  
+      // part1Dur is a TIMELINE delta; scale by each component's own speed
+      // to get the correct SOURCE-time mediaOffset for the second half.
       const part2Components = target.components?.map(c => {
         if (c.type === 'VideoRenderer' || c.type === 'AudioSource') {
           const origOffset = c.mediaOffset || 0;
-          return { ...c, mediaOffset: origOffset + part1Dur };
+          const speed = c.speed || 1;
+          return { ...c, mediaOffset: computeTrimmedOffset(origOffset, part1Dur, speed) };
         }
         return JSON.parse(JSON.stringify(c));
       }) || [];
@@ -316,19 +323,19 @@ export function useEntityActions({
       setSelectedEntityId(toAdd[0].id);
     }
   }, [entities, selectedEntityId, getPlaybackTime, setEntities, setSelectedEntityId]);
-
+ 
   // Cut silence from a clip (or clips in a track), with ripple shift and video-audio sync
   const handleCutSilence = useCallback(({ targetType = 'clip', targetId, keptSegments, cutsByClipId, ripple = true }) => {
     if (!targetId) return;
-
+ 
     if (targetType === 'clip') {
       const target = entities.find((e) => e.id === targetId);
       if (!target) return;
-
+ 
       // Identify companion video/audio entities
       let primaryEntity = target;
       let childEntities = [];
-
+ 
       if (target.parentId) {
         const parent = entities.find((e) => e.id === target.parentId);
         if (parent && (parent.type === 'video' || parent.components?.some((c) => c.type === 'VideoRenderer'))) {
@@ -338,11 +345,11 @@ export function useEntityActions({
       } else {
         childEntities = entities.filter((e) => e.parentId === target.id);
       }
-
+ 
       const allGroupEntities = [primaryEntity, ...childEntities];
       const origStart = primaryEntity.startTime;
       const origDur = primaryEntity.duration;
-
+ 
       const segments = Array.isArray(keptSegments) ? keptSegments : [];
       if (segments.length === 0) {
         // Entire clip was silent -> remove all in group
@@ -362,31 +369,31 @@ export function useEntityActions({
         });
         return;
       }
-
+ 
       // Generate replacement segments
       const toAdd = [];
       const updatedMap = new Map();
       let rippleAccumTime = 0;
-
+ 
       for (let i = 0; i < segments.length; i++) {
         const seg = segments[i];
         const segStartTime = ripple ? origStart + rippleAccumTime : origStart + seg.start;
         const segDur = seg.duration;
         rippleAccumTime += segDur;
-
+ 
         // Primary entity slice
         const isFirst = i === 0;
         const primaryId = isFirst ? primaryEntity.id : `go-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
-
+ 
         const primaryComponents = primaryEntity.components?.map((c) => {
           if (c.type === 'VideoRenderer' || c.type === 'AudioSource') {
             const origOffset = c.mediaOffset || 0;
             const speed = c.speed || 1;
-            return { ...c, mediaOffset: origOffset + seg.start * speed };
+            return { ...c, mediaOffset: computeTrimmedOffset(origOffset, seg.start, speed) };
           }
           return JSON.parse(JSON.stringify(c));
         }) || [];
-
+ 
         const primarySlice = {
           ...primaryEntity,
           id: primaryId,
@@ -395,13 +402,13 @@ export function useEntityActions({
           duration: segDur,
           components: primaryComponents,
         };
-
+ 
         if (isFirst) {
           updatedMap.set(primaryEntity.id, primarySlice);
         } else {
           toAdd.push(primarySlice);
         }
-
+ 
         // Child entities slices (e.g. linked audio or callouts)
         for (const child of childEntities) {
           const childId = isFirst ? child.id : `go-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
@@ -409,11 +416,11 @@ export function useEntityActions({
             if (c.type === 'VideoRenderer' || c.type === 'AudioSource') {
               const origOffset = c.mediaOffset || 0;
               const speed = c.speed || 1;
-              return { ...c, mediaOffset: origOffset + seg.start * speed };
+              return { ...c, mediaOffset: computeTrimmedOffset(origOffset, seg.start, speed) };
             }
             return JSON.parse(JSON.stringify(c));
           }) || [];
-
+ 
           const childSlice = {
             ...child,
             id: childId,
@@ -423,7 +430,7 @@ export function useEntityActions({
             duration: segDur,
             components: childComponents,
           };
-
+ 
           if (isFirst) {
             updatedMap.set(child.id, childSlice);
           } else {
@@ -431,12 +438,12 @@ export function useEntityActions({
           }
         }
       }
-
+ 
       const totalKept = segments.reduce((sum, s) => sum + s.duration, 0);
       const totalCut = Math.max(0, origDur - totalKept);
       const affectedTrackIds = new Set(allGroupEntities.map((e) => e.trackId));
       const groupIds = new Set(allGroupEntities.map((e) => e.id));
-
+ 
       setEntities((prev) => {
         const next = prev.map((e) => {
           if (updatedMap.has(e.id)) {
@@ -453,31 +460,31 @@ export function useEntityActions({
       });
       return;
     }
-
+ 
     if (targetType === 'track') {
       const trackClips = entities
         .filter((e) => e.trackId === targetId && !e.parentId)
         .sort((a, b) => a.startTime - b.startTime);
-
+ 
       if (trackClips.length === 0) return;
-
+ 
       const clipMap = cutsByClipId instanceof Map ? cutsByClipId : new Map(Object.entries(cutsByClipId || {}));
       let currentEntities = [...entities];
-
+ 
       for (const clip of trackClips) {
         const segs = clipMap.get(clip.id);
         if (segs && Array.isArray(segs)) {
           // Re-query clip in currentEntities in case its startTime changed from previous ripple
           const liveClip = currentEntities.find((e) => e.id === clip.id);
           if (!liveClip) continue;
-
+ 
           // Apply cut to this single clip within currentEntities
           let childEntities = currentEntities.filter((e) => e.parentId === liveClip.id);
           const allGroup = [liveClip, ...childEntities];
           const origStart = liveClip.startTime;
           const origDur = liveClip.duration;
           const groupIds = new Set(allGroup.map((e) => e.id));
-
+ 
           if (segs.length === 0) {
             currentEntities = currentEntities.filter((e) => !groupIds.has(e.id));
             if (ripple) {
@@ -491,11 +498,11 @@ export function useEntityActions({
             }
             continue;
           }
-
+ 
           const toAdd = [];
           const updatedMap = new Map();
           let accum = 0;
-
+ 
           for (let i = 0; i < segs.length; i++) {
             const seg = segs[i];
             const segStartTime = ripple ? origStart + accum : origStart + seg.start;
@@ -503,16 +510,16 @@ export function useEntityActions({
             accum += segDur;
             const isFirst = i === 0;
             const primaryId = isFirst ? liveClip.id : `go-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
-
+ 
             const compPrim = liveClip.components?.map((c) => {
               if (c.type === 'VideoRenderer' || c.type === 'AudioSource') {
                 const origOffset = c.mediaOffset || 0;
                 const speed = c.speed || 1;
-                return { ...c, mediaOffset: origOffset + seg.start * speed };
+                return { ...c, mediaOffset: computeTrimmedOffset(origOffset, seg.start, speed) };
               }
               return JSON.parse(JSON.stringify(c));
             }) || [];
-
+ 
             const pSlice = {
               ...liveClip,
               id: primaryId,
@@ -521,21 +528,21 @@ export function useEntityActions({
               duration: segDur,
               components: compPrim,
             };
-
+ 
             if (isFirst) updatedMap.set(liveClip.id, pSlice);
             else toAdd.push(pSlice);
-
+ 
             for (const ch of childEntities) {
               const chId = isFirst ? ch.id : `go-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
               const compCh = ch.components?.map((c) => {
                 if (c.type === 'VideoRenderer' || c.type === 'AudioSource') {
                   const origOffset = c.mediaOffset || 0;
                   const speed = c.speed || 1;
-                  return { ...c, mediaOffset: origOffset + seg.start * speed };
+                  return { ...c, mediaOffset: computeTrimmedOffset(origOffset, seg.start, speed) };
                 }
                 return JSON.parse(JSON.stringify(c));
               }) || [];
-
+ 
               const chSlice = {
                 ...ch,
                 id: chId,
@@ -545,16 +552,16 @@ export function useEntityActions({
                 duration: segDur,
                 components: compCh,
               };
-
+ 
               if (isFirst) updatedMap.set(ch.id, chSlice);
               else toAdd.push(chSlice);
             }
           }
-
+ 
           const totKept = segs.reduce((s, x) => s + x.duration, 0);
           const totCut = Math.max(0, origDur - totKept);
           const affTracks = new Set(allGroup.map((e) => e.trackId));
-
+ 
           currentEntities = currentEntities.map((e) => {
             if (updatedMap.has(e.id)) return updatedMap.get(e.id);
             if (ripple && totCut > 0 && affTracks.has(e.trackId) && !groupIds.has(e.id)) {
@@ -566,7 +573,7 @@ export function useEntityActions({
           }).concat(toAdd);
         }
       }
-
+ 
       setEntities(currentEntities);
     }
   }, [entities, setEntities]);
@@ -636,7 +643,7 @@ export function useEntityActions({
       : null;
  
     const prefabInstanceId = `pinst-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
-
+ 
     if (!snapshots) {
       const newGO = createGameObject({
         name: prefab.name.replace(/\.prefab(\.json)?$/i, ''),
@@ -689,12 +696,12 @@ export function useEntityActions({
           : [],
       };
     });
-
+ 
     // If the prefab has embeddedScripts that are missing from the project, auto-restore them!
     const missingScripts = (prefab.embeddedScripts || []).filter(
       (es) => !scripts.some((s) => s.id === es.id || s.name === es.name)
     );
-
+ 
     if (missingScripts.length > 0 && setProjectHistoryState) {
       const newScriptsToAdd = missingScripts.map((es) => ({
         id: es.id || `script-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
@@ -710,11 +717,11 @@ export function useEntityActions({
       setSelectedEntityId(newClips[0]?.id || null);
       return;
     }
-
+ 
     setEntities(prev => [...prev, ...newClips]);
     setSelectedEntityId(newClips[0]?.id || null);
   };
-
+ 
   // Detach / Unpack Prefab: breaks the link to the prefab asset, turning it into regular clips
   const handleDetachPrefab = useCallback((entityId) => {
     if (!entityId) return;
@@ -731,7 +738,7 @@ export function useEntityActions({
       });
     });
   }, [setEntities]);
-
+ 
   // Revert timeline instance to original prefab snapshot values
   const handleRevertToPrefab = useCallback((entityId) => {
     if (!entityId) return;
@@ -739,14 +746,14 @@ export function useEntityActions({
     if (!target || !target.prefabAssetId) return;
     const prefab = prefabs.find((p) => p.id === target.prefabAssetId);
     if (!prefab) return;
-
+ 
     const snapshots = Array.isArray(prefab.entities) && prefab.entities.length > 0
       ? prefab.entities
       : [{ id: prefab.rootId || 'root', name: prefab.name.replace(/\.prefab(\.json)?$/i, ''), components: prefab.components || [] }];
-
+ 
     const snapRoot = snapshots.find((e) => e.id === prefab.rootId) || snapshots[0];
     const instId = target.prefabInstanceId;
-
+ 
     setEntities((prev) => {
       return prev.map((e) => {
         if (instId ? e.prefabInstanceId === instId : e.id === entityId) {
@@ -765,7 +772,7 @@ export function useEntityActions({
       });
     });
   }, [entities, prefabs, setEntities]);
-
+ 
   // Apply timeline instance changes back to the source Prefab asset
   const handleApplyToPrefab = useCallback(async (entityId) => {
     if (!entityId || !handleUpdatePrefab) return;
@@ -773,25 +780,25 @@ export function useEntityActions({
     if (!target || !target.prefabAssetId) return;
     const prefab = prefabs.find((p) => p.id === target.prefabAssetId);
     if (!prefab) return;
-
+ 
     const instId = target.prefabInstanceId;
     const instanceClips = instId
       ? entities.filter((e) => e.prefabInstanceId === instId)
       : [target];
-
+ 
     // Find the root clip of this instance group
     const rootClip = instanceClips.find((e) => !e.parentId) || target;
     const rootStartTime = rootClip.startTime || 0;
-
+ 
     // Map clip.id to snapId to preserve existing snapshot IDs
     const clipIdToSnapId = new Map();
     instanceClips.forEach((obj) => {
       const snapId = obj.prefabSourceSnapId || obj.id;
       clipIdToSnapId.set(obj.id, snapId);
     });
-
+ 
     const rootSnapId = clipIdToSnapId.get(rootClip.id);
-
+ 
     // Snapshot each object in the instance group, normalizing relative start times
     const updatedSnapshots = instanceClips.map((obj) => {
       const clone = JSON.parse(JSON.stringify(obj));
@@ -808,12 +815,11 @@ export function useEntityActions({
       delete clone.prefabSourceSnapId;
       return clone;
     });
-
+ 
     const maxDuration = Math.max(
       ...updatedSnapshots.map((s) => (s.startTime || 0) + (s.duration || 0)),
-      1
     );
-
+ 
     // Extract any scripts referenced
     const usedScriptIds = new Set();
     updatedSnapshots.forEach((snap) => {
@@ -831,7 +837,7 @@ export function useEntityActions({
         description: s.description || '',
         code: s.code || '',
       }));
-
+ 
     const updatedData = {
       rootId: rootSnapId,
       entities: updatedSnapshots,
@@ -839,9 +845,9 @@ export function useEntityActions({
       duration: maxDuration,
       embeddedScripts,
     };
-
+ 
     await handleUpdatePrefab(prefab.id, updatedData);
-
+ 
     // Sync all instances of this prefab on the timeline so they receive the applied changes!
     setEntities((prev) => syncPrefabInstances(prev, prefab.id, updatedSnapshots, rootSnapId));
   }, [entities, prefabs, scripts, handleUpdatePrefab, setEntities]);
