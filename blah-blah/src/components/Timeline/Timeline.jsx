@@ -66,6 +66,21 @@ export const Timeline = memo(function Timeline({
   const velocityRef = useRef(0);
   const smoothScrollAnimIdRef = useRef(null);
   const miniScrollbarTrackRef = useRef(null);
+  // ── Ctrl/Cmd+wheel zoom coalescing ─────────────────────────────
+  // A trackpad or a fast mouse wheel fires many 'wheel' events per
+  // visual frame. Previously each one synchronously called
+  // setPixelsPerSecond AND scheduled its own requestAnimationFrame to
+  // re-anchor scroll position — so a single zoom gesture could queue up
+  // several competing rAF callbacks per frame, each recalculating
+  // scrollLeft against a scrollWidth that hadn't caught up yet. That's
+  // what made zoom feel stepped/jittery instead of smooth. Now we just
+  // accumulate the raw wheel delta here and flush it once per animation
+  // frame (zoomFrameRef), so there is at most one pps update + one
+  // scroll re-anchor per rendered frame, matching the visual refresh
+  // rate the eye actually sees.
+  const zoomAccumRef = useRef(0);
+  const zoomFrameRef = useRef(null);
+  const zoomAnchorTimeRef = useRef(null);
  
   // ── Custom horizontal minimap scrollbar ────────────────────────
   // Mirrors lanesScrollRef's scrollLeft/scrollWidth/clientWidth as a
@@ -348,46 +363,72 @@ export const Timeline = memo(function Timeline({
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
         stopSmoothScroll();
-        const zoomDelta = e.deltaY < 0 ? 15 : -15;
-
-        const scroller = lanesScrollRef.current;
-        const anchorTime = playbackStore.getCurrentTime();
-        // Screen-space x of the playhead BEFORE the zoom change, relative
-        // to the scroller's own viewport (not the page). We restore the
-        // playhead to this exact x after pixelsPerSecond updates.
-        const anchorScreenX = scroller
-          ? HEADER_WIDTH + anchorTime * pixelsPerSecond - scroller.scrollLeft
-          : null;
-
-        const reanchor = (nextPps) => {
-          if (!scroller || anchorScreenX === null) return;
-          // Wait a frame so totalWidth/scrollWidth have repainted for the
-          // new pixelsPerSecond before we clamp against them.
-          requestAnimationFrame(() => {
-            const s = lanesScrollRef.current;
-            if (!s) return;
-            const maxScroll = Math.max(0, s.scrollWidth - s.clientWidth);
-            const desiredScrollLeft = HEADER_WIDTH + anchorTime * nextPps - anchorScreenX;
-            s.scrollLeft = Math.max(0, Math.min(maxScroll, desiredScrollLeft));
-            if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = s.scrollLeft;
-            updateScrollMetrics();
-          });
-        };
-
-        if (onSetPixelsPerSecond) {
-          onSetPixelsPerSecond((prev) => {
-            const next = Math.max(4, Math.min(240, prev + zoomDelta));
-            reanchor(next);
-            return next;
-          });
-        } else {
-          // No direct pps setter available (discrete zoom in/out only) —
-          // still re-center on the playhead using the current closure's
-          // pixelsPerSecond as a best-effort estimate of the new zoom.
-          if (e.deltaY < 0) onZoomIn?.();
-          else onZoomOut?.();
-          reanchor(pixelsPerSecond);
+ 
+        // Scale the step to how hard the user is scrolling instead of a
+        // fixed +/-15 per notch — a fast flick zooms faster, a gentle
+        // nudge zooms gently, which reads as smooth instead of steppy.
+        const rawDelta = Math.max(-60, Math.min(60, -e.deltaY));
+        zoomAccumRef.current += rawDelta * 0.5;
+ 
+        // Capture the anchor instant once per gesture (first tick after
+        // the previous frame flushed), not on every wheel event -- the
+        // anchor must stay fixed for the whole gesture or the "same
+        // instant under the cursor" guarantee drifts tick to tick.
+        if (zoomAnchorTimeRef.current === null) {
+          zoomAnchorTimeRef.current = playbackStore.getCurrentTime();
         }
+ 
+        if (zoomFrameRef.current) return; // already scheduled for this frame
+ 
+        zoomFrameRef.current = requestAnimationFrame(() => {
+          zoomFrameRef.current = null;
+          const pending = zoomAccumRef.current;
+          zoomAccumRef.current = 0;
+          const anchorTime = zoomAnchorTimeRef.current;
+          zoomAnchorTimeRef.current = null;
+          if (pending === 0) return;
+ 
+          const scroller = lanesScrollRef.current;
+          // Screen-space x of the anchor instant BEFORE the zoom change,
+          // relative to the scroller's own viewport (not the page). We
+          // restore the anchor to this exact x after pixelsPerSecond
+          // updates.
+          const anchorScreenX = scroller
+            ? HEADER_WIDTH + anchorTime * pixelsPerSecond - scroller.scrollLeft
+            : null;
+ 
+          // Compute the next pps as a pure value BEFORE touching state --
+          // the previous version called this re-anchor logic from *inside*
+          // the setPixelsPerSecond updater function, which React may invoke
+          // more than once per commit. Doing DOM/scroll work as a side
+          // effect of a state updater is what caused the extra, competing
+          // rAF-driven scroll corrections that made zooming feel jumpy.
+          const nextPps = Math.max(4, Math.min(240, pixelsPerSecond + pending));
+ 
+          const reanchor = () => {
+            if (!scroller || anchorScreenX === null) return;
+            // Wait one more frame so totalWidth/scrollWidth have repainted
+            // for the new pixelsPerSecond before we clamp against them.
+            requestAnimationFrame(() => {
+              const s = lanesScrollRef.current;
+              if (!s) return;
+              const maxScroll = Math.max(0, s.scrollWidth - s.clientWidth);
+              const desiredScrollLeft = HEADER_WIDTH + anchorTime * nextPps - anchorScreenX;
+              s.scrollLeft = Math.max(0, Math.min(maxScroll, desiredScrollLeft));
+              if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = s.scrollLeft;
+              updateScrollMetrics();
+            });
+          };
+ 
+          if (onSetPixelsPerSecond) {
+            onSetPixelsPerSecond(nextPps);
+          } else if (pending > 0) {
+            onZoomIn?.();
+          } else {
+            onZoomOut?.();
+          }
+          reanchor();
+        });
         return;
       }
  
@@ -439,6 +480,12 @@ export const Timeline = memo(function Timeline({
     return () => {
       el.removeEventListener('wheel', handleWheel, { passive: false });
       stopSmoothScroll();
+      if (zoomFrameRef.current) {
+        cancelAnimationFrame(zoomFrameRef.current);
+        zoomFrameRef.current = null;
+      }
+      zoomAccumRef.current = 0;
+      zoomAnchorTimeRef.current = null;
     };
   }, [onSetPixelsPerSecond, onZoomIn, onZoomOut, startSmoothScroll, stopSmoothScroll, pixelsPerSecond, playbackStore, updateScrollMetrics]);
  
@@ -881,6 +928,5 @@ export const Timeline = memo(function Timeline({
     </section>
   );
 });
- 
  
  
