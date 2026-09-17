@@ -183,6 +183,60 @@ export const Timeline = memo(function Timeline({
     onSetExportRange(null);
   }, [onSetExportRange]);
  
+  // Shared zoom-and-reanchor: used by both the ctrl+wheel gesture handler
+  // and the toolbar zoom in/out buttons, so both paths keep the same
+  // instant (the playhead/seekbar position) under the same screen x
+  // instead of drifting the view — previously the toolbar buttons just
+  // called setPixelsPerSecond with no scroll compensation at all, so
+  // clicking them shifted the whole view relative to the left edge
+  // rather than staying centered on the seekbar.
+  const applyZoomStep = useCallback((delta) => {
+    const scroller = lanesScrollRef.current;
+    const anchorTime = playbackStore.getCurrentTime();
+    const anchorScreenX = scroller
+      ? HEADER_WIDTH + anchorTime * pixelsPerSecond - scroller.scrollLeft
+      : null;
+ 
+    const nextPps = Math.max(4, Math.min(240, pixelsPerSecond + delta));
+ 
+    const reanchor = () => {
+      if (!scroller || anchorScreenX === null) return;
+      // Wait one more frame so totalWidth/scrollWidth have repainted for
+      // the new pixelsPerSecond before we clamp against them.
+      requestAnimationFrame(() => {
+        const s = lanesScrollRef.current;
+        if (!s) return;
+        const maxScroll = Math.max(0, s.scrollWidth - s.clientWidth);
+        const desiredScrollLeft = HEADER_WIDTH + anchorTime * nextPps - anchorScreenX;
+        s.scrollLeft = Math.max(0, Math.min(maxScroll, desiredScrollLeft));
+        if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = s.scrollLeft;
+        updateScrollMetrics();
+      });
+    };
+ 
+    if (onSetPixelsPerSecond) {
+      onSetPixelsPerSecond(nextPps);
+    } else if (delta > 0) {
+      onZoomIn?.();
+    } else {
+      onZoomOut?.();
+    }
+    reanchor();
+  }, [pixelsPerSecond, playbackStore, onSetPixelsPerSecond, onZoomIn, onZoomOut, updateScrollMetrics]);
+ 
+  // Toolbar +/- buttons: same fixed step the old handleZoomIn/handleZoomOut
+  // used (15), just routed through applyZoomStep so they re-center on the
+  // seekbar the same way the wheel gesture does.
+  const handleZoomInBtn = useCallback(() => {
+    stopSmoothScroll();
+    applyZoomStep(15);
+  }, [applyZoomStep, stopSmoothScroll]);
+ 
+  const handleZoomOutBtn = useCallback(() => {
+    stopSmoothScroll();
+    applyZoomStep(-15);
+  }, [applyZoomStep, stopSmoothScroll]);
+ 
   // Auto-scroll timeline to keep playhead visible ONLY during active playback
   useEffect(() => {
     const unsub = playbackStore.registerFrameCallback((time) => {
@@ -384,50 +438,11 @@ export const Timeline = memo(function Timeline({
           zoomFrameRef.current = null;
           const pending = zoomAccumRef.current;
           zoomAccumRef.current = 0;
-          const anchorTime = zoomAnchorTimeRef.current;
           zoomAnchorTimeRef.current = null;
           if (pending === 0) return;
- 
-          const scroller = lanesScrollRef.current;
-          // Screen-space x of the anchor instant BEFORE the zoom change,
-          // relative to the scroller's own viewport (not the page). We
-          // restore the anchor to this exact x after pixelsPerSecond
-          // updates.
-          const anchorScreenX = scroller
-            ? HEADER_WIDTH + anchorTime * pixelsPerSecond - scroller.scrollLeft
-            : null;
- 
-          // Compute the next pps as a pure value BEFORE touching state --
-          // the previous version called this re-anchor logic from *inside*
-          // the setPixelsPerSecond updater function, which React may invoke
-          // more than once per commit. Doing DOM/scroll work as a side
-          // effect of a state updater is what caused the extra, competing
-          // rAF-driven scroll corrections that made zooming feel jumpy.
-          const nextPps = Math.max(4, Math.min(240, pixelsPerSecond + pending));
- 
-          const reanchor = () => {
-            if (!scroller || anchorScreenX === null) return;
-            // Wait one more frame so totalWidth/scrollWidth have repainted
-            // for the new pixelsPerSecond before we clamp against them.
-            requestAnimationFrame(() => {
-              const s = lanesScrollRef.current;
-              if (!s) return;
-              const maxScroll = Math.max(0, s.scrollWidth - s.clientWidth);
-              const desiredScrollLeft = HEADER_WIDTH + anchorTime * nextPps - anchorScreenX;
-              s.scrollLeft = Math.max(0, Math.min(maxScroll, desiredScrollLeft));
-              if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = s.scrollLeft;
-              updateScrollMetrics();
-            });
-          };
- 
-          if (onSetPixelsPerSecond) {
-            onSetPixelsPerSecond(nextPps);
-          } else if (pending > 0) {
-            onZoomIn?.();
-          } else {
-            onZoomOut?.();
-          }
-          reanchor();
+          // Delegate to the same re-anchor logic the toolbar buttons use,
+          // so wheel-zoom and button-zoom behave identically.
+          applyZoomStep(pending);
         });
         return;
       }
@@ -487,7 +502,7 @@ export const Timeline = memo(function Timeline({
       zoomAccumRef.current = 0;
       zoomAnchorTimeRef.current = null;
     };
-  }, [onSetPixelsPerSecond, onZoomIn, onZoomOut, startSmoothScroll, stopSmoothScroll, pixelsPerSecond, playbackStore, updateScrollMetrics]);
+  }, [onSetPixelsPerSecond, onZoomIn, onZoomOut, applyZoomStep, startSmoothScroll, stopSmoothScroll, pixelsPerSecond, playbackStore, updateScrollMetrics]);
  
   const handleLanesPointerDown = (e) => {
     stopSmoothScroll();
@@ -687,14 +702,14 @@ export const Timeline = memo(function Timeline({
         <div className="timeline-actions-group" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <button 
             className="timeline-zoom-btn" 
-            onClick={onZoomOut}
+            onClick={handleZoomOutBtn}
             title="Zoom Out (-)"
           >
             <ZoomOut size={12} />
           </button>
           <button 
             className="timeline-zoom-btn" 
-            onClick={onZoomIn}
+            onClick={handleZoomInBtn}
             title="Zoom In (+)"
           >
             <ZoomIn size={12} />
