@@ -51,6 +51,7 @@ export const ClipItem = memo(function ClipItem({
   onSplitVideoAndAudio,
   onOpenSilenceRemover,
   silencePreviewCuts = null,
+  onAdjustSilenceCutEdge = null,
   snappingPoints = [],
   snappingEnabled = true,
 }) {
@@ -606,12 +607,58 @@ export const ClipItem = memo(function ClipItem({
     window.addEventListener('pointerup', handlePointerUp);
   };
  
+  // Drag either edge of an auto-detected silence-cut region, directly on
+  // the timeline overlay. Mirrors the clip trim handles above (pixel
+  // delta -> time delta, converted to clip-local seconds since cut.start/
+  // end are relative to the clip's own [0, duration) span, not the
+  // timeline). Reports through onAdjustSilenceCutEdge rather than
+  // mutating anything locally — SilenceRemoverPanel owns the actual cut
+  // data and merges this into its manualCutOverrides (see that file for
+  // why: cuts are otherwise fully re-derived on every detection run).
+  const handleCutEdgePointerDown = (cutId, edge) => (e) => {
+    if (!onAdjustSilenceCutEdge) return;
+    e.stopPropagation();
+    e.preventDefault();
+
+    const startX = e.clientX;
+    const cut = (silencePreviewCuts || []).find((c) => (c.id ?? silencePreviewCuts.indexOf(c)) === cutId);
+    const origValue = edge === 'start' ? cut?.start ?? 0 : cut?.end ?? clip.duration;
+
+    const handlePointerMove = (moveEvent) => {
+      const deltaPx = moveEvent.clientX - startX;
+      const deltaTime = deltaPx / pixelsPerSecond;
+      const newTime = Math.max(0, Math.min(clip.duration, origValue + deltaTime));
+      onAdjustSilenceCutEdge(cutId, edge, newTime);
+    };
+
+    const handlePointerUp = () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+  };
+ 
   // Extract audio URL for waveform display (AudioSource or VideoRenderer src)
   const audioUrl = useMemo(() => {
     if (clip.src) return clip.src;
     const audioComp = clip.components?.find((c) => c.type === 'AudioSource' || c.type === 'VideoRenderer');
     return audioComp?.src || null;
   }, [clip.src, clip.components]);
+
+  // mediaOffset is the clip's in-point into the source file — updated by
+  // handleLeftTrimPointerDown/handleRightTrimPointerDown above (and by
+  // applying silence-cut results) every time the clip is trimmed. Without
+  // passing this window through to WaveformCanvas, the waveform always
+  // showed the FULL original file stretched across the clip's current
+  // width, regardless of trims — the actual audio played back correctly,
+  // but the picture didn't match it. mediaOffset + clip.duration gives
+  // the exact [start, end) slice of the source file this clip now plays.
+  const mediaOffset = useMemo(() => {
+    const audioComp = clip.components?.find((c) => c.type === 'AudioSource' || c.type === 'VideoRenderer');
+    return audioComp?.mediaOffset || 0;
+  }, [clip.components]);
  
   const showWaveform = hasAudio && audioUrl && widthPx > 30; // only audio clips get waveforms
  
@@ -727,6 +774,8 @@ export const ClipItem = memo(function ClipItem({
               height={cardHeight - 6}
               color={hasAudio ? 'rgba(139, 92, 246, 0.55)' : 'rgba(56, 189, 248, 0.4)'}
               mirror
+              startSec={mediaOffset}
+              endSec={mediaOffset + clip.duration}
             />
           </div>
         )}
@@ -735,18 +784,34 @@ export const ClipItem = memo(function ClipItem({
         {silencePreviewCuts && silencePreviewCuts.length > 0 && (
           <div className="clip-silence-cut-overlay">
             {silencePreviewCuts.map((cut, idx) => {
+              const cutId = cut.id ?? idx;
               const leftRatio = Math.max(0, cut.start / clip.duration);
               const widthRatio = Math.max(0, cut.duration / clip.duration);
               return (
                 <div
-                  key={idx}
+                  key={cutId}
                   className="clip-silence-cut-slice"
                   style={{
                     left: `${leftRatio * 100}%`,
                     width: `${widthRatio * 100}%`,
                   }}
                   title={`Cut Silence: ${cut.duration.toFixed(2)}s`}
-                />
+                >
+                  {onAdjustSilenceCutEdge && !isLocked && (
+                    <>
+                      <div
+                        className="silence-cut-edge-handle left"
+                        onPointerDown={handleCutEdgePointerDown(cutId, 'start')}
+                        title="Drag to adjust cut start"
+                      />
+                      <div
+                        className="silence-cut-edge-handle right"
+                        onPointerDown={handleCutEdgePointerDown(cutId, 'end')}
+                        title="Drag to adjust cut end"
+                      />
+                    </>
+                  )}
+                </div>
               );
             })}
           </div>

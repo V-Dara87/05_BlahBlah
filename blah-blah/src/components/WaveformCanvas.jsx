@@ -21,6 +21,8 @@ import { getWaveformPeaks } from '../utils/audioWaveform';
  *   color      — envelope fill color (default: currentColor)
  *   rmsColor   — inner RMS fill color; defaults to a brighter version of `color`
  *   mirror     — if true, renders mirrored (top + bottom) like most DAWs
+ *   startSec   — start of the window into the source file to draw (default 0)
+ *   endSec     — end of the window into the source file to draw (default: end of file)
  */
  
 // How many envelope buckets to request per pixel of canvas width, as a
@@ -45,6 +47,8 @@ export const WaveformCanvas = memo(function WaveformCanvas({
   color = 'rgba(56, 189, 248, 0.7)',
   rmsColor,
   mirror = true,
+  startSec = 0,
+  endSec = null,
 }) {
   const canvasRef = useRef(null);
   const [envelope, setEnvelope] = useState(null);
@@ -58,17 +62,23 @@ export const WaveformCanvas = memo(function WaveformCanvas({
   const numPeaks = Math.ceil(rawBuckets / 20) * 20;
  
   // Decode audio and get the min/max/rms envelope at this resolution.
+  // startSec/endSec window the envelope into the clip's actual trimmed
+  // in/out points (see ClipItem.jsx, which passes mediaOffset and
+  // mediaOffset+duration) — without this, a trimmed or silence-cut clip
+  // always showed the full original file's waveform stretched across the
+  // clip's current width, regardless of what part of the file the clip
+  // was actually now pointing at.
   useEffect(() => {
     if (!url) {
       setEnvelope(null);
       return;
     }
     let cancelled = false;
-    getWaveformPeaks(url, numPeaks).then((env) => {
+    getWaveformPeaks(url, numPeaks, startSec, endSec).then((env) => {
       if (!cancelled) setEnvelope(env);
     });
     return () => { cancelled = true; };
-  }, [url, numPeaks]);
+  }, [url, numPeaks, startSec, endSec]);
  
   // Draw the filled envelope on canvas.
   useEffect(() => {

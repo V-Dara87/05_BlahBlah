@@ -58,17 +58,33 @@ export function decodeAudio(url) {
  * @param {AudioBuffer} audioBuffer - decoded audio
  * @param {number} numPeaks - number of buckets to produce
  */
-function extractEnvelope(audioBuffer, numPeaks) {
+function extractEnvelope(audioBuffer, numPeaks, startSec = 0, endSec = null) {
   const channels = audioBuffer.numberOfChannels;
+  const sampleRate = audioBuffer.sampleRate;
+  const bufferTotalSamples = audioBuffer.length;
+ 
+  // Clamp the requested window into the buffer's actual sample range.
+  const windowStartSample = Math.max(0, Math.min(bufferTotalSamples, Math.floor(startSec * sampleRate)));
+  const windowEndSample = endSec != null
+    ? Math.max(windowStartSample, Math.min(bufferTotalSamples, Math.ceil(endSec * sampleRate)))
+    : bufferTotalSamples;
+  const totalSamples = windowEndSample - windowStartSample;
+ 
+  if (totalSamples <= 0) {
+    return { mins: new Float32Array(numPeaks), maxs: new Float32Array(numPeaks), rms: new Float32Array(numPeaks) };
+  }
+ 
   // Average all channels down to one array up front — cheaper than
   // re-reading N channel buffers per-bucket, and a stereo mixdown is what
   // every other part of the app already treats a clip's "loudness" as.
-  const totalSamples = audioBuffer.length;
+  // Only the requested window is mixed down, not the whole buffer, so a
+  // trimmed clip's waveform costs roughly the same as its trimmed length,
+  // not the full original file's length.
   const mixed = new Float32Array(totalSamples);
   for (let ch = 0; ch < channels; ch++) {
     const data = audioBuffer.getChannelData(ch);
     for (let i = 0; i < totalSamples; i++) {
-      mixed[i] += data[i] / channels;
+      mixed[i] += data[windowStartSample + i] / channels;
     }
   }
  
@@ -101,26 +117,35 @@ function extractEnvelope(audioBuffer, numPeaks) {
  
 /**
  * Get a MIN/MAX/RMS waveform envelope for a given audio URL, at the
- * requested resolution. Results are cached per (url, numPeaks) pair — a
- * clip re-rendered wider (e.g. zooming the timeline in, or an editor
- * expanding a track's height to reveal more waveform detail) decodes once
- * per resolution actually requested, not once per pixel width ever seen.
+ * requested resolution, optionally windowed to a [startSec, endSec) slice
+ * of the underlying file. This is what makes a trimmed clip's waveform
+ * actually show the trimmed audio instead of always stretching the full
+ * original file across the clip's current width — pass the clip's own
+ * mediaOffset/duration (its in/out points into the source file) as
+ * startSec/endSec and only that slice gets drawn.
+ *
+ * Results are cached per (url, numPeaks, startSec, endSec) — re-trimming
+ * a clip (new offset/duration) re-buckets from the already-decoded
+ * AudioBuffer (see decodeAudio's own cache) rather than re-fetching or
+ * re-decoding the source file.
  *
  * @param {string} url - audio file URL (blob: or http(s):)
  * @param {number} [numPeaks=200] - number of envelope buckets
+ * @param {number} [startSec=0] - start of the window, in seconds into the source file
+ * @param {number|null} [endSec=null] - end of the window, in seconds into the source file (null = to the end)
  * @returns {Promise<{ mins: Float32Array, maxs: Float32Array, rms: Float32Array }>}
  */
-export function getWaveformPeaks(url, numPeaks = 200) {
+export function getWaveformPeaks(url, numPeaks = 200, startSec = 0, endSec = null) {
   const empty = () => ({ mins: new Float32Array(0), maxs: new Float32Array(0), rms: new Float32Array(0) });
   if (!url) return Promise.resolve(empty());
  
-  const cacheKey = `${url}::${numPeaks}`;
+  const cacheKey = `${url}::${numPeaks}::${startSec}::${endSec ?? 'end'}`;
   if (peakCache.has(cacheKey)) {
     return peakCache.get(cacheKey);
   }
  
   const promise = decodeAudio(url)
-    .then((buffer) => extractEnvelope(buffer, numPeaks))
+    .then((buffer) => extractEnvelope(buffer, numPeaks, startSec, endSec))
     .catch((err) => {
       console.warn('Waveform decode failed:', err);
       peakCache.delete(cacheKey);

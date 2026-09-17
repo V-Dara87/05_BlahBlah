@@ -3,7 +3,7 @@
    alone; generic modifier classes (.active/.danger/.disabled) travel with the
    component that owns the rest of the selector.
    App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
-
+ 
 .timeline-clip-card.is-locked {
   opacity: 0.7;
   cursor: not-allowed !important;
@@ -265,7 +265,7 @@
   outline-offset: 1px;
   box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.25);
 }
-
+ 
 /* Live Silence Cut Overlay on actual Timeline */
 .clip-silence-cut-overlay {
   position: absolute;
@@ -275,7 +275,7 @@
   overflow: hidden;
   border-radius: 3px;
 }
-
+ 
 .clip-silence-cut-slice {
   position: absolute;
   top: 0;
@@ -291,3 +291,28 @@
   border-right: 1.5px solid #ef4444;
   box-shadow: 0 0 6px rgba(239, 68, 68, 0.4);
 }
+ 
+/* Draggable edges on a silence-cut region — lets the user manually
+   adjust where an auto-detected cut actually starts/ends, directly on
+   the timeline, the same "grab the edge" interaction as clip-trim-handle
+   above. The parent overlay/slice are pointer-events:none (so clicks
+   pass through to the clip body for selection/drag) but these handles
+   opt back in with pointer-events:auto since they need their own
+   pointerdown. */
+.silence-cut-edge-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  pointer-events: auto;
+  z-index: 6;
+}
+ 
+.silence-cut-edge-handle.left { left: -3px; }
+.silence-cut-edge-handle.right { right: -3px; }
+ 
+.silence-cut-edge-handle:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+ 

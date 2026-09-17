@@ -237,6 +237,15 @@ export function App() {
   const [recordingStartTime, setRecordingStartTime] = useState(0);
   const [audioInputDeviceId, setAudioInputDeviceId] = useState(() => loadAudioSettings().inputDeviceId);
   const recordingStartTimeRef = useRef(0);
+  // Re-entrancy guard for handleToggleRecordTrack's stop branch. pause()
+  // notifies playbackStore subscribers synchronously, and the stop-on-
+  // pause effect below reads recordingTrackId from its own closure, which
+  // still holds the pre-stop value until React re-renders — so pause()
+  // called from inside the stop branch was re-entering this same handler
+  // a second time before the first stop had finished, producing a second
+  // (bogus/empty) clip per single recording. This ref is set the instant
+  // a stop begins and checked immediately, independent of React state.
+  const isStoppingRecordingRef = useRef(false);
   const { startRecording, stopRecording, level: recordingLevel } = useAudioRecorder({ inputDeviceId: audioInputDeviceId });
  
   // Playback: App owns no playback state (PlaybackProvider/playbackStore
@@ -245,10 +254,21 @@ export function App() {
   const { playbackStoreRef, getPlaybackTime } = usePlaybackController();
  
   // Media library (out of undo scope by design — see hook header).
+  // reconcileAssetUrlRef bridges a chicken-and-egg ordering problem: this
+  // hook needs to notify "an asset's URL just changed from blob X to disk
+  // URL Y, please fix any clip entity still pointing at X" but useEntities
+  // (which owns setEntities) is initialized further below, using state
+  // this hook itself provides. A ref lets the actual reconciliation
+  // function be filled in after useProjectStore runs, while still being
+  // callable from inside handleAddMediaAsset above at any time.
+  const reconcileAssetUrlRef = useRef(null);
   const {
     mediaAssets, setMediaAssets, handleAddMediaAsset, handleRemoveMediaAsset,
     handleMoveMediaAsset, handleReplaceMediaAsset,
-  } = useMediaAssets({ projectFolderHandle });
+  } = useMediaAssets({
+    projectFolderHandle,
+    onReconcileAssetUrl: (oldUrl, newUrl) => reconcileAssetUrlRef.current?.(oldUrl, newUrl),
+  });
  
   // App-wide Shared Library — prefabs/scripts that persist OUTSIDE any
   // single project folder (IndexedDB/localStorage) so they're available in
@@ -333,6 +353,36 @@ export function App() {
     getPlaybackTime,
   });
  
+  // Populate reconcileAssetUrlRef (see its declaration above): re-point
+  // any entity/component whose src still matches a stale blob: URL at
+  // the fresh on-disk URL, the moment an asset finishes saving to disk —
+  // not just on the next project reload, since by then the original blob
+  // URL has already been revoked and is unrecoverable. This is what
+  // actually fixes recorded clips losing their audio after a reload.
+  useEffect(() => {
+    reconcileAssetUrlRef.current = (oldUrl, newUrl) => {
+      if (!oldUrl || !newUrl || oldUrl === newUrl) return;
+      setEntities((prev) => prev.map((e) => {
+        let changed = false;
+        const nextEntity = { ...e };
+        if (e.src === oldUrl) {
+          nextEntity.src = newUrl;
+          changed = true;
+        }
+        const comps = e.components;
+        if (comps && comps.some((c) => (c.type === 'VideoRenderer' || c.type === 'AudioSource') && c.src === oldUrl)) {
+          nextEntity.components = comps.map((c) =>
+            (c.type === 'VideoRenderer' || c.type === 'AudioSource') && c.src === oldUrl
+              ? { ...c, src: newUrl }
+              : c
+          );
+          changed = true;
+        }
+        return changed ? nextEntity : e;
+      }));
+    };
+  }, [setEntities]);
+ 
   // Voice Recording — toggled from the per-track record button in
   // TrackHeader. Clicking record on a track arms that track (captures
   // from the Settings-selected input device); clicking again (or the
@@ -340,22 +390,34 @@ export function App() {
   // and drops it onto that same track at the time recording started.
    const handleToggleRecordTrack = useCallback(async (trackId) => {
     if (recordingTrackId === trackId) {
-      // Stop & finalize this track's recording
-      playbackStoreRef.current?.setIsRecording(false);
-      playbackStoreRef.current?.pause();
+      // Stop & finalize this track's recording.
+      // Bail immediately if a stop is already in flight for this track —
+      // see isStoppingRecordingRef declaration for why this re-entrancy
+      // guard is needed (pause() below can synchronously re-trigger this
+      // same branch via the stop-on-pause effect before React has
+      // re-rendered recordingTrackId to null).
+      if (isStoppingRecordingRef.current) return;
+      isStoppingRecordingRef.current = true;
       const startTime = recordingStartTimeRef.current;
       setRecordingTrackId(null);
       setRecordingStartTime(0);
-      const result = await stopRecording();
+      playbackStoreRef.current?.setIsRecording(false);
+      playbackStoreRef.current?.pause();
+      let result;
+      try {
+        result = await stopRecording();
+      } finally {
+        isStoppingRecordingRef.current = false;
+      }
       if (!result || !result.blob || result.durationSec < 0.15) return;
-
+ 
       const { blob, durationSec, mimeType } = result;
       const ext = mimeType.includes('webm') ? 'webm' : 'wav';
       const takeNumber = mediaAssets.filter(m => m.folder === 'Recordings').length + 1;
       const fileName = `Recording_${String(takeNumber).padStart(3, '0')}.${ext}`;
       const url = URL.createObjectURL(blob);
       const file = new File([blob], fileName, { type: mimeType });
-
+ 
       const asset = {
         id: `asset-recording-${Date.now()}`,
         name: fileName,
@@ -366,14 +428,21 @@ export function App() {
         folder: 'Recordings',
         createdAt: Date.now(),
       };
-
-      await handleAddMediaAsset(asset, file);
-      handleAddMediaToTimeline(asset, trackId, startTime);
+ 
+      // Use the FINAL resolved URL (disk URL once saved, see
+      // handleAddMediaAsset's return value) for the clip we place on the
+      // timeline — not asset.url, which stays a blob: URL forever since
+      // handleAddMediaAsset never mutates the local `asset` object it
+      // was passed, only its own internal mediaAssets state. Using
+      // asset.url here was the actual cause of recorded clips losing
+      // their audio after a reload.
+      const finalUrl = await handleAddMediaAsset(asset, file);
+      handleAddMediaToTimeline({ ...asset, url: finalUrl }, trackId, startTime);
       return;
     }
-
+ 
     if (recordingTrackId) return; // another track is already recording
-
+ 
     // Arm this track and start capturing at the current playhead position
     const startTime = getPlaybackTime();
     recordingStartTimeRef.current = startTime;
@@ -383,14 +452,35 @@ export function App() {
     playbackStoreRef.current?.setIsRecording(true);
     playbackStoreRef.current?.play();
   }, [recordingTrackId, getPlaybackTime, mediaAssets, startRecording, stopRecording, handleAddMediaAsset, handleAddMediaToTimeline]);
-
-  // Synchronize playback stopping (spacebar / pause) with active recording
+ 
+  // Synchronize playback stopping (spacebar / pause) with active recording.
+  //
+  // BUGFIX: play() is async — right after we call it in
+  // handleToggleRecordTrack, the store can briefly still report
+  // isPlaying() === false before playback actually engages. Without a
+  // guard, that transient false was being treated as "the user stopped
+  // playback", which auto-finalized the recording into a clip almost
+  // immediately (near-empty blob), while the mic stream stayed open and a
+  // *second* MediaRecorder session started on the next click — hence one
+  // real recording turning into two clips (one silent/truncated). Fix:
+  // only arm the stop-on-pause listener once we've observed isPlaying()
+  // actually become true at least once for this recording session, so a
+  // startup blip can't be mistaken for a real stop.
+  const hasSeenPlaybackStartRef = useRef(false);
   useEffect(() => {
-    if (!recordingTrackId) return;
+    if (!recordingTrackId) {
+      hasSeenPlaybackStartRef.current = false;
+      return;
+    }
     const store = playbackStoreRef.current;
     if (!store) return;
     const unsub = store.subscribe(() => {
-      if (!store.getIsPlaying() && recordingTrackId) {
+      const isPlaying = store.getIsPlaying();
+      if (isPlaying) {
+        hasSeenPlaybackStartRef.current = true;
+        return;
+      }
+      if (hasSeenPlaybackStartRef.current && recordingTrackId) {
         handleToggleRecordTrack(recordingTrackId);
       }
     });
@@ -405,12 +495,12 @@ export function App() {
     setEditingScript(script);
     setIsScriptEditorOpen(true);
   };
-
+ 
   const handleOpenSilenceRemover = useCallback((clipId) => {
     setSilenceTarget({ type: 'clip', id: clipId });
     openOrFocusPanel('silenceRemover', 'Silence Remover');
   }, [openOrFocusPanel]);
-
+ 
   const handleOpenSilenceRemoverForTrack = useCallback((trackId) => {
     setSilenceTarget({ type: 'track', id: trackId });
     openOrFocusPanel('silenceRemover', 'Silence Remover');
@@ -481,26 +571,26 @@ export function App() {
       ]);
     }
   }, [handleCreateScript, setPrefabs, scripts]);
-
+ 
   // ── Prefab Editing Mode State & Handlers ──────────────────────────────────
   const [editingPrefabId, setEditingPrefabId] = useState(null);
   const [prefabEntities, setPrefabEntities] = useState([]);
   const [isPrefabSaved, setIsPrefabSaved] = useState(true);
   const [isPrefabSynced, setIsPrefabSynced] = useState(false);
-
+ 
   const editingPrefab = useMemo(() => {
     if (!editingPrefabId) return null;
     return prefabs.find((p) => p.id === editingPrefabId) || null;
   }, [editingPrefabId, prefabs]);
-
+ 
   const isPrefabMode = Boolean(editingPrefabId && editingPrefab);
-
+ 
   const setPrefabEntitiesWithDirty = useCallback((updater) => {
     setPrefabEntities((prev) => (typeof updater === 'function' ? updater(prev) : updater));
     setIsPrefabSaved(false);
     setIsPrefabSynced(false);
   }, []);
-
+ 
   const prefabEntityActions = useEntityActions({
     entities: prefabEntities,
     tracks,
@@ -520,7 +610,7 @@ export function App() {
     setSelectedEntityId,
     getPlaybackTime,
   });
-
+ 
   const handleEnterPrefabMode = useCallback((prefabId) => {
     const p = prefabs.find((item) => item.id === prefabId);
     if (!p) return;
@@ -551,15 +641,14 @@ export function App() {
     setSelectedEntityId(initialEntities[0]?.id || null);
     setSelectedIds([]);
   }, [prefabs, tracks]);
-
+ 
   const handleSaveCurrentPrefab = useCallback(async () => {
     if (!editingPrefabId || !editingPrefab) return;
     const maxDuration = Math.max(
       ...prefabEntities.map((e) => (e.startTime || 0) + (e.duration || 0)),
-      1
     );
     const rootEntity = prefabEntities.find((e) => !e.parentId) || prefabEntities[0];
-
+ 
     // Collect all referenced scripts
     const usedScriptIds = new Set();
     prefabEntities.forEach((snap) => {
@@ -577,7 +666,7 @@ export function App() {
         description: s.description || '',
         code: s.code || '',
       }));
-
+ 
     const updatedData = {
       rootId: rootEntity ? rootEntity.id : editingPrefab.rootId,
       entities: prefabEntities,
@@ -588,16 +677,15 @@ export function App() {
     await handleUpdatePrefab(editingPrefabId, updatedData);
     setIsPrefabSaved(true);
   }, [editingPrefabId, editingPrefab, prefabEntities, scripts, handleUpdatePrefab]);
-
+ 
   // Sync Prefab changes to all instances across the scene timeline
   const handleSyncPrefabToSceneInstances = useCallback(async () => {
     if (!editingPrefabId || !editingPrefab) return;
     const maxDuration = Math.max(
       ...prefabEntities.map((e) => (e.startTime || 0) + (e.duration || 0)),
-      1
     );
     const rootEntity = prefabEntities.find((e) => !e.parentId) || prefabEntities[0];
-
+ 
     // Collect all referenced scripts
     const usedScriptIds = new Set();
     prefabEntities.forEach((snap) => {
@@ -615,7 +703,7 @@ export function App() {
         description: s.description || '',
         code: s.code || '',
       }));
-
+ 
     const updatedData = {
       rootId: rootEntity ? rootEntity.id : editingPrefab.rootId,
       entities: prefabEntities,
@@ -625,16 +713,16 @@ export function App() {
     };
     await handleUpdatePrefab(editingPrefabId, updatedData);
     setIsPrefabSaved(true);
-
+ 
     // Sync all timeline instances
     setEntities((prev) =>
       syncPrefabInstances(prev, editingPrefabId, prefabEntities, rootEntity ? rootEntity.id : null)
     );
-
+ 
     setIsPrefabSynced(true);
     setTimeout(() => setIsPrefabSynced(false), 2500);
   }, [editingPrefabId, editingPrefab, prefabEntities, scripts, handleUpdatePrefab, setEntities]);
-
+ 
   const handleExitPrefabMode = useCallback(() => {
     if (editingPrefabId && !isPrefabSaved) {
       handleSaveCurrentPrefab();
@@ -646,7 +734,7 @@ export function App() {
     setIsPrefabSaved(true);
     setIsPrefabSynced(false);
   }, [editingPrefabId, isPrefabSaved, handleSaveCurrentPrefab]);
-
+ 
   // Calculate timeline duration based on entity placements
   // BUG FIX -- this used to return a fabricated `30` when there were no
   // clips at all, which useTimelinePlayback then treated as a completely
@@ -662,7 +750,7 @@ export function App() {
     const maxEnd = Math.max(...entities.map((e) => e.startTime + e.duration));
     return Math.max(30, Math.ceil(maxEnd + 5));
   }, [entities]);
-
+ 
   const activeEntities = isPrefabMode ? prefabEntities : entities;
   const activeDuration = useMemo(() => {
     if (isPrefabMode) {
@@ -931,7 +1019,7 @@ export function App() {
           frameless desktop build the right end carries window controls
           and a drag region (see framelessChrome above). */}
       <MenuBar menus={menuBarConfig} trailing={framelessChrome} />
-
+ 
       {/* Top Navigation Bar */}
       <EditorHeader
         projectName={projectName}
@@ -959,7 +1047,7 @@ export function App() {
         onOpenSettings={() => setIsSettingsOpen(true)}
         onGoToHub={() => setScreen('hub')}
       />
-
+ 
       {/* Unity-style dockable workspace: every panel below (Project,
           Preview, Inspector, Timeline) can be dragged to any edge,
           split, or merged into tabs, same as Unity's editor windows.
@@ -1100,6 +1188,8 @@ export function App() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         onSettingsChanged={handleAudioSettingsChanged}
+        resolution={resolution}
+        onResolutionChange={setResolution}
       />
     </div>
     </PlaybackProvider>

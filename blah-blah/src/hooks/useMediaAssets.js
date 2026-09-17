@@ -5,7 +5,7 @@ import {
   moveMediaFileOnDisk,
 } from '../services/projectFileSystem';
 import { probeFileDuration, MEDIA_FALLBACK_DURATION } from '../services/mediaImport';
-
+ 
 /**
  * useMediaAssets — the media-asset library (state + import/remove logic).
  *
@@ -40,10 +40,17 @@ import { probeFileDuration, MEDIA_FALLBACK_DURATION } from '../services/mediaImp
  * returns the saved absolute path so this works even when the imported
  * file was never readable as a blob.
  */
-export function useMediaAssets({ projectFolderHandle } = {}) {
+export function useMediaAssets({ projectFolderHandle, onReconcileAssetUrl } = {}) {
   const [mediaAssets, setMediaAssets] = useState([]);
-
+ 
   // Upload Media File
+  // Returns the FINAL resolved URL for the saved asset — the disk URL if
+  // a save happened, otherwise the original asset.url unchanged. Callers
+  // that create a timeline clip right after adding an asset (e.g. voice
+  // recording's stop handler) MUST use this return value for the clip's
+  // src, not the asset object they originally passed in — see the long
+  // comment below for why using the stale object silently breaks
+  // playback after a reload.
   const handleAddMediaAsset = async (asset, originalFile = null) => {
     setMediaAssets(prev => [asset, ...prev]);
     if (projectFolderHandle && originalFile) {
@@ -52,14 +59,35 @@ export function useMediaAssets({ projectFolderHandle } = {}) {
       // sitting in media/, and free the blob (it was only for probing).
       if (savedPath) {
         const { convertFileSrc } = await import('@tauri-apps/api/core');
+        const diskUrl = convertFileSrc(savedPath);
         setMediaAssets(prev => prev.map(a => a.id === asset.id
-          ? { ...a, url: convertFileSrc(savedPath), path: savedPath }
+          ? { ...a, url: diskUrl, path: savedPath }
           : a
         ));
+        // Backstop for any OTHER caller that doesn't use this function's
+        // return value (see the doc comment above) — re-points any
+        // entity/component that somehow still references the stale blob
+        // URL. The PRIMARY fix is the return value below: the voice
+        // recording handler now awaits this call and builds the timeline
+        // clip from the returned URL directly, so the clip never points
+        // at the stale blob URL in the first place. This used to be the
+        // only fix attempted, but it ran too late — by the time it fired,
+        // handleAddMediaToTimeline had already created the clip from the
+        // ORIGINAL asset object (a separate in-memory copy whose .url
+        // was never mutated), so there was nothing yet to reconcile. This
+        // is the actual reason recorded clips — trimmed or not — lost
+        // their audio after a reload: not that reconciliation was
+        // missing, but that it ran after the clip it needed to fix
+        // already existed with the wrong URL baked in.
+        if (onReconcileAssetUrl) {
+          onReconcileAssetUrl(asset.url, diskUrl);
+        }
+        return diskUrl;
       }
     }
+    return asset.url;
   };
-
+ 
   const handleRemoveMediaAsset = async (assetId) => {
     const asset = mediaAssets.find((a) => a.id === assetId);
     setMediaAssets((prev) => prev.filter((a) => a.id !== assetId));
@@ -74,7 +102,7 @@ export function useMediaAssets({ projectFolderHandle } = {}) {
       });
     }
   };
-
+ 
   // Reassign an asset's folder (null = root media folder). Used by the
   // Project panel folder drag-and-drop.
   const handleMoveMediaAsset = async (assetId, targetFolderName) => {
@@ -97,7 +125,7 @@ export function useMediaAssets({ projectFolderHandle } = {}) {
       }
     }
   };
-
+ 
   // Replace the underlying file of an existing asset. The id is preserved
   // (the whole codebase locates assets by id, so anything referencing this
   // asset keeps working without re-linking); only url/size/duration/type
@@ -108,7 +136,7 @@ export function useMediaAssets({ projectFolderHandle } = {}) {
     if (!asset || !newFile) return;
     const isVideo = newFile.type.startsWith('video/');
     const duration = (await probeFileDuration(newFile, isVideo)) || MEDIA_FALLBACK_DURATION[isVideo ? 'video' : 'audio'];
-
+ 
     setMediaAssets(prev => prev.map(a => a.id === assetId ? {
       ...a,
       url: URL.createObjectURL(newFile),
@@ -116,7 +144,7 @@ export function useMediaAssets({ projectFolderHandle } = {}) {
       duration,
       type: isVideo ? 'video' : 'audio',
     } : a));
-
+ 
     // Persist the replacement over the SAME on-disk location (keep the
     // asset's existing filename) so paths already referencing it stay
     // valid — saveMediaFileToFolder takes an explicit target name.
@@ -131,7 +159,7 @@ export function useMediaAssets({ projectFolderHandle } = {}) {
       }
     }
   };
-
+ 
   return {
     mediaAssets,
     setMediaAssets,
@@ -141,3 +169,4 @@ export function useMediaAssets({ projectFolderHandle } = {}) {
     handleReplaceMediaAsset,
   };
 }
+ 

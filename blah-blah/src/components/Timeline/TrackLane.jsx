@@ -170,6 +170,7 @@ export const TrackLane = memo(function TrackLane({
         {clips.map((clip) => {
           const lane = subLanes.get(clip.id) || { laneIndex: 0, laneCount: 1 };
           let clipSilenceCuts = null;
+          let clipSilenceAdjustHandler = null;
           if (silencePreviewData && silencePreviewData.cuts?.length > 0) {
             if (silencePreviewData.targetType === 'clip') {
               if (
@@ -178,10 +179,12 @@ export const TrackLane = memo(function TrackLane({
                 (fullClipList.find((c) => c.id === silencePreviewData.targetId)?.parentId === clip.id)
               ) {
                 clipSilenceCuts = silencePreviewData.cuts;
+                clipSilenceAdjustHandler = silencePreviewData.onAdjustCutEdge || null;
               }
             } else if (silencePreviewData.targetType === 'track') {
               if (clip.trackId === silencePreviewData.targetId) {
                 clipSilenceCuts = silencePreviewData.cuts;
+                clipSilenceAdjustHandler = silencePreviewData.onAdjustCutEdge || null;
               }
             }
           }
@@ -193,6 +196,7 @@ export const TrackLane = memo(function TrackLane({
               laneIndex={lane.laneIndex}
               laneCount={lane.laneCount}
               silencePreviewCuts={clipSilenceCuts}
+              onAdjustSilenceCutEdge={clipSilenceAdjustHandler}
               {...sharedProps}
             />
           );

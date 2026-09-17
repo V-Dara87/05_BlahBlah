@@ -24,7 +24,7 @@ import {
   isFfmpegAvailable,
 } from '../services/silenceDetector';
 import './silence-remover-panel.css';
-
+ 
 /**
  * SilenceRemoverPanel — Dockable Panel for Audio Silence Detection & Cutting
  *
@@ -42,26 +42,45 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
   onApplyCutSilence,
   onUpdatePreviewCuts, // (previewData: { targetType, targetId, cuts: [] }) => void
 }) {
+  // Master on/off switch for the whole panel. Starts OFF: previously
+  // this panel ran audio decode + silence detection + live timeline-cut
+  // overlays unconditionally the moment it had an activeClip, so simply
+  // opening the tab silently painted cut regions onto the timeline even
+  // if you just wanted to glance at it. Every effect below now checks
+  // this before doing any work, and the timeline overlay is explicitly
+  // cleared when it flips off.
+  const [isEnabled, setIsEnabled] = useState(false);
+ 
   const [targetType, setTargetType] = useState(activeTargetType);
   const [selectedClipId, setSelectedClipId] = useState(activeTargetId);
   const [selectedTrackId, setSelectedTrackId] = useState(null);
-
+ 
   // Settings
-  const [thresholdDb, setThresholdDb] = useState(-35);
+  const [thresholdDb, setThresholdDb] = useState(-45);
   const [minSilenceDuration, setMinSilenceDuration] = useState(0.4);
-  const [padding, setPadding] = useState(0.08); // 80ms offset / padding
+  const [padding, setPadding] = useState(0.12); // 120ms offset / padding
   const [minSpeechDuration, setMinSpeechDuration] = useState(0.15);
   const [rippleMode, setRippleMode] = useState(true);
   const [useFfmpegEngine, setUseFfmpegEngine] = useState(false);
   const [disabledCutIds, setDisabledCutIds] = useState(new Set());
-
+  // Manual edge overrides for auto-detected cuts, keyed by cut.id (see
+  // computeAudibleAndSilentSegments — cut ids are stable across a given
+  // detection run since they're derived from index + rounded start time).
+  // computed.cutSegments below is fully re-derived from raw detection on
+  // every threshold/padding change, so without this map any drag done on
+  // the timeline's cut-edge handles would be silently discarded the next
+  // time anything re-triggers detection. This map is applied ON TOP of
+  // computed.cutSegments (see `displayCutSegments` below) and is the
+  // source of truth once the user has manually adjusted a given cut.
+  const [manualCutOverrides, setManualCutOverrides] = useState({}); // { [cutId]: { start, end } }
+ 
   // Audio / Detection state
   const [audioBuffer, setAudioBuffer] = useState(null);
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
   const [isDetecting, setIsDetecting] = useState(false);
   const [rawSilenceIntervals, setRawSilenceIntervals] = useState([]);
   const [ffmpegSupported, setFfmpegSupported] = useState(false);
-
+ 
   // Live Audition Player
   const [isAuditioning, setIsAuditioning] = useState(false);
   const [auditionCurrentTime, setAuditionCurrentTime] = useState(0);
@@ -70,12 +89,12 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
   const auditionRafRef = useRef(null);
   const auditionStartWallTimeRef = useRef(0);
   const auditionStartAudioTimeRef = useRef(0);
-
+ 
   // Check FFmpeg availability on mount
   useEffect(() => {
     isFfmpegAvailable().then((avail) => setFfmpegSupported(avail));
   }, []);
-
+ 
   // Update target when props change
   useEffect(() => {
     if (activeTargetId) {
@@ -89,7 +108,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
       setDisabledCutIds(new Set());
     }
   }, [activeTargetId, activeTargetType]);
-
+ 
   // Active clip resolution
   const activeClip = useMemo(() => {
     if (targetType === 'clip') {
@@ -109,7 +128,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
     }
     return null;
   }, [targetType, selectedClipId, allEntities]);
-
+ 
   // Audio/video clips for dropdown
   const audioVideoClips = useMemo(() => {
     return allEntities.filter(
@@ -119,7 +138,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
         e.components?.some((c) => c.type === 'AudioSource' || c.type === 'VideoRenderer')
     );
   }, [allEntities]);
-
+ 
   // Audio source resolution
   const audioSourceInfo = useMemo(() => {
     if (!activeClip) return null;
@@ -127,27 +146,27 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
     let filePath = null;
     const comp = activeClip.components?.find((c) => c.type === 'AudioSource' || c.type === 'VideoRenderer');
     if (comp?.src) url = comp.src;
-
+ 
     // Resolve matching asset for disk file path (Tauri mode)
     const asset = mediaAssets.find((a) => a.url === url || a.name === activeClip.name || url?.includes(a.name));
     if (asset?.path) filePath = asset.path;
-
+ 
     const mediaOffset = comp?.mediaOffset || 0;
     const duration = activeClip.duration || 0;
-
+ 
     return { url, filePath, mediaOffset, duration };
   }, [activeClip, mediaAssets]);
-
+ 
   // Load AudioBuffer for client-side preview, Web Audio detection, and auditioning
   useEffect(() => {
-    if (!audioSourceInfo?.url) {
+    if (!isEnabled || !audioSourceInfo?.url) {
       setAudioBuffer(null);
       return;
     }
-
+ 
     let cancelled = false;
     setIsLoadingAudio(true);
-
+ 
     decodeAudio(audioSourceInfo.url)
       .then((buf) => {
         if (!cancelled) {
@@ -161,19 +180,19 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
           setIsLoadingAudio(false);
         }
       });
-
+ 
     return () => {
       cancelled = true;
     };
-  }, [audioSourceInfo?.url]);
-
+  }, [isEnabled, audioSourceInfo?.url]);
+ 
   // Detection execution
   useEffect(() => {
-    if (!activeClip) {
+    if (!isEnabled || !activeClip) {
       setRawSilenceIntervals([]);
       return;
     }
-
+ 
     if (useFfmpegEngine && ffmpegSupported && audioSourceInfo?.filePath) {
       let cancelled = false;
       setIsDetecting(true);
@@ -209,7 +228,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
         cancelled = true;
       };
     }
-
+ 
     // Default: Fast Web Audio detection
     if (audioBuffer) {
       const intervals = detectSilenceWithWebAudio(audioBuffer, {
@@ -221,6 +240,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
       setRawSilenceIntervals(intervals);
     }
   }, [
+    isEnabled,
     activeClip,
     audioBuffer,
     audioSourceInfo,
@@ -229,7 +249,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
     useFfmpegEngine,
     ffmpegSupported,
   ]);
-
+ 
   // Calculate audible & silent segments with padding
   const computed = useMemo(() => {
     if (!activeClip) {
@@ -241,28 +261,73 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
       minSpeechDuration,
     });
   }, [activeClip, rawSilenceIntervals, disabledCutIds, padding, minSpeechDuration]);
-
-  // Broadcast cut preview data to the Timeline for live on-timeline clip overlays
+ 
+  // A fresh detection run (new raw intervals) invalidates any manual edge
+  // drags from before — those overrides were keyed to the previous run's
+  // cut ids/positions and no longer correspond to anything meaningful.
+  useEffect(() => {
+    setManualCutOverrides({});
+  }, [rawSilenceIntervals]);
+ 
+  // Cuts actually shown/used everywhere below: computed.cutSegments with
+  // any manual edge drags applied on top, re-clamped to stay inside the
+  // clip and never invert (end before start).
+  const displayCutSegments = useMemo(() => {
+    if (Object.keys(manualCutOverrides).length === 0) return computed.cutSegments;
+    const clipDur = activeClip?.duration || 0;
+    return computed.cutSegments.map((cut) => {
+      const override = manualCutOverrides[cut.id];
+      if (!override) return cut;
+      const start = Math.max(0, Math.min(override.start, clipDur));
+      const end = Math.max(start + 0.02, Math.min(override.end, clipDur));
+      return { ...cut, start, end, duration: Math.round((end - start) * 1000) / 1000 };
+    });
+  }, [computed.cutSegments, manualCutOverrides, activeClip]);
+ 
+  // Called by the timeline's cut-edge drag handles (ClipItem) as the user
+  // drags a cut region's left/right edge. Merges into manualCutOverrides
+  // rather than mutating computed.cutSegments directly, since the latter
+  // is re-derived from scratch on every threshold/padding change.
+  const handleAdjustCutEdge = useCallback((cutId, edge, newTime) => {
+    setManualCutOverrides((prev) => {
+      const base = computed.cutSegments.find((c) => c.id === cutId);
+      if (!base) return prev;
+      const existing = prev[cutId] || { start: base.start, end: base.end };
+      const next = { ...existing, [edge]: newTime };
+      // Keep start < end with a small minimum width so a cut can't be
+      // dragged past/through itself.
+      if (edge === 'start') next.start = Math.min(next.start, next.end - 0.02);
+      if (edge === 'end') next.end = Math.max(next.end, next.start + 0.02);
+      return { ...prev, [cutId]: next };
+    });
+  }, [computed.cutSegments]);
+ 
+  // Broadcast cut preview data to the Timeline for live on-timeline clip overlays.
+  // Gated on isEnabled — this is the effect that actually paints cut
+  // regions onto the real timeline, so it's the one that most needed to
+  // stop running just because the panel happened to be open.
   useEffect(() => {
     if (onUpdatePreviewCuts) {
-      if (targetType === 'clip' && activeClip) {
+      if (isEnabled && targetType === 'clip' && activeClip) {
         onUpdatePreviewCuts({
           targetType: 'clip',
           targetId: activeClip.id,
-          cuts: computed.cutSegments,
+          cuts: displayCutSegments,
+          onAdjustCutEdge: handleAdjustCutEdge,
         });
-      } else if (targetType === 'track' && selectedTrackId) {
+      } else if (isEnabled && targetType === 'track' && selectedTrackId) {
         onUpdatePreviewCuts({
           targetType: 'track',
           targetId: selectedTrackId,
-          cuts: computed.cutSegments,
+          cuts: displayCutSegments,
+          onAdjustCutEdge: handleAdjustCutEdge,
         });
       } else {
         onUpdatePreviewCuts(null);
       }
     }
-  }, [onUpdatePreviewCuts, targetType, activeClip, selectedTrackId, computed.cutSegments]);
-
+  }, [isEnabled, onUpdatePreviewCuts, targetType, activeClip, selectedTrackId, displayCutSegments, handleAdjustCutEdge]);
+ 
   // Clean up on unmount
   useEffect(() => {
     return () => {
@@ -271,7 +336,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
       }
     };
   }, [onUpdatePreviewCuts]);
-
+ 
   // ── Live Audition Player (skips silent cut intervals in real time) ─────────
   const stopAudition = useCallback(() => {
     if (sourceNodeRef.current) {
@@ -289,12 +354,12 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
     }
     setIsAuditioning(false);
   }, []);
-
+ 
   const startAudition = useCallback(
     (startTime = 0) => {
       if (!audioBuffer) return;
       stopAudition();
-
+ 
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       if (!audioContextRef.current) {
         audioContextRef.current = new AudioCtx();
@@ -303,37 +368,37 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
       if (ctx.state === 'suspended') {
         ctx.resume();
       }
-
+ 
       const mediaOffset = audioSourceInfo?.mediaOffset || 0;
       const clipDuration = activeClip?.duration || audioBuffer.duration;
       const safeStart = Math.max(0, Math.min(startTime, clipDuration - 0.1));
-
+ 
       const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(ctx.destination);
-
-      const cuts = computed.cutSegments;
-
+ 
+      const cuts = displayCutSegments;
+ 
       // Start playing
       const bufferStartTime = mediaOffset + safeStart;
       source.start(0, bufferStartTime);
       sourceNodeRef.current = source;
-
+ 
       auditionStartWallTimeRef.current = ctx.currentTime;
       auditionStartAudioTimeRef.current = safeStart;
       setIsAuditioning(true);
-
+ 
       const loop = () => {
         if (!sourceNodeRef.current) return;
         const elapsed = ctx.currentTime - auditionStartWallTimeRef.current;
         const currentAudioTime = auditionStartAudioTimeRef.current + elapsed;
-
+ 
         if (currentAudioTime >= clipDuration) {
           stopAudition();
           setAuditionCurrentTime(0);
           return;
         }
-
+ 
         // Check if inside a cut interval -> skip forward past the silence
         for (const cut of cuts) {
           if (currentAudioTime >= cut.start && currentAudioTime < cut.end) {
@@ -343,20 +408,20 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
             return;
           }
         }
-
+ 
         setAuditionCurrentTime(currentAudioTime);
         auditionRafRef.current = requestAnimationFrame(loop);
       };
-
+ 
       auditionRafRef.current = requestAnimationFrame(loop);
-
+ 
       source.onended = () => {
         setIsAuditioning(false);
       };
     },
-    [audioBuffer, audioSourceInfo, activeClip, computed.cutSegments, stopAudition]
+    [audioBuffer, audioSourceInfo, activeClip, displayCutSegments, stopAudition]
   );
-
+ 
   const toggleAudition = () => {
     if (isAuditioning) {
       stopAudition();
@@ -364,13 +429,13 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
       startAudition(auditionCurrentTime > 0 ? auditionCurrentTime : 0);
     }
   };
-
+ 
   // Stop audition when clip changes
   useEffect(() => {
     stopAudition();
     setAuditionCurrentTime(0);
   }, [activeClip?.id, stopAudition]);
-
+ 
   // Toggle individual cut checkbox
   const handleToggleCut = useCallback((idx) => {
     setDisabledCutIds((prev) => {
@@ -380,7 +445,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
       return next;
     });
   }, []);
-
+ 
   // Presets
   const applyPreset = (preset) => {
     if (preset === 'gentle') {
@@ -397,23 +462,53 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
       setPadding(0.04);
     }
   };
-
+ 
   // Commit Cut Silence
+  // Kept (audible) segments recomputed from displayCutSegments so manual
+  // edge drags actually change what handleApply cuts, not just the
+  // preview overlay on the timeline.
+  const displayKeptSegments = useMemo(() => {
+    const clipDur = activeClip?.duration || 0;
+    if (clipDur <= 0) return [];
+    const sorted = [...displayCutSegments].sort((a, b) => a.start - b.start);
+    const kept = [];
+    let curTime = 0;
+    for (const cut of sorted) {
+      if (cut.start > curTime + 0.02) {
+        kept.push({
+          start: Math.round(curTime * 1000) / 1000,
+          end: Math.round(cut.start * 1000) / 1000,
+          duration: Math.round((cut.start - curTime) * 1000) / 1000,
+        });
+      }
+      curTime = Math.max(curTime, cut.end);
+    }
+    if (curTime < clipDur - 0.02) {
+      kept.push({
+        start: Math.round(curTime * 1000) / 1000,
+        end: Math.round(clipDur * 1000) / 1000,
+        duration: Math.round((clipDur - curTime) * 1000) / 1000,
+      });
+    }
+    return kept;
+  }, [displayCutSegments, activeClip]);
+ 
   const handleApply = () => {
+    if (!isEnabled) return;
     stopAudition();
     if (!onApplyCutSilence) return;
-
+ 
     if (targetType === 'clip' && activeClip) {
       onApplyCutSilence({
         targetType: 'clip',
         targetId: activeClip.id,
-        keptSegments: computed.keptSegments,
+        keptSegments: displayKeptSegments,
         ripple: rippleMode,
       });
     } else if (targetType === 'track' && selectedTrackId) {
       const cutsByClipId = new Map();
       if (activeClip && activeClip.trackId === selectedTrackId) {
-        cutsByClipId.set(activeClip.id, computed.keptSegments);
+        cutsByClipId.set(activeClip.id, displayKeptSegments);
       }
       onApplyCutSilence({
         targetType: 'track',
@@ -423,9 +518,35 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
       });
     }
   };
-
+ 
   return (
     <div className="silence-panel-container">
+      {/* Enable / Disable — master switch for the whole panel. Off by
+          default and on every mount; detection, auditioning, and the
+          live timeline-cut overlay only run while this is on. */}
+      <div className="silence-enable-bar">
+        <label className="silence-enable-toggle">
+          <span className="toggle-switch">
+            <input
+              type="checkbox"
+              checked={isEnabled}
+              onChange={(e) => setIsEnabled(e.target.checked)}
+            />
+            <span className="toggle-switch-track">
+              <span className="toggle-switch-thumb" />
+            </span>
+          </span>
+          <span className="silence-enable-label">
+            <Scissors size={12} />
+            Silence Remover
+          </span>
+        </label>
+        <span className={`silence-enable-status ${isEnabled ? 'on' : 'off'}`}>
+          {isEnabled ? 'Active — editing timeline' : 'Off'}
+        </span>
+      </div>
+ 
+      <div className={`silence-panel-body ${!isEnabled ? 'is-disabled' : ''}`}>
       {/* Top Bar / Target Selector */}
       <div className="silence-panel-topbar">
         <div className="silence-target-tabs">
@@ -433,6 +554,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
             type="button"
             className={`silence-tab-btn ${targetType === 'clip' ? 'active' : ''}`}
             onClick={() => setTargetType('clip')}
+            disabled={!isEnabled}
           >
             {activeClip?.type === 'video' ? <Film size={12} /> : <Music size={12} />}
             Selected Clip
@@ -441,18 +563,20 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
             type="button"
             className={`silence-tab-btn ${targetType === 'track' ? 'active' : ''}`}
             onClick={() => setTargetType('track')}
+            disabled={!isEnabled}
           >
             <Layers size={12} />
             Entire Track
           </button>
         </div>
-
+ 
         <div className="silence-target-select-wrap">
           {targetType === 'clip' ? (
             <select
               className="silence-select-input"
               value={selectedClipId || ''}
               onChange={(e) => setSelectedClipId(e.target.value)}
+              disabled={!isEnabled}
             >
               {audioVideoClips.length === 0 && <option value="">No audio/video clips</option>}
               {audioVideoClips.map((c) => (
@@ -466,6 +590,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
               className="silence-select-input"
               value={selectedTrackId || ''}
               onChange={(e) => setSelectedTrackId(e.target.value)}
+              disabled={!isEnabled}
             >
               {allTracks.length === 0 && <option value="">No tracks</option>}
               {allTracks.map((t) => (
@@ -477,7 +602,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
           )}
         </div>
       </div>
-
+ 
       {/* Summary Metrics Banner */}
       <div className="silence-metrics-banner">
         <div className="metric-chip">
@@ -497,7 +622,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
           </span>
         </div>
       </div>
-
+ 
       {/* Audition Player & On-Timeline Indicator */}
       <div className="silence-audition-card">
         <div className="audition-header">
@@ -509,19 +634,19 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
             {formatTime(auditionCurrentTime)} / {formatTime(activeClip?.duration || 0)}
           </span>
         </div>
-
+ 
         <div className="audition-controls">
           <button
             type="button"
             className={`audition-play-btn ${isAuditioning ? 'playing' : ''}`}
             onClick={toggleAudition}
-            disabled={!audioBuffer}
+            disabled={!isEnabled || !audioBuffer}
             title={isAuditioning ? 'Pause Audition' : 'Play and skip detected silence in real time'}
           >
             {isAuditioning ? <Pause size={13} /> : <Play size={13} />}
             {isAuditioning ? 'Pause' : 'Audition Result'}
           </button>
-
+ 
           <button
             type="button"
             className="audition-reset-btn"
@@ -529,18 +654,19 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
               stopAudition();
               setAuditionCurrentTime(0);
             }}
+            disabled={!isEnabled}
             title="Reset playback to beginning"
           >
             <RotateCcw size={11} />
           </button>
-
-          <div className="timeline-sync-badge" title="Red cut regions are displayed live on the actual timeline clips">
+ 
+          <div className={`timeline-sync-badge ${!isEnabled ? 'inactive' : ''}`} title={isEnabled ? 'Red cut regions are displayed live on the actual timeline clips' : 'Turn on Silence Remover to preview cuts on the timeline'}>
             <span className="live-indicator-dot" />
-            <span>Live on Timeline</span>
+            <span>{isEnabled ? 'Live on Timeline' : 'Not Active'}</span>
           </div>
         </div>
       </div>
-
+ 
       {/* Scrollable Controls Section */}
       <div className="silence-panel-scroll-area">
         {/* Preset Chips */}
@@ -550,6 +676,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
             type="button"
             className={`preset-btn ${thresholdDb === -45 ? 'active' : ''}`}
             onClick={() => applyPreset('gentle')}
+            disabled={!isEnabled}
           >
             Gentle (-45dB)
           </button>
@@ -557,6 +684,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
             type="button"
             className={`preset-btn ${thresholdDb === -35 ? 'active' : ''}`}
             onClick={() => applyPreset('normal')}
+            disabled={!isEnabled}
           >
             Balanced (-35dB)
           </button>
@@ -564,11 +692,12 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
             type="button"
             className={`preset-btn ${thresholdDb === -25 ? 'active' : ''}`}
             onClick={() => applyPreset('aggressive')}
+            disabled={!isEnabled}
           >
             Aggressive (-25dB)
           </button>
         </div>
-
+ 
         {/* Slider 1: Threshold (dB) */}
         <div className="silence-control-card">
           <div className="control-header">
@@ -586,12 +715,13 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
             value={thresholdDb}
             onChange={(e) => setThresholdDb(parseFloat(e.target.value))}
             className="silence-slider"
+            disabled={!isEnabled}
           />
           <span className="control-desc">
             Sounds below this volume level are treated as silence.
           </span>
         </div>
-
+ 
         {/* Slider 2: Min Silence Duration */}
         <div className="silence-control-card">
           <div className="control-header">
@@ -609,12 +739,13 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
             value={minSilenceDuration}
             onChange={(e) => setMinSilenceDuration(parseFloat(e.target.value))}
             className="silence-slider"
+            disabled={!isEnabled}
           />
           <span className="control-desc">
             Pauses shorter than this are kept to preserve natural pauses.
           </span>
         </div>
-
+ 
         {/* Slider 3: Padding / Offset */}
         <div className="silence-control-card">
           <div className="control-header">
@@ -632,12 +763,13 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
             value={padding}
             onChange={(e) => setPadding(parseFloat(e.target.value))}
             className="silence-slider"
+            disabled={!isEnabled}
           />
           <span className="control-desc">
             Lead-in &amp; lead-out margins to prevent cutting word edges.
           </span>
         </div>
-
+ 
         {/* Ripple & Engine Checkboxes */}
         <div className="silence-toggles-card">
           <label className="silence-toggle-item">
@@ -645,16 +777,18 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
               type="checkbox"
               checked={rippleMode}
               onChange={(e) => setRippleMode(e.target.checked)}
+              disabled={!isEnabled}
             />
             <span>Ripple Cut (Close gaps between cuts)</span>
           </label>
-
+ 
           {ffmpegSupported && (
             <label className="silence-toggle-item">
               <input
                 type="checkbox"
                 checked={useFfmpegEngine}
                 onChange={(e) => setUseFfmpegEngine(e.target.checked)}
+                disabled={!isEnabled}
               />
               <span>
                 <Cpu size={11} style={{ display: 'inline', marginRight: 4 }} />
@@ -663,14 +797,14 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
             </label>
           )}
         </div>
-
+ 
         {/* Detected Pauses Checklist */}
         <div className="silence-pauses-section">
           <div className="pauses-section-header">
             <span>Detected Pauses ({rawSilenceIntervals.length})</span>
             <span className="pauses-section-sub">Uncheck to keep</span>
           </div>
-
+ 
           <div className="pauses-list">
             {rawSilenceIntervals.length === 0 ? (
               <div className="pauses-empty-state">
@@ -685,13 +819,14 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
                   <div
                     key={idx}
                     className={`pause-entry ${isChecked ? 'cut' : 'kept'}`}
-                    onClick={() => handleToggleCut(idx)}
+                    onClick={() => isEnabled && handleToggleCut(idx)}
                   >
                     <input
                       type="checkbox"
                       checked={isChecked}
                       onChange={() => {}}
                       onClick={(e) => e.stopPropagation()}
+                      disabled={!isEnabled}
                     />
                     <div className="pause-time">
                       <span>{formatTime(interval.start)}</span>
@@ -709,18 +844,19 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
           </div>
         </div>
       </div>
-
+ 
       {/* Action Footer */}
       <div className="silence-panel-footer">
         <button
           type="button"
           className="silence-cut-action-btn"
           onClick={handleApply}
-          disabled={computed.cutSegments.length === 0}
+          disabled={!isEnabled || computed.cutSegments.length === 0}
         >
           <Scissors size={13} />
           Cut Silence ({computed.cutSegments.length} pauses)
         </button>
+      </div>
       </div>
     </div>
   );
