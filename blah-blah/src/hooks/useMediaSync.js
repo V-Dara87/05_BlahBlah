@@ -14,6 +14,15 @@ import { setMediaElementVolume, setMediaElementRate, resumeAudioContext, disconn
  * Volume is applied through a Web Audio GainNode chain (see
  * utils/mediaAudio.js) so it can exceed 1.0 — element.volume is clamped to
  * [0,1] by the platform.
+ *
+ * FIXED — silent preview on play: resumeAudioContext() is now awaited
+ * BEFORE the element is routed through the gain chain (setMediaElementVolume)
+ * and before play() is called. Previously resumeAudioContext() was fired
+ * off without waiting right after volume/routing had already happened, so
+ * play() could start while the shared AudioContext was still 'suspended' —
+ * the element would visibly play (currentTime advancing) with no audible
+ * sound until something else happened to resume the context later. See
+ * utils/mediaAudio.js for the full explanation.
  */
 export function useMediaSync({ entities, activeVideoItems, computedEntities, currentTime, isPlaying }) {
   const videoRefs = useRef({});
@@ -26,41 +35,51 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
     const isStateTransition = wasPlayingRef.current !== isPlaying;
     wasPlayingRef.current = isPlaying;
  
-    activeVideoItems.forEach(({ entity, transform }) => {
-      const videoComp = entity.components.find((c) => c.type === 'VideoRenderer') || { src: entity.src };
-      const vidSrc = videoComp.src || entity.src;
-      if (!vidSrc) return;
+    // Resume the shared AudioContext FIRST and wait for it to actually be
+    // running before routing/playing anything this tick. Cheap no-op when
+    // already running; see utils/mediaAudio.js for why the ordering matters.
+    const startPlayback = async () => {
+      if (isPlaying) {
+        await resumeAudioContext();
+      }
  
-      const vidEl = videoRefs.current[entity.id];
-      if (vidEl) {
-        const speed = (videoComp.speed || 1) * (transform?.speed ?? 1);
-        const offset = videoComp.mediaOffset || 0;
-        const localTime = (currentTime - entity.startTime) * speed + offset;
+      activeVideoItems.forEach(({ entity, transform }) => {
+        const videoComp = entity.components.find((c) => c.type === 'VideoRenderer') || { src: entity.src };
+        const vidSrc = videoComp.src || entity.src;
+        if (!vidSrc) return;
  
-        // Default video volume to 0 (silent) — a video clip's audio is
-        // owned by its linked AudioSource entity (handleAddMediaToTimeline
-        // mutes the video and pairs it with one). This matches the export
-        // mixdown (exportRunner.js collectAudioSources defaults
-        // VideoRenderer volume to 0) so a video without an explicit volume
-        // never plays its own audio track in preview, and a volume slider
-        // on the video clip never silently does nothing.
-        setMediaElementVolume(vidEl, videoComp.volume ?? 0);
-        setMediaElementRate(vidEl, speed);
+        const vidEl = videoRefs.current[entity.id];
+        if (vidEl) {
+          const speed = (videoComp.speed || 1) * (transform?.speed ?? 1);
+          const offset = videoComp.mediaOffset || 0;
+          const localTime = (currentTime - entity.startTime) * speed + offset;
  
-        if (isPlaying) {
-          resumeAudioContext();
-          if (vidEl.paused || isStateTransition || Math.abs(vidEl.currentTime - localTime) > 0.6) {
-            vidEl.currentTime = Math.max(0, localTime);
-            vidEl.play().catch(() => {});
-          }
-        } else {
-          if (!vidEl.paused) vidEl.pause();
-          if (Math.abs(vidEl.currentTime - localTime) > 0.05) {
-            vidEl.currentTime = Math.max(0, localTime);
+          // Default video volume to 0 (silent) — a video clip's audio is
+          // owned by its linked AudioSource entity (handleAddMediaToTimeline
+          // mutes the video and pairs it with one). This matches the export
+          // mixdown (exportRunner.js collectAudioSources defaults
+          // VideoRenderer volume to 0) so a video without an explicit volume
+          // never plays its own audio track in preview, and a volume slider
+          // on the video clip never silently does nothing.
+          setMediaElementVolume(vidEl, videoComp.volume ?? 0);
+          setMediaElementRate(vidEl, speed);
+ 
+          if (isPlaying) {
+            if (vidEl.paused || isStateTransition || Math.abs(vidEl.currentTime - localTime) > 0.6) {
+              vidEl.currentTime = Math.max(0, localTime);
+              vidEl.play().catch(() => {});
+            }
+          } else {
+            if (!vidEl.paused) vidEl.pause();
+            if (Math.abs(vidEl.currentTime - localTime) > 0.05) {
+              vidEl.currentTime = Math.max(0, localTime);
+            }
           }
         }
-      }
-    });
+      });
+    };
+ 
+    startPlayback();
  
     // Pause any videos outside the active timeline window
     Object.keys(videoRefs.current).forEach((id) => {
@@ -84,42 +103,49 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
   // elements are created imperatively here (no <audio> in JSX) since
   // there's nothing to render for them.
   useEffect(() => {
-    computedEntities.forEach(({ entity, transform }) => {
-      const audioComp =
-        entity.components.find((c) => c.type === 'AudioSource') ||
-        (entity.type === 'audio' ? { src: entity.src } : null);
-      if (audioComp && audioComp.src) {
-        let aud = audioRefs.current[entity.id];
-        if (!aud) {
-          aud = new Audio();
-          aud.crossOrigin = 'anonymous';
-          aud.src = audioComp.src;
-          audioRefs.current[entity.id] = aud;
-        } else if (aud.src !== audioComp.src) {
-          aud.crossOrigin = 'anonymous';
-          aud.src = audioComp.src;
-        }
- 
-        const speed = (audioComp.speed || 1) * (transform?.speed ?? 1);
-        const offset = audioComp.mediaOffset || 0;
-        const localTime = (currentTime - entity.startTime) * speed + offset;
-        setMediaElementVolume(aud, audioComp.volume ?? 1);
-        setMediaElementRate(aud, speed);
- 
-        if (isPlaying) {
-          resumeAudioContext();
-          if (aud.paused || Math.abs(aud.currentTime - localTime) > 0.6) {
-            aud.currentTime = Math.max(0, localTime);
-            aud.play().catch(() => {});
-          }
-        } else {
-          if (!aud.paused) aud.pause();
-          if (Math.abs(aud.currentTime - localTime) > 0.05) {
-            aud.currentTime = Math.max(0, localTime);
-          }
-        }
+    const startPlayback = async () => {
+      if (isPlaying) {
+        await resumeAudioContext();
       }
-    });
+ 
+      computedEntities.forEach(({ entity, transform }) => {
+        const audioComp =
+          entity.components.find((c) => c.type === 'AudioSource') ||
+          (entity.type === 'audio' ? { src: entity.src } : null);
+        if (audioComp && audioComp.src) {
+          let aud = audioRefs.current[entity.id];
+          if (!aud) {
+            aud = new Audio();
+            aud.crossOrigin = 'anonymous';
+            aud.src = audioComp.src;
+            audioRefs.current[entity.id] = aud;
+          } else if (aud.src !== audioComp.src) {
+            aud.crossOrigin = 'anonymous';
+            aud.src = audioComp.src;
+          }
+ 
+          const speed = (audioComp.speed || 1) * (transform?.speed ?? 1);
+          const offset = audioComp.mediaOffset || 0;
+          const localTime = (currentTime - entity.startTime) * speed + offset;
+          setMediaElementVolume(aud, audioComp.volume ?? 1);
+          setMediaElementRate(aud, speed);
+ 
+          if (isPlaying) {
+            if (aud.paused || Math.abs(aud.currentTime - localTime) > 0.6) {
+              aud.currentTime = Math.max(0, localTime);
+              aud.play().catch(() => {});
+            }
+          } else {
+            if (!aud.paused) aud.pause();
+            if (Math.abs(aud.currentTime - localTime) > 0.05) {
+              aud.currentTime = Math.max(0, localTime);
+            }
+          }
+        }
+      });
+    };
+ 
+    startPlayback();
  
     Object.keys(audioRefs.current).forEach((id) => {
       if (!computedEntities.some(({ entity }) => entity.id === id)) {
@@ -160,4 +186,3 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
  
   return { videoRefs, audioRefs };
 }
- 

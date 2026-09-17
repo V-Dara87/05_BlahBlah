@@ -339,16 +339,54 @@ export const Timeline = memo(function Timeline({
     const handleWheel = (e) => {
       lastUserScrollTimeRef.current = Date.now();
  
-      // Ctrl + Wheel: Zoom timeline
+      // Ctrl + Wheel: Zoom timeline, anchored on the playhead/seekbar
+      // position (not the mouse, not the left edge) so the same instant
+      // in time stays under the same screen x while pixelsPerSecond
+      // changes — instead of the zoom appearing to happen at a "random"
+      // spot (previously it just changed pps with no scroll compensation
+      // at all, so the whole view shifted relative to the left edge).
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
         stopSmoothScroll();
         const zoomDelta = e.deltaY < 0 ? 15 : -15;
+
+        const scroller = lanesScrollRef.current;
+        const anchorTime = playbackStore.getCurrentTime();
+        // Screen-space x of the playhead BEFORE the zoom change, relative
+        // to the scroller's own viewport (not the page). We restore the
+        // playhead to this exact x after pixelsPerSecond updates.
+        const anchorScreenX = scroller
+          ? HEADER_WIDTH + anchorTime * pixelsPerSecond - scroller.scrollLeft
+          : null;
+
+        const reanchor = (nextPps) => {
+          if (!scroller || anchorScreenX === null) return;
+          // Wait a frame so totalWidth/scrollWidth have repainted for the
+          // new pixelsPerSecond before we clamp against them.
+          requestAnimationFrame(() => {
+            const s = lanesScrollRef.current;
+            if (!s) return;
+            const maxScroll = Math.max(0, s.scrollWidth - s.clientWidth);
+            const desiredScrollLeft = HEADER_WIDTH + anchorTime * nextPps - anchorScreenX;
+            s.scrollLeft = Math.max(0, Math.min(maxScroll, desiredScrollLeft));
+            if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = s.scrollLeft;
+            updateScrollMetrics();
+          });
+        };
+
         if (onSetPixelsPerSecond) {
-          onSetPixelsPerSecond((prev) => Math.max(4, Math.min(240, prev + zoomDelta)));
+          onSetPixelsPerSecond((prev) => {
+            const next = Math.max(4, Math.min(240, prev + zoomDelta));
+            reanchor(next);
+            return next;
+          });
         } else {
+          // No direct pps setter available (discrete zoom in/out only) —
+          // still re-center on the playhead using the current closure's
+          // pixelsPerSecond as a best-effort estimate of the new zoom.
           if (e.deltaY < 0) onZoomIn?.();
           else onZoomOut?.();
+          reanchor(pixelsPerSecond);
         }
         return;
       }
@@ -402,7 +440,7 @@ export const Timeline = memo(function Timeline({
       el.removeEventListener('wheel', handleWheel, { passive: false });
       stopSmoothScroll();
     };
-  }, [onSetPixelsPerSecond, onZoomIn, onZoomOut, startSmoothScroll, stopSmoothScroll]);
+  }, [onSetPixelsPerSecond, onZoomIn, onZoomOut, startSmoothScroll, stopSmoothScroll, pixelsPerSecond, playbackStore, updateScrollMetrics]);
  
   const handleLanesPointerDown = (e) => {
     stopSmoothScroll();

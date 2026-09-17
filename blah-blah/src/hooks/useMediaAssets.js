@@ -4,7 +4,7 @@ import {
   deleteMediaFileFromFolder,
   moveMediaFileOnDisk,
 } from '../services/projectFileSystem';
-import { probeFileDuration, MEDIA_FALLBACK_DURATION } from '../services/mediaImport';
+import { probeFileDuration, MEDIA_FALLBACK_DURATION, detectMediaKind } from '../services/mediaImport';
  
 /**
  * useMediaAssets — the media-asset library (state + import/remove logic).
@@ -134,7 +134,11 @@ export function useMediaAssets({ projectFolderHandle, onReconcileAssetUrl } = {}
   const handleReplaceMediaAsset = async (assetId, newFile) => {
     const asset = mediaAssets.find(a => a.id === assetId);
     if (!asset || !newFile) return;
-    const isVideo = newFile.type.startsWith('video/');
+    // FIXED — same MIME-only detection bug as mediaImport.js: relying
+    // solely on newFile.type mis-detects (or, in importMediaFiles' case,
+    // outright rejects) files like .wav when the platform doesn't report
+    // a MIME type. detectMediaKind falls back to the extension.
+    const isVideo = detectMediaKind(newFile) === 'video';
     const duration = (await probeFileDuration(newFile, isVideo)) || MEDIA_FALLBACK_DURATION[isVideo ? 'video' : 'audio'];
  
     setMediaAssets(prev => prev.map(a => a.id === assetId ? {
@@ -169,4 +173,3 @@ export function useMediaAssets({ projectFolderHandle, onReconcileAssetUrl } = {}
     handleReplaceMediaAsset,
   };
 }
- 

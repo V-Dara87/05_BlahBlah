@@ -2,7 +2,7 @@ import { useState, memo, useMemo } from 'react';
 import { ClipItem } from './ClipItem';
 import { LiveRecordingClipPreview } from './LiveRecordingClipPreview';
 import { TRACK_HEIGHT, computeClipSubLanes, getTickIntervalSeconds } from '../../utils/timelineLayout';
-import { importMediaFiles } from '../../services/mediaImport';
+import { importMediaFiles, detectMediaKind } from '../../services/mediaImport';
 import './track-lane.css';
  
 /**
@@ -64,9 +64,13 @@ export const TrackLane = memo(function TrackLane({
  
     const files = e.dataTransfer?.files;
     if (files && files.length > 0 && onAddMediaAsset && onDropItemOnTrack) {
-      const fileList = Array.from(files).filter(
-        (f) => f.type?.startsWith('video/') || f.type?.startsWith('audio/')
-      );
+      // FIXED — same MIME-only filter bug as mediaImport.js: some
+      // platforms (Tauri drag&drop especially) report an empty file.type
+      // for formats like .wav, which silently dropped them here before
+      // importMediaFiles ever got a chance to run its own (now also
+      // extension-aware) check. detectMediaKind falls back to the file
+      // extension when the MIME type is missing/unrecognized.
+      const fileList = Array.from(files).filter((f) => detectMediaKind(f) !== null);
       if (fileList.length > 0) {
         importMediaFiles({
           files: fileList,
@@ -188,7 +192,7 @@ export const TrackLane = memo(function TrackLane({
               }
             }
           }
-
+ 
           return (
             <ClipItem
               key={clip.id}
@@ -201,7 +205,7 @@ export const TrackLane = memo(function TrackLane({
             />
           );
         })}
-
+ 
         {isRecordingTarget && (
           <LiveRecordingClipPreview
             startTime={recordingStartTime}
@@ -214,4 +218,3 @@ export const TrackLane = memo(function TrackLane({
     </div>
   );
 });
- 

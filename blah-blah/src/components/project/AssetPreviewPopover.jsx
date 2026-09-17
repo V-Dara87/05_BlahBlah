@@ -9,11 +9,13 @@ import {
   Square,
   Sparkles,
 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { detectScriptKind } from '../../engine/scriptRunner';
 import { isScriptComponent } from '../../engine/ecs';
 import { COMPONENT_TYPE_LABEL, scriptKindMeta, shortDuration } from './projectPanelConstants';
+import { WaveformCanvas } from '../WaveformCanvas';
 import './asset-preview-popover.css';
-
+ 
 /**
  * Hover/click asset previews for the Project panel.
  *
@@ -24,7 +26,7 @@ export function AssetPreviewPopover({ x, y, kind, item }) {
   const isPrefab = kind === 'prefab';
   const width = isPrefab ? 340 : 270;
   const maxHeight = isPrefab ? 340 : 220;
-
+ 
   return (
     <div
       className={`asset-hover-preview${isPrefab ? ' is-prefab' : ''}`}
@@ -42,7 +44,7 @@ export function AssetPreviewPopover({ x, y, kind, item }) {
     </div>
   );
 }
-
+ 
 function MediaPreview({ asset }) {
   if (asset?.type === 'video') {
     return (
@@ -73,24 +75,104 @@ function MediaPreview({ asset }) {
         <Music size={12} className="text-emerald" />
         <span className="asset-preview-title">{asset?.name}</span>
       </div>
-      <div className="asset-preview-audio">
-        <audio
-          src={asset?.url}
-          muted
-          autoPlay
-          loop
-          controls
-          preload="metadata"
-          onError={(e) => {
-            e.currentTarget.style.display = 'none';
-          }}
-        />
-      </div>
+      <AudioWaveformPreview asset={asset} />
       <div className="asset-preview-meta">Audio · {shortDuration(asset?.duration)}</div>
     </>
   );
 }
-
+ 
+/**
+ * Waveform-based audio preview (replaces the native <audio controls> bar).
+ * The <audio> element itself is still what actually produces sound and
+ * still autoplays unmuted on open (same as before) — it's just visually
+ * hidden now, with WaveformCanvas + a moving playhead line standing in for
+ * the native scrub bar. Click anywhere on the waveform to seek.
+ */
+function AudioWaveformPreview({ asset }) {
+  const audioRef = useRef(null);
+  const containerRef = useRef(null);
+  const [progress, setProgress] = useState(0); // 0..1
+  const [containerWidth, setContainerWidth] = useState(240);
+ 
+  // Track the popover's actual rendered width so the waveform (and hit
+  // area for seeking) always matches, instead of a hardcoded guess.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect?.width;
+      if (w) setContainerWidth(w);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+ 
+  // Poll playback position for the playhead line (rAF would also work,
+  // but this preview is a small, low-stakes popover — a light interval
+  // is plenty smooth for this size without keeping a rAF loop running
+  // the whole time the popover is open).
+  useEffect(() => {
+    const id = setInterval(() => {
+      const el = audioRef.current;
+      if (el && el.duration) {
+        setProgress(el.currentTime / el.duration);
+      }
+    }, 100);
+    return () => clearInterval(id);
+  }, []);
+ 
+  const handleSeek = (e) => {
+    const el = audioRef.current;
+    const container = containerRef.current;
+    if (!el || !container || !el.duration) return;
+    const rect = container.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    el.currentTime = ratio * el.duration;
+    setProgress(ratio);
+  };
+ 
+  return (
+    <div className="asset-preview-audio" ref={containerRef} onClick={handleSeek}>
+      <WaveformCanvas
+        url={asset?.url}
+        width={containerWidth}
+        height={56}
+        color="rgba(52, 211, 153, 0.55)"
+        rmsColor="rgba(110, 231, 183, 0.9)"
+      />
+      <div
+        className="asset-preview-audio-playhead"
+        style={{ left: `${progress * 100}%` }}
+      />
+      <audio
+        src={asset?.url}
+        // Autoplay WITH sound on hover-open, per request. Browsers can
+        // block unmuted autoplay if no user gesture has happened yet in
+        // this tab — .catch() below swallows that silently rather than
+        // throwing an unhandled promise rejection; the waveform still
+        // shows and clicking it will start playback from that point.
+        autoPlay
+        loop
+        preload="metadata"
+        ref={(el) => {
+          audioRef.current = el;
+          if (el) {
+            el.muted = false;
+            const playResult = el.play();
+            if (playResult && typeof playResult.catch === 'function') {
+              playResult.catch(() => {});
+            }
+          }
+        }}
+        onError={(e) => {
+          e.currentTarget.style.display = 'none';
+        }}
+        style={{ display: 'none' }}
+      />
+    </div>
+  );
+}
+ 
 function ScriptPreview({ script }) {
   const Meta = scriptKindMeta(detectScriptKind(script?.code || ''));
   const snippet = (script?.code || '').slice(0, 900);
@@ -107,7 +189,7 @@ function ScriptPreview({ script }) {
     </>
   );
 }
-
+ 
 function getEntityIcon(comps = []) {
   if (comps.some((c) => c.type === 'TextRenderer')) return <Type size={11} className="text-amber" />;
   if (comps.some((c) => c.type === 'ShapeRenderer')) return <Square size={11} className="text-cyan" />;
@@ -116,7 +198,7 @@ function getEntityIcon(comps = []) {
   if (comps.some((c) => isScriptComponent(c))) return <Sparkles size={11} className="text-violet" />;
   return <Layers size={11} className="text-muted" />;
 }
-
+ 
 // Prefab semi-timeline breakdown: visual timeline tracks and parent/child hierarchy
 function PrefabPreview({ prefab }) {
   const snapshots =
@@ -133,12 +215,12 @@ function PrefabPreview({ prefab }) {
           },
         ]
       : [];
-
+ 
   const maxDuration = Math.max(
     0.5,
     ...snapshots.map((s) => (s.startTime || 0) + (s.duration || 5))
   );
-
+ 
   // Group into hierarchy (roots first, then children)
   const roots = snapshots.filter((s) => !s.parentId);
   const childrenMap = new Map();
@@ -148,14 +230,14 @@ function PrefabPreview({ prefab }) {
       childrenMap.get(s.parentId).push(s);
     }
   });
-
+ 
   const orderedEntities = [];
   const appendWithChildren = (entity, depth = 0) => {
     orderedEntities.push({ entity, depth });
     const children = childrenMap.get(entity.id) || [];
     children.forEach((child) => appendWithChildren(child, depth + 1));
   };
-
+ 
   if (roots.length > 0) {
     roots.forEach((root) => appendWithChildren(root, 0));
     // Catch any detached entities whose parentId wasn't in roots
@@ -167,9 +249,9 @@ function PrefabPreview({ prefab }) {
   } else {
     snapshots.forEach((s) => orderedEntities.push({ entity: s, depth: 0 }));
   }
-
+ 
   const childCount = snapshots.length - (roots.length || 1);
-
+ 
   return (
     <div className="prefab-semi-timeline">
       {/* Header */}
@@ -181,7 +263,7 @@ function PrefabPreview({ prefab }) {
           {maxDuration.toFixed(1)}s
         </span>
       </div>
-
+ 
       {/* Hierarchy & Object Summary */}
       <div className="prefab-preview-summary">
         <span className="prefab-obj-count">
@@ -194,7 +276,7 @@ function PrefabPreview({ prefab }) {
         )}
         <span className="prefab-hint-edit">Double-click to open in Prefab Mode</span>
       </div>
-
+ 
       {/* Semi Timeline Container */}
       <div className="prefab-timeline-stage">
         {/* Time Ruler */}
@@ -203,7 +285,7 @@ function PrefabPreview({ prefab }) {
           <span>{(maxDuration / 2).toFixed(1)}s</span>
           <span>{maxDuration.toFixed(1)}s</span>
         </div>
-
+ 
         {/* Tracks / Objects Rows */}
         <div className="prefab-tracks-list">
           {orderedEntities.map(({ entity, depth }) => {
@@ -214,13 +296,13 @@ function PrefabPreview({ prefab }) {
                 if (isScriptComponent(c)) return c.scriptName ? `Script (${c.scriptName})` : 'Script';
                 return COMPONENT_TYPE_LABEL[c.type] || c.type;
               });
-
+ 
             const start = entity.startTime || 0;
             const dur = entity.duration || 5;
             const leftPct = Math.min(95, Math.max(0, (start / maxDuration) * 100));
             const widthPct = Math.min(100 - leftPct, Math.max(8, (dur / maxDuration) * 100));
             const isChild = depth > 0;
-
+ 
             return (
               <div
                 key={entity.id || entity.name}
@@ -242,7 +324,7 @@ function PrefabPreview({ prefab }) {
                     snapshots.length > 1 && <span className="prefab-role-pill parent">parent</span>
                   )}
                 </div>
-
+ 
                 {/* Mini Timeline Bar Lane */}
                 <div className="prefab-bar-lane">
                   <div
