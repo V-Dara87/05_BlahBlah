@@ -1,13 +1,22 @@
 import { isTauri } from '@tauri-apps/api/core';
 
 /**
- * Normalizes and joins two path segments using the appropriate separator.
+ * Normalizes and joins path segments using the appropriate separator.
+ * Supports any number of arguments (variadic).
  */
-export function joinPath(base, child) {
-  const cleanBase = (base || '').replace(/[/\\]+$/, '');
-  const cleanChild = (child || '').replace(/^[/\\]+/, '');
-  const sep = cleanBase.includes('\\') ? '\\' : '/';
-  return `${cleanBase}${sep}${cleanChild}`;
+export function joinPath(...segments) {
+  const valid = segments.filter((s) => s !== null && s !== undefined && s !== '');
+  if (valid.length === 0) return '';
+  const hasBackslash = valid.some((s) => String(s).includes('\\'));
+  const sep = hasBackslash ? '\\' : '/';
+  return valid
+    .map((seg, i) => {
+      let str = String(seg);
+      if (i > 0) str = str.replace(/^[/\\]+/, '');
+      if (i < valid.length - 1) str = str.replace(/[/\\]+$/, '');
+      return str;
+    })
+    .join(sep);
 }
 
 /**

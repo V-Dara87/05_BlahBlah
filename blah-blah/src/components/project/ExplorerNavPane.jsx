@@ -93,6 +93,7 @@ export const ExplorerNavPane = memo(function ExplorerNavPane({
           return (
             <div key={secKey} className="explorer-tree-section-wrapper">
               <div
+                data-project-section={secKey}
                 className={`explorer-tree-node section-node${isSectionActive ? ' active' : ''}${dragOverKey === dropKey ? ' drag-over' : ''}`}
                 onClick={() => onNavigate({ section: secKey, folder: null })}
                 onContextMenu={(e) => onOpenFolderMenu?.(e, secKey, null)}
@@ -139,6 +140,8 @@ export const ExplorerNavPane = memo(function ExplorerNavPane({
                     return (
                       <div
                         key={folderName}
+                        data-project-section={secKey}
+                        data-project-folder={folderName}
                         className={`explorer-tree-node subfolder-node${isFolderActive ? ' active' : ''}${dragOverKey === subDropKey ? ' drag-over' : ''}`}
                         onClick={() =>
                           onNavigate({ section: secKey, folder: folderName })

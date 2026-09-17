@@ -298,9 +298,33 @@ export function App() {
       // imported twice.
       if (e.target?.closest?.('.track-lane-row')) return;
       e.preventDefault();
+
+      // Check if dropped into a specific folder or into ProjectPanel with a folder open
+      let targetFolder = null;
+      const folderEl = e.target?.closest?.('[data-project-folder]');
+      if (folderEl) {
+        const sec = folderEl.getAttribute('data-project-section');
+        if (!sec || sec === 'media') {
+          targetFolder = folderEl.getAttribute('data-project-folder') || null;
+        }
+      } else {
+        const panelEl = e.target?.closest?.('[data-project-current-folder]');
+        if (panelEl) {
+          const sec = panelEl.getAttribute('data-project-current-section');
+          if (!sec || sec === 'media') {
+            targetFolder = panelEl.getAttribute('data-project-current-folder') || null;
+          }
+        }
+      }
+
       importMediaFiles({
         files: e.dataTransfer.files,
-        onAddMediaAsset: handleAddMediaAsset,
+        onAddMediaAsset: (asset, file) => {
+          if (targetFolder) {
+            asset.folder = targetFolder;
+          }
+          handleAddMediaAsset(asset, file);
+        },
         mediaAssets,
         // OS file drops happen outside the Project panel, so a lightweight
         // alert is the only surface available here (the panel shows an

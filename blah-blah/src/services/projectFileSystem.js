@@ -411,7 +411,23 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
   const loadedPrefabs = [];
   try {
     const prefabsDirHandle = await dirHandle.getDirectoryHandle('prefabs', { create: true });
+    const prefabEntries = [];
     for await (const entry of prefabsDirHandle.values()) {
+      if (entry.kind === 'directory' && !entry.name.startsWith('.')) {
+        try {
+          const subDirHandle = await prefabsDirHandle.getDirectoryHandle(entry.name, { create: false });
+          for await (const subEntry of subDirHandle.values()) {
+            prefabEntries.push({ entry: subEntry, folderName: entry.name });
+          }
+        } catch (err) {
+          console.warn(`Could not read prefabs subfolder ${entry.name}:`, err);
+        }
+      } else if (entry.kind === 'file') {
+        prefabEntries.push({ entry, folderName: null });
+      }
+    }
+
+    for (const { entry, folderName } of prefabEntries) {
       if (entry.kind === 'file' && (entry.name.endsWith('.json') || entry.name.endsWith('.prefab'))) {
         const file = await entry.getFile();
         const text = await file.text();
@@ -419,10 +435,11 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
           const prefabObj = JSON.parse(text);
           const isNested = Array.isArray(prefabObj.entities);
           loadedPrefabs.push({
-            id: `prefab-${entry.name.replace(/\.[^.]+$/, '')}`,
+            id: `prefab-${(folderName ? `${folderName}-` : '')}${entry.name.replace(/\.[^.]+$/, '')}`,
             name: prefabObj.name || entry.name,
             type: prefabObj.type || 'prefab',
             rootId: prefabObj.rootId ?? null,
+            ...(folderName ? { folder: folderName } : (prefabObj.folder ? { folder: prefabObj.folder } : {})),
             // Same ReactRenderer/CanvasRenderer/MonoBehaviour migration as
             // entities, applied to the prefab's component list(s). Nested
             // prefabs carry an `entities` array (root + children snapshot);
@@ -789,6 +806,12 @@ export async function moveMediaFileOnDisk(dirHandle, fileName, oldFolder = null,
       const targetDir = newFolder ? joinPath(mediaPath, newFolder) : mediaPath;
       const targetPath = joinPath(targetDir, fileName);
 
+      // Guard: never rename if sourcePath somehow resolved to the whole media folder
+      if (sourcePath === mediaPath || sourcePath === dirHandle.path) {
+        console.error('Refusing to move: sourcePath resolved to directory root');
+        return assetPath;
+      }
+
       if (await exists(sourcePath)) {
         if (!(await exists(targetDir))) {
           await mkdir(targetDir, { recursive: true });
@@ -831,13 +854,21 @@ export async function moveMediaFileOnDisk(dirHandle, fileName, oldFolder = null,
  * Delete an entire folder directory from a project section on disk.
  */
 export async function deleteFolderFromProject(dirHandle, section, folderName) {
-  if (!dirHandle || !section || !folderName || section === 'shared') return;
+  if (!dirHandle || !section || !folderName || section === 'shared' || folderName === '.' || folderName === '..') return;
   const rootName = section === 'prefabs' ? 'prefabs' : section;
 
   if (isTauri() && dirHandle.path) {
     try {
       const { remove, exists } = await import('@tauri-apps/plugin-fs');
+      const rootPath = joinPath(dirHandle.path, rootName);
       const targetPath = joinPath(dirHandle.path, rootName, folderName);
+
+      // Safety guard: targetPath must be strictly deeper than rootPath
+      if (targetPath === rootPath || targetPath === dirHandle.path) {
+        console.error(`Refusing to delete: targetPath resolved to section root: ${targetPath}`);
+        return;
+      }
+
       if (await exists(targetPath)) {
         await remove(targetPath, { recursive: true });
         return;
@@ -860,14 +891,22 @@ export async function deleteFolderFromProject(dirHandle, section, folderName) {
  * Rename a folder directory in a project section on disk.
  */
 export async function renameFolderInProject(dirHandle, section, oldName, newName) {
-  if (!dirHandle || !section || !oldName || !newName || section === 'shared' || oldName === newName) return;
+  if (!dirHandle || !section || !oldName || !newName || section === 'shared' || oldName === newName || oldName === '.' || oldName === '..' || newName === '.' || newName === '..') return;
   const rootName = section === 'prefabs' ? 'prefabs' : section;
 
   if (isTauri() && dirHandle.path) {
     try {
       const { rename, exists } = await import('@tauri-apps/plugin-fs');
+      const rootPath = joinPath(dirHandle.path, rootName);
       const oldPath = joinPath(dirHandle.path, rootName, oldName);
       const newPath = joinPath(dirHandle.path, rootName, newName);
+
+      // Safety guard: oldPath/newPath must be strictly deeper than rootPath
+      if (oldPath === rootPath || newPath === rootPath || oldPath === dirHandle.path || newPath === dirHandle.path) {
+        console.error(`Refusing to rename: path resolved to section root: ${oldPath} -> ${newPath}`);
+        return;
+      }
+
       if (await exists(oldPath)) {
         await rename(oldPath, newPath);
         return;

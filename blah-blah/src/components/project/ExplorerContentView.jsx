@@ -123,6 +123,7 @@ export const ExplorerContentView = memo(function ExplorerContentView({
               return (
                 <div
                   key={secKey}
+                  data-project-section={secKey}
                   className={`explorer-folder-card${dragOverKey === dropKey ? ' drag-over' : ''}`}
                   onClick={() => {}}
                   onDoubleClick={() => onNavigate({ section: secKey, folder: null })}
@@ -149,6 +150,7 @@ export const ExplorerContentView = memo(function ExplorerContentView({
             return (
               <div
                 key={secKey}
+                data-project-section={secKey}
                 className={`explorer-details-row folder-row${dragOverKey === dropKey ? ' drag-over' : ''}`}
                 onDoubleClick={() => onNavigate({ section: secKey, folder: null })}
                 onContextMenu={(e) => onFolderContextMenu(e, secKey, null)}
@@ -182,8 +184,10 @@ export const ExplorerContentView = memo(function ExplorerContentView({
 
   return (
     <div
+      data-project-section={sectionKey}
+      data-project-current-folder={currentFolder || ''}
       className={`explorer-content-view${isGridView ? ' grid-mode' : ' list-mode'}`}
-      onContextMenu={(e) => onEmptyContextMenu(e, sectionKey)}
+      onContextMenu={(e) => onEmptyContextMenu(e, sectionKey, currentFolder)}
     >
       {/* Details View Table Header */}
       {!isGridView && (
@@ -254,6 +258,8 @@ export const ExplorerContentView = memo(function ExplorerContentView({
                 return (
                   <div
                     key={folderName}
+                    data-project-section={sectionKey}
+                    data-project-folder={folderName}
                     className={`explorer-folder-card subfolder${dragOverKey === subDropKey ? ' drag-over' : ''}`}
                     onDoubleClick={() => onFolderDoubleClick(sectionKey, folderName)}
                     onContextMenu={(e) => onFolderContextMenu(e, sectionKey, folderName)}
@@ -281,6 +287,8 @@ export const ExplorerContentView = memo(function ExplorerContentView({
               return (
                 <div
                   key={folderName}
+                  data-project-section={sectionKey}
+                  data-project-folder={folderName}
                   className={`explorer-details-row folder-row${dragOverKey === subDropKey ? ' drag-over' : ''}`}
                   onDoubleClick={() => onFolderDoubleClick(sectionKey, folderName)}
                   onContextMenu={(e) => onFolderContextMenu(e, sectionKey, folderName)}

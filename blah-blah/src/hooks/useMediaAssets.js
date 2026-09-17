@@ -119,9 +119,21 @@ export function useMediaAssets({ projectFolderHandle, onReconcileAssetUrl } = {}
         asset.path || null
       ).catch(() => null);
       if (newPath) {
+        let newUrl = null;
+        if (isTauri()) {
+          const { convertFileSrc } = await import('@tauri-apps/api/core');
+          newUrl = convertFileSrc(newPath);
+        }
         setMediaAssets((prev) =>
-          prev.map((a) => (a.id === assetId ? { ...a, path: newPath } : a))
+          prev.map((a) =>
+            a.id === assetId
+              ? { ...a, path: newPath, ...(newUrl ? { url: newUrl } : {}) }
+              : a
+          )
         );
+        if (newUrl && onReconcileAssetUrl && asset.url) {
+          onReconcileAssetUrl(asset.url, newUrl);
+        }
       }
     }
   };

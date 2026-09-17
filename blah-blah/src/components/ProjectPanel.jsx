@@ -206,6 +206,7 @@ export const ProjectPanel = memo(function ProjectPanel({
   const panelRef = useRef(null);
   const fileInputRef = useRef(null);
   const replaceFileInputRef = useRef(null);
+  const importTargetFolderRef = useRef(undefined);
 
   // ── Folder Section Store Hook ────────────────────────────────────────────
   const itemsBySection = useMemo(
@@ -433,8 +434,11 @@ export const ProjectPanel = memo(function ProjectPanel({
     }
   };
 
+  const isOsFileDrag = (dt) => Boolean(dt?.types && Array.from(dt.types).includes('Files'));
+
   const handleFolderDragOver = (e, itemKind, dropKey) => {
-    if (!dragHasItemKind(e.dataTransfer, itemKind)) return;
+    const isOsFile = isOsFileDrag(e.dataTransfer);
+    if (!dragHasItemKind(e.dataTransfer, itemKind) && !(isOsFile && itemKind === 'media')) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     if (dragOverKey !== dropKey) setDragOverKey(dropKey);
@@ -443,6 +447,17 @@ export const ProjectPanel = memo(function ProjectPanel({
   const handleFolderDragLeave = () => setDragOverKey(null);
 
   const handleFolderDrop = (e, section, folderName, itemKind) => {
+    const isOsFile = isOsFileDrag(e.dataTransfer);
+    const hasFiles = (e.dataTransfer?.files?.length ?? 0) > 0;
+
+    if (isOsFile && hasFiles && (section === 'media' || itemKind === 'media')) {
+      e.preventDefault();
+      e.stopPropagation();
+      setDragOverKey(null);
+      handleFileUpload(e.dataTransfer.files, folderName || null);
+      return;
+    }
+
     if (!dragHasItemKind(e.dataTransfer, itemKind)) return;
     e.preventDefault();
     e.stopPropagation();
@@ -646,12 +661,22 @@ export const ProjectPanel = memo(function ProjectPanel({
   };
 
   // ── File actions ─────────────────────────────────────────────────────────
-  const handleFileUpload = (files) => {
+  const handleFileUpload = (files, explicitFolder = undefined) => {
+    const destFolder =
+      explicitFolder !== undefined
+        ? explicitFolder
+        : importTargetFolderRef.current !== undefined
+        ? importTargetFolderRef.current
+        : currentLocation.section === 'media' && currentLocation.folder
+        ? currentLocation.folder
+        : null;
+    importTargetFolderRef.current = undefined;
+
     importMediaFiles({
       files,
       onAddMediaAsset: (asset) => {
-        if (currentLocation.section === 'media' && currentLocation.folder) {
-          asset.folder = currentLocation.folder;
+        if (destFolder) {
+          asset.folder = destFolder;
         }
         onAddMediaAsset?.(asset);
       },
@@ -735,7 +760,7 @@ export default class NewScript extends CanvasComponent {
   };
 
   // ── Context Menus ────────────────────────────────────────────────────────
-  const openEmptyMenu = (e, section) => {
+  const openEmptyMenu = (e, section, folder = null) => {
     e.preventDefault();
     if (
       e.target.closest('.asset-card') ||
@@ -743,10 +768,12 @@ export default class NewScript extends CanvasComponent {
       e.target.closest('.explorer-tree-node')
     )
       return;
+    const sec = section || currentLocation.section || 'media';
+    const fld = folder ?? (currentLocation.section === sec ? currentLocation.folder : null);
     setCtxMenu({
       x: e.clientX,
       y: e.clientY,
-      target: { kind: 'empty', section: section || currentLocation.section || 'media' },
+      target: { kind: 'empty', section: sec, folder: fld || null },
     });
   };
 
@@ -794,6 +821,12 @@ export default class NewScript extends CanvasComponent {
       setCtxMenu(null);
       handleCreateNewScript();
     } else if (action === 'import-media') {
+      const destFolder =
+        target.kind === 'folder'
+          ? target.name
+          : target.folder ??
+            (currentLocation.section === 'media' ? currentLocation.folder : null);
+      importTargetFolderRef.current = destFolder || null;
       setCtxMenu(null);
       fileInputRef.current?.click();
     } else if (action === 'open') {
@@ -958,6 +991,8 @@ export default class NewScript extends CanvasComponent {
     <aside
       ref={panelRef}
       tabIndex={-1}
+      data-project-current-section={currentLocation.section || ''}
+      data-project-current-folder={currentLocation.folder || ''}
       className="project-panel explorer-root-container"
       onClick={(e) => {
         if (ctxMenu && !e.target.closest('.project-context-menu')) setCtxMenu(null);
@@ -1006,7 +1041,11 @@ export default class NewScript extends CanvasComponent {
           setCreatingFolder(sec);
           setNewFolderName('');
         }}
-        onImportMedia={() => fileInputRef.current?.click()}
+        onImportMedia={() => {
+          importTargetFolderRef.current =
+            currentLocation.section === 'media' ? currentLocation.folder : null;
+          fileInputRef.current?.click();
+        }}
         onNewScript={handleCreateNewScript}
         onNewClip={onAddEmptyClip}
         onOpenVsCode={() => projectFolderHandle?.path && openProjectInVsCode(projectFolderHandle.path)}
@@ -1106,7 +1145,11 @@ export default class NewScript extends CanvasComponent {
           onImportSharedItem={onImportSharedItem}
           onSharePrefab={onSharePrefab}
           onShareScript={onShareScript}
-          onImportMedia={() => fileInputRef.current?.click()}
+          onImportMedia={() => {
+            importTargetFolderRef.current =
+              currentLocation.section === 'media' ? currentLocation.folder : null;
+            fileInputRef.current?.click();
+          }}
           onNewScript={handleCreateNewScript}
         />
       </div>
@@ -1183,6 +1226,15 @@ export default class NewScript extends CanvasComponent {
               >
                 <Package size={13} /> Open
               </button>
+              {(ctxMenu.target.section === 'media' ||
+                (!ctxMenu.target.section && currentLocation.section === 'media')) && (
+                <button
+                  className="ctx-menu-item"
+                  onClick={() => handleContextAction('import-media')}
+                >
+                  <Upload size={13} className="text-indigo" /> Import Media…
+                </button>
+              )}
               {ctxMenu.target.name && (
                 <>
                   <button

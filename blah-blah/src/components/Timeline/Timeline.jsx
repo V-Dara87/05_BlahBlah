@@ -182,61 +182,7 @@ export const Timeline = memo(function Timeline({
   const handleClearRange = useCallback(() => {
     onSetExportRange(null);
   }, [onSetExportRange]);
- 
-  // Shared zoom-and-reanchor: used by both the ctrl+wheel gesture handler
-  // and the toolbar zoom in/out buttons, so both paths keep the same
-  // instant (the playhead/seekbar position) under the same screen x
-  // instead of drifting the view — previously the toolbar buttons just
-  // called setPixelsPerSecond with no scroll compensation at all, so
-  // clicking them shifted the whole view relative to the left edge
-  // rather than staying centered on the seekbar.
-  const applyZoomStep = useCallback((delta) => {
-    const scroller = lanesScrollRef.current;
-    const anchorTime = playbackStore.getCurrentTime();
-    const anchorScreenX = scroller
-      ? HEADER_WIDTH + anchorTime * pixelsPerSecond - scroller.scrollLeft
-      : null;
- 
-    const nextPps = Math.max(4, Math.min(240, pixelsPerSecond + delta));
- 
-    const reanchor = () => {
-      if (!scroller || anchorScreenX === null) return;
-      // Wait one more frame so totalWidth/scrollWidth have repainted for
-      // the new pixelsPerSecond before we clamp against them.
-      requestAnimationFrame(() => {
-        const s = lanesScrollRef.current;
-        if (!s) return;
-        const maxScroll = Math.max(0, s.scrollWidth - s.clientWidth);
-        const desiredScrollLeft = HEADER_WIDTH + anchorTime * nextPps - anchorScreenX;
-        s.scrollLeft = Math.max(0, Math.min(maxScroll, desiredScrollLeft));
-        if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = s.scrollLeft;
-        updateScrollMetrics();
-      });
-    };
- 
-    if (onSetPixelsPerSecond) {
-      onSetPixelsPerSecond(nextPps);
-    } else if (delta > 0) {
-      onZoomIn?.();
-    } else {
-      onZoomOut?.();
-    }
-    reanchor();
-  }, [pixelsPerSecond, playbackStore, onSetPixelsPerSecond, onZoomIn, onZoomOut, updateScrollMetrics]);
- 
-  // Toolbar +/- buttons: same fixed step the old handleZoomIn/handleZoomOut
-  // used (15), just routed through applyZoomStep so they re-center on the
-  // seekbar the same way the wheel gesture does.
-  const handleZoomInBtn = useCallback(() => {
-    stopSmoothScroll();
-    applyZoomStep(15);
-  }, [applyZoomStep, stopSmoothScroll]);
- 
-  const handleZoomOutBtn = useCallback(() => {
-    stopSmoothScroll();
-    applyZoomStep(-15);
-  }, [applyZoomStep, stopSmoothScroll]);
- 
+
   // Auto-scroll timeline to keep playhead visible ONLY during active playback
   useEffect(() => {
     const unsub = playbackStore.registerFrameCallback((time) => {
@@ -270,6 +216,64 @@ export const Timeline = memo(function Timeline({
     }
     velocityRef.current = 0;
   }, []);
+
+  // Shared zoom-and-reanchor: used by both the ctrl+wheel gesture handler
+  // and the toolbar zoom in/out buttons, so both paths keep the same
+  // instant (the playhead/seekbar position) under the same screen x
+  // instead of drifting the view — previously the toolbar buttons just
+  // called setPixelsPerSecond with no scroll compensation at all, so
+  // clicking them shifted the whole view relative to the left edge
+  // rather than staying centered on the seekbar.
+  // NOTE: declared after stopSmoothScroll (not before, as in an earlier
+  // pass) — handleZoomInBtn/handleZoomOutBtn below call stopSmoothScroll,
+  // and const declarations aren't hoisted, so defining them earlier threw
+  // "Cannot access 'stopSmoothScroll' before initialization" on mount.
+  const applyZoomStep = useCallback((delta) => {
+    const scroller = lanesScrollRef.current;
+    const anchorTime = playbackStore.getCurrentTime();
+    const anchorScreenX = scroller
+      ? HEADER_WIDTH + anchorTime * pixelsPerSecond - scroller.scrollLeft
+      : null;
+
+    const nextPps = Math.max(4, Math.min(240, pixelsPerSecond + delta));
+
+    const reanchor = () => {
+      if (!scroller || anchorScreenX === null) return;
+      // Wait one more frame so totalWidth/scrollWidth have repainted for
+      // the new pixelsPerSecond before we clamp against them.
+      requestAnimationFrame(() => {
+        const s = lanesScrollRef.current;
+        if (!s) return;
+        const maxScroll = Math.max(0, s.scrollWidth - s.clientWidth);
+        const desiredScrollLeft = HEADER_WIDTH + anchorTime * nextPps - anchorScreenX;
+        s.scrollLeft = Math.max(0, Math.min(maxScroll, desiredScrollLeft));
+        if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = s.scrollLeft;
+        updateScrollMetrics();
+      });
+    };
+
+    if (onSetPixelsPerSecond) {
+      onSetPixelsPerSecond(nextPps);
+    } else if (delta > 0) {
+      onZoomIn?.();
+    } else {
+      onZoomOut?.();
+    }
+    reanchor();
+  }, [pixelsPerSecond, playbackStore, onSetPixelsPerSecond, onZoomIn, onZoomOut, updateScrollMetrics]);
+
+  // Toolbar +/- buttons: same fixed step the old handleZoomIn/handleZoomOut
+  // used (15), just routed through applyZoomStep so they re-center on the
+  // seekbar the same way the wheel gesture does.
+  const handleZoomInBtn = useCallback(() => {
+    stopSmoothScroll();
+    applyZoomStep(15);
+  }, [applyZoomStep, stopSmoothScroll]);
+
+  const handleZoomOutBtn = useCallback(() => {
+    stopSmoothScroll();
+    applyZoomStep(-15);
+  }, [applyZoomStep, stopSmoothScroll]);
  
   useEffect(() => {
     return () => {
@@ -417,13 +421,13 @@ export const Timeline = memo(function Timeline({
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
         stopSmoothScroll();
- 
+
         // Scale the step to how hard the user is scrolling instead of a
         // fixed +/-15 per notch — a fast flick zooms faster, a gentle
         // nudge zooms gently, which reads as smooth instead of steppy.
         const rawDelta = Math.max(-60, Math.min(60, -e.deltaY));
         zoomAccumRef.current += rawDelta * 0.5;
- 
+
         // Capture the anchor instant once per gesture (first tick after
         // the previous frame flushed), not on every wheel event -- the
         // anchor must stay fixed for the whole gesture or the "same
@@ -431,9 +435,9 @@ export const Timeline = memo(function Timeline({
         if (zoomAnchorTimeRef.current === null) {
           zoomAnchorTimeRef.current = playbackStore.getCurrentTime();
         }
- 
+
         if (zoomFrameRef.current) return; // already scheduled for this frame
- 
+
         zoomFrameRef.current = requestAnimationFrame(() => {
           zoomFrameRef.current = null;
           const pending = zoomAccumRef.current;
@@ -943,5 +947,3 @@ export const Timeline = memo(function Timeline({
     </section>
   );
 });
- 
- 
