@@ -10,36 +10,28 @@ import {
   Pencil,
   Plus,
 } from 'lucide-react';
-import { detectScriptKind } from '../engine/scriptRunner';
-import { importMediaFiles } from '../services/mediaImport';
 import { isTauri } from '../services/tauriFsAdapter';
 import { openProjectInVsCode } from '../services/ideLauncher';
-import {
-  deleteFolderFromProject,
-  renameFolderInProject,
-} from '../services/projectFileSystem';
-import {
-  setDragPayload,
-  readDragPayload,
-  dragHasItemKind,
-} from '../utils/dragData';
 import { ContextMenu } from './ContextMenu';
 import { AssetPreviewPopover } from './project/AssetPreviewPopover';
 import { useSectionFolders } from './project/useSectionFolders';
 import { KIND_REGISTRY } from './project/kindRegistry';
 import {
-  SECTIONS_CONFIG,
   ROOT_LOCATION,
-  isSameLocation,
-  selKey,
 } from './project/projectPanelConstants';
 import { ExplorerAddressBar } from './project/ExplorerAddressBar';
 import { ExplorerCommandBar } from './project/ExplorerCommandBar';
 import { ExplorerNavPane } from './project/ExplorerNavPane';
 import { ExplorerContentView } from './project/ExplorerContentView';
 import { ExplorerStatusBar } from './project/ExplorerStatusBar';
+import { useExplorerNavigation } from '../hooks/project/useExplorerNavigation';
+import { useExplorerSelection } from '../hooks/project/useExplorerSelection';
+import { useExplorerFilters } from '../hooks/project/useExplorerFilters';
+import { useExplorerFileManager } from '../hooks/project/useExplorerFileManager';
+import { useExplorerContextMenu } from '../hooks/project/useExplorerContextMenu';
+import { useExplorerKeyboardShortcuts } from '../hooks/project/useExplorerKeyboardShortcuts';
 import './project-panel.css';
-
+ 
 /**
  * Windows File Explorer styled Project navigation surface.
  *
@@ -123,91 +115,36 @@ export const ProjectPanel = memo(function ProjectPanel({
       onRenameScript,
     ]
   );
-
-  // ── Navigation & History State ───────────────────────────────────────────
-  const [currentLocation, setCurrentLocation] = useState(ROOT_LOCATION);
-  const [history, setHistory] = useState([ROOT_LOCATION]);
-  const [historyIndex, setHistoryIndex] = useState(0);
-
-  // ── Multi-select ─────────────────────────────────────────────────────────
-  const [selectedItems, setSelectedItems] = useState(() => new Set());
-  const lastClickedKeyRef = useRef(null);
-
-  const clearSelection = useCallback(() => setSelectedItems(new Set()), [setSelectedItems]);
-
-  const navigateTo = useCallback((newLoc) => {
-    setCurrentLocation((prev) => {
-      if (isSameLocation(prev, newLoc)) return prev;
-      setHistory((prevHist) => {
-        const sliced = prevHist.slice(0, historyIndex + 1);
-        return [...sliced, newLoc];
-      });
-      setHistoryIndex((prevIdx) => prevIdx + 1);
-      return newLoc;
-    });
-    setSelectedItems(new Set());
-  }, [historyIndex, setSelectedItems]);
-
-  const goBack = useCallback(() => {
-    if (historyIndex > 0) {
-      const nextIdx = historyIndex - 1;
-      setHistoryIndex(nextIdx);
-      setCurrentLocation(history[nextIdx]);
-      setSelectedItems(new Set());
-    }
-  }, [historyIndex, history]);
-
-  const goForward = useCallback(() => {
-    if (historyIndex < history.length - 1) {
-      const nextIdx = historyIndex + 1;
-      setHistoryIndex(nextIdx);
-      setCurrentLocation(history[nextIdx]);
-      setSelectedItems(new Set());
-    }
-  }, [historyIndex, history]);
-
-  const goUp = useCallback(() => {
-    if (currentLocation.folder) {
-      navigateTo({ section: currentLocation.section, folder: null });
-    } else if (currentLocation.section) {
-      navigateTo(ROOT_LOCATION);
-    }
-  }, [currentLocation, navigateTo]);
-
+ 
   // ── Explorer Layout & View State ─────────────────────────────────────────
   const [showNavPane, setShowNavPane] = useState(true);
   const [navPaneWidth, setNavPaneWidth] = useState(165);
   const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'list'
-  const [searchQuery, setSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState('name-asc');
-  const [mediaTypeFilter, setMediaTypeFilter] = useState({ video: true, audio: true });
-  const [scriptKindFilter, setScriptKindFilter] = useState({ react: true, canvas: true, motion: true });
-
+ 
   const [treeOpenSections, setTreeOpenSections] = useState({
     media: true,
     prefabs: true,
     scripts: true,
     shared: true,
   });
-
+ 
   const toggleSectionOpen = useCallback((sec) => {
     setTreeOpenSections((prev) => ({ ...prev, [sec]: !prev[sec] }));
   }, []);
-
+ 
   const [dupeNotice, setDupeNotice] = useState(null);
-  const [dragOverKey, setDragOverKey] = useState(null);
   const [replaceTarget, setReplaceTarget] = useState(null);
   const [ctxMenu, setCtxMenu] = useState(null);
   const [preview, setPreview] = useState(null);
   const [renaming, setRenaming] = useState(null); // { kind, id, name, section? }
   const [creatingFolder, setCreatingFolder] = useState(null);
   const [newFolderName, setNewFolderName] = useState('');
-
+ 
   const panelRef = useRef(null);
   const fileInputRef = useRef(null);
   const replaceFileInputRef = useRef(null);
   const importTargetFolderRef = useRef(undefined);
-
+ 
   // ── Folder Section Store Hook ────────────────────────────────────────────
   const itemsBySection = useMemo(
     () => ({
@@ -218,171 +155,82 @@ export const ProjectPanel = memo(function ProjectPanel({
     }),
     [registryCtx]
   );
-
+ 
   const {
     foldersBySection,
     setExtraFoldersFor,
     setOpenSubfoldersFor,
   } = useSectionFolders({ projectFolderHandle, itemsBySection });
-
-
-  // ── Sorting & Filtering ──────────────────────────────────────────────────
-  const sortList = useCallback(
-    (list) => {
-      const sorted = [...list];
-      switch (sortBy) {
-        case 'name-asc':
-          sorted.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-          break;
-        case 'name-desc':
-          sorted.sort((a, b) => (b.name || '').localeCompare(a.name || ''));
-          break;
-        case 'date-asc':
-          sorted.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-          break;
-        case 'date-desc':
-          sorted.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-          break;
-        case 'duration-desc':
-          sorted.sort((a, b) => (b.duration || 0) - (a.duration || 0));
-          break;
-        case 'duration-asc':
-          sorted.sort((a, b) => (a.duration || 0) - (b.duration || 0));
-          break;
-        case 'size-desc':
-          sorted.sort((a, b) => (b.size || 0) - (a.size || 0));
-          break;
-        case 'size-asc':
-          sorted.sort((a, b) => (a.size || 0) - (b.size || 0));
-          break;
-        default:
-          break;
-      }
-      return sorted;
-    },
-    [sortBy]
+ 
+  // ── Navigation, Selection & Filters (hooks) ──────────────────────────────
+  const deleteItem = useCallback((kind, item) => {
+    KIND_REGISTRY[kind]?.deleteFn(item.id, registryCtx);
+  }, [registryCtx]);
+ 
+  const {
+    selectedItems,
+    setSelectedItems,
+    lastClickedKeyRef,
+    clearSelection,
+    resolveSelectionEntries,
+    handleItemClick: handleItemClickBase,
+    bulkDeleteSelected,
+  } = useExplorerSelection({
+    mediaAssets,
+    prefabs,
+    scripts,
+    sharedItems,
+    renaming,
+    deleteItem,
+    closeCtxMenu: () => setCtxMenu(null),
+  });
+ 
+  const {
+    currentLocation,
+    history,
+    historyIndex,
+    navigateTo,
+    goBack,
+    goForward,
+    goUp,
+    renameCurrentFolderIfActive,
+  } = useExplorerNavigation({
+    rootLocation: ROOT_LOCATION,
+    clearSelection,
+  });
+ 
+  const {
+    searchQuery,
+    setSearchQuery,
+    sortBy,
+    setSortBy,
+    mediaTypeFilter,
+    setMediaTypeFilter,
+    scriptKindFilter,
+    setScriptKindFilter,
+    sortList,
+    handleSortByColumn,
+    filteredShared,
+    filteredPrefabs,
+    filteredMedia,
+    filteredScripts,
+    currentSectionItems,
+    filteredItemsInView,
+    subfolderNamesInView,
+  } = useExplorerFilters({
+    mediaAssets,
+    prefabs,
+    scripts,
+    sharedItems,
+    currentLocation,
+    foldersBySection,
+  });
+ 
+  const handleItemClick = useCallback(
+    (e, kind, item) => handleItemClickBase(e, kind, item, filteredItemsInView),
+    [handleItemClickBase, filteredItemsInView]
   );
-
-  const handleSortByColumn = useCallback((col) => {
-    setSortBy((prev) => {
-      if (prev === `${col}-asc`) return `${col}-desc`;
-      return `${col}-asc`;
-    });
-  }, []);
-
-  const query = searchQuery.toLowerCase().trim();
-
-  // Filtered lists per section
-  const filteredShared = useMemo(
-    () => sortList(sharedItems.filter((i) => (i.name || '').toLowerCase().includes(query))),
-    [sharedItems, query, sortList]
-  );
-
-  const filteredPrefabs = useMemo(
-    () => sortList(prefabs.filter((p) => (p.name || '').toLowerCase().includes(query))),
-    [prefabs, query, sortList]
-  );
-
-  const filteredMedia = useMemo(
-    () =>
-      sortList(
-        mediaAssets.filter(
-          (m) =>
-            (m.name || '').toLowerCase().includes(query) &&
-            ((mediaTypeFilter.video && m.type === 'video') ||
-              (mediaTypeFilter.audio && m.type === 'audio'))
-        )
-      ),
-    [mediaAssets, query, mediaTypeFilter, sortList]
-  );
-
-  const filteredScripts = useMemo(
-    () =>
-      sortList(
-        scripts.filter((s) => {
-          if (!(s.name || '').toLowerCase().includes(query)) return false;
-          const kind = detectScriptKind(s.code || '');
-          return scriptKindFilter[kind] !== false;
-        })
-      ),
-    [scripts, query, scriptKindFilter, sortList]
-  );
-
-  // Active items for the CURRENT navigated location
-  const currentSectionItems = useMemo(() => {
-    if (!currentLocation.section) return [];
-    if (currentLocation.section === 'media') return filteredMedia;
-    if (currentLocation.section === 'prefabs') return filteredPrefabs;
-    if (currentLocation.section === 'scripts') return filteredScripts;
-    if (currentLocation.section === 'shared') return filteredShared;
-    return [];
-  }, [currentLocation.section, filteredMedia, filteredPrefabs, filteredScripts, filteredShared]);
-
-  const filteredItemsInView = useMemo(() => {
-    if (!currentLocation.section) return [];
-    if (searchQuery) {
-      // While searching, show all matching items in this section regardless of folder
-      return currentSectionItems;
-    }
-    if (currentLocation.folder) {
-      return currentSectionItems.filter((i) => i.folder === currentLocation.folder);
-    }
-    // At section root: show items with no folder
-    return currentSectionItems.filter((i) => !i.folder);
-  }, [currentLocation, currentSectionItems, searchQuery]);
-
-  const subfolderNamesInView = useMemo(() => {
-    if (!currentLocation.section || currentLocation.folder || searchQuery) return [];
-    const all = foldersBySection[currentLocation.section] || [];
-    return all;
-  }, [currentLocation, foldersBySection, searchQuery]);
-
-  // ── Selection helpers ────────────────────────────────────────────────────
-  const resolveSelectionEntries = useCallback(() => {
-    const byId = {
-      media: new Map(mediaAssets.map((i) => [i.id, i])),
-      prefab: new Map(prefabs.map((i) => [i.id, i])),
-      script: new Map(scripts.map((i) => [i.id, i])),
-      shared: new Map(sharedItems.map((i) => [i.id, i])),
-    };
-    const out = [];
-    selectedItems.forEach((key) => {
-      const [kind, id] = key.split(':');
-      const item = byId[kind]?.get(id);
-      if (item) out.push({ kind, item });
-    });
-    return out;
-  }, [selectedItems, mediaAssets, prefabs, scripts, sharedItems]);
-
-  const handleItemClick = (e, kind, item) => {
-    if (renaming && renaming.kind === kind && renaming.id === item.id) return;
-    const key = selKey(kind, item.id);
-    if (e.ctrlKey || e.metaKey) {
-      setSelectedItems((prev) => {
-        const next = new Set(prev);
-        if (next.has(key)) next.delete(key);
-        else next.add(key);
-        return next;
-      });
-      lastClickedKeyRef.current = key;
-    } else if (e.shiftKey) {
-      const visibleKeys = filteredItemsInView.map((i) => selKey(kind, i.id));
-      const fromIdx = visibleKeys.indexOf(lastClickedKeyRef.current);
-      const toIdx = visibleKeys.indexOf(key);
-      if (lastClickedKeyRef.current && fromIdx !== -1 && toIdx !== -1) {
-        const min = Math.min(fromIdx, toIdx);
-        const max = Math.max(fromIdx, toIdx);
-        setSelectedItems(new Set(visibleKeys.slice(min, max + 1)));
-      } else {
-        setSelectedItems(new Set([key]));
-      }
-      lastClickedKeyRef.current = key;
-    } else {
-      setSelectedItems(new Set([key]));
-      lastClickedKeyRef.current = key;
-    }
-  };
-
+ 
   // Double click handlers
   const handleItemDoubleClick = (kind, item) => {
     if (kind === 'script') {
@@ -407,569 +255,127 @@ export const ProjectPanel = memo(function ProjectPanel({
       }
     }
   };
-
+ 
   const handleFolderDoubleClick = (section, folderName) => {
     navigateTo({ section, folder: folderName });
   };
-
-  // ── Drag & Drop ──────────────────────────────────────────────────────────
-  const handleDragStart = (e, itemType, itemData) => {
-    setDragPayload(e.dataTransfer, itemType, itemData);
-  };
-
-  const moveItemToFolder = (kind, id, folderName) => {
-    KIND_REGISTRY[kind]?.moveFn(id, folderName, registryCtx);
-    if (folderName) {
-      const section =
-        kind === 'prefab'
-          ? 'prefabs'
-          : kind === 'script'
-          ? 'scripts'
-          : kind === 'shared'
-          ? 'shared'
-          : 'media';
-      setExtraFoldersFor(section, (prev) =>
-        prev.includes(folderName) ? prev : [...prev, folderName]
-      );
-    }
-  };
-
-  const isOsFileDrag = (dt) => Boolean(dt?.types && Array.from(dt.types).includes('Files'));
-
-  const handleFolderDragOver = (e, itemKind, dropKey) => {
-    const isOsFile = isOsFileDrag(e.dataTransfer);
-    if (!dragHasItemKind(e.dataTransfer, itemKind) && !(isOsFile && itemKind === 'media')) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'copy';
-    if (dragOverKey !== dropKey) setDragOverKey(dropKey);
-  };
-
-  const handleFolderDragLeave = () => setDragOverKey(null);
-
-  const handleFolderDrop = (e, section, folderName, itemKind) => {
-    const isOsFile = isOsFileDrag(e.dataTransfer);
-    const hasFiles = (e.dataTransfer?.files?.length ?? 0) > 0;
-
-    if (isOsFile && hasFiles && (section === 'media' || itemKind === 'media')) {
-      e.preventDefault();
-      e.stopPropagation();
-      setDragOverKey(null);
-      handleFileUpload(e.dataTransfer.files, folderName || null);
-      return;
-    }
-
-    if (!dragHasItemKind(e.dataTransfer, itemKind)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOverKey(null);
-    const payload = readDragPayload(e.dataTransfer);
-    const draggedId = payload?.itemData?.id;
-    if (!draggedId) return;
-    const key = selKey(section, draggedId);
-    if (selectedItems.has(key) && selectedItems.size > 1) {
-      selectedItems.forEach((k) => {
-        const [kKind, id] = k.split(':');
-        if (kKind === section) moveItemToFolder(kKind, id, folderName);
-      });
-    } else {
-      moveItemToFolder(section, draggedId, folderName);
-    }
-  };
-
-  // ── Deletion ─────────────────────────────────────────────────────────────
-  const deleteItem = useCallback((kind, item) => {
-    KIND_REGISTRY[kind]?.deleteFn(item.id, registryCtx);
-  }, [registryCtx]);
-
-  const bulkDeleteSelected = useCallback(() => {
-    if (selectedItems.size === 0) return;
-    const entries = resolveSelectionEntries();
-    if (entries.length === 0) return;
-    if (entries.length > 1 && !window.confirm(`Delete ${entries.length} item(s)?`)) return;
-    setCtxMenu(null);
-    clearSelection();
-    entries.forEach(({ kind, item }) => deleteItem(kind, item));
-  }, [selectedItems, resolveSelectionEntries, deleteItem, clearSelection]);
-
-  // ── Renaming ─────────────────────────────────────────────────────────────
-  const startRename = (kind, item) => {
-    setRenaming({ kind, id: item.id, name: item.name || '' });
-    setCtxMenu(null);
-  };
-
-  const startFolderRename = (section, name) => {
-    setRenaming({ kind: 'folder', section, id: name, name });
-    setCtxMenu(null);
-  };
-
-  const commitFolderRename = async (section, oldName, newName) => {
-    if (!newName || newName === oldName) return;
-    const kind = section === 'prefabs' ? 'prefab' : section === 'scripts' ? 'script' : section === 'shared' ? 'shared' : 'media';
-
-    if (projectFolderHandle && section !== 'shared') {
-      await renameFolderInProject(projectFolderHandle, section, oldName, newName).catch((err) => {
-        console.warn('Could not rename folder on disk:', err);
-      });
-    }
-
-    (itemsBySection[section] || [])
-      .filter((i) => i.folder === oldName)
-      .forEach((i) => moveItemToFolder(kind, i.id, newName));
-
-    setExtraFoldersFor(section, (prev) => {
-      const next = prev.filter((f) => f !== oldName);
-      if (!next.includes(newName)) next.push(newName);
-      return next;
-    });
-    setOpenSubfoldersFor(section, (prev) => {
-      const next = { ...prev };
-      delete next[oldName];
-      next[newName] = true;
-      return next;
-    });
-
-    if (currentLocation.section === section && currentLocation.folder === oldName) {
-      setCurrentLocation((prev) => ({ ...prev, folder: newName }));
-    }
-  };
-
-  const commitRename = async () => {
-    if (!renaming) return;
-    const name = (renaming.name || '').trim();
-    if (name) {
-      if (renaming.kind === 'folder') {
-        commitFolderRename(renaming.section, renaming.id, name);
-      } else {
-        try {
-          await KIND_REGISTRY[renaming.kind]?.renameFn?.(renaming.id, name, registryCtx);
-        } catch (err) {
-          console.error('Could not rename item:', err);
-          return;
-        }
-      }
-    }
-    setRenaming(null);
-  };
-
-  const renameInput = (kind, item) => {
-    if (!renaming || renaming.kind !== kind || renaming.id !== item.id) return null;
-    return (
-      <input
-        type="text"
-        className="asset-rename-input"
-        value={renaming.name}
-        autoFocus
-        onFocus={(e) => e.target.select()}
-        onChange={(e) => setRenaming({ ...renaming, name: e.target.value })}
-        onBlur={commitRename}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') commitRename();
-          else if (e.key === 'Escape') setRenaming(null);
-        }}
-        onClick={(e) => e.stopPropagation()}
-      />
-    );
-  };
-
-  const folderRenameInput = (section, folderName) => {
-    if (!renaming || renaming.kind !== 'folder' || renaming.section !== section || renaming.id !== folderName)
-      return null;
-    return (
-      <input
-        type="text"
-        className="asset-rename-input"
-        value={renaming.name}
-        autoFocus
-        onFocus={(e) => e.target.select()}
-        onChange={(e) => setRenaming({ ...renaming, name: e.target.value })}
-        onBlur={commitRename}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') commitRename();
-          else if (e.key === 'Escape') setRenaming(null);
-        }}
-        onClick={(e) => e.stopPropagation()}
-      />
-    );
-  };
-
-  // ── Folder creation & deletion ───────────────────────────────────────────
-  const commitNewFolder = async () => {
-    const section = creatingFolder || currentLocation.section || 'media';
-    const name = (newFolderName || '').trim();
-    if (name && !/[\\/:*?"<>|]/.test(name) && name !== '.' && name !== '..') {
-      const rootName = section === 'prefabs' ? 'prefabs' : section;
-      if (section !== 'shared' && projectFolderHandle) {
-        try {
-          const root = await projectFolderHandle.getDirectoryHandle(rootName, { create: true });
-          await root.getDirectoryHandle(name, { create: true });
-        } catch (err) {
-          console.error('Could not create folder on disk:', err);
-        }
-      }
-      setExtraFoldersFor(section, (prev) => (prev.includes(name) ? prev : [...prev, name]));
-      setOpenSubfoldersFor(section, (prev) => ({ ...prev, [name]: true }));
-    }
-    setCreatingFolder(null);
-    setNewFolderName('');
-  };
-
-  const deleteFolder = async (section, name) => {
-    setCtxMenu(null);
-    if (!section || !name) return; // Prevent deleting root or null folders
-    const kind =
-      section === 'prefabs'
-        ? 'prefab'
-        : section === 'scripts'
-        ? 'script'
-        : section === 'shared'
-        ? 'shared'
-        : 'media';
-
-    const itemsInThisFolder = (itemsBySection[section] || []).filter(
-      (i) => i.folder === name
-    );
-
-    if (
-      itemsInThisFolder.length > 0 &&
-      !window.confirm(
-        `Delete folder "${name}" and all ${itemsInThisFolder.length} item(s) inside it?`
-      )
-    ) {
-      return;
-    }
-
-    for (const item of itemsInThisFolder) {
-      deleteItem(kind, item);
-    }
-
-    if (projectFolderHandle && section !== 'shared') {
-      await deleteFolderFromProject(projectFolderHandle, section, name).catch((err) => {
-        console.warn('Could not delete folder from disk:', err);
-      });
-    }
-
-    setExtraFoldersFor(section, (prev) => prev.filter((f) => f !== name));
-    setOpenSubfoldersFor(section, (prev) => {
-      const next = { ...prev };
-      delete next[name];
-      return next;
-    });
-
-    if (currentLocation.section === section && currentLocation.folder === name) {
-      navigateTo({ section, folder: null });
-    }
-  };
-
-  // ── File actions ─────────────────────────────────────────────────────────
-  const handleFileUpload = (files, explicitFolder = undefined) => {
-    const destFolder =
-      explicitFolder !== undefined
-        ? explicitFolder
-        : importTargetFolderRef.current !== undefined
-        ? importTargetFolderRef.current
-        : currentLocation.section === 'media' && currentLocation.folder
-        ? currentLocation.folder
-        : null;
-    importTargetFolderRef.current = undefined;
-
-    importMediaFiles({
-      files,
-      onAddMediaAsset: (asset) => {
-        if (destFolder) {
-          asset.folder = destFolder;
-        }
-        onAddMediaAsset?.(asset);
-      },
-      mediaAssets,
-      onDuplicatesDetected: (count) => setDupeNotice(count),
-    });
-  };
-
-  const handleReplaceFile = (e) => {
-    const file = e.target.files?.[0];
-    if (file && replaceTarget) onReplaceMediaAsset?.(replaceTarget, file);
-    e.target.value = '';
-    setReplaceTarget(null);
-  };
-
-  const handleCreateNewScript = async () => {
-    const usedNames = new Set(scripts.map((s) => s.name.toLowerCase()));
-    let number = 1;
-    let name = 'NewScript.jsx';
-    while (usedNames.has(name.toLowerCase())) {
-      number += 1;
-      name = `NewScript ${number}.jsx`;
-    }
-    const targetFolder =
-      currentLocation.section === 'scripts' && currentLocation.folder
-        ? currentLocation.folder
-        : null;
-
-    const newScript = {
-      id: `script-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      name,
-      folder: targetFolder,
-      description: 'Blank JavaScript Motion script',
-      code: `import { CanvasComponent } from '@blahblah/sdk';
-
-export default class NewScript extends CanvasComponent {
-  static props = {};
-
-  onMount({ container, canvasWidth, canvasHeight }) {
-    this.canvas = document.createElement('canvas');
-    this.canvas.width = canvasWidth || 800;
-    this.canvas.height = canvasHeight || 600;
-    this.canvas.style.width = '100%';
-    this.canvas.style.height = '100%';
-    this.canvas.style.display = 'block';
-    container.appendChild(this.canvas);
-    this.ctx = this.canvas.getContext('2d');
-  }
-
-  onUpdate({ time, canvasWidth, canvasHeight }) {
-    if (!this.ctx) return;
-    if (this.canvas.width !== canvasWidth || this.canvas.height !== canvasHeight) {
-      this.canvas.width = canvasWidth;
-      this.canvas.height = canvasHeight;
-    }
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    const x = this.canvas.width / 2 + Math.sin(time * 2) * 50;
-    const y = this.canvas.height / 2;
-    this.ctx.fillStyle = '#ffffff';
-    this.ctx.beginPath();
-    this.ctx.arc(x, y, 8, 0, Math.PI * 2);
-    this.ctx.fill();
-  }
-
-  onUnmount({ container }) {
-    if (this.canvas?.parentNode === container) {
-      container.removeChild(this.canvas);
-    }
-    this.canvas = null;
-    this.ctx = null;
-  }
-}`,
-    };
-    try {
-      await onCreateScript?.(newScript);
-    } catch (err) {
-      console.error('Could not create script:', err);
-      return;
-    }
-    onOpenScriptEditor?.(newScript);
-  };
-
-  // ── Context Menus ────────────────────────────────────────────────────────
-  const openEmptyMenu = (e, section, folder = null) => {
-    e.preventDefault();
-    if (
-      e.target.closest('.asset-card') ||
-      e.target.closest('.explorer-details-row') ||
-      e.target.closest('.explorer-tree-node')
-    )
-      return;
-    const sec = section || currentLocation.section || 'media';
-    const fld = folder ?? (currentLocation.section === sec ? currentLocation.folder : null);
-    setCtxMenu({
-      x: e.clientX,
-      y: e.clientY,
-      target: { kind: 'empty', section: sec, folder: fld || null },
-    });
-  };
-
-  const openItemMenuSafe = (e, kind, item) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const key = selKey(kind, item.id);
-    if (selectedItems.has(key) && selectedItems.size > 1) {
-      setCtxMenu({
-        x: e.clientX,
-        y: e.clientY,
-        target: { kind: 'multi', items: resolveSelectionEntries() },
-      });
-      return;
-    }
-    if (!selectedItems.has(key)) {
-      setSelectedItems(new Set([key]));
-      lastClickedKeyRef.current = key;
-    }
-    setCtxMenu({ x: e.clientX, y: e.clientY, target: { kind, item } });
-  };
-
-  const openFolderMenu = (e, section, folderName) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setCtxMenu({
-      x: e.clientX,
-      y: e.clientY,
-      target: { kind: 'folder', section, name: folderName },
-    });
-  };
-
-  const handleContextAction = (action) => {
-    if (!ctxMenu) return;
-    const { target } = ctxMenu;
-    if (action === 'new-folder') {
-      const section = target.section || currentLocation.section || 'media';
-      setCreatingFolder(section);
-      setNewFolderName('');
-      setCtxMenu(null);
-    } else if (action === 'new-clip') {
-      setCtxMenu(null);
-      onAddEmptyClip?.();
-    } else if (action === 'new-script') {
-      setCtxMenu(null);
-      handleCreateNewScript();
-    } else if (action === 'import-media') {
-      const destFolder =
-        target.kind === 'folder'
-          ? target.name
-          : target.folder ??
-            (currentLocation.section === 'media' ? currentLocation.folder : null);
-      importTargetFolderRef.current = destFolder || null;
-      setCtxMenu(null);
-      fileInputRef.current?.click();
-    } else if (action === 'open') {
-      setCtxMenu(null);
-      if (target.kind === 'folder') {
-        navigateTo({ section: target.section, folder: target.name });
-      } else if (target.item) {
-        handleItemDoubleClick(target.kind, target.item);
-      }
-    } else if (action === 'edit-prefab') {
-      setCtxMenu(null);
-      if (target.item) {
-        onEnterPrefabMode?.(target.item.id);
-      }
-    } else if (action === 'add-to-timeline') {
-      setCtxMenu(null);
-      if (target.item) {
-        onAddPrefabToTimeline?.(target.item);
-      }
-    } else if (action === 'rename') {
-      if (target.kind === 'folder') startFolderRename(target.section, target.name);
-      else startRename(target.kind, target.item);
-    } else if (action === 'replace') {
-      if (target.kind === 'media' && onReplaceMediaAsset) {
-        setReplaceTarget(target.item.id);
-        setCtxMenu(null);
-        setTimeout(() => replaceFileInputRef.current?.click(), 0);
-      }
-    } else if (action === 'delete') {
-      if (target.kind === 'multi') {
-        if (target.items.length > 1 && !window.confirm(`Delete ${target.items.length} item(s)?`))
-          return;
-        setCtxMenu(null);
-        clearSelection();
-        target.items.forEach(({ kind, item }) => deleteItem(kind, item));
-      } else if (target.kind === 'folder') {
-        deleteFolder(target.section, target.name);
-      } else {
-        setCtxMenu(null);
-        deleteItem(target.kind, target.item);
-      }
-    } else if (action === 'share') {
-      setCtxMenu(null);
-      if (target.kind === 'multi') {
-        target.items.forEach(({ kind, item }) => {
-          if (kind === 'prefab') onSharePrefab?.(item);
-          else if (kind === 'script') onShareScript?.(item);
-        });
-      } else if (target.kind === 'prefab') onSharePrefab?.(target.item);
-      else if (target.kind === 'script') onShareScript?.(target.item);
-    }
-  };
-
-  // ── Keyboard Navigation ──────────────────────────────────────────────────
-  useEffect(() => {
-    const onKey = (e) => {
-      const t = e.target;
-      const inInput =
-        t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
-      const panel = panelRef.current;
-      const panelFocused = panel && (panel.contains(t) || panel === document.activeElement);
-
-      if (e.key === 'Escape') {
-        if (selectedItems.size > 0 && !inInput) clearSelection();
-        if (ctxMenu) setCtxMenu(null);
-        return;
-      }
-
-      if (inInput) return;
-
-      if (panelFocused) {
-        // Alt + Left = Go Back
-        if (e.altKey && e.key === 'ArrowLeft') {
-          e.preventDefault();
-          goBack();
-          return;
-        }
-        // Alt + Right = Go Forward
-        if (e.altKey && e.key === 'ArrowRight') {
-          e.preventDefault();
-          goForward();
-          return;
-        }
-        // Alt + Up or Backspace = Go Up
-        if ((e.altKey && e.key === 'ArrowUp') || e.key === 'Backspace') {
-          e.preventDefault();
-          goUp();
-          return;
-        }
-        // F2 = Rename
-        if (e.key === 'F2' && selectedItems.size === 1) {
-          e.preventDefault();
-          const [entry] = resolveSelectionEntries();
-          if (entry && entry.kind !== 'shared') startRename(entry.kind, entry.item);
-          return;
-        }
-        // Delete = Delete selected
-        if (e.key === 'Delete' && selectedItems.size > 0) {
-          e.preventDefault();
-          bulkDeleteSelected();
-          return;
-        }
-        // Ctrl + A = Select all
-        if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
-          e.preventDefault();
-          if (currentLocation.section) {
-            const kind = SECTIONS_CONFIG[currentLocation.section]?.dropKind;
-            if (kind) {
-              const allKeys = filteredItemsInView.map((i) => selKey(kind, i.id));
-              setSelectedItems(new Set(allKeys));
-            }
-          }
-          return;
-        }
-      }
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [
+ 
+  // ── Drag & Drop and File Ops (merged hook) ───────────────────────────────
+  const {
+    dragOverKey,
+    handleDragStart,
+    moveItemToFolder,
+    handleFolderDragOver,
+    handleFolderDragLeave,
+    handleFolderDrop,
+    startRename,
+    startFolderRename,
+    commitFolderRename,
+    commitRename,
+    renameInput,
+    folderRenameInput,
+    commitNewFolder,
+    deleteFolder,
+    handleFileUpload,
+    handleReplaceFile,
+    handleCreateNewScript,
+  } = useExplorerFileManager({
+    registryCtx,
+    projectFolderHandle,
+    itemsBySection,
+    currentLocation,
+    setExtraFoldersFor,
+    setOpenSubfoldersFor,
     selectedItems,
+    deleteItem,
+    renameCurrentFolderIfActive,
+    navigateTo,
+    renaming,
+    setRenaming,
+    creatingFolder,
+    setCreatingFolder,
+    newFolderName,
+    setNewFolderName,
+    closeCtxMenu: () => setCtxMenu(null),
+    mediaAssets,
+    onAddMediaAsset,
+    setDupeNotice,
+    importTargetFolderRef,
+    replaceTarget,
+    setReplaceTarget,
+    onReplaceMediaAsset,
+    scripts,
+    onCreateScript,
+    onOpenScriptEditor,
+  });
+ 
+  // ── Context Menu (hook) ──────────────────────────────────────────────────
+  const {
+    closeCtxMenu,
+    openEmptyMenu,
+    openItemMenuSafe,
+    openFolderMenu,
+    handleContextAction,
+  } = useExplorerContextMenu({
     ctxMenu,
+    setCtxMenu,
+    currentLocation,
+    selectedItems,
+    setSelectedItems,
+    lastClickedKeyRef,
+    resolveSelectionEntries,
+    clearSelection,
+    deleteItem,
+    deleteFolder,
+    startRename,
+    startFolderRename,
+    navigateTo,
+    handleItemDoubleClick,
+    setCreatingFolder,
+    setNewFolderName,
+    importTargetFolderRef,
+    fileInputRef,
+    replaceFileInputRef,
+    setReplaceTarget,
+    handleCreateNewScript,
+    onAddEmptyClip,
+    onEnterPrefabMode,
+    onAddPrefabToTimeline,
+    onReplaceMediaAsset,
+    onSharePrefab,
+    onShareScript,
+  });
+ 
+  // ── Keyboard Shortcuts (hook) ─────────────────────────────────────────────
+  useExplorerKeyboardShortcuts({
+    panelRef,
+    selectedItems,
+    setSelectedItems,
+    clearSelection,
+    ctxMenu,
+    setCtxMenu,
     currentLocation,
     filteredItemsInView,
     goBack,
     goForward,
     goUp,
     resolveSelectionEntries,
+    startRename,
     bulkDeleteSelected,
-    clearSelection,
-  ]);
-
+  });
+ 
   // Focus panel on selection
   useEffect(() => {
     if (selectedItems.size > 0) panelRef.current?.focus({ preventScroll: true });
   }, [selectedItems]);
-
+ 
   // Auto-dismiss duplicate notice
   useEffect(() => {
     if (dupeNotice == null) return;
     const t = setTimeout(() => setDupeNotice(null), 5000);
     return () => clearTimeout(t);
   }, [dupeNotice]);
-
+ 
   // Selected entry summaries for command bar & status bar
   const selectedEntries = resolveSelectionEntries();
   const canRenameSelected =
@@ -980,13 +386,12 @@ export default class NewScript extends CanvasComponent {
     selectedEntries.every(({ kind }) => kind === 'prefab' || kind === 'script');
   const selectedTotalSize = selectedEntries.reduce(
     (acc, { item }) => acc + (item?.size || 0),
-    0
   );
-
+ 
   const totalItemsCountInView =
     (currentLocation.section ? filteredItemsInView.length : 4) +
     subfolderNamesInView.length;
-
+ 
   return (
     <aside
       ref={panelRef}
@@ -1028,7 +433,7 @@ export default class NewScript extends CanvasComponent {
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
       />
-
+ 
       {/* 2. Command Toolbar */}
       <ExplorerCommandBar
         currentLocation={currentLocation}
@@ -1074,7 +479,7 @@ export default class NewScript extends CanvasComponent {
         scriptKindFilter={scriptKindFilter}
         onScriptKindFilterChange={setScriptKindFilter}
       />
-
+ 
       {/* Duplicate notice */}
       {dupeNotice != null && (
         <div className="project-dupe-notice">
@@ -1086,7 +491,7 @@ export default class NewScript extends CanvasComponent {
           </button>
         </div>
       )}
-
+ 
       {/* 3. Main Split View: Left Nav Pane + Right Content View */}
       <div className="explorer-main-area">
         {showNavPane && (
@@ -1106,7 +511,7 @@ export default class NewScript extends CanvasComponent {
             onOpenFolderMenu={openFolderMenu}
           />
         )}
-
+ 
         <ExplorerContentView
           currentLocation={currentLocation}
           onNavigate={navigateTo}
@@ -1153,7 +558,7 @@ export default class NewScript extends CanvasComponent {
           onNewScript={handleCreateNewScript}
         />
       </div>
-
+ 
       {/* 4. Bottom Windows Explorer Status Bar */}
       <ExplorerStatusBar
         itemCount={totalItemsCountInView}
@@ -1162,7 +567,7 @@ export default class NewScript extends CanvasComponent {
         viewMode={viewMode}
         onViewModeChange={setViewMode}
       />
-
+ 
       {/* Hidden File Inputs */}
       <input
         type="file"
@@ -1179,7 +584,7 @@ export default class NewScript extends CanvasComponent {
         accept="video/*,audio/*"
         onChange={handleReplaceFile}
       />
-
+ 
       {/* Context Menu */}
       {ctxMenu && (
         <ContextMenu
@@ -1217,7 +622,7 @@ export default class NewScript extends CanvasComponent {
               </button>
             </>
           )}
-
+ 
           {ctxMenu.target.kind === 'folder' && (
             <>
               <button
@@ -1253,7 +658,7 @@ export default class NewScript extends CanvasComponent {
               )}
             </>
           )}
-
+ 
           {ctxMenu.target.kind === 'multi' && (
             <>
               {ctxMenu.target.items.length > 0 &&
@@ -1275,7 +680,7 @@ export default class NewScript extends CanvasComponent {
               </button>
             </>
           )}
-
+ 
           {ctxMenu.target.kind !== 'empty' &&
             ctxMenu.target.kind !== 'folder' &&
             ctxMenu.target.kind !== 'multi' && (
@@ -1338,7 +743,7 @@ export default class NewScript extends CanvasComponent {
             )}
         </ContextMenu>
       )}
-
+ 
       {/* Asset Preview Popover */}
       {preview && (
         <AssetPreviewPopover
