@@ -1,7 +1,7 @@
 import { useRef, useEffect, useCallback, useState, memo } from 'react';
 import { RotateCcw, MousePointer2, Maximize2 } from 'lucide-react';
-import { CURVE_PRESETS } from '../engine/keyframes';
-import { CurvePickerModal } from './CurvePickerModal';
+import { CURVE_PRESETS } from '../../engine/keyframes';
+import { CurvePickerModal } from '../modals/CurvePickerModal';
  
 const PADDING = 24;
 const HANDLE_HIT_RADIUS = 14;

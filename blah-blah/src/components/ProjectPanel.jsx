@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { isTauri } from '../services/tauriFsAdapter';
 import { openProjectInVsCode } from '../services/ideLauncher';
-import { ContextMenu } from './ContextMenu';
+import { ContextMenu } from './shared/ContextMenu';
 import { AssetPreviewPopover } from './project/AssetPreviewPopover';
 import { useSectionFolders } from './project/useSectionFolders';
 import { KIND_REGISTRY } from './project/kindRegistry';
@@ -386,6 +386,7 @@ export const ProjectPanel = memo(function ProjectPanel({
     selectedEntries.every(({ kind }) => kind === 'prefab' || kind === 'script');
   const selectedTotalSize = selectedEntries.reduce(
     (acc, { item }) => acc + (item?.size || 0),
+    0,
   );
  
   const totalItemsCountInView =

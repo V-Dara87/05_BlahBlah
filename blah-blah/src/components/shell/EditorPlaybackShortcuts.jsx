@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { usePlaybackStore } from '../hooks/PlaybackContext';
-import { loadKeybindSettings, normalizeKeyEvent } from '../services/keybindSettings';
+import { usePlaybackStore } from '../../hooks/PlaybackContext';
+import { loadKeybindSettings, normalizeKeyEvent } from '../../services/keybindSettings';
  
 /**
  * Keyboard shortcuts that need live playback state. Lives inside

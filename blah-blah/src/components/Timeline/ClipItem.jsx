@@ -1,10 +1,10 @@
 import { useRef, useMemo, memo, useState } from 'react';
 import { Film, Music, Type, Square, FileCode, Link2, X, Copy, Scissors, Unlink } from 'lucide-react';
-import { WaveformCanvas } from '../WaveformCanvas';
+import { WaveformCanvas } from '../shared/WaveformCanvas';
 import { isScriptComponent, isVideoEntity, isAudioEntity } from '../../engine/ecs';
 import { dragHasItemKind, ITEM_KIND_SCRIPT, setDragPayload, ITEM_KIND_ENTITY } from '../../utils/dragData';
 import { computeTrimmedOffset } from '../../utils/mediaOffset';
-import { ContextMenu } from '../ContextMenu';
+import { ContextMenu } from '../shared/ContextMenu';
 import './clip-item.css';
  
 /** Return true if candidateChild is a descendant of ancestorId (cycle guard). */

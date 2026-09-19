@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Settings, X, Mic, AlertCircle, Keyboard, RotateCcw, Pencil, Cpu, CheckCircle2, MonitorPlay } from 'lucide-react';
-import { loadAudioSettings, saveAudioSettings, listAudioInputDevices } from '../services/audioSettings';
-import { useAudioRecorder } from '../hooks/useAudioRecorder';
-import { getFfmpegVersion, isFfmpegAvailable } from '../services/ffmpegRunner';
-import { isTauri } from '../services/tauriFsAdapter';
-import { RESOLUTION_PRESETS, DEFAULT_RESOLUTION } from '../types';
+import { loadAudioSettings, saveAudioSettings, listAudioInputDevices } from '../../services/audioSettings';
+import { useAudioRecorder } from '../../hooks/useAudioRecorder';
+import { getFfmpegVersion, isFfmpegAvailable } from '../../services/ffmpegRunner';
+import { isTauri } from '../../services/tauriFsAdapter';
+import { RESOLUTION_PRESETS, DEFAULT_RESOLUTION } from '../../types';
 import {
   SHORTCUT_ACTIONS,
   loadKeybindSettings,
@@ -13,7 +13,7 @@ import {
   normalizeKeyEvent,
   findConflict,
   getDefaultBinding,
-} from '../services/keybindSettings';
+} from '../../services/keybindSettings';
 import './settings-modal.css';
  
 const TABS = [

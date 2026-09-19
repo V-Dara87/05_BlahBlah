@@ -1,5 +1,5 @@
 import { Volume2 } from 'lucide-react';
-import { DragNumber } from '../DragNumber';
+import { DragNumber } from '../shared/DragNumber';
 import { InspectorCardHeader } from './InspectorCardHeader';
  
 /**

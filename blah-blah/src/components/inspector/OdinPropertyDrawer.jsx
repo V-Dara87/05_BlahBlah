@@ -1,6 +1,6 @@
 import { memo, useMemo } from 'react';
 import { RotateCcw, Sliders } from 'lucide-react';
-import { DragNumber } from '../DragNumber';
+import { DragNumber } from '../shared/DragNumber';
 import './odin-property-drawer.css';
 
 /**

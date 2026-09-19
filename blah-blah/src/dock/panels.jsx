@@ -1,13 +1,13 @@
  
 import { memo, useState, useCallback, useMemo } from 'react';
 import { ProjectPanel } from '../components/ProjectPanel';
-import { EntityRenderer } from '../components/EntityRenderer';
+import { EntityRenderer } from '../components/entity/EntityRenderer';
 import { UnityInspector } from '../components/UnityInspector';
 import { Timeline } from '../components/Timeline/Timeline';
 import { PrefabModeBar } from '../components/Timeline/PrefabModeBar';
 import { Dopesheet } from '../components/Dopesheet/Dopesheet';
-import { CurveEditorTab } from '../components/CurveEditor';
-import { SilenceRemoverPanel } from '../components/SilenceRemoverPanel';
+import { CurveEditorTab } from '../components/shared/CurveEditor';
+import { SilenceRemoverPanel } from '../components/silence-remover/SilenceRemoverPanel';
 import { setKeyframeCurve, findKeyframeById, DEFAULT_CP1, DEFAULT_CP2 } from '../engine/keyframes';
 import { useEditorContext } from './EditorContext';
 import { useCurrentTime, useIsPlaying, useIsLooping, usePlaybackStore } from '../hooks/PlaybackContext';

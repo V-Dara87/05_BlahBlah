@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from 'react';
 import { detectScriptKind } from '../../engine/scriptRunner';
 import { isScriptComponent } from '../../engine/ecs';
 import { COMPONENT_TYPE_LABEL, scriptKindMeta, shortDuration } from './projectPanelConstants';
-import { WaveformCanvas } from '../WaveformCanvas';
+import { WaveformCanvas } from '../shared/WaveformCanvas';
 import './asset-preview-popover.css';
  
 /**

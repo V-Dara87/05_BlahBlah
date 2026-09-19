@@ -14,7 +14,7 @@ import {
   Sparkles,
   Cpu,
 } from 'lucide-react';
-import { decodeAudio } from '../utils/audioWaveform';
+import { decodeAudio } from '../../utils/audioWaveform';
 import {
   detectSilenceWithWebAudio,
   detectSilenceWithFfmpeg,
@@ -22,7 +22,7 @@ import {
   formatTime,
   isTauri,
   isFfmpegAvailable,
-} from '../services/silenceDetector';
+} from '../../services/silenceDetector';
 import './silence-remover-panel.css';
  
 /**

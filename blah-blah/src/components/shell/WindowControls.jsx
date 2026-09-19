@@ -1,6 +1,6 @@
 import { Minus, Square, X } from 'lucide-react';
-import { isTauri } from '../services/tauriFsAdapter';
-import { withCurrentWindow, toggleWindowMaximize } from '../services/windowChrome';
+import { isTauri } from '../../services/tauriFsAdapter';
+import { withCurrentWindow, toggleWindowMaximize } from '../../services/windowChrome';
 import './window-controls.css';
  
 /**

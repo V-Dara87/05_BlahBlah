@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, memo } from 'react';
-import { getWaveformPeaks } from '../utils/audioWaveform';
+import { getWaveformPeaks } from '../../utils/audioWaveform';
  
 /**
  * WaveformCanvas — renders a true signed-envelope audio waveform (DaVinci

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { TransitionPickerModal } from '../TransitionPickerModal';
+import { TransitionPickerModal } from '../modals/TransitionPickerModal';
  
 /**
  * Owns the picker-modal state (`showPickerModal`, `pickerSlot`,

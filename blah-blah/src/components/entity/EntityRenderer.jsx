@@ -3,19 +3,19 @@
  
  
 import { useRef, useEffect, useMemo, useState, Fragment } from 'react';
-import { getCompiledReactComponent, detectScriptKind, extractScriptProps } from '../engine/scriptRunner';
-import { resolveScriptProps } from '../engine/referenceTypes';
-import { resolveTextRendererText, cssFontFamily, DEFAULT_TEXT_FONT_SIZE, DEFAULT_TEXT_FONT_COLOR, DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_WEIGHT } from '../engine/textRenderer';
-import { isScriptComponent, isVideoEntity, isAudioEntity } from '../engine/ecs';
-import { computeActiveEntitiesAtTime } from '../engine/renderPipeline';
+import { getCompiledReactComponent, detectScriptKind, extractScriptProps } from '../../engine/scriptRunner';
+import { resolveScriptProps } from '../../engine/referenceTypes';
+import { resolveTextRendererText, cssFontFamily, DEFAULT_TEXT_FONT_SIZE, DEFAULT_TEXT_FONT_COLOR, DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_WEIGHT } from '../../engine/textRenderer';
+import { isScriptComponent, isVideoEntity, isAudioEntity } from '../../engine/ecs';
+import { computeActiveEntitiesAtTime } from '../../engine/renderPipeline';
 import { EntityErrorBoundary } from './EntityErrorBoundary';
-import { usePreviewViewport } from '../hooks/usePreviewViewport';
-import { useGizmoDrag } from '../hooks/useGizmoDrag';
-import { useMediaSync } from '../hooks/useMediaSync';
-import { useCanvasScriptDriver } from '../hooks/useCanvasScriptDriver';
-import { VideoLayer } from './preview/VideoLayer';
-import { OverlayLayer } from './preview/OverlayLayer';
-import { PlaybackTransportBar } from './preview/PlaybackTransportBar';
+import { usePreviewViewport } from '../../hooks/usePreviewViewport';
+import { useGizmoDrag } from '../../hooks/useGizmoDrag';
+import { useMediaSync } from '../../hooks/useMediaSync';
+import { useCanvasScriptDriver } from '../../hooks/useCanvasScriptDriver';
+import { VideoLayer } from '../preview/VideoLayer';
+import { OverlayLayer } from '../preview/OverlayLayer';
+import { PlaybackTransportBar } from '../preview/PlaybackTransportBar';
 import './entity-renderer.css';
  
 /**

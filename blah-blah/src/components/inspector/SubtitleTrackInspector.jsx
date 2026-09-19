@@ -1,6 +1,6 @@
-import { DragNumber } from '../DragNumber';
+import { DragNumber } from '../shared/DragNumber';
 import { Upload, Download } from 'lucide-react';
-import { ArrayFieldEditor } from '../ArrayFieldEditor';
+import { ArrayFieldEditor } from '../shared/ArrayFieldEditor';
 import {
   createPhrase,
   addPhrase,

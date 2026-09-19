@@ -10,7 +10,7 @@ import {
   getTransitionPreset,
   startTransitionPreviewLoop,
 } from '../../engine/glTransitions';
-import { DragNumber } from '../DragNumber';
+import { DragNumber } from '../shared/DragNumber';
 import { OdinPropertyDrawer } from './OdinPropertyDrawer';
 import './transition-inspector.css';
  

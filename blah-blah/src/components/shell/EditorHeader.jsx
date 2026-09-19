@@ -1,5 +1,5 @@
-import { UnityHeader } from '../components/UnityHeader';
-import { useCurrentTime, useIsPlaying, useIsLooping, usePlaybackStore } from '../hooks/PlaybackContext';
+import { UnityHeader } from './UnityHeader';
+import { useCurrentTime, useIsPlaying, useIsLooping, usePlaybackStore } from '../../hooks/PlaybackContext';
 
 export function EditorHeader(props) {
   const currentTime = useCurrentTime();

@@ -17,9 +17,9 @@ import {
   Volume2,
   Cpu
 } from 'lucide-react';
-import { formatTimecode } from '../utils/timeFormat';
-import { isVideoEntity } from '../engine/ecs';
-import { isTauri } from '../services/tauriFsAdapter';
+import { formatTimecode } from '../../utils/timeFormat';
+import { isVideoEntity } from '../../engine/ecs';
+import { isTauri } from '../../services/tauriFsAdapter';
 import {
   drawExportFrame,
   createCanvasContainerPool,
@@ -27,13 +27,13 @@ import {
   computeActiveEntitiesAtTime,
   mixdownAudio,
   encodeAudioTrack,
-} from '../engine/exportRunner';
+} from '../../engine/exportRunner';
 import {
   FFMPEG_FORMATS,
   FFMPEG_QUALITY_PRESETS,
   executeFfmpegExport,
   isFfmpegAvailable
-} from '../services/ffmpegExportRunner';
+} from '../../services/ffmpegExportRunner';
 import './export-modal.css';
  
 /**

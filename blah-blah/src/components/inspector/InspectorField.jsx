@@ -1,7 +1,7 @@
-import { DragNumber } from '../DragNumber';
+import { DragNumber } from '../shared/DragNumber';
 import { trackKeyFor, getFieldKeyframes, setKeyframe, removeKeyframe } from '../../engine/keyframes';
 import { EntityRefSlot, AssetRefSlot } from './RefSlot';
-import { ArrayFieldEditor } from '../ArrayFieldEditor';
+import { ArrayFieldEditor } from '../shared/ArrayFieldEditor';
 import { buildStructDefault } from '../../engine/scriptRunner';
 import { useState } from 'react';
 import { ChevronRight } from 'lucide-react';

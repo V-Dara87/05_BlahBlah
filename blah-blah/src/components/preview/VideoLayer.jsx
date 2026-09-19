@@ -1,5 +1,5 @@
 import { Fragment } from 'react';
-import { EntityErrorBoundary } from '../EntityErrorBoundary';
+import { EntityErrorBoundary } from '../entity/EntityErrorBoundary';
 import { getSharedGLTransitionRenderer } from '../../engine/glTransitions';
 import './video-layer.css';
  

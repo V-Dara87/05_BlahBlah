@@ -3,7 +3,7 @@ import { getCompiledReactComponent, detectScriptKind, extractScriptProps } from 
 import { resolveScriptProps } from '../../engine/referenceTypes';
 import { resolveTextRendererText, cssFontFamily, DEFAULT_TEXT_FONT_SIZE, DEFAULT_TEXT_FONT_COLOR, DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_WEIGHT } from '../../engine/textRenderer';
 import { isScriptComponent } from '../../engine/ecs';
-import { EntityErrorBoundary } from '../EntityErrorBoundary';
+import { EntityErrorBoundary } from '../entity/EntityErrorBoundary';
 import './overlay-layer.css';
  
 /**
