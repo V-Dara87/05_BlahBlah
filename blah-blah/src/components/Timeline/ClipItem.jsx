@@ -1,5 +1,5 @@
 import { useRef, useMemo, memo, useState } from 'react';
-import { Film, Music, Type, Square, FileCode, Link2, X, Copy, Scissors, Unlink } from 'lucide-react';
+import { Film, Music, Type, Square, FileCode, Link2, X, Copy, Scissors, Unlink, AlertTriangle } from 'lucide-react';
 import { WaveformCanvas } from '../shared/WaveformCanvas';
 import { isScriptComponent, isVideoEntity, isAudioEntity } from '../../engine/ecs';
 import { dragHasItemKind, ITEM_KIND_SCRIPT, setDragPayload, ITEM_KIND_ENTITY } from '../../utils/dragData';
@@ -33,6 +33,7 @@ export const ClipItem = memo(function ClipItem({
   clip,
   allClips = [],
   tracks = [],
+  mediaAssets = [],
   isLocked = false,
   pixelsPerSecond,
   selectedClipId,
@@ -667,6 +668,22 @@ export const ClipItem = memo(function ClipItem({
  
   const showWaveform = hasAudio && audioUrl && widthPx > 30; // only audio clips get waveforms
  
+  // Does this clip's own media reference (audioUrl above) still resolve to
+  // a real asset in the library? A clip only ever points at its source by
+  // URL (no stable asset id), so deleting the media asset from the Project
+  // panel leaves the clip's src pointing at nothing — previously silent,
+  // with no visible difference from a healthy clip until playback/export
+  // broke. Video/audio clips only: text/shape/prefab clips don't carry a
+  // media src, so they're never flagged. blob: URLs are excluded from the
+  // "missing" check — those are legitimately transient (e.g. a live
+  // recording still being persisted to disk, see reconcileAssetUrlRef in
+  // App.jsx) and would otherwise flash the warning on every recording.
+  const isMissingSrc = useMemo(() => {
+    if (!audioUrl || (!hasVideo && !hasAudio)) return false;
+    if (audioUrl.startsWith('blob:')) return false;
+    return !mediaAssets.some((a) => a.url === audioUrl);
+  }, [audioUrl, hasVideo, hasAudio, mediaAssets]);
+ 
   // ── Script assignment drag & drop (Project panel script → this clip) ────
   const handleScriptDragOver = (e) => {
     if (isLocked || !onAttachScriptToEntity) return;
@@ -745,7 +762,7 @@ export const ClipItem = memo(function ClipItem({
     <>
     <div
       data-clip-id={clip.id}
-      className={`timeline-clip-card ${clipCategory} ${isSelectedCard || isSelectedMulti ? 'selected' : ''} ${isChildOfSelected ? 'is-linked-child' : ''} ${isParentOfSelected ? 'is-linked-parent' : ''} ${clip.parentId ? 'is-child' : ''} ${isLocked ? 'is-locked' : ''} ${compact ? 'compact' : ''} ${isScriptDragOver ? 'script-drop-target' : ''}`}
+      className={`timeline-clip-card ${clipCategory} ${isSelectedCard || isSelectedMulti ? 'selected' : ''} ${isChildOfSelected ? 'is-linked-child' : ''} ${isParentOfSelected ? 'is-linked-parent' : ''} ${clip.parentId ? 'is-child' : ''} ${isLocked ? 'is-locked' : ''} ${compact ? 'compact' : ''} ${isScriptDragOver ? 'script-drop-target' : ''} ${isMissingSrc ? 'missing-media' : ''}`}
       style={{
         left: `${leftPx}px`,
         top: `${cardTop}px`,
@@ -757,7 +774,7 @@ export const ClipItem = memo(function ClipItem({
       onDragOver={handleScriptDragOver}
       onDragLeave={() => setIsScriptDragOver(false)}
       onDrop={handleScriptDrop}
-      title={`${clip.name} (${clip.duration.toFixed(1)}s)${directParent ? ` [Parent: ${directParent.name}]` : ''}${isLocked ? ' 🔒 Locked' : ''}`}
+      title={`${clip.name} (${clip.duration.toFixed(1)}s)${directParent ? ` [Parent: ${directParent.name}]` : ''}${isLocked ? ' 🔒 Locked' : ''}${isMissingSrc ? ' ⚠️ Source media missing — was it deleted from the project?' : ''}`}
     >
       {/* Left Trim Handle */}
       {!isLocked && (
@@ -843,6 +860,19 @@ export const ClipItem = memo(function ClipItem({
             )}
           </span>
           <span className="clip-title-text">{clip.name}</span>
+ 
+          {/* Missing-media warning — this clip's src no longer matches any
+              asset in the Project panel (the source file was likely
+              deleted). Purely informational: the clip is left in place,
+              nothing is auto-removed or auto-relinked. */}
+          {isMissingSrc && (
+            <span
+              className="clip-missing-media-badge"
+              title="Source media missing — was it deleted from the project?"
+            >
+              <AlertTriangle size={10} />
+            </span>
+          )}
  
           {/* Pickwhip Drag-to-Parent Handle */}
           {!isLocked && (
@@ -940,5 +970,4 @@ export const ClipItem = memo(function ClipItem({
     </>
   );
 });
- 
  

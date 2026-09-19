@@ -19,6 +19,27 @@
   pointer-events: none;
 }
  
+/* Missing source media — clip's src no longer resolves to any asset in
+   the Project panel (the underlying file was deleted). Amber to match
+   the existing is-linked-parent / warning badge language elsewhere in
+   the timeline, and !important on the border for the same reason
+   .selected/.is-linked-* use it: this needs to read through whatever
+   category color (.video/.audio/etc) is already on the card. */
+.timeline-clip-card.missing-media {
+  border: 1px solid #f59e0b !important;
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.35);
+}
+ 
+.clip-missing-media-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #f59e0b;
+  margin-left: 2px;
+  flex-shrink: 0;
+  cursor: help;
+}
+ 
 .timeline-clip-card {
   position: absolute;
   top: 5px;
@@ -232,27 +253,6 @@
   gap: 2px;
 }
  
-.clip-title-text {
-  font-size: 10px;
-  font-weight: 600;
-  color: #fff;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
- 
-.script-tag {
-  font-size: 8px;
-  font-weight: 700;
-  background: rgba(16, 185, 129, 0.25);
-  color: #34d399;
-  padding: 1px 3px;
-  border-radius: 2px;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
- 
 .clip-time-text {
   font-size: 8px;
   font-family: var(--font-mono);
@@ -315,4 +315,3 @@
 .silence-cut-edge-handle:hover {
   background: rgba(255, 255, 255, 0.35);
 }
- 

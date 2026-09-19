@@ -9,6 +9,7 @@ import {
   Share2,
   Pencil,
   Plus,
+  FolderOpen,
 } from 'lucide-react';
 import { isTauri } from '../services/tauriFsAdapter';
 import { openProjectInVsCode } from '../services/ideLauncher';
@@ -316,6 +317,7 @@ export const ProjectPanel = memo(function ProjectPanel({
     openItemMenuSafe,
     openFolderMenu,
     handleContextAction,
+    resolveDiskTarget,
   } = useExplorerContextMenu({
     ctxMenu,
     setCtxMenu,
@@ -344,6 +346,7 @@ export const ProjectPanel = memo(function ProjectPanel({
     onReplaceMediaAsset,
     onSharePrefab,
     onShareScript,
+    projectFolderHandle,
   });
  
   // ── Keyboard Shortcuts (hook) ─────────────────────────────────────────────
@@ -392,6 +395,19 @@ export const ProjectPanel = memo(function ProjectPanel({
   const totalItemsCountInView =
     (currentLocation.section ? filteredItemsInView.length : 4) +
     subfolderNamesInView.length;
+ 
+  // "Open in File Explorer" is only meaningful on the desktop build, with a real
+  // project path, and for something that exists on disk (never the Shared Library).
+  const canOpenInExplorer =
+    Boolean(ctxMenu) && isTauri() && Boolean(resolveDiskTarget(ctxMenu.target));
+  const openInExplorerItem = canOpenInExplorer ? (
+    <button
+      className="ctx-menu-item"
+      onClick={() => handleContextAction('open-in-explorer')}
+    >
+      <FolderOpen size={13} className="text-amber" /> Open in File Explorer
+    </button>
+  ) : null;
  
   return (
     <aside
@@ -621,6 +637,7 @@ export const ProjectPanel = memo(function ProjectPanel({
               >
                 <Layers size={13} className="text-cyan" /> New Empty Clip
               </button>
+              {openInExplorerItem}
             </>
           )}
  
@@ -632,6 +649,7 @@ export const ProjectPanel = memo(function ProjectPanel({
               >
                 <Package size={13} /> Open
               </button>
+              {openInExplorerItem}
               {(ctxMenu.target.section === 'media' ||
                 (!ctxMenu.target.section && currentLocation.section === 'media')) && (
                 <button
@@ -673,6 +691,7 @@ export const ProjectPanel = memo(function ProjectPanel({
                     <Share2 size={13} /> Save to Shared Library
                   </button>
                 )}
+              {openInExplorerItem}
               <button
                 className="ctx-menu-item danger"
                 onClick={() => handleContextAction('delete')}
@@ -734,6 +753,7 @@ export const ProjectPanel = memo(function ProjectPanel({
                     <Share2 size={13} /> Save to Shared Library
                   </button>
                 )}
+                {openInExplorerItem}
                 <button
                   className="ctx-menu-item danger"
                   onClick={() => handleContextAction('delete')}

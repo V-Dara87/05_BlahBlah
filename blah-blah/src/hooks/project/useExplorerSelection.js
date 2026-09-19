@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from 'react';
 import { selKey } from '../../components/project/projectPanelConstants';
-
+ 
 /**
  * Owns multi-selection state (Click / Ctrl+Click / Shift+Range) for the
  * Explorer content view, plus resolving selected keys back into real items
@@ -26,9 +26,9 @@ export function useExplorerSelection({
 }) {
   const [selectedItems, setSelectedItems] = useState(() => new Set());
   const lastClickedKeyRef = useRef(null);
-
+ 
   const clearSelection = useCallback(() => setSelectedItems(new Set()), []);
-
+ 
   const resolveSelectionEntries = useCallback(() => {
     const byId = {
       media: new Map(mediaAssets.map((i) => [i.id, i])),
@@ -44,7 +44,7 @@ export function useExplorerSelection({
     });
     return out;
   }, [selectedItems, mediaAssets, prefabs, scripts, sharedItems]);
-
+ 
   const handleItemClick = useCallback((e, kind, item, filteredItemsInView) => {
     if (renaming && renaming.kind === kind && renaming.id === item.id) return;
     const key = selKey(kind, item.id);
@@ -73,17 +73,25 @@ export function useExplorerSelection({
       lastClickedKeyRef.current = key;
     }
   }, [renaming]);
-
+ 
   const bulkDeleteSelected = useCallback(() => {
     if (selectedItems.size === 0) return;
     const entries = resolveSelectionEntries();
     if (entries.length === 0) return;
-    if (entries.length > 1 && !window.confirm(`Delete ${entries.length} item(s)?`)) return;
+    // Previously only prompted when 2+ items were selected, so deleting a
+    // single selected item via the Delete key skipped confirmation entirely.
+    // Name-aware prompt for the single-item case so it reads naturally.
+    if (entries.length > 1) {
+      if (!window.confirm(`Delete ${entries.length} item(s)?`)) return;
+    } else {
+      const label = entries[0].item?.name ? `"${entries[0].item.name}"` : 'this item';
+      if (!window.confirm(`Delete ${label}? This can't be undone.`)) return;
+    }
     closeCtxMenu();
     clearSelection();
     entries.forEach(({ kind, item }) => deleteItem(kind, item));
   }, [selectedItems, resolveSelectionEntries, deleteItem, clearSelection, closeCtxMenu]);
-
+ 
   return {
     selectedItems,
     setSelectedItems,

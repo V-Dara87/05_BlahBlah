@@ -48,7 +48,7 @@ function sanitizeResolution(candidate) {
   }
   return { ...DEFAULT_RESOLUTION };
 }
-
+ 
 // ─── Script type + file-extension unification ────────────────────────────────
 //
 // There is ONE script component type now — 'ScriptComponent' — covering
@@ -60,14 +60,14 @@ function sanitizeResolution(candidate) {
 // (the extension never meant anything to the engine — everything compiles
 // through the same JSX/TS loader); reads stay permissive so old files and
 // relative imports like './helpers.js' keep working.
-
+ 
 const SCRIPT_EXT_RE = /\.(js|jsx|ts|tsx)$/i;
 const isScriptFile = (name) => SCRIPT_EXT_RE.test(name || '');
-
+ 
 /** Canonical .jsx filename for a script (any supported extension accepted). */
 const toScriptFileName = (name) => `${(name || '').replace(/\.(js|jsx|ts|tsx|cs)$/i, '')}.jsx`;
-
-
+ 
+ 
  
 import { isTauri, createTauriDirectoryHandle, joinPath } from './tauriFsAdapter';
 import { convertFileSrc } from '@tauri-apps/api/core';
@@ -75,7 +75,7 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 // the import path) — reused here because reload rebuilds mediaAssets by
 // scanning media/ on disk and must not stamp a placeholder duration.
 import { probeMediaElementDuration, MEDIA_FALLBACK_DURATION } from './mediaImport';
-
+ 
 /**
  * Write (or overwrite) the vendored `@blahblah/sdk` copy — index.d.ts +
  * index.js — plus scripts/jsconfig.json into a project's scripts/ folder.
@@ -90,22 +90,22 @@ import { probeMediaElementDuration, MEDIA_FALLBACK_DURATION } from './mediaImpor
 async function writeSdkFiles(scriptsDirHandle) {
   const blahblahDirHandle = await scriptsDirHandle.getDirectoryHandle('.blahblah', { create: true });
   const sdkDirHandle = await blahblahDirHandle.getDirectoryHandle('sdk', { create: true });
-
+ 
   const sdkDtsHandle = await sdkDirHandle.getFileHandle('index.d.ts', { create: true });
   const sdkDtsWritable = await sdkDtsHandle.createWritable();
   await sdkDtsWritable.write(blahblahSdkDts);
   await sdkDtsWritable.close();
-
+ 
   const sdkJsHandle = await sdkDirHandle.getFileHandle('index.js', { create: true });
   const sdkJsWritable = await sdkJsHandle.createWritable();
   await sdkJsWritable.write(blahblahSdkSource);
   await sdkJsWritable.close();
-
+ 
   const sdkAmbientDtsHandle = await sdkDirHandle.getFileHandle('ambient.d.ts', { create: true });
   const sdkAmbientDtsWritable = await sdkAmbientDtsHandle.createWritable();
   await sdkAmbientDtsWritable.write(blahblahSdkAmbientDts);
   await sdkAmbientDtsWritable.close();
-
+ 
   // Only create jsconfig.json if the project doesn't already have one —
   // unlike the SDK files above, this one may have been hand-edited by the
   // user (compilerOptions tweaks, added paths, etc.) and blindly
@@ -152,7 +152,7 @@ async function writeSdkFiles(scriptsDirHandle) {
     await jsconfigWritable.close();
   }
 }
-
+ 
 export function isFileSystemSupported() {
   return isTauri() || (typeof window !== 'undefined' && 'showDirectoryPicker' in window);
 }
@@ -200,7 +200,7 @@ export async function pickProjectDirectory() {
     }
     return createTauriDirectoryHandle(selected);
   }
-
+ 
   if (!isFileSystemSupported()) {
     throw new Error('File System Access API is not supported in this browser. Please use Chrome, Edge, or Brave.');
   }
@@ -245,7 +245,7 @@ export async function createNewProjectFolder(parentDirHandle, projectName, defau
   const scriptsDirHandle = await projectDirHandle.getDirectoryHandle('scripts', { create: true });
   await projectDirHandle.getDirectoryHandle('prefabs', { create: true });
   await projectDirHandle.getDirectoryHandle('media', { create: true });
-
+ 
   // Vendor a copy of the SDK (index.d.ts + index.js) and scripts/
   // jsconfig.json into the project itself, instead of pointing jsconfig
   // at `../packages/blahblah-sdk`. That relative path only worked if the
@@ -426,7 +426,7 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
         prefabEntries.push({ entry, folderName: null });
       }
     }
-
+ 
     for (const { entry, folderName } of prefabEntries) {
       if (entry.kind === 'file' && (entry.name.endsWith('.json') || entry.name.endsWith('.prefab'))) {
         const file = await entry.getFile();
@@ -465,11 +465,17 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
   const readMediaEntry = async (entry, folderName) => {
     if (entry.kind !== 'file') return null;
     const ext = entry.name.toLowerCase();
-    const isVideo = ext.endsWith('.mp4') || ext.endsWith('.webm') || ext.endsWith('.mov');
-    const isAudio = ext.endsWith('.mp3') || ext.endsWith('.wav') || ext.endsWith('.ogg') || ext.endsWith('.aac');
+    // Voice takes recorded by older builds were saved as audio-only .webm
+    // (MediaRecorder/Opus) inside media/Recordings/. A bare .webm is normally a
+    // VIDEO container, so without this they reloaded as video assets. Only the
+    // Recordings folder is reclassified — real .webm video elsewhere (e.g. an
+    // export dropped into media/) must stay video. New takes are .wav.
+    const isLegacyRecording = folderName === 'Recordings' && ext.endsWith('.webm');
+    const isVideo = !isLegacyRecording && (ext.endsWith('.mp4') || ext.endsWith('.webm') || ext.endsWith('.mov'));
+    const isAudio = isLegacyRecording || ext.endsWith('.mp3') || ext.endsWith('.wav') || ext.endsWith('.ogg') || ext.endsWith('.aac');
  
     if (!isVideo && !isAudio) return null;
-
+ 
     // Tauri: stream straight off disk through the asset protocol
     // (HTTP Range requests) instead of slurping the whole file into
     // memory to make a blob URL — large video/audio files load in
@@ -493,7 +499,7 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
       url = URL.createObjectURL(file);
       size = file.size;
     }
-
+ 
     // Re-derive the REAL duration with a metadata-only probe against the
     // playable URL (blob: in the browser, convertFileSrc asset URL under
     // Tauri) — same technique and fallback the import path uses. Without
@@ -501,7 +507,7 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
     // and silently discard the durations import probed correctly.
     const probedDuration = await probeMediaElementDuration(url, isVideo);
     const duration = probedDuration || MEDIA_FALLBACK_DURATION[isVideo ? 'video' : 'audio'];
-
+ 
     return {
       id: `asset-${(folderName || '')}${entry.name.replace(/[^a-zA-Z0-9_-]/g, '_')}`,
       name: entry.name,
@@ -553,7 +559,7 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
       const cleanBase = m.name.replace(/\.[^.]+$/, '').toLowerCase();
       mediaMap.set(cleanBase, m.url);
     }
-
+ 
     projectMeta.entities = projectMeta.entities.map((e) => {
       let freshUrl = null;
       if (e.src) {
@@ -569,7 +575,7 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
           freshUrl = mediaMap.get(cleanName);
         }
       }
-
+ 
       if (freshUrl) {
         const updatedComponents = (e.components || []).map((c) => {
           if ((c.type === 'VideoRenderer' || c.type === 'AudioSource') && c.src) {
@@ -582,7 +588,7 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
       return e;
     });
   }
-
+ 
   return {
     projectName: projectMeta.name,
     tracks: projectMeta.tracks,
@@ -656,7 +662,7 @@ export async function saveProjectToDirectory(dirHandle, projectState) {
   if (projectState.scripts && projectState.scripts.length > 0) {    const scriptsDirHandle = await dirHandle.getDirectoryHandle('scripts', { create: true });
     for (const script of projectState.scripts) {
       const fileName = toScriptFileName(script.name);
-
+ 
       const scriptFileHandle = await scriptsDirHandle.getFileHandle(fileName, { create: true });
       const scriptWritable = await scriptFileHandle.createWritable();
       await scriptWritable.write(script.code || '');
@@ -695,7 +701,7 @@ export async function writeScriptFile(dirHandle, scriptName, scriptCode) {
   await writable.write(scriptCode);
   await writable.close();
 }
-
+ 
 /**
  * Rename a script on disk without leaving its previous filename behind.
  * The File System Access API has no portable rename primitive, so this is a
@@ -709,7 +715,7 @@ export async function renameScriptFile(dirHandle, oldName, newName, scriptCode) 
   const oldFileName = toScriptFileName(oldName);
   const newFileName = toScriptFileName(newName);
   if (oldFileName === newFileName) return;
-
+ 
   try {
     await scriptsDirHandle.getFileHandle(newFileName, { create: false });
     throw new Error(`A script named "${newFileName}" already exists.`);
@@ -717,12 +723,12 @@ export async function renameScriptFile(dirHandle, oldName, newName, scriptCode) 
     if (err?.message?.includes('already exists')) throw err;
     // NotFoundError is expected: the destination is available.
   }
-
+ 
   const nextHandle = await scriptsDirHandle.getFileHandle(newFileName, { create: true });
   const writable = await nextHandle.createWritable();
   await writable.write(scriptCode || '');
   await writable.close();
-
+ 
   try {
     await scriptsDirHandle.removeEntry(oldFileName);
   } catch (err) {
@@ -754,18 +760,18 @@ export async function saveMediaFileToFolder(dirHandle, file, subfolder = null, t
   const writable = await fileHandle.createWritable();
   await writable.write(file);
   await writable.close();
-
+ 
   // Tauri: report the on-disk absolute path of the saved copy so callers
   // can stream it via convertFileSrc instead of keeping a blob in memory.
   return mediaDirHandle?.path ? joinPath(mediaDirHandle.path, fileName) : null;
 }
-
+ 
 /**
  * Delete a media file from the media/ directory on disk.
  */
 export async function deleteMediaFileFromFolder(dirHandle, fileName, subfolder = null, assetPath = null) {
   if (!dirHandle || !fileName) return;
-
+ 
   // Tauri direct removal
   if (isTauri() && assetPath) {
     try {
@@ -778,7 +784,7 @@ export async function deleteMediaFileFromFolder(dirHandle, fileName, subfolder =
       console.warn('Tauri direct remove failed, falling back to directory handle:', err);
     }
   }
-
+ 
   // Directory handle removal
   try {
     await verifyPermission(dirHandle, true);
@@ -791,13 +797,13 @@ export async function deleteMediaFileFromFolder(dirHandle, fileName, subfolder =
     console.warn(`Could not remove ${fileName} from media folder:`, err);
   }
 }
-
+ 
 /**
  * Move a media file between media root and subfolders on disk.
  */
 export async function moveMediaFileOnDisk(dirHandle, fileName, oldFolder = null, newFolder = null, assetPath = null) {
   if (!dirHandle || !fileName || oldFolder === newFolder) return assetPath;
-
+ 
   if (isTauri() && dirHandle.path) {
     try {
       const { rename, exists, mkdir } = await import('@tauri-apps/plugin-fs');
@@ -805,13 +811,13 @@ export async function moveMediaFileOnDisk(dirHandle, fileName, oldFolder = null,
       const sourcePath = assetPath || (oldFolder ? joinPath(mediaPath, oldFolder, fileName) : joinPath(mediaPath, fileName));
       const targetDir = newFolder ? joinPath(mediaPath, newFolder) : mediaPath;
       const targetPath = joinPath(targetDir, fileName);
-
+ 
       // Guard: never rename if sourcePath somehow resolved to the whole media folder
       if (sourcePath === mediaPath || sourcePath === dirHandle.path) {
         console.error('Refusing to move: sourcePath resolved to directory root');
         return assetPath;
       }
-
+ 
       if (await exists(sourcePath)) {
         if (!(await exists(targetDir))) {
           await mkdir(targetDir, { recursive: true });
@@ -823,7 +829,7 @@ export async function moveMediaFileOnDisk(dirHandle, fileName, oldFolder = null,
       console.warn('Tauri direct move failed, falling back to directory handle:', err);
     }
   }
-
+ 
   try {
     await verifyPermission(dirHandle, true);
     const mediaDirHandle = await dirHandle.getDirectoryHandle('media', { create: true });
@@ -833,15 +839,15 @@ export async function moveMediaFileOnDisk(dirHandle, fileName, oldFolder = null,
     const targetDir = newFolder
       ? await mediaDirHandle.getDirectoryHandle(newFolder, { create: true })
       : mediaDirHandle;
-
+ 
     const sourceFileHandle = await sourceDir.getFileHandle(fileName, { create: false });
     const file = await sourceFileHandle.getFile();
-
+ 
     const destFileHandle = await targetDir.getFileHandle(fileName, { create: true });
     const writable = await destFileHandle.createWritable();
     await writable.write(file);
     await writable.close();
-
+ 
     await sourceDir.removeEntry(fileName);
     return targetDir?.path ? joinPath(targetDir.path, fileName) : null;
   } catch (err) {
@@ -849,26 +855,26 @@ export async function moveMediaFileOnDisk(dirHandle, fileName, oldFolder = null,
     return assetPath;
   }
 }
-
+ 
 /**
  * Delete an entire folder directory from a project section on disk.
  */
 export async function deleteFolderFromProject(dirHandle, section, folderName) {
   if (!dirHandle || !section || !folderName || section === 'shared' || folderName === '.' || folderName === '..') return;
   const rootName = section === 'prefabs' ? 'prefabs' : section;
-
+ 
   if (isTauri() && dirHandle.path) {
     try {
       const { remove, exists } = await import('@tauri-apps/plugin-fs');
       const rootPath = joinPath(dirHandle.path, rootName);
       const targetPath = joinPath(dirHandle.path, rootName, folderName);
-
+ 
       // Safety guard: targetPath must be strictly deeper than rootPath
       if (targetPath === rootPath || targetPath === dirHandle.path) {
         console.error(`Refusing to delete: targetPath resolved to section root: ${targetPath}`);
         return;
       }
-
+ 
       if (await exists(targetPath)) {
         await remove(targetPath, { recursive: true });
         return;
@@ -877,7 +883,7 @@ export async function deleteFolderFromProject(dirHandle, section, folderName) {
       console.warn('Tauri direct folder remove failed, falling back to handle:', err);
     }
   }
-
+ 
   try {
     await verifyPermission(dirHandle, true);
     const rootDir = await dirHandle.getDirectoryHandle(rootName, { create: false });
@@ -886,27 +892,27 @@ export async function deleteFolderFromProject(dirHandle, section, folderName) {
     console.warn(`Could not remove folder ${rootName}/${folderName}:`, err);
   }
 }
-
+ 
 /**
  * Rename a folder directory in a project section on disk.
  */
 export async function renameFolderInProject(dirHandle, section, oldName, newName) {
   if (!dirHandle || !section || !oldName || !newName || section === 'shared' || oldName === newName || oldName === '.' || oldName === '..' || newName === '.' || newName === '..') return;
   const rootName = section === 'prefabs' ? 'prefabs' : section;
-
+ 
   if (isTauri() && dirHandle.path) {
     try {
       const { rename, exists } = await import('@tauri-apps/plugin-fs');
       const rootPath = joinPath(dirHandle.path, rootName);
       const oldPath = joinPath(dirHandle.path, rootName, oldName);
       const newPath = joinPath(dirHandle.path, rootName, newName);
-
+ 
       // Safety guard: oldPath/newPath must be strictly deeper than rootPath
       if (oldPath === rootPath || newPath === rootPath || oldPath === dirHandle.path || newPath === dirHandle.path) {
         console.error(`Refusing to rename: path resolved to section root: ${oldPath} -> ${newPath}`);
         return;
       }
-
+ 
       if (await exists(oldPath)) {
         await rename(oldPath, newPath);
         return;
@@ -915,13 +921,13 @@ export async function renameFolderInProject(dirHandle, section, oldName, newName
       console.warn('Tauri direct folder rename failed, falling back to handle:', err);
     }
   }
-
+ 
   try {
     await verifyPermission(dirHandle, true);
     const rootDir = await dirHandle.getDirectoryHandle(rootName, { create: false });
     const oldDir = await rootDir.getDirectoryHandle(oldName, { create: false });
     const newDir = await rootDir.getDirectoryHandle(newName, { create: true });
-
+ 
     for await (const entry of oldDir.values()) {
       if (entry.kind === 'file') {
         const file = await entry.getFile();
@@ -936,7 +942,7 @@ export async function renameFolderInProject(dirHandle, section, oldName, newName
     console.warn(`Could not rename folder ${rootName}/${oldName} to ${newName}:`, err);
   }
 }
-
+ 
 /**
  * Delete a script file from scripts/ on disk.
  */
@@ -954,7 +960,7 @@ export async function deleteScriptFileFromFolder(dirHandle, scriptName, subfolde
     console.warn(`Could not remove script ${scriptName} from disk:`, err);
   }
 }
-
+ 
 /**
  * Delete a prefab file from prefabs/ on disk.
  */
@@ -972,7 +978,7 @@ export async function deletePrefabFileFromFolder(dirHandle, prefabName, subfolde
     console.warn(`Could not remove prefab ${prefabName} from disk:`, err);
   }
 }
-
+ 
 /**
  * Write a prefab file to prefabs/ on disk.
  */
@@ -993,7 +999,7 @@ export async function writePrefabFile(dirHandle, prefabName, prefabData, subfold
     console.warn(`Could not write prefab ${prefabName} to disk:`, err);
   }
 }
-
+ 
  
 /**
  * Check scripts/ directory for external changes (e.g. edited in VS Code) for hot-reload.
@@ -1040,7 +1046,7 @@ export async function checkScriptsForChanges(dirHandle, existingScripts) {
  
   return null;
 }
-
+ 
 /**
  * Tauri-only: subscribe to OS file-system events for the project's
  * scripts/ folder instead of the 2s polling loop used in the browser.
@@ -1059,12 +1065,12 @@ export async function checkScriptsForChanges(dirHandle, existingScripts) {
  */
 export async function watchScriptsDirectory(dirHandle, onChange) {
   if (!isTauri() || !dirHandle?.path) return null;
-
+ 
   try {
     const { watch, exists } = await import('@tauri-apps/plugin-fs');
     const scriptsPath = joinPath(dirHandle.path, 'scripts');
     if (!(await exists(scriptsPath))) return null;
-
+ 
     const unwatch = await watch(
       scriptsPath,
       (event) => {
@@ -1082,3 +1088,4 @@ export async function watchScriptsDirectory(dirHandle, onChange) {
     return null;
   }
 }
+ 

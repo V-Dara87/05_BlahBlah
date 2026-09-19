@@ -30,9 +30,9 @@ import {
   ITEM_KIND_SCRIPT,
   ITEM_KIND_SHARED,
 } from '../../utils/dragData';
-
+ 
 const SECTION_KEYS = ['media', 'prefabs', 'scripts', 'shared'];
-
+ 
 export const ExplorerContentView = memo(function ExplorerContentView({
   currentLocation,
   onNavigate,
@@ -74,7 +74,17 @@ export const ExplorerContentView = memo(function ExplorerContentView({
 }) {
   const isGridView = viewMode === 'grid';
   const isRoot = currentLocation.section === null;
-
+ 
+  // The "This Project" root only lists the four system folders — there is
+  // nothing to create, import or rename here, so no custom context menu is
+  // offered. We still preventDefault so the WebView's native right-click menu
+  // (Reload / Inspect) doesn't appear in its place, and we do NOT stopPropagation
+  // so the panel's outside-click logic keeps working. Any custom menu that was
+  // already open is dismissed by ContextMenu's own capture-phase pointerdown.
+  const suppressRootContextMenu = (e) => {
+    e.preventDefault();
+  };
+ 
   // Render sorting arrow on column header
   const renderSortArrow = (columnKey) => {
     if (sortBy === `${columnKey}-asc`) {
@@ -85,13 +95,13 @@ export const ExplorerContentView = memo(function ExplorerContentView({
     }
     return null;
   };
-
+ 
   // ── Render Root View (This Project) ──────────────────────────────────────
   if (isRoot) {
     return (
       <div
         className={`explorer-content-view is-root${isGridView ? ' grid-mode' : ' list-mode'}`}
-        onContextMenu={(e) => onEmptyContextMenu(e, null)}
+        onContextMenu={suppressRootContextMenu}
       >
         {!isGridView && (
           <div className="explorer-details-header">
@@ -110,7 +120,7 @@ export const ExplorerContentView = memo(function ExplorerContentView({
             </div>
           </div>
         )}
-
+ 
         <div className={isGridView ? 'explorer-grid-container' : 'explorer-list-container'}>
           {SECTION_KEYS.map((secKey) => {
             const cfg = SECTIONS_CONFIG[secKey];
@@ -118,7 +128,7 @@ export const ExplorerContentView = memo(function ExplorerContentView({
             const subfolders = foldersBySection[secKey] || [];
             const dropKey = `${cfg.dropKind}:__root__`;
             const totalCount = items.length;
-
+ 
             if (isGridView) {
               return (
                 <div
@@ -127,7 +137,7 @@ export const ExplorerContentView = memo(function ExplorerContentView({
                   className={`explorer-folder-card${dragOverKey === dropKey ? ' drag-over' : ''}`}
                   onClick={() => {}}
                   onDoubleClick={() => onNavigate({ section: secKey, folder: null })}
-                  onContextMenu={(e) => onFolderContextMenu(e, secKey, null)}
+                  onContextMenu={suppressRootContextMenu}
                   onDragOver={(e) => onFolderDragOver(e, cfg.dropKind, dropKey)}
                   onDragLeave={onFolderDragLeave}
                   onDrop={(e) => onFolderDrop(e, cfg.dropKind, null, cfg.dropKind)}
@@ -146,14 +156,14 @@ export const ExplorerContentView = memo(function ExplorerContentView({
                 </div>
               );
             }
-
+ 
             return (
               <div
                 key={secKey}
                 data-project-section={secKey}
                 className={`explorer-details-row folder-row${dragOverKey === dropKey ? ' drag-over' : ''}`}
                 onDoubleClick={() => onNavigate({ section: secKey, folder: null })}
-                onContextMenu={(e) => onFolderContextMenu(e, secKey, null)}
+                onContextMenu={suppressRootContextMenu}
                 onDragOver={(e) => onFolderDragOver(e, cfg.dropKind, dropKey)}
                 onDragLeave={onFolderDragLeave}
                 onDrop={(e) => onFolderDrop(e, cfg.dropKind, null, cfg.dropKind)}
@@ -172,16 +182,16 @@ export const ExplorerContentView = memo(function ExplorerContentView({
       </div>
     );
   }
-
+ 
   // ── Render Section / Subfolder View ──────────────────────────────────────
   const sectionKey = currentLocation.section;
   const currentFolder = currentLocation.folder;
   const cfg = SECTIONS_CONFIG[sectionKey] || SECTIONS_CONFIG.media;
   const itemKind = cfg.dropKind;
-
+ 
   const hasSubfolders = !currentFolder && subfolderNames.length > 0;
   const isEmpty = filteredItems.length === 0 && (!hasSubfolders && !creatingFolder);
-
+ 
   return (
     <div
       data-project-section={sectionKey}
@@ -221,7 +231,7 @@ export const ExplorerContentView = memo(function ExplorerContentView({
           </div>
         </div>
       )}
-
+ 
       {isEmpty ? (
         <div className="explorer-empty-state">
           <FolderOpen size={42} className="empty-icon text-muted" />
@@ -253,7 +263,7 @@ export const ExplorerContentView = memo(function ExplorerContentView({
                 (i) => i.folder === folderName
               );
               const subDropKey = `${itemKind}:${folderName}`;
-
+ 
               if (isGridView) {
                 return (
                   <div
@@ -283,7 +293,7 @@ export const ExplorerContentView = memo(function ExplorerContentView({
                   </div>
                 );
               }
-
+ 
               return (
                 <div
                   key={folderName}
@@ -311,7 +321,7 @@ export const ExplorerContentView = memo(function ExplorerContentView({
                 </div>
               );
             })}
-
+ 
           {/* Inline Folder Creation Row */}
           {creatingFolder === sectionKey && (
             <div
@@ -368,18 +378,18 @@ export const ExplorerContentView = memo(function ExplorerContentView({
               )}
             </div>
           )}
-
+ 
           {/* Asset Items */}
           {filteredItems.map((item) => {
             const isSelected = selectedItems.has(selKey(itemKind, item.id));
-
+ 
             // Item-kind specifics
             let iconElement;
             let typeLabel = itemKind;
             let metaString = '';
             let dateString = formatDate(item.createdAt || item.updatedAt);
             let sizeString = '';
-
+ 
             if (itemKind === 'media') {
               const isVideo = item.type === 'video';
               iconElement = isVideo ? (
@@ -420,7 +430,7 @@ export const ExplorerContentView = memo(function ExplorerContentView({
               metaString = isPrefab ? 'prefab' : 'jsx';
               sizeString = 'Shared';
             }
-
+ 
             // Drag item kind payload
             const dragPayloadKind =
               itemKind === 'media'
@@ -430,7 +440,7 @@ export const ExplorerContentView = memo(function ExplorerContentView({
                 : itemKind === 'script'
                 ? ITEM_KIND_SCRIPT
                 : ITEM_KIND_SHARED;
-
+ 
             // ── Grid View Asset Card ──
             if (isGridView) {
               return (
@@ -537,7 +547,7 @@ export const ExplorerContentView = memo(function ExplorerContentView({
                 </div>
               );
             }
-
+ 
             // ── Details View Asset Row ──
             return (
               <div
@@ -576,7 +586,7 @@ export const ExplorerContentView = memo(function ExplorerContentView({
                 <div className="details-col col-date">{dateString}</div>
                 <div className="details-col col-type">{typeLabel}</div>
                 <div className="details-col col-size">{sizeString}</div>
-
+ 
                 <div className="details-row-actions">
                   {itemKind === 'media' && (
                     <button
@@ -631,3 +641,4 @@ export const ExplorerContentView = memo(function ExplorerContentView({
     </div>
   );
 });
+ 

@@ -1,5 +1,5 @@
 import { isTauri } from './tauriFsAdapter';
-
+ 
 /**
  * External-editor / Explorer launchers (P1-3) — one-click "Open in VS
  * Code / Cursor / Explorer" for the current project folder.
@@ -10,17 +10,17 @@ import { isTauri } from './tauriFsAdapter';
  * (openPath / openUrl / revealItemInDir) so the OS — not the webview —
  * decides which app handles the request.
  */
-
+ 
 function normalizePathForUri(p) {
   // Custom-protocol file URIs (vscode://, cursor://) want forward-slash
   // absolute paths; percent-encode the rest.
   return String(p || '').replace(/\\/g, '/');
 }
-
+ 
 function encodedFileUri(p) {
   return encodeURI(normalizePathForUri(p));
 }
-
+ 
 /** Open the folder in the OS file manager. */
 export async function openProjectInExplorer(projectPath) {
   if (!isTauri() || !projectPath) return;
@@ -31,7 +31,22 @@ export async function openProjectInExplorer(projectPath) {
     console.warn('Could not open folder in Explorer:', err);
   }
 }
-
+ 
+/**
+ * Reveal a specific file (or folder) inside its parent in the OS file
+ * manager, with the item pre-selected. Use openProjectInExplorer for
+ * "open this folder"; use this for "show me this file".
+ */
+export async function revealPathInExplorer(targetPath) {
+  if (!isTauri() || !targetPath) return;
+  try {
+    const { revealItemInDir } = await import('@tauri-apps/plugin-opener');
+    await revealItemInDir(targetPath);
+  } catch (err) {
+    console.warn('Could not reveal item in Explorer:', err);
+  }
+}
+ 
 /** Open the folder in VS Code (vscode:// deep link). */
 export async function openProjectInVsCode(projectPath) {
   if (!isTauri() || !projectPath) return;
@@ -42,7 +57,7 @@ export async function openProjectInVsCode(projectPath) {
     console.warn('Could not open folder in VS Code:', err);
   }
 }
-
+ 
 /** Open the folder in Cursor (cursor:// deep link). */
 export async function openProjectInCursor(projectPath) {
   if (!isTauri() || !projectPath) return;
@@ -53,3 +68,4 @@ export async function openProjectInCursor(projectPath) {
     console.warn('Could not open folder in Cursor:', err);
   }
 }
+ 

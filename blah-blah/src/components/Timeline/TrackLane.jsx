@@ -132,6 +132,12 @@ export const TrackLane = memo(function TrackLane({
   const sharedProps = {
     allClips: fullClipList,
     tracks,
+    // Passed through so ClipItem can tell whether its own src still
+    // resolves to a real asset in the library — see isMissingSrc there.
+    // Previously not threaded past this point, so a clip whose source
+    // media had been deleted from the project rendered exactly like a
+    // healthy one, with no visual cue that playback/export would break.
+    mediaAssets,
     isLocked: track.locked,
     pixelsPerSecond,
     selectedClipId,

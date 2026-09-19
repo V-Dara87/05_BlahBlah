@@ -358,9 +358,14 @@ export function App() {
   // updated to treat totalDuration <= 0 as "nothing to play" and refuse to
   // start/continue the playback tick loop in that case.
   const calculatedDuration = useMemo(() => {
-    if (entities.length === 0) return 0;
+    // Always keep at least 5 minutes (300s) of timeline visible so users can
+    // place clips well past the current content end, then grow as needed —
+    // + 60s trailing buffer ensures there's always scrollable empty space
+    // beyond the last clip (was +5s, which made it impossible to drag/drop
+    // into empty space near the right edge).
+    if (entities.length === 0) return 300;
     const maxEnd = Math.max(...entities.map((e) => e.startTime + e.duration));
-    return Math.max(30, Math.ceil(maxEnd + 5));
+    return Math.max(300, Math.ceil(maxEnd + 60));
   }, [entities]);
  
   const activeEntities = isPrefabMode ? prefabEntities : entities;
@@ -391,8 +396,13 @@ export function App() {
       const maxEnd = Math.max(...prefabEntities.map((e) => (e.startTime || 0) + (e.duration || 0)));
       return Math.max(10, Math.ceil(maxEnd + 2));
     }
+    // For playback purposes, 0 on an empty project keeps the play() guard
+    // in useTimelinePlayback working (it refuses to start if duration <= 0).
+    // The timeline display width (calculatedDuration) uses 300s minimum
+    // separately so the ruler always shows scrollable space.
+    if (entities.length === 0) return 0;
     return calculatedDuration;
-  }, [isPrefabMode, prefabEntities, calculatedDuration]);
+  }, [isPrefabMode, prefabEntities, calculatedDuration, entities]);
  
   // Current project state object
   const projectState = useMemo(() => ({

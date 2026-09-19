@@ -1,5 +1,7 @@
 import { useCallback } from 'react';
 import { selKey } from '../../components/project/projectPanelConstants';
+import { joinPath } from '../../services/tauriFsAdapter';
+import { openProjectInExplorer, revealPathInExplorer } from '../../services/ideLauncher';
  
 /**
  * Owns the single right-click context menu's open logic and dispatches
@@ -35,6 +37,7 @@ import { selKey } from '../../components/project/projectPanelConstants';
  * @param {(item:any) => void} params.onReplaceMediaAsset
  * @param {(item:any) => void} params.onSharePrefab
  * @param {(item:any) => void} params.onShareScript
+ * @param {{path?:string}|null} params.projectFolderHandle - project root (Tauri handles carry `.path`)
  */
 export function useExplorerContextMenu({
   ctxMenu,
@@ -64,6 +67,7 @@ export function useExplorerContextMenu({
   onReplaceMediaAsset,
   onSharePrefab,
   onShareScript,
+  projectFolderHandle,
 }) {
   const closeCtxMenu = useCallback(() => setCtxMenu(null), [setCtxMenu]);
  
@@ -75,7 +79,11 @@ export function useExplorerContextMenu({
       e.target.closest('.explorer-tree-node')
     )
       return;
-    const sec = section || currentLocation.section || 'media';
+    // Root ("This Project") has no context menu: nothing can be created or
+    // imported outside a section. Previously this silently fell back to
+    // 'media', which showed a misleading New Folder / Import menu at root.
+    const sec = section || currentLocation.section;
+    if (!sec) return;
     const fld = folder ?? (currentLocation.section === sec ? currentLocation.folder : null);
     setCtxMenu({
       x: e.clientX,
@@ -106,16 +114,85 @@ export function useExplorerContextMenu({
   const openFolderMenu = useCallback((e, section, folderName) => {
     e.preventDefault();
     e.stopPropagation();
+    // At root the four system-folder cards/rows must not open a menu.
+    // (The nav-pane tree is unaffected: it lives outside the root content view
+    // and keeps its Open / Import Media menu for sections and subfolders.)
+    if (!currentLocation.section && !folderName && !e.target.closest('.explorer-tree-node')) {
+      return;
+    }
     setCtxMenu({
       x: e.clientX,
       y: e.clientY,
       target: { kind: 'folder', section, name: folderName },
     });
-  }, []);
+  }, [currentLocation]);
+ 
+  // Sections that actually live on disk under the project root. The Shared
+  // Library is browser storage (see sharedLibraryStorage.js) — no path.
+  const DISK_SECTIONS = { media: 'media', prefabs: 'prefabs', scripts: 'scripts' };
+  const KIND_TO_SECTION = { media: 'media', prefab: 'prefabs', script: 'scripts' };
+ 
+  /**
+   * Resolve a context-menu target to { path, reveal } for the OS file manager.
+   *   reveal:true  -> select this file inside its parent (revealItemInDir)
+   *   reveal:false -> open this folder (openPath)
+   * Returns null when there is nothing on disk to show (Shared Library,
+   * no project path, browser build, or an unresolvable target).
+   */
+  const resolveDiskTarget = useCallback((target) => {
+    const root = projectFolderHandle?.path;
+    if (!root || !target) return null;
+    const folderPath = (section, folder) => {
+      const dir = DISK_SECTIONS[section];
+      return dir ? joinPath(root, dir, folder || '') : null;
+    };
+ 
+    if (target.kind === 'empty') {
+      const path = folderPath(target.section, target.folder);
+      return path ? { path, reveal: false } : null;
+    }
+    if (target.kind === 'folder') {
+      const path = folderPath(target.section, target.name);
+      return path ? { path, reveal: false } : null;
+    }
+    if (target.kind === 'multi') {
+      // Can't reveal several files at once — open the folder being browsed.
+      const path = folderPath(currentLocation.section, currentLocation.folder);
+      return path ? { path, reveal: false } : null;
+    }
+ 
+    const section = KIND_TO_SECTION[target.kind];
+    const item = target.item;
+    if (!section || !item) return null; // 'shared' and unknown kinds
+ 
+    if (target.kind === 'media') {
+      if (item.path) return { path: item.path, reveal: true };
+      const dir = folderPath('media', item.folder);
+      return dir ? { path: joinPath(dir, item.name), reveal: true } : null;
+    }
+    const dir = folderPath(section, item.folder);
+    if (!dir) return null;
+    const rawName = String(item.name || '');
+    const fileName =
+      target.kind === 'script'
+        ? `${rawName.replace(/\.(js|jsx|ts|tsx|cs)$/i, '')}.jsx`
+        : /\.json$/i.test(rawName)
+        ? rawName
+        : `${rawName}.prefab.json`;
+    return { path: joinPath(dir, fileName), reveal: true };
+  }, [projectFolderHandle, currentLocation]);
  
   const handleContextAction = useCallback((action) => {
     if (!ctxMenu) return;
     const { target } = ctxMenu;
+    if (action === 'open-in-explorer') {
+      const disk = resolveDiskTarget(target);
+      setCtxMenu(null);
+      if (!disk) return;
+      if (disk.reveal) revealPathInExplorer(disk.path);
+      else openProjectInExplorer(disk.path);
+      return;
+    }
     if (action === 'new-folder') {
       const section = target.section || currentLocation.section || 'media';
       setCreatingFolder(section);
@@ -172,6 +249,12 @@ export function useExplorerContextMenu({
       } else if (target.kind === 'folder') {
         deleteFolder(target.section, target.name);
       } else {
+        // Single item (media/prefab/script/shared): previously deleted
+        // immediately with no confirmation, unlike the multi-select and
+        // folder-with-contents paths above. Name-aware prompt so it reads
+        // naturally for one item instead of the generic "1 item(s)?".
+        const label = target.item?.name ? `"${target.item.name}"` : 'this item';
+        if (!window.confirm(`Delete ${label}? This can't be undone.`)) return;
         setCtxMenu(null);
         deleteItem(target.kind, target.item);
       }
@@ -208,6 +291,7 @@ export function useExplorerContextMenu({
     deleteFolder,
     onSharePrefab,
     onShareScript,
+    resolveDiskTarget,
   ]);
  
   return {
@@ -216,5 +300,6 @@ export function useExplorerContextMenu({
     openItemMenuSafe,
     openFolderMenu,
     handleContextAction,
+    resolveDiskTarget,
   };
 }

@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { encodeWav, mergeFloat32Chunks, mixToMono } from '../utils/wavEncoder';
  
 /**
  * Shared microphone + level-meter + MediaRecorder logic.
@@ -7,7 +8,12 @@ import { useState, useRef, useCallback, useEffect } from 'react';
  * 1. SettingsModal — just wants the live level meter for the chosen
  *    input device, never actually records to a file.
  * 2. TrackHeader (per-track record button) — wants the level meter
- *    AND to capture a WAV/WebM blob when the user hits record/stop.
+ *    AND to capture a WAV blob when the user hits record/stop.
+ *
+ * Recording is captured as raw PCM through Web Audio and encoded to a 16-bit
+ * WAV (see utils/wavEncoder.js). MediaRecorder is deliberately NOT used:
+ * Chromium/WebView2 can only produce WebM/Opus, which is lossy, and which
+ * projectFileSystem.js doesn't classify as audio when a project is reloaded.
  *
  * Level metering runs via Web Audio's AnalyserNode (time-domain RMS),
  * sampled with requestAnimationFrame — cheap enough to run continuously
@@ -22,10 +28,9 @@ export function useAudioRecorder({ inputDeviceId } = {}) {
   const streamRef = useRef(null);
   const audioCtxRef = useRef(null);
   const analyserRef = useRef(null);
+  const sourceRef = useRef(null);
   const rafRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
-  const chunksRef = useRef([]);
-  const recordStartedAtRef = useRef(null);
+  const captureRef = useRef(null); // { node, sink, chunks, sampleRate, startedAt }
  
   const stopMeter = useCallback(() => {
     if (rafRef.current) {
@@ -34,7 +39,17 @@ export function useAudioRecorder({ inputDeviceId } = {}) {
     }
   }, []);
  
+  const teardownCapture = useCallback(() => {
+    const cap = captureRef.current;
+    if (!cap) return;
+    try { cap.node.onaudioprocess = null; } catch { /* ignore */ }
+    try { cap.node.disconnect(); } catch { /* ignore */ }
+    try { cap.sink.disconnect(); } catch { /* ignore */ }
+    captureRef.current = null;
+  }, []);
+ 
   const closeStream = useCallback(() => {
+    teardownCapture();
     stopMeter();
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
@@ -45,9 +60,10 @@ export function useAudioRecorder({ inputDeviceId } = {}) {
       audioCtxRef.current = null;
     }
     analyserRef.current = null;
+    sourceRef.current = null;
     setIsMonitoring(false);
     setLevel(0);
-  }, [stopMeter]);
+  }, [stopMeter, teardownCapture]);
  
   const runMeterLoop = useCallback(() => {
     const analyser = analyserRef.current;
@@ -85,6 +101,7 @@ export function useAudioRecorder({ inputDeviceId } = {}) {
       audioCtxRef.current = audioCtx;
  
       const source = audioCtx.createMediaStreamSource(stream);
+      sourceRef.current = source;
       const analyser = audioCtx.createAnalyser();
       analyser.fftSize = 1024;
       source.connect(analyser);
@@ -113,44 +130,67 @@ export function useAudioRecorder({ inputDeviceId } = {}) {
       const stream = streamRef.current;
       if (!stream) throw new Error('Microphone not available');
  
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm; codecs=opus')
-        ? 'audio/webm; codecs=opus'
-        : 'audio/webm';
-      const recorder = new MediaRecorder(stream, { mimeType });
-      chunksRef.current = [];
-      recordStartedAtRef.current = Date.now();
+      const audioCtx = audioCtxRef.current;
+      const source = sourceRef.current;
+      if (!audioCtx || !source) throw new Error('Audio engine not ready');
+      // A context created before any user gesture can be suspended, which
+      // would deliver zero samples and yield a silent/empty take.
+      if (audioCtx.state === 'suspended') await audioCtx.resume().catch(() => {});
  
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
+      teardownCapture();
+      const chunks = [];
+      // ScriptProcessorNode is deprecated but still supported by every
+      // Chromium/WebView2 build, and — unlike an AudioWorklet — needs no
+      // separate module file / CSP allowance. 4096 frames ≈ 85 ms at 48 kHz.
+      const node = audioCtx.createScriptProcessor(4096, 1, 1);
+      node.onaudioprocess = (e) => {
+        const input = e.inputBuffer;
+        const channels = [];
+        for (let ch = 0; ch < input.numberOfChannels; ch++) {
+          channels.push(input.getChannelData(ch));
+        }
+        // getChannelData is reused by the engine — copy, don't keep a view.
+        chunks.push(new Float32Array(mixToMono(channels)));
       };
+      // A ScriptProcessor only runs while connected to the destination. Route
+      // it through a muted gain so the mic is never played back (feedback).
+      const sink = audioCtx.createGain();
+      sink.gain.value = 0;
+      source.connect(node);
+      node.connect(sink);
+      sink.connect(audioCtx.destination);
  
-      const stoppedPromise = new Promise((resolve) => {
-        recorder.onstop = () => {
-          const blob = new Blob(chunksRef.current, { type: mimeType });
-          const durationSec = (Date.now() - recordStartedAtRef.current) / 1000;
-          resolve({ blob, durationSec, mimeType });
-        };
-      });
- 
-      mediaRecorderRef.current = { recorder, stoppedPromise };
-      recorder.start();
+      captureRef.current = {
+        node,
+        sink,
+        chunks,
+        sampleRate: audioCtx.sampleRate,
+        startedAt: Date.now(),
+      };
       setIsRecording(true);
     } catch (err) {
       setError(err.message || 'Could not start recording');
       setIsRecording(false);
     }
-  }, [startMonitoring]);
+  }, [startMonitoring, teardownCapture]);
  
-  // Stop recording, resolve with the captured blob + duration.
+  // Stop recording, resolve with the captured WAV blob + duration.
   const stopRecording = useCallback(async () => {
-    const active = mediaRecorderRef.current;
-    if (!active) return null;
-    active.recorder.stop();
-    const result = await active.stoppedPromise;
-    mediaRecorderRef.current = null;
+    const cap = captureRef.current;
+    if (!cap) return null;
+    const { chunks, sampleRate, startedAt } = cap;
+    teardownCapture();
     setIsRecording(false);
-    return result;
-  }, []);
+ 
+    const samples = mergeFloat32Chunks(chunks);
+    if (samples.length === 0) return null;
+    const blob = encodeWav(samples, sampleRate);
+    // Duration from the real sample count, not wall-clock: it can't drift
+    // and always matches what the file actually contains.
+    const durationSec = samples.length / sampleRate;
+    void startedAt;
+    return { blob, durationSec, mimeType: 'audio/wav' };
+  }, [teardownCapture]);
  
   useEffect(() => () => closeStream(), [closeStream]);
  

@@ -67,8 +67,23 @@ export function useAudioRecording({
       if (!result || !result.blob || result.durationSec < 0.15) return;
  
       const { blob, durationSec, mimeType } = result;
-      const ext = mimeType.includes('webm') ? 'webm' : 'wav';
-      const takeNumber = mediaAssets.filter(m => m.folder === 'Recordings').length + 1;
+      // The recorder always yields WAV now; keep the mime-derived ext so a
+      // future format change here can't silently mislabel files.
+      const ext = mimeType.includes('wav') ? 'wav' : mimeType.includes('webm') ? 'webm' : 'wav';
+      // Next free take number — NOT "count + 1". Counting reused a live name
+      // after any earlier take was deleted (e.g. keep #2,#3 -> next was #3),
+      // and the on-disk write then silently overwrote that existing file.
+      // Numbers are compared ignoring the extension so an old Recording_003.webm
+      // also blocks a new Recording_003.wav.
+      const usedTakes = new Set(
+        mediaAssets
+          .filter((m) => m.folder === 'Recordings')
+          .map((m) => /^Recording_(\d+)\./i.exec(m.name || '')?.[1])
+          .filter(Boolean)
+          .map(Number)
+      );
+      let takeNumber = 1;
+      while (usedTakes.has(takeNumber)) takeNumber += 1;
       const fileName = `Recording_${String(takeNumber).padStart(3, '0')}.${ext}`;
       const url = URL.createObjectURL(blob);
       const file = new File([blob], fileName, { type: mimeType });
