@@ -587,6 +587,101 @@ export function buildStructDefault(subfields) {
  *   { type: 'struct',   label: 'My Group', fields: { key: { type, default, ...} } }
  *   { type: 'struct[]', label: 'My List',  fields: { key: { type, default, ...} } }
  */
+/**
+ * Finds the `static props = { ... }` (or `props = { ... }` /
+ * `Component.props = { ... }`) block in `code` and returns the FULL
+ * object-literal source text, including its closing brace — no matter how
+ * deeply the object is nested (struct / struct[] fields, arrays, etc).
+ *
+ * Replaces the previous lazy-regex approach
+ * (`/= \{[\s\S]*?\n\s*\};?/`), which stopped at the FIRST line looking
+ * like `};` — wrong as soon as the object contains its own nested
+ * `{ ... }`, which is exactly what every `struct` / `struct[]` field's
+ * `fields:` sub-object does. That bug silently truncated the captured
+ * text mid-object, so `new Function(...)` on the result either threw
+ * (falling through to the flat-fields-only regex fallback, which does
+ * not understand struct/struct[] and spills nested subfields out as
+ * top-level props) or produced a malformed schema.
+ *
+ * This scans forward from the first `{` after the `props =` keyword,
+ * counting brace depth, while correctly skipping over string literals
+ * (', ", `) and comments (//, block) so a `}`/`{` inside a nested struct
+ * schema, a string default, or a comment can never be mis-counted — same
+ * "walk it properly" approach as extractImportSpecifiers above, applied
+ * to brace matching instead of import statements.
+ *
+ * @param {string} code
+ * @returns {string|null} The object literal source (e.g. "{ speed: ... }"),
+ *   or null if no `static props`/`props` assignment is found.
+ */
+function extractPropsObjectSource(code) {
+  const keywordMatch = code.match(/(?:static\s+props|\bprops)\s*=\s*/);
+  if (!keywordMatch) return null;
+
+  const searchStart = keywordMatch.index + keywordMatch[0].length;
+  let openIdx = searchStart;
+  while (openIdx < code.length && /\s/.test(code[openIdx])) openIdx++;
+  if (code[openIdx] !== '{') return null;
+
+  let i = openIdx;
+  let depth = 0;
+  let quote = null; // ' " or ` when inside a string literal
+  let lineComment = false;
+  let blockComment = false;
+  const n = code.length;
+
+  for (; i < n; i++) {
+    const ch = code[i];
+    const next = code[i + 1];
+
+    if (lineComment) {
+      if (ch === '\n' || ch === '\r') lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (ch === '*' && next === '/') {
+        blockComment = false;
+        i++;
+      }
+      continue;
+    }
+    if (quote) {
+      if (ch === '\\') {
+        i++;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      continue;
+    }
+
+    if (ch === '/' && next === '/') {
+      lineComment = true;
+      i++;
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      blockComment = true;
+      i++;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      quote = ch;
+      continue;
+    }
+
+    if (ch === '{') {
+      depth++;
+    } else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        return code.slice(openIdx, i + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
 export function extractScriptProps(code) {
   if (!code) return [];
   if (propsSchemaCache.has(code)) {
@@ -596,11 +691,13 @@ export function extractScriptProps(code) {
   const fields = [];
  
   try {
-    // 1. Check for `static props = { ... }` or `export const props = { ... }` or `Component.props = { ... }`
-    const propsMatch = code.match(/(?:static\s+props|\bprops)\s*=\s*(\{[\s\S]*?\n\s*\};?)/);
-    if (propsMatch) {
+    // 1. Find `static props = { ... }` via a brace-counting scan that
+    // correctly captures the FULL object even when it contains nested
+    // objects (struct / struct[] fields) — see extractPropsObjectSource.
+    const propsObjectSource = extractPropsObjectSource(code);
+    if (propsObjectSource) {
       try {
-        const schemaFunc = new Function(`return (${propsMatch[1].replace(/;$/, '')});`);
+        const schemaFunc = new Function(`return (${propsObjectSource});`);
         const schemaObj = schemaFunc();
         if (schemaObj && typeof schemaObj === 'object') {
           Object.entries(schemaObj).forEach(([name, def]) => {

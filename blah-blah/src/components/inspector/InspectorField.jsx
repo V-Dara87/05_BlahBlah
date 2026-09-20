@@ -5,9 +5,9 @@ import { ArrayFieldEditor } from '../shared/ArrayFieldEditor';
 import { buildStructDefault } from '../../engine/scriptRunner';
 import { useState } from 'react';
 import { ChevronRight } from 'lucide-react';
-
+ 
 // ─── Struct helpers ──────────────────────────────────────────────────────────
-
+ 
 /**
  * StructFieldGroup — renders a single `type:'struct'` prop as a
  * collapsible section whose sub-rows are plain InspectorField instances.
@@ -26,7 +26,7 @@ function StructFieldGroup({ field, value, onChange, entities, mediaAssets }) {
     step: def.step,
     options: def.options,
   }));
-
+ 
   return (
     <div style={{ width: '100%' }}>
       <button
@@ -64,7 +64,7 @@ function StructFieldGroup({ field, value, onChange, entities, mediaAssets }) {
     </div>
   );
 }
-
+ 
 /**
  * StructArrayEditor — renders a `type:'struct[]'` prop using ArrayFieldEditor.
  * Each row expands to show all subfields as standard Inspector rows.
@@ -82,11 +82,11 @@ function StructArrayEditor({ field, value, onChange, entities, mediaAssets }) {
     step: def.step,
     options: def.options,
   }));
-
+ 
   // Mutations return a new items array (not a component shape) — we wrap
   // them so ArrayFieldEditor's commit path passes through.
   const handleUpdate = (nextItems) => onChange(nextItems);
-
+ 
   return (
     <div style={{ width: '100%' }}>
       <ArrayFieldEditor
@@ -117,25 +117,60 @@ function StructArrayEditor({ field, value, onChange, entities, mediaAssets }) {
         )}
         renderBody={(item, _index, onUpdate) => (
           <div style={{ paddingLeft: 20, paddingBottom: 4 }}>
-            {subfields.map((sf) => (
-              <div key={sf.name} className="inspector-row">
-                <span className="row-label">{sf.label}</span>
-                <InspectorField
-                  field={sf}
-                  value={item[sf.name]}
-                  onChange={(v) => onUpdate({ [sf.name]: v })}
-                  entities={entities}
-                  mediaAssets={mediaAssets}
-                />
-              </div>
-            ))}
+            {subfields.map((sf) => {
+              // A nested struct/struct[] subfield (a List<T> field living
+              // INSIDE another List<T> item) manages its own label and
+              // needs full-width room for its own boxed rows — cramming it
+              // into the flat 75px/1fr .inspector-row grid used for plain
+              // single-value subfields left it unstyled and un-indented,
+              // so a nested list didn't visually read as nested at all.
+              // This wraps it in its own bordered box (one level deeper
+              // than the parent item's box in ArrayFieldEditor) so nested
+              // lists render as "box inside box".
+              const isNestedStruct = sf.type === 'struct' || sf.type === 'struct[]';
+              if (isNestedStruct) {
+                return (
+                  <div
+                    key={sf.name}
+                    className="inspector-row"
+                    style={{
+                      display: 'block',
+                      padding: 6,
+                      marginTop: 4,
+                      border: '1px dashed var(--border-subtle, #333)',
+                      borderRadius: 4,
+                    }}
+                  >
+                    <InspectorField
+                      field={sf}
+                      value={item[sf.name]}
+                      onChange={(v) => onUpdate({ [sf.name]: v })}
+                      entities={entities}
+                      mediaAssets={mediaAssets}
+                    />
+                  </div>
+                );
+              }
+              return (
+                <div key={sf.name} className="inspector-row">
+                  <span className="row-label">{sf.label}</span>
+                  <InspectorField
+                    field={sf}
+                    value={item[sf.name]}
+                    onChange={(v) => onUpdate({ [sf.name]: v })}
+                    entities={entities}
+                    mediaAssets={mediaAssets}
+                  />
+                </div>
+              );
+            })}
           </div>
         )}
       />
     </div>
   );
 }
-
+ 
 /**
  * P0 #3 — Unified Inspector field rendering.
  *
@@ -397,7 +432,7 @@ export const TEXT_RENDERER_FIELDS = [
   { name: 'fontSize', type: 'number', label: 'Font Size', dragLabel: 'px', step: 1, min: 4, defaultVal: 36 },
   { name: 'fontColor', type: 'color', label: 'Color', defaultVal: '#ffffff' },
 ];
-
+ 
 /**
  * Static field schema for the Transform component — the one component
  * type whose fields aren't script-derived. Expressed in the same shape as

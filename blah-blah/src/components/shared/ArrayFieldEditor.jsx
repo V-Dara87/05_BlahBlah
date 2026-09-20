@@ -121,7 +121,14 @@ export const ArrayFieldEditor = memo(function ArrayFieldEditor({
   };
  
   return (
-    <div className="array-field-editor">
+    <div
+      className="array-field-editor"
+      style={{
+        border: '1px solid var(--border-subtle, #333)',
+        borderRadius: 6,
+        padding: 6,
+      }}
+    >
       {renderToolbar && renderToolbar()}
  
       {items.length === 0 && (
@@ -131,50 +138,103 @@ export const ArrayFieldEditor = memo(function ArrayFieldEditor({
       {items.map((item, index) => {
         const itemId = item[itemIdKey];
         const onUpdate = patchItem(itemId);
+        const isDragging = dragItemId === itemId;
+        const isDropTarget = dragOverItemId === itemId && dragItemId !== itemId;
         return (
-          <div
-            key={itemId}
-            className={`inspector-row array-field-item${itemClassName ? ` ${itemClassName}` : ''}${dragOverItemId === itemId ? ' drag-over' : ''}`}
-            style={{
-              // Override .inspector-row's inherited 75px/1fr two-column grid
-              // template with a single full-width column, so this row's two
-              // stacked children (the controls row below, and the optional
-              // renderBody row) lay out top-to-bottom as intended instead of
-              // being split across label/value grid tracks meant for plain
-              // single-field rows elsewhere in the Inspector.
-              display: 'grid',
-              gridTemplateColumns: '1fr',
-              rowGap: 4,
-              alignItems: 'stretch',
-            }}
-            onDragOver={handleDragOver(itemId)}
-            onDrop={handleDrop(itemId)}
-          >
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center', minWidth: 0 }}>
-              <span
-                className="card-drag-handle"
-                title="Drag to reorder"
-                draggable
-                onDragStart={handleDragStart(itemId)}
-                onDragEnd={handleDragEnd}
-              >
-                <GripVertical size={12} />
-              </span>
+          <div key={itemId} style={{ position: 'relative' }}>
+            {/* Drop-position indicator — shown ABOVE this row when it's the
+                current drag-over target, so reordering has a clear, visible
+                insertion point instead of only a background-color class
+                toggle (easy to miss, and gave no real feedback once a list
+                is boxed the way nested struct[] items are below). */}
+            {isDropTarget && (
+              <div
+                className="array-field-drop-indicator"
+                style={{
+                  position: 'absolute',
+                  top: -3,
+                  left: 4,
+                  right: 4,
+                  height: 2,
+                  background: 'var(--accent, #4f9eff)',
+                  borderRadius: 1,
+                  zIndex: 1,
+                }}
+              />
+            )}
+            <div
+              className={`inspector-row array-field-item${itemClassName ? ` ${itemClassName}` : ''}${isDropTarget ? ' drag-over' : ''}${isDragging ? ' dragging' : ''}`}
+              style={{
+                // Override .inspector-row's inherited 75px/1fr two-column grid
+                // template with a single full-width column, so this row's two
+                // stacked children (the controls row below, and the optional
+                // renderBody row) lay out top-to-bottom as intended instead of
+                // being split across label/value grid tracks meant for plain
+                // single-field rows elsewhere in the Inspector.
+                display: 'grid',
+                gridTemplateColumns: '1fr',
+                rowGap: 4,
+                alignItems: 'stretch',
+                // Boxed container: every array item — including a struct[]
+                // item that itself contains another struct[] field — gets a
+                // visible border/background, so a nested list reads as
+                // "box inside box" instead of running flush into its parent.
+                border: '1px solid var(--border-subtle, #333)',
+                borderRadius: 4,
+                padding: '6px 6px 6px 4px',
+                marginBottom: 4,
+                background: 'var(--bg-inset, rgba(255,255,255,0.02))',
+                opacity: isDragging ? 0.5 : 1,
+              }}
+              onDragOver={handleDragOver(itemId)}
+              onDrop={handleDrop(itemId)}
+            >
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', minWidth: 0 }}>
+                <span
+                  className="card-drag-handle"
+                  title="Drag to reorder"
+                  draggable
+                  onDragStart={handleDragStart(itemId)}
+                  onDragEnd={handleDragEnd}
+                  style={{ cursor: 'grab', flexShrink: 0 }}
+                >
+                  <GripVertical size={12} />
+                </span>
  
-              {renderItem(item, index, onUpdate)}
-              {renderActions && renderActions(item, index, onUpdate)}
+                {/* Stable 1-based index — independent of the item's own id
+                    or content, so reordering is easy to verify by eye
+                    (matches Unity's List<T> element index display). */}
+                <span
+                  className="array-field-index"
+                  title={`Index ${index}`}
+                  style={{
+                    flexShrink: 0,
+                    fontSize: 14,
+                    fontWeight: 600,
+                    fontVariantNumeric: 'tabular-nums',
+                    color: 'var(--text-secondary, #aaa)',
+                    minWidth: 22,
+                    textAlign: 'right',
+                  }}
+                >
+                  {index + 1}
+                </span>
  
-              <button
-                className="del-btn-sm"
-                title="Remove item"
-                style={{ flexShrink: 0 }}
-                onClick={() => handleRemove(itemId)}
-              >
-                <Trash2 size={11} />
-              </button>
+                {renderItem(item, index, onUpdate)}
+                {renderActions && renderActions(item, index, onUpdate)}
+ 
+                <button
+                  className="del-btn-sm"
+                  title="Remove item"
+                  style={{ flexShrink: 0 }}
+                  onClick={() => handleRemove(itemId)}
+                >
+                  <Trash2 size={11} />
+                </button>
+              </div>
+ 
+              {renderBody && renderBody(item, index, onUpdate)}
             </div>
- 
-            {renderBody && renderBody(item, index, onUpdate)}
           </div>
         );
       })}
