@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, memo } from 'react';
+import { useState, useRef, useEffect, useMemo, memo } from 'react';
 import { 
   Volume2, 
   VolumeX, 
@@ -11,9 +11,12 @@ import {
   Square,
   Trash2,
   Scissors,
+  ArrowLeftToLine,
 } from 'lucide-react';
 import { TRACK_HEIGHT, clampTrackHeight } from '../../utils/timelineLayout';
 import { usePlaybackStore } from '../../hooks/PlaybackContext';
+import { ContextMenu } from '../shared/ContextMenu';
+import { buildGapRemovalUpdates } from '../../utils/removeGaps';
 import './track-header.css';
  
 export const TrackHeader = memo(function TrackHeader({
@@ -28,11 +31,14 @@ export const TrackHeader = memo(function TrackHeader({
   isAnyTrackRecording,
   onToggleRecordTrack,
   onOpenSilenceRemoverForTrack,
+  allClips = [],
+  selectedIds = [],
+  onUpdateClips,
 }) {
   const recording = !!isRecordingTarget;
   const store = usePlaybackStore();
   const recordingTimerRef = useRef(null);
-
+ 
   useEffect(() => {
     if (!recording) return;
     const update = (time) => {
@@ -135,10 +141,50 @@ export const TrackHeader = memo(function TrackHeader({
     }
   };
  
+  // ── Right-click menu: Remove Gaps ────────────────────────────────
+  // Acts on the SELECTED clips. "This track" only considers the selected
+  // clips that live on this track; "all selected" runs the same close-the-
+  // gaps pass across every track the selection touches (each track is still
+  // handled independently by buildGapRemovalUpdates).
+  const [menu, setMenu] = useState(null); // { x, y } | null
+  const closeMenu = () => setMenu(null);
+ 
+  // Same behaviour as the clip menu: pack ALL selected clips (any track)
+  // back to back. The menu ALWAYS opens on a header right-click; when Remove
+  // Gaps can't run it is greyed out and says why, instead of the whole menu
+  // silently not appearing.
+  const gapUpdates = useMemo(
+    () => (selectedIds.length > 1 ? buildGapRemovalUpdates(allClips, selectedIds) : []),
+    [selectedIds, allClips]
+  );
+  const gapUnavailableReason = !onUpdateClips
+    ? 'Unavailable'
+    : track.locked
+      ? 'Track locked'
+      : selectedIds.length < 2
+        ? 'Select 2+ clips'
+        : gapUpdates.length === 0
+          ? 'No gaps'
+          : null;
+ 
+  const handleContextMenu = (e) => {
+    // Let the rename <input> keep its native text menu.
+    if (e.target.closest?.('.track-name-input')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu({ x: e.clientX, y: e.clientY });
+  };
+  const runGapRemoval = () => {
+    closeMenu();
+    if (!gapUnavailableReason) onUpdateClips(gapUpdates);
+  };
+ 
   return (
+    <>
     <div
       className={`track-header-row ${recording ? 'recording-active' : ''} ${track.locked ? 'track-locked' : ''}`}
       style={{ height: effectiveHeight }}
+      onContextMenu={handleContextMenu}
     >
       <div className="track-header-controls" style={{ height: effectiveHeight }}>
         <div className="track-header-top-row">
@@ -189,7 +235,7 @@ export const TrackHeader = memo(function TrackHeader({
               {recording ? <Square size={9} /> : <Mic size={10} />}
             </button>
           )}
-
+ 
           {recording && (
             <span className="track-header-rec-badge" title="Recording in progress">
               <span className="rec-pulse-dot" />
@@ -206,7 +252,7 @@ export const TrackHeader = memo(function TrackHeader({
           >
             <span style={{ fontSize: '8px', fontWeight: 700, color: '#38bdf8' }}>+C</span>
           </button>
-
+ 
           {onOpenSilenceRemoverForTrack && (
             <button
               className="track-btn cut-silence-track-btn"
@@ -255,6 +301,23 @@ export const TrackHeader = memo(function TrackHeader({
         title="Drag to resize track (double-click to reset)"
       />
     </div>
+ 
+    {menu && (
+      <ContextMenu x={menu.x} y={menu.y} onClose={closeMenu} className="clip-context-menu" minWidth={200}>
+        <button
+          className="ctx-menu-item ctx-menu-row"
+          onClick={runGapRemoval}
+          disabled={!!gapUnavailableReason}
+          title={gapUnavailableReason
+            ? `Remove Gaps: ${gapUnavailableReason}`
+            : 'Close the empty space between the selected clips'}
+        >
+          <span className="ctx-menu-label"><ArrowLeftToLine size={12} /> Remove Gaps</span>
+          {gapUnavailableReason && <span className="ctx-menu-hint">{gapUnavailableReason}</span>}
+        </button>
+      </ContextMenu>
+    )}
+    </>
   );
 });
  

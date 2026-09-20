@@ -1,10 +1,12 @@
 import { useRef, useMemo, memo, useState } from 'react';
-import { Film, Music, Type, Square, FileCode, Link2, X, Copy, Scissors, Unlink, AlertTriangle } from 'lucide-react';
+import { Film, Music, Type, Square, FileCode, Link2, X, Copy, Scissors, Unlink, AlertTriangle, ClipboardPaste, ArrowLeftToLine } from 'lucide-react';
 import { WaveformCanvas } from '../shared/WaveformCanvas';
 import { isScriptComponent, isVideoEntity, isAudioEntity } from '../../engine/ecs';
 import { dragHasItemKind, ITEM_KIND_SCRIPT, setDragPayload, ITEM_KIND_ENTITY } from '../../utils/dragData';
 import { computeTrimmedOffset } from '../../utils/mediaOffset';
 import { ContextMenu } from '../shared/ContextMenu';
+import { hasClipboardClips } from '../../utils/clipClipboard';
+import { buildGapRemovalUpdates } from '../../utils/removeGaps';
 import './clip-item.css';
  
 /** Return true if candidateChild is a descendant of ancestorId (cycle guard). */
@@ -49,6 +51,9 @@ export const ClipItem = memo(function ClipItem({
   onUpdateClip,
   onUpdateClips,
   onDuplicateClips,
+  onCopySelected,
+  onCutSelected,
+  onPasteClips,
   onAttachScriptToEntity,
   onSplitVideoAndAudio,
   onOpenSilenceRemover,
@@ -726,7 +731,10 @@ export const ClipItem = memo(function ClipItem({
  
     // Ensure this clip is selected
     if (!isSelectedCard && !isSelectedMulti) {
+      selectionWillChange.current = true;
       onSelectClip(clip.id);
+    } else {
+      selectionWillChange.current = false;
     }
  
     setCtxMenu({ x: e.clientX, y: e.clientY });
@@ -739,6 +747,42 @@ export const ClipItem = memo(function ClipItem({
     (c) => c.id !== clip.id && c.id !== clip.parentId && !isDescendantOf(c.id, clip.id, allClips)
   );
   const showQuickLinks = !isLocked && eligibleParents.length > 0 && eligibleParents.length <= 6;
+ 
+  // Copy / Cut / Paste. The handlers (App.jsx -> useEntityActions) act on
+  // the CURRENT selection, exactly like Ctrl+C / Ctrl+X / Ctrl+V. When the
+  // right-clicked clip wasn't already selected, handleContextMenu selects
+  // it, but that state update hasn't been applied yet at click time — so
+  // defer one tick and the handler sees the right selection. If the clip
+  // was already part of the selection nothing changes, so run immediately
+  // (a right-click on one of several selected clips copies/cuts them all).
+  const selectionWillChange = useRef(false);
+  const runOnSelection = (fn) => {
+    closeCtxMenu();
+    if (!fn) return;
+    if (selectionWillChange.current) setTimeout(fn, 0);
+    else fn();
+  };
+  const handleCopy = () => runOnSelection(onCopySelected);
+  const handleCut = () => runOnSelection(onCutSelected);
+  const handlePaste = () => runOnSelection(onPasteClips);
+ 
+  // Remove Gaps — only meaningful for a multi-selection. The updates are
+  // computed here (pure) so the menu item can show/enable itself based on
+  // whether there is actually a gap to close.
+  const gapUpdates = useMemo(
+    () => (isSelectedMulti && selectedIds.length > 1 && onUpdateClips
+      ? buildGapRemovalUpdates(allClips, selectedIds)
+      : []),
+    [isSelectedMulti, selectedIds, allClips, onUpdateClips]
+  );
+  // Only offered when there is actually something to close — once the
+  // clips are already back to back the item disappears instead of sitting
+  // there greyed out.
+  const showRemoveGaps = !isLocked && isSelectedMulti && selectedIds.length > 1 && !!onUpdateClips && gapUpdates.length > 0;
+  const handleRemoveGaps = () => {
+    closeCtxMenu();
+    if (gapUpdates.length > 0) onUpdateClips(gapUpdates);
+  };
  
   const handleDuplicate = () => {
     const newIds = onDuplicateClips(activeTargetIds);
@@ -939,7 +983,39 @@ export const ClipItem = memo(function ClipItem({
     </div>
  
     {ctxMenu && (
-      <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onClose={closeCtxMenu} className="clip-context-menu" minWidth={140}>
+      <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onClose={closeCtxMenu} className="clip-context-menu" minWidth={170}>
+        {onCutSelected && !isLocked && (
+          <button className="ctx-menu-item ctx-menu-row" onClick={handleCut}>
+            <span className="ctx-menu-label"><Scissors size={12} /> Cut</span>
+            <span className="ctx-menu-hint">Ctrl+X</span>
+          </button>
+        )}
+        {onCopySelected && (
+          <button className="ctx-menu-item ctx-menu-row" onClick={handleCopy}>
+            <span className="ctx-menu-label"><Copy size={12} /> Copy</span>
+            <span className="ctx-menu-hint">Ctrl+C</span>
+          </button>
+        )}
+        {onPasteClips && !isLocked && (
+          <button
+            className="ctx-menu-item ctx-menu-row"
+            onClick={handlePaste}
+            disabled={!hasClipboardClips()}
+          >
+            <span className="ctx-menu-label"><ClipboardPaste size={12} /> Paste</span>
+            <span className="ctx-menu-hint">Ctrl+V</span>
+          </button>
+        )}
+        {(onCutSelected || onCopySelected || onPasteClips) && <div className="ctx-menu-divider" />}
+        {showRemoveGaps && (
+          <button
+            className="ctx-menu-item ctx-menu-row"
+            onClick={handleRemoveGaps}
+            title="Close the empty space between the selected clips"
+          >
+            <span className="ctx-menu-label"><ArrowLeftToLine size={12} /> Remove Gaps</span>
+          </button>
+        )}
         {onDuplicateClips && !isLocked && (
           <button className="ctx-menu-item" onClick={handleDuplicate}>
             <Copy size={12} /> Duplicate

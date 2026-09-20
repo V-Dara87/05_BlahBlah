@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import './context-menu.css';
-
+ 
 /**
  * ContextMenu — shared shell for every right-click menu in the app
  * (Project panel, Timeline clips, and any future one).
@@ -24,6 +24,10 @@ import './context-menu.css';
  * state, so callers keep their own item logic and only swap the outer
  * shell.
  */
+// Keep menu interactions from reaching the component tree that rendered the
+// menu (see the note on the root element below).
+const stopBubble = (e) => e.stopPropagation();
+ 
 export function ContextMenu({ x, y, onClose, children, className = '', minWidth = 160 }) {
   const menuRef = useRef(null);
   const [coords, setCoords] = useState(null);
@@ -31,11 +35,11 @@ export function ContextMenu({ x, y, onClose, children, className = '', minWidth 
   // runs instead of the element appearing already at its final state) ->
   // 'closing' (set by requestClose, then unmounts after the transition).
   const [phase, setPhase] = useState('entering');
-
+ 
   const requestClose = () => {
     setPhase((p) => (p === 'closing' ? p : 'closing'));
   };
-
+ 
   // Clamp the requested (x, y) inside the viewport once the menu's real
   // size is known, same idea as the font picker popover: prefer opening
   // at the click point, flip up/left near an edge rather than spilling
@@ -61,7 +65,7 @@ export function ContextMenu({ x, y, onClose, children, className = '', minWidth 
     return () => cancelAnimationFrame(raf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [x, y]);
-
+ 
   useEffect(() => {
     const onPointerDown = (e) => {
       if (menuRef.current?.contains(e.target)) return;
@@ -81,7 +85,7 @@ export function ContextMenu({ x, y, onClose, children, className = '', minWidth 
       document.removeEventListener('keydown', onKeyDown);
     };
   }, []);
-
+ 
   // Once the closing transition has had time to play, tell the caller to
   // actually unmount us (they own the `ctxMenu` state this reads from).
   useEffect(() => {
@@ -89,7 +93,7 @@ export function ContextMenu({ x, y, onClose, children, className = '', minWidth 
     const t = setTimeout(() => onClose?.(), 120);
     return () => clearTimeout(t);
   }, [phase, onClose]);
-
+ 
   return createPortal(
     <div
       ref={menuRef}
@@ -102,6 +106,21 @@ export function ContextMenu({ x, y, onClose, children, className = '', minWidth 
         visibility: coords ? 'visible' : 'hidden',
       }}
       onContextMenu={(e) => e.preventDefault()}
+      // The menu is portaled to document.body, but React still bubbles
+      // synthetic events through the REACT tree — i.e. up into whatever
+      // component rendered the menu (a clip, a track header, the timeline
+      // lanes...). Without this, pressing a menu item counted as a click on
+      // the timeline behind it: the lasso handler treated it as "click on
+      // empty lane space", moved the playhead there and cleared the
+      // selection. Stop pointer/mouse/click events at the menu boundary.
+      // (Outside-click-to-close uses a native document listener, so it is
+      // unaffected; the buttons' own onClick handlers run before this.)
+      onPointerDown={stopBubble}
+      onPointerUp={stopBubble}
+      onMouseDown={stopBubble}
+      onMouseUp={stopBubble}
+      onClick={stopBubble}
+      onDoubleClick={stopBubble}
     >
       {children}
     </div>,

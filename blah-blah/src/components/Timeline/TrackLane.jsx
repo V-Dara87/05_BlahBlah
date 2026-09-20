@@ -1,5 +1,8 @@
 import { useState, memo, useMemo } from 'react';
+import { ClipboardPaste } from 'lucide-react';
 import { ClipItem } from './ClipItem';
+import { ContextMenu } from '../shared/ContextMenu';
+import { hasClipboardClips } from '../../utils/clipClipboard';
 import { LiveRecordingClipPreview } from './LiveRecordingClipPreview';
 import { TRACK_HEIGHT, computeClipSubLanes, getTickIntervalSeconds } from '../../utils/timelineLayout';
 import { importMediaFiles, detectMediaKind } from '../../services/mediaImport';
@@ -33,6 +36,10 @@ export const TrackLane = memo(function TrackLane({
   onUpdateClip,
   onUpdateClips,
   onDuplicateClips,
+  onCopySelected,
+  onCutSelected,
+  onPasteClips,
+  onSeek,
   onAttachScriptToEntity,
   onDropItemOnTrack,
   onAddMediaAsset,
@@ -45,6 +52,34 @@ export const TrackLane = memo(function TrackLane({
 }) {
   const [isDragOver, setIsDragOver] = useState(false);
   const fullClipList = allClips.length > 0 ? allClips : clips;
+ 
+  // Right-click on EMPTY lane space -> Paste menu. Clips stop their own
+  // contextmenu event from bubbling (see ClipItem.handleContextMenu), so
+  // this only fires for the bare lane / grid, never on top of a clip.
+  // { x, y, time } | null — `time` is the timeline position that was
+  // clicked, so "Paste" drops the clips exactly where the user pointed.
+  const [laneMenu, setLaneMenu] = useState(null);
+  const closeLaneMenu = () => setLaneMenu(null);
+ 
+  const handleLaneContextMenu = (e) => {
+    // A locked track can't receive new clips, and there's nothing to
+    // offer on it — fall through to the browser default (no menu).
+    if (track.locked) return;
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const time = Math.max(0, (e.clientX - rect.left) / pixelsPerSecond);
+    setLaneMenu({ x: e.clientX, y: e.clientY, time });
+  };
+ 
+  const handleLanePaste = () => {
+    const at = laneMenu?.time;
+    closeLaneMenu();
+    // Paste lands at the playhead, so move the playhead to the clicked
+    // spot first. Store updates are synchronous, but the paste handler
+    // reads the playhead time when it runs, so defer one tick to be safe.
+    if (Number.isFinite(at) && onSeek) onSeek(at);
+    setTimeout(() => onPasteClips?.(), 0);
+  };
  
   // DaVinci-style compression: clips that overlap in time on this track
   // split the row height evenly between them (sub-lanes) instead of
@@ -149,6 +184,9 @@ export const TrackLane = memo(function TrackLane({
     onUpdateClip,
     onUpdateClips,
     onDuplicateClips,
+    onCopySelected,
+    onCutSelected,
+    onPasteClips,
     onAttachScriptToEntity,
     onSplitVideoAndAudio,
     onOpenSilenceRemover,
@@ -164,6 +202,7 @@ export const TrackLane = memo(function TrackLane({
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
+      onContextMenu={handleLaneContextMenu}
       title={track.locked ? `${track.name} is locked` : undefined}
     >
       <div className="track-grid-pattern" style={{ backgroundSize: `${gridSpacingPx}px 100%` }} />
@@ -221,6 +260,19 @@ export const TrackLane = memo(function TrackLane({
           />
         )}
       </div>
+ 
+      {laneMenu && (
+        <ContextMenu x={laneMenu.x} y={laneMenu.y} onClose={closeLaneMenu} className="clip-context-menu" minWidth={160}>
+          <button
+            className="ctx-menu-item ctx-menu-row"
+            onClick={handleLanePaste}
+            disabled={!hasClipboardClips() || !onPasteClips}
+          >
+            <span className="ctx-menu-label"><ClipboardPaste size={12} /> Paste</span>
+            <span className="ctx-menu-hint">Ctrl+V</span>
+          </button>
+        </ContextMenu>
+      )}
     </div>
   );
 });

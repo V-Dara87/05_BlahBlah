@@ -12,7 +12,7 @@ import { SilenceRemoverPanel } from '../components/silence-remover/SilenceRemove
 import { setKeyframeCurve, findKeyframeById, DEFAULT_CP1, DEFAULT_CP2 } from '../engine/keyframes';
 import { useEditorContext } from './EditorContext';
 import { useCurrentTime, useIsPlaying, useIsLooping, usePlaybackStore } from '../hooks/PlaybackContext';
-
+ 
 export const ProjectDockPanel = memo(function ProjectDockPanel() {
   const {
     mediaAssets, prefabs, scripts,
@@ -27,7 +27,7 @@ export const ProjectDockPanel = memo(function ProjectDockPanel() {
     handleAddEmptyClip,
     onEnterPrefabMode,
   } = useEditorContext();
-
+ 
   return (
     <ProjectPanel
       mediaAssets={mediaAssets}
@@ -209,6 +209,7 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
     selectedEntityId, setSelectedEntityId, snappingEnabled,
     selectedIds, setSelectedIds,
     handleUpdateEntity, handleUpdateClips, handleDuplicateClips,
+    onCopySelected, onCutSelected, onPasteClips,
     handleUpdateTrack, handleDeleteTrack,
     handleAddTrack, handleAddEmptyClip,
     handleDropItemOnTrack, handleAttachScriptToEntity,
@@ -297,6 +298,9 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
         onUpdateClip={handleUpdateEntity}
         onUpdateClips={handleUpdateClips}
         onDuplicateClips={handleDuplicateClips}
+        onCopySelected={onCopySelected}
+        onCutSelected={onCutSelected}
+        onPasteClips={onPasteClips}
         onUpdateTrack={handleUpdateTrack}
         onDeleteTrack={handleDeleteTrack}
         onAddTrack={handleAddTrack}
@@ -422,7 +426,7 @@ export const CurveEditorDockPanel = memo(function CurveEditorDockPanel() {
     />
   );
 });
-
+ 
 export const SilenceRemoverDockPanel = memo(function SilenceRemoverDockPanel() {
   const {
     entities,
@@ -433,7 +437,7 @@ export const SilenceRemoverDockPanel = memo(function SilenceRemoverDockPanel() {
     handleCutSilence,
     setSilencePreviewCuts,
   } = useEditorContext();
-
+ 
   return (
     <SilenceRemoverPanel
       activeTargetType={silenceTarget?.type || 'clip'}

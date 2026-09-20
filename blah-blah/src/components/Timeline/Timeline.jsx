@@ -31,6 +31,9 @@ export const Timeline = memo(function Timeline({
   onUpdateClip,
   onUpdateClips,
   onDuplicateClips,
+  onCopySelected,
+  onCutSelected,
+  onPasteClips,
   onUpdateTrack,
   onDeleteTrack,
   onAddTrack,
@@ -199,7 +202,7 @@ export const Timeline = memo(function Timeline({
   const handleClearRange = useCallback(() => {
     onSetExportRange(null);
   }, [onSetExportRange]);
-
+ 
   // Auto-scroll timeline to keep playhead visible ONLY during active playback
   useEffect(() => {
     const unsub = playbackStore.registerFrameCallback((time) => {
@@ -233,7 +236,7 @@ export const Timeline = memo(function Timeline({
     }
     velocityRef.current = 0;
   }, []);
-
+ 
   // Shared zoom-and-reanchor: used by both the ctrl+wheel gesture handler
   // and the toolbar zoom in/out buttons, so both paths keep the same
   // instant (the playhead/seekbar position) under the same screen x
@@ -251,9 +254,9 @@ export const Timeline = memo(function Timeline({
     const anchorScreenX = scroller
       ? HEADER_WIDTH + anchorTime * pixelsPerSecond - scroller.scrollLeft
       : null;
-
+ 
     const nextPps = Math.max(4, Math.min(240, pixelsPerSecond + delta));
-
+ 
     const reanchor = () => {
       if (!scroller || anchorScreenX === null) return;
       // Wait one more frame so totalWidth/scrollWidth have repainted for
@@ -268,7 +271,7 @@ export const Timeline = memo(function Timeline({
         updateScrollMetrics();
       });
     };
-
+ 
     // Mark this change as already handled so the external-change effect
     // below doesn't ALSO try to reanchor it (which would double-apply
     // the scroll compensation against a stale anchorScreenX). Only set
@@ -285,7 +288,7 @@ export const Timeline = memo(function Timeline({
       selfInitiatedZoomRef.current = true;
     }
     prevPpsRef.current = nextPps;
-
+ 
     if (onSetPixelsPerSecond) {
       onSetPixelsPerSecond(nextPps);
     } else if (delta > 0) {
@@ -295,7 +298,7 @@ export const Timeline = memo(function Timeline({
     }
     reanchor();
   }, [pixelsPerSecond, playbackStore, onSetPixelsPerSecond, onZoomIn, onZoomOut, updateScrollMetrics]);
-
+ 
   // Re-centers the view on the playhead whenever pixelsPerSecond changes
   // for a reason OTHER than this component's own applyZoomStep (wheel
   // gesture / Timeline's +/- buttons, which already reanchor themselves
@@ -319,13 +322,13 @@ export const Timeline = memo(function Timeline({
     const prevPps = prevPpsRef.current;
     prevPpsRef.current = pixelsPerSecond;
     if (prevPps === pixelsPerSecond) return;
-
+ 
     const scroller = lanesScrollRef.current;
     if (!scroller) return;
-
+ 
     const anchorTime = playbackStore.getCurrentTime();
     const anchorScreenX = HEADER_WIDTH + anchorTime * prevPps - scroller.scrollLeft;
-
+ 
     requestAnimationFrame(() => {
       const s = lanesScrollRef.current;
       if (!s) return;
@@ -336,7 +339,7 @@ export const Timeline = memo(function Timeline({
       updateScrollMetrics();
     });
   }, [pixelsPerSecond, playbackStore, updateScrollMetrics]);
-
+ 
   // Toolbar +/- buttons: same fixed step the old handleZoomIn/handleZoomOut
   // used (15), just routed through applyZoomStep so they re-center on the
   // seekbar the same way the wheel gesture does.
@@ -344,7 +347,7 @@ export const Timeline = memo(function Timeline({
     stopSmoothScroll();
     applyZoomStep(15);
   }, [applyZoomStep, stopSmoothScroll]);
-
+ 
   const handleZoomOutBtn = useCallback(() => {
     stopSmoothScroll();
     applyZoomStep(-15);
@@ -496,13 +499,13 @@ export const Timeline = memo(function Timeline({
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
         stopSmoothScroll();
-
+ 
         // Scale the step to how hard the user is scrolling instead of a
         // fixed +/-15 per notch — a fast flick zooms faster, a gentle
         // nudge zooms gently, which reads as smooth instead of steppy.
         const rawDelta = Math.max(-60, Math.min(60, -e.deltaY));
         zoomAccumRef.current += rawDelta * 0.5;
-
+ 
         // Capture the anchor instant once per gesture (first tick after
         // the previous frame flushed), not on every wheel event -- the
         // anchor must stay fixed for the whole gesture or the "same
@@ -510,9 +513,9 @@ export const Timeline = memo(function Timeline({
         if (zoomAnchorTimeRef.current === null) {
           zoomAnchorTimeRef.current = playbackStore.getCurrentTime();
         }
-
+ 
         if (zoomFrameRef.current) return; // already scheduled for this frame
-
+ 
         zoomFrameRef.current = requestAnimationFrame(() => {
           zoomFrameRef.current = null;
           const pending = zoomAccumRef.current;
@@ -749,6 +752,15 @@ export const Timeline = memo(function Timeline({
     window.addEventListener('pointerup', onUp);
   };
  
+  // Committed selection for the track-header right-click menu: the multi
+  // selection, or the single selected clip when the list is empty (same
+  // resolution ClipItem and the shortcuts use). Memoized so memo(TrackHeader)
+  // doesn't re-render on unrelated Timeline renders.
+  const headerSelectedIds = useMemo(
+    () => (selectedIds.length > 0 ? selectedIds : (selectedClipId ? [selectedClipId] : [])),
+    [selectedIds, selectedClipId]
+  );
+ 
   // Compute which clips are inside the box selection in real-time
   const boxSelectedIds = useMemo(() => {
     if (!boxSelect) return [];
@@ -961,6 +973,9 @@ export const Timeline = memo(function Timeline({
                       isAnyTrackRecording={!!recordingTrackId}
                       onToggleRecordTrack={onToggleRecordTrack}
                       onOpenSilenceRemoverForTrack={onOpenSilenceRemoverForTrack}
+                      allClips={clips}
+                      selectedIds={headerSelectedIds}
+                      onUpdateClips={onUpdateClips}
                     />
                   </div>
                   <TrackLane
@@ -982,6 +997,10 @@ export const Timeline = memo(function Timeline({
                     onUpdateClip={onUpdateClip}
                     onUpdateClips={onUpdateClips}
                     onDuplicateClips={onDuplicateClips}
+                    onCopySelected={onCopySelected}
+                    onCutSelected={onCutSelected}
+                    onPasteClips={onPasteClips}
+                    onSeek={onSeek}
                     onAttachScriptToEntity={onAttachScriptToEntity}
                     onDropItemOnTrack={onDropItemOnTrack}
                     onAddMediaAsset={onAddMediaAsset}

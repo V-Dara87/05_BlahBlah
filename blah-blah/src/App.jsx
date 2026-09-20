@@ -587,6 +587,13 @@ export function App() {
           handleUpdateEntity: isPrefabMode ? prefabEntityActions.handleUpdateEntity : handleUpdateEntity,
           handleUpdateClips: isPrefabMode ? prefabEntityActions.handleUpdateClips : handleUpdateClips,
           handleDuplicateClips: isPrefabMode ? prefabEntityActions.handleDuplicateClips : handleDuplicateClips,
+          // Copy / Cut / Paste for the Timeline right-click menus. These are
+          // the SAME handlers the Ctrl+C / Ctrl+X / Ctrl+V shortcuts use
+          // (they already handle prefab mode, multi-selection, children and
+          // paste-at-playhead), so the menu and the keyboard can never drift.
+          onCopySelected: editorPlaybackHandlers.onCopySelected,
+          onCutSelected: editorPlaybackHandlers.onCutSelected,
+          onPasteClips: editorPlaybackHandlers.onPasteClips,
           handleDeleteEntity: isPrefabMode ? prefabEntityActions.handleDeleteEntity : handleDeleteEntity,
           handleSplitEntity: isPrefabMode ? prefabEntityActions.handleSplitEntity : handleSplitEntity,
           handleSaveAsPrefab,

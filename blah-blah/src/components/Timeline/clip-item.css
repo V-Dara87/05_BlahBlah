@@ -187,6 +187,45 @@
   padding: 4px 0;
 }
  
+/* Cut / Copy / Paste rows: icon + label on the left, shortcut hint on the
+   right. Scoped to .clip-context-menu so the Project panel's own menus
+   (which share .ctx-menu-item) are untouched. */
+.clip-context-menu .ctx-menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+ 
+.clip-context-menu .ctx-menu-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+ 
+.clip-context-menu .ctx-menu-hint {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--unity-text-dim, #8b8d98);
+  letter-spacing: 0.02em;
+}
+ 
+/* Paste is greyed out until something has been copied/cut. */
+.clip-context-menu .ctx-menu-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+ 
+.clip-context-menu .ctx-menu-item:disabled:hover {
+  background: none;
+}
+ 
+.clip-context-menu .ctx-menu-divider {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--unity-border-light);
+}
+ 
 .clip-trim-handle {
   width: 7px;
   background: rgba(0,0,0,0.3);
