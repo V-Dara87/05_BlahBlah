@@ -1132,9 +1132,9 @@ export function useEntityActions({
  
   // Coalesced for the same reason as handleUpdateEntity — track volume
   // sliders etc. fire continuously while dragging.
-  const handleUpdateTrack = (trackId, updates) => {
+  const handleUpdateTrack = useCallback((trackId, updates) => {
     setTracks(prev => prev.map(t => t.id === trackId ? { ...t, ...updates } : t), { coalesce: true });
-  };
+  }, [setTracks]);
  
   // Delete track and all clips on it
   const handleDeleteTrack = useCallback((trackId) => {

@@ -72,7 +72,7 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
           // on the video clip never silently does nothing.
           const track = findEntityTrack(entity, tracks);
           const effectiveVolume = resolveEffectiveVolume(videoComp.volume ?? 0, track, tracks);
-          setMediaElementVolume(vidEl, effectiveVolume);
+          setMediaElementVolume(vidEl, effectiveVolume, track?.id);
           setMediaElementRate(vidEl, speed);
  
           if (isPlaying) {
@@ -140,7 +140,7 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
           const localTime = (currentTime - entity.startTime) * speed + offset;
           const track = findEntityTrack(entity, tracks);
           const effectiveVolume = resolveEffectiveVolume(audioComp.volume ?? 1, track, tracks);
-          setMediaElementVolume(aud, effectiveVolume);
+          setMediaElementVolume(aud, effectiveVolume, track?.id);
           setMediaElementRate(aud, speed);
  
           if (isPlaying) {

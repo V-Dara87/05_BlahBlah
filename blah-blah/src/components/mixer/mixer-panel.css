@@ -1,4 +1,16 @@
+/* ── Mixer panel ─────────────────────────────────────────────────────────
+   Colour zones follow the usual DAW meter convention (see meterZone() in
+   utils/mixerMath.js): green → amber → orange → RED at/above 0 dBFS.
+   The red is a hard-coded literal on purpose: "red = clipping" must stay
+   red regardless of theme accent tokens. */
+ 
 .mixer-panel {
+  --mx-ok: #22c55e;
+  --mx-warm: #eab308;
+  --mx-hot: #f97316;
+  --mx-clip: #ef4444;
+  --mx-seg-off: rgba(255, 255, 255, 0.055);
+ 
   display: flex;
   flex-direction: row;
   height: 100%;
@@ -7,7 +19,7 @@
   background: var(--unity-dark);
   user-select: none;
 }
-
+ 
 .mixer-panel-empty {
   display: flex;
   align-items: center;
@@ -18,31 +30,29 @@
   padding: 24px;
   text-align: center;
 }
-
+ 
+/* ── Strip ── */
 .mixer-strip {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  width: 84px;
-  min-width: 84px;
+  width: 104px;
+  min-width: 104px;
   border-right: 1px solid var(--unity-border);
-  background: var(--unity-panel);
-  padding: 8px 6px 10px;
-  gap: 8px;
+  background: linear-gradient(180deg, var(--unity-panel), var(--unity-darkest));
+  padding: 8px 8px 10px;
+  gap: 7px;
+  transition: opacity 0.15s;
 }
-
-.mixer-strip.is-master {
-  background: var(--unity-subtle);
-  border-right: 2px solid var(--unity-border-light);
-}
-
+ 
 .mixer-strip.is-silenced {
   opacity: 0.45;
 }
-
+ 
 .mixer-strip-name {
   font-size: 10px;
   font-weight: 600;
+  letter-spacing: 0.02em;
   color: var(--unity-text);
   text-align: center;
   white-space: nowrap;
@@ -50,99 +60,287 @@
   text-overflow: ellipsis;
   padding: 0 2px;
 }
-
+ 
 .mixer-strip-plugin-slot {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  height: 22px;
+  height: 20px;
   border: 1px dashed var(--unity-border-light);
   border-radius: 4px;
   color: var(--unity-text-dim);
-  font-size: 9px;
   cursor: not-allowed;
   background: var(--unity-darkest);
 }
-
-.mixer-strip-plugin-slot:hover {
-  color: var(--unity-text-muted);
-  border-color: var(--unity-text-dim);
-}
-
-.mixer-fader-row {
+ 
+/* ── Clip lamp + peak readout ── */
+.mixer-clip {
   display: flex;
-  flex: 1;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  min-height: 120px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid var(--unity-border-light);
+  background: var(--unity-darkest);
+  color: var(--unity-text-muted);
+  cursor: pointer;
+  padding: 0;
+  font-family: var(--font-mono);
+  transition: background 0.08s, border-color 0.08s, color 0.08s, box-shadow 0.08s;
 }
-
-.mixer-fader-track {
+ 
+.mixer-clip-readout {
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+ 
+/* Latched: the signal reached 0 dBFS or above since it was last cleared. */
+.mixer-clip.is-clipped {
+  background: var(--mx-clip);
+  border-color: #fca5a5;
+  color: #fff;
+  box-shadow: 0 0 10px 1px rgba(239, 68, 68, 0.75);
+  animation: mixer-clip-pulse 0.9s ease-in-out infinite;
+}
+ 
+@keyframes mixer-clip-pulse {
+  50% { box-shadow: 0 0 4px 0 rgba(239, 68, 68, 0.45); }
+}
+ 
+/* ── Fader / meter / scale row ── */
+.mixer-fader-row {
   position: relative;
   display: flex;
-  align-items: center;
+  flex: 1;
+  align-items: stretch;
   justify-content: center;
+  gap: 5px;
+  min-height: 140px;
+  padding: 6px 0;
+}
+ 
+/* dB scale labels, positioned by the same 0..1 mapping as the meter. */
+.mixer-scale {
+  position: relative;
+  width: 20px;
+  flex: none;
+}
+ 
+.mixer-scale-mark {
+  position: absolute;
+  right: 0;
+  transform: translateY(50%);
+  font-size: 8px;
+  line-height: 1;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--unity-text-dim);
+}
+ 
+.mixer-scale-mark.is-zero {
+  color: var(--mx-clip);
+  font-weight: 700;
+}
+ 
+/* ── Meter ── */
+.mixer-meter {
+  position: relative;
+  width: 12px;
+  flex: none;
+  border-radius: 2px;
+  background: #06070a;
+  border: 1px solid var(--unity-border);
+  padding: 1px;
+  box-sizing: border-box;
+}
+ 
+.mixer-meter-segs {
+  display: flex;
+  flex-direction: column-reverse; /* index 0 = bottom */
+  gap: 1px;
   height: 100%;
 }
-
-/* Vertical range slider via rotation — cross-browser-consistent approach,
-   avoids relying on non-standard writing-mode: vertical-lr slider support. */
-.mixer-fader-input {
-  width: 100px;
-  transform: rotate(-90deg);
-  accent-color: var(--unity-accent-blue, #38bdf8);
-  cursor: pointer;
-  background: transparent;
+ 
+.mixer-seg {
+  flex: 1;
+  border-radius: 1px;
+  background: var(--mx-seg-off);
+  transition: background 0.05s linear;
 }
-
+ 
+.mixer-seg.zone-ok.on   { background: var(--mx-ok); }
+.mixer-seg.zone-warm.on { background: var(--mx-warm); }
+.mixer-seg.zone-hot.on  { background: var(--mx-hot); }
+.mixer-seg.zone-clip.on {
+  background: var(--mx-clip);
+  box-shadow: 0 0 6px 1px rgba(239, 68, 68, 0.85);
+}
+ 
+/* Peak-hold tick. */
+.mixer-meter-peak {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  margin-bottom: -1px;
+  background: var(--mx-ok);
+  opacity: 0;
+  pointer-events: none;
+}
+.mixer-meter-peak[data-zone='warm'] { background: var(--mx-warm); }
+.mixer-meter-peak[data-zone='hot']  { background: var(--mx-hot); }
+.mixer-meter-peak[data-zone='clip'] {
+  background: var(--mx-clip);
+  box-shadow: 0 0 5px 1px rgba(239, 68, 68, 0.9);
+}
+ 
+/* The 0 dBFS reference line across the meter. */
+.mixer-meter-zero {
+  position: absolute;
+  left: -3px;
+  right: -3px;
+  height: 1px;
+  background: rgba(239, 68, 68, 0.9);
+  pointer-events: none;
+}
+ 
+/* ── Fader ── */
+.mixer-fader {
+  position: relative;
+  width: 26px;
+  flex: none;
+  cursor: ns-resize;
+  touch-action: none;
+  outline: none;
+}
+ 
+.mixer-fader:focus-visible .mixer-fader-cap {
+  box-shadow: 0 0 0 2px var(--unity-accent-blue, #38bdf8);
+}
+ 
+.mixer-fader-rail {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  margin-left: -2px;
+  border-radius: 2px;
+  background: #06070a;
+  border: 1px solid var(--unity-border);
+  box-sizing: border-box;
+}
+ 
+.mixer-fader-fill {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--unity-accent-blue, #38bdf8);
+  opacity: 0.55;
+  pointer-events: none;
+}
+ 
+/* Unity (0 dB) notch on the fader. */
+.mixer-fader-unity {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  height: 1px;
+  background: var(--unity-text-muted);
+  opacity: 0.8;
+  pointer-events: none;
+}
+ 
+.mixer-fader-cap {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 14px;
+  margin-bottom: -7px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #d4d8e0 0%, #9aa1ae 48%, #7b8290 52%, #b9bfca 100%);
+  border: 1px solid #1a1d24;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+ 
+/* Centre grip line, like a real channel-fader knob. */
+.mixer-fader-cap::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  top: 50%;
+  height: 1px;
+  margin-top: -0.5px;
+  background: #1a1d24;
+}
+ 
+/* Boosted above unity: warm the cap so "hotter than 0 dB" is visible. */
+.mixer-fader-cap.is-boosted {
+  background: linear-gradient(180deg, #fecaca 0%, #f87171 48%, #dc2626 52%, #fca5a5 100%);
+}
+ 
+/* ── Fader value readout ── */
 .mixer-fader-value {
-  font-size: 9px;
-  color: var(--unity-text-muted);
+  font-size: 11px;
+  font-weight: 600;
   font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--unity-text);
   text-align: center;
 }
-
+ 
+.mixer-fader-value.is-boosted {
+  color: var(--mx-clip);
+}
+ 
+.mixer-fader-unit {
+  font-size: 8px;
+  font-weight: 400;
+  color: var(--unity-text-dim);
+}
+ 
+/* ── Buttons ── */
 .mixer-strip-buttons {
   display: flex;
-  gap: 4px;
+  gap: 5px;
   justify-content: center;
 }
-
+ 
 .mixer-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 20px;
+  width: 30px;
+  height: 22px;
   border-radius: 3px;
   border: 1px solid var(--unity-border-light);
   background: var(--unity-hover);
   color: var(--unity-text-muted);
+  font-size: 10px;
+  font-weight: 700;
   cursor: pointer;
   padding: 0;
 }
-
+ 
 .mixer-btn:hover {
   color: var(--unity-text);
   border-color: var(--unity-text-dim);
 }
-
+ 
 .mixer-btn.mixer-btn-mute.active {
-  background: var(--unity-accent-red, #ef4444);
-  border-color: var(--unity-accent-red, #ef4444);
+  background: #dc2626;
+  border-color: #dc2626;
   color: #fff;
 }
-
+ 
 .mixer-btn.mixer-btn-solo.active {
-  background: var(--unity-accent-amber, #f59e0b);
-  border-color: var(--unity-accent-amber, #f59e0b);
+  background: #f59e0b;
+  border-color: #f59e0b;
   color: #1a1a1a;
-}
-
-.mixer-strip-meter-label {
-  font-size: 8px;
-  color: var(--unity-text-dim);
-  text-align: center;
 }

@@ -69,11 +69,43 @@ export function resumeAudioContext() {
   return Promise.resolve();
 }
  
-// element -> { source, gain } (null means chain creation failed and we
+// Samples per analysis window for the level meters. 1024 samples is ~21ms
+// at 48kHz — short enough that transient peaks register, long enough to be
+// cheap to read every animation frame.
+const METER_FFT_SIZE = 1024;
+ 
+// Floor for the meter scale. Anything at or below this reads as "silence".
+export const METER_FLOOR_DB = -60;
+ 
+// element -> { source, gain, analyser, trackId } (null means chain creation failed and we
 // fell back to element.volume). WeakMap: keys are the media elements
 // themselves, so elements removed by React drop out of the map
 // automatically once their chain is disconnected.
 const gainChains = new WeakMap();
+ 
+// trackId -> Set<AnalyserNode>. The WeakMap above can't be iterated, so the
+// meters need their own index. Entries are added when an element is tagged
+// with a track and removed when it's retagged to another track or its chain
+// is torn down (disconnectMediaGainChain), so it never holds a dead node.
+const trackAnalysers = new Map();
+ 
+function indexAnalyser(trackId, analyser) {
+  if (trackId == null || !analyser) return;
+  let set = trackAnalysers.get(trackId);
+  if (!set) {
+    set = new Set();
+    trackAnalysers.set(trackId, set);
+  }
+  set.add(analyser);
+}
+ 
+function unindexAnalyser(trackId, analyser) {
+  if (trackId == null || !analyser) return;
+  const set = trackAnalysers.get(trackId);
+  if (!set) return;
+  set.delete(analyser);
+  if (set.size === 0) trackAnalysers.delete(trackId);
+}
  
 /**
  * Route `el` through a GainNode once. Returns the gain node, or null if
@@ -97,7 +129,20 @@ export function ensureMediaGainChain(el) {
     gain.gain.value = 1;
     source.connect(gain);
     gain.connect(ctx.destination);
-    gainChains.set(el, { source, gain });
+    // Level-meter tap: a passive side branch off the POST-gain signal, so
+    // what the meter shows is what's actually being sent to the speakers
+    // (mute/solo/fader all already applied). An AnalyserNode with no
+    // output connection never touches the audible path.
+    let analyser = null;
+    try {
+      analyser = ctx.createAnalyser();
+      analyser.fftSize = METER_FFT_SIZE;
+      analyser.smoothingTimeConstant = 0;
+      gain.connect(analyser);
+    } catch {
+      analyser = null;
+    }
+    gainChains.set(el, { source, gain, analyser, trackId: null });
     // Once routed through the graph the element's own volume property is
     // bypassed — pin it at 1 so the gain node is the single volume control.
     el.volume = 1;
@@ -128,11 +173,21 @@ export function clampVolume(volume) {
  * an element that's about to play — see the FIXED note at the top of this
  * file for why order matters here.
  */
-export function setMediaElementVolume(el, volume) {
+export function setMediaElementVolume(el, volume, trackId) {
   if (!el) return;
   const v = clampVolume(volume);
   const gainNode = ensureMediaGainChain(el);
   if (gainNode) {
+    // Remember which track this element feeds so the mixer can meter per
+    // track. Optional: callers that don't pass one just aren't metered.
+    if (trackId != null) {
+      const chain = gainChains.get(el);
+      if (chain && chain.trackId !== trackId) {
+        unindexAnalyser(chain.trackId, chain.analyser);
+        chain.trackId = trackId;
+        indexAnalyser(trackId, chain.analyser);
+      }
+    }
     gainNode.gain.value = v;
     // When volume is 0, also mute the element so absolutely no sound leaks through
     el.muted = v === 0;
@@ -169,12 +224,66 @@ export function disconnectMediaGainChain(el) {
   if (!el) return;
   const chain = gainChains.get(el);
   if (chain) {
+    unindexAnalyser(chain.trackId, chain.analyser);
     try {
       chain.source.disconnect();
       chain.gain.disconnect();
+      chain.analyser?.disconnect();
     } catch {
       // already disconnected
     }
     gainChains.delete(el);
   }
+}
+ 
+// Reused per-analyser scratch buffers so reading levels every animation
+// frame allocates nothing.
+const meterBuffers = new WeakMap();
+ 
+function readAnalyserPeak(analyser) {
+  let buf = meterBuffers.get(analyser);
+  if (!buf) {
+    buf = new Float32Array(analyser.fftSize);
+    meterBuffers.set(analyser, buf);
+  }
+  analyser.getFloatTimeDomainData(buf);
+  let peak = 0;
+  for (let i = 0; i < buf.length; i++) {
+    const a = buf[i] < 0 ? -buf[i] : buf[i];
+    if (a > peak) peak = a;
+  }
+  return peak;
+}
+ 
+/** Linear amplitude (1.0 = full scale) -> dBFS, floored at METER_FLOOR_DB. */
+export function amplitudeToDb(amp) {
+  if (!(amp > 0)) return METER_FLOOR_DB;
+  const db = 20 * Math.log10(amp);
+  return db < METER_FLOOR_DB ? METER_FLOOR_DB : db;
+}
+ 
+/**
+ * Live peak level (dBFS) for one track: the loudest sample across every
+ * media element currently routed to that track, in the last analysis
+ * window. Returns METER_FLOOR_DB when nothing is playing on the track.
+ * Values above 0 are possible (and meaningful — the fader goes to +12 dB,
+ * and summed/boosted signal can exceed full scale): that's clipping.
+ *
+ * Note: this measures each element separately and takes the max, not the
+ * true summed waveform of overlapping clips. Overlaps on one track are
+ * rare, and peak-of-max is the conservative direction to be wrong in for
+ * a clip warning.
+ */
+export function getTrackPeakDb(trackId) {
+  if (trackId == null || typeof window === 'undefined') return METER_FLOOR_DB;
+  // gainChains is a WeakMap (not iterable) by design so discarded elements
+  // can be collected — track membership therefore lives in this Set index.
+  const set = trackAnalysers.get(trackId);
+  if (!set || set.size === 0) return METER_FLOOR_DB;
+  let peak = 0;
+  for (const analyser of set) {
+    const p = readAnalyserPeak(analyser);
+    if (p > peak) peak = p;
+  }
+  return amplitudeToDb(peak);
 }
