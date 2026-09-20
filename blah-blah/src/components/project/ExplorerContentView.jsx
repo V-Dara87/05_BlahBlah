@@ -33,6 +33,26 @@ import {
  
 const SECTION_KEYS = ['media', 'prefabs', 'scripts', 'shared'];
  
+/**
+ * Object handed to the hover/click preview popover. Most items preview
+ * straight from their own data; a shared MEDIA item keeps its file under
+ * `data` (Blob + a derived playable `url`), so it is reshaped into the same
+ * { name, type, url, duration } an ordinary media asset has, which is what
+ * MediaPreview reads.
+ */
+const previewPayload = (item, itemKind) => {
+  if (itemKind === 'shared' && item.type === 'media') {
+    return {
+      id: item.id,
+      name: item.name,
+      type: item.data?.mediaType,
+      url: item.data?.url,
+      duration: item.data?.duration,
+    };
+  }
+  return item.data || item;
+};
+ 
 export const ExplorerContentView = memo(function ExplorerContentView({
   currentLocation,
   onNavigate,
@@ -69,6 +89,7 @@ export const ExplorerContentView = memo(function ExplorerContentView({
   onImportSharedItem,
   onSharePrefab,
   onShareScript,
+  onShareMedia,
   onImportMedia,
   onNewScript,
 }) {
@@ -421,14 +442,25 @@ export const ExplorerContentView = memo(function ExplorerContentView({
               sizeString = 'JSX File';
             } else if (itemKind === 'shared') {
               const isPrefab = item.type === 'prefab';
+              const isMedia = item.type === 'media';
+              const isSharedVideo = isMedia && item.data?.mediaType === 'video';
+              const iconSize = isGridView ? 28 : 15;
               iconElement = isPrefab ? (
-                <Package size={isGridView ? 28 : 15} className="text-violet" />
+                <Package size={iconSize} className="text-violet" />
+              ) : isMedia ? (
+                isSharedVideo
+                  ? <Film size={iconSize} className="text-indigo" />
+                  : <Music size={iconSize} className="text-emerald" />
               ) : (
-                <FileCode size={isGridView ? 28 : 15} className="text-emerald" />
+                <FileCode size={iconSize} className="text-emerald" />
               );
-              typeLabel = isPrefab ? 'Shared Prefab' : 'Shared Script';
-              metaString = isPrefab ? 'prefab' : 'jsx';
-              sizeString = 'Shared';
+              typeLabel = isPrefab
+                ? 'Shared Prefab'
+                : isMedia
+                ? (isSharedVideo ? 'Shared Video' : 'Shared Audio')
+                : 'Shared Script';
+              metaString = isPrefab ? 'prefab' : isMedia ? shortDuration(item.data?.duration) : 'jsx';
+              sizeString = isMedia && item.data?.size ? formatFileSize(item.data.size) : 'Shared';
             }
  
             // Drag item kind payload
@@ -453,7 +485,7 @@ export const ExplorerContentView = memo(function ExplorerContentView({
                     showPreview(
                       e,
                       itemKind === 'shared' ? item.type : itemKind,
-                      item.data || item
+                      previewPayload(item, itemKind)
                     )
                   }
                   onMouseLeave={() => setPreview(null)}
@@ -464,7 +496,7 @@ export const ExplorerContentView = memo(function ExplorerContentView({
                     showPreview(
                       e,
                       itemKind === 'shared' ? item.type : itemKind,
-                      item.data || item
+                      previewPayload(item, itemKind)
                     );
                   }}
                   onDoubleClick={() => onItemDoubleClick(itemKind, item)}
@@ -530,14 +562,15 @@ export const ExplorerContentView = memo(function ExplorerContentView({
                         <Plus size={13} />
                       </button>
                     )}
-                    {(itemKind === 'prefab' || itemKind === 'script') && (
+                    {(itemKind === 'prefab' || itemKind === 'script' || itemKind === 'media') && (
                       <button
                         className="card-action-btn share-btn"
                         title="Save to Shared Library"
                         onClick={(e) => {
                           e.stopPropagation();
                           if (itemKind === 'prefab') onSharePrefab(item);
-                          else onShareScript(item);
+                          else if (itemKind === 'script') onShareScript(item);
+                          else onShareMedia?.(item);
                         }}
                       >
                         <Share2 size={12} />
@@ -559,7 +592,7 @@ export const ExplorerContentView = memo(function ExplorerContentView({
                   showPreview(
                     e,
                     itemKind === 'shared' ? item.type : itemKind,
-                    item.data || item
+                    previewPayload(item, itemKind)
                   )
                 }
                 onMouseLeave={() => setPreview(null)}
@@ -570,7 +603,7 @@ export const ExplorerContentView = memo(function ExplorerContentView({
                   showPreview(
                     e,
                     itemKind === 'shared' ? item.type : itemKind,
-                    item.data || item
+                    previewPayload(item, itemKind)
                   );
                 }}
                 onDoubleClick={() => onItemDoubleClick(itemKind, item)}

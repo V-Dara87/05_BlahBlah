@@ -61,6 +61,7 @@ export const ProjectPanel = memo(function ProjectPanel({
   onMoveSharedItem,
   onSharePrefab,
   onShareScript,
+  onShareMedia,
   onImportSharedItem,
   onAddMediaAsset,
   onRemoveMediaAsset,
@@ -261,6 +262,17 @@ export const ProjectPanel = memo(function ProjectPanel({
     navigateTo({ section, folder: folderName });
   };
  
+  // Copy one project item into the app-wide Shared Library. Single entry
+  // point for every path that shares (toolbar, context menu, drag & drop),
+  // so adding a new shareable kind only touches this switch. Resolves the
+  // stored shared item (or undefined) so callers can file it into a folder.
+  const shareToLibrary = useCallback((kind, item) => {
+    if (kind === 'prefab') return onSharePrefab?.(item);
+    if (kind === 'script') return onShareScript?.(item);
+    if (kind === 'media') return onShareMedia?.(item);
+    return undefined;
+  }, [onSharePrefab, onShareScript, onShareMedia]);
+ 
   // ── Drag & Drop and File Ops (merged hook) ───────────────────────────────
   const {
     dragOverKey,
@@ -308,6 +320,7 @@ export const ProjectPanel = memo(function ProjectPanel({
     scripts,
     onCreateScript,
     onOpenScriptEditor,
+    onShareToLibrary: shareToLibrary,
   });
  
   // ── Context Menu (hook) ──────────────────────────────────────────────────
@@ -346,6 +359,7 @@ export const ProjectPanel = memo(function ProjectPanel({
     onReplaceMediaAsset,
     onSharePrefab,
     onShareScript,
+    onShareToLibrary: shareToLibrary,
     projectFolderHandle,
   });
  
@@ -386,9 +400,9 @@ export const ProjectPanel = memo(function ProjectPanel({
   const canDeleteSelected = selectedEntries.length > 0;
   const canShareSelected =
     selectedEntries.length > 0 &&
-    selectedEntries.every(({ kind }) => kind === 'prefab' || kind === 'script');
+    selectedEntries.every(({ kind }) => kind === 'prefab' || kind === 'script' || kind === 'media');
   const selectedTotalSize = selectedEntries.reduce(
-    (acc, { item }) => acc + (item?.size || 0),
+    (acc, { item }) => acc + (item?.size || item?.data?.size || 0),
     0,
   );
  
@@ -480,10 +494,7 @@ export const ProjectPanel = memo(function ProjectPanel({
         }}
         onDelete={bulkDeleteSelected}
         onShare={() => {
-          selectedEntries.forEach(({ kind, item }) => {
-            if (kind === 'prefab') onSharePrefab?.(item);
-            else if (kind === 'script') onShareScript?.(item);
-          });
+          selectedEntries.forEach(({ kind, item }) => shareToLibrary(kind, item));
         }}
         sortBy={sortBy}
         onSortChange={setSortBy}
@@ -567,6 +578,7 @@ export const ProjectPanel = memo(function ProjectPanel({
           onImportSharedItem={onImportSharedItem}
           onSharePrefab={onSharePrefab}
           onShareScript={onShareScript}
+          onShareMedia={onShareMedia}
           onImportMedia={() => {
             importTargetFolderRef.current =
               currentLocation.section === 'media' ? currentLocation.folder : null;
@@ -682,7 +694,7 @@ export const ProjectPanel = memo(function ProjectPanel({
             <>
               {ctxMenu.target.items.length > 0 &&
                 ctxMenu.target.items.every(
-                  ({ kind }) => kind === 'prefab' || kind === 'script'
+                  ({ kind }) => kind === 'prefab' || kind === 'script' || kind === 'media'
                 ) && (
                   <button
                     className="ctx-menu-item"
@@ -745,7 +757,8 @@ export const ProjectPanel = memo(function ProjectPanel({
                   </button>
                 )}
                 {(ctxMenu.target.kind === 'prefab' ||
-                  ctxMenu.target.kind === 'script') && (
+                  ctxMenu.target.kind === 'script' ||
+                  ctxMenu.target.kind === 'media') && (
                   <button
                     className="ctx-menu-item"
                     onClick={() => handleContextAction('share')}

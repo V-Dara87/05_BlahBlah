@@ -311,6 +311,7 @@ export function App() {
   const {
     handleSharePrefab,
     handleShareScript,
+    handleShareMedia,
     handleRemoveSharedItem,
     handleMoveSharedItem,
     handleImportSharedItem,
@@ -320,6 +321,7 @@ export function App() {
     setPrefabs,
     handleCreateScript,
     onOpenScriptEditor: handleOpenScriptEditor,
+    onAddMediaAsset: handleAddMediaAsset,
   });
  
   const {
@@ -642,6 +644,7 @@ export function App() {
           sharedLibraryItems: sharedLibrary.items,
           onSharePrefab: handleSharePrefab,
           onShareScript: handleShareScript,
+          onShareMedia: handleShareMedia,
           onRemoveSharedItem: handleRemoveSharedItem,
           onMoveSharedItem: handleMoveSharedItem,
           onImportSharedItem: handleImportSharedItem,

@@ -12,6 +12,14 @@ import {
   dragHasItemKind,
 } from '../../utils/dragData';
  
+// Item kinds each drop target accepts. The Shared Library accepts its own
+// items (move between its folders) AND project prefabs/scripts/media, which
+// are COPIED into it (the project keeps its original). Every other section
+// only accepts its own kind.
+const SHARE_SOURCE_KINDS = ['prefab', 'script', 'media'];
+const acceptedKindsFor = (itemKind) =>
+  itemKind === 'shared' ? ['shared', ...SHARE_SOURCE_KINDS] : [itemKind];
+ 
 /**
  * Owns everything that mutates the Explorer's items/folders on disk or in
  * state: renaming (items + folders), folder creation/deletion, media
@@ -51,6 +59,9 @@ import {
  * @param {any[]} params.scripts
  * @param {(script:any) => Promise<void>} params.onCreateScript
  * @param {(script:any) => void} params.onOpenScriptEditor
+ * @param {(kind:'prefab'|'script'|'media', item:any, folderName:string|null) => void} [params.onShareToLibrary]
+ *   Copies a project item into the app-wide Shared Library (used when a
+ *   prefab/script/media card is dropped onto a Shared Library target).
  */
 export function useExplorerFileManager({
   registryCtx,
@@ -80,6 +91,7 @@ export function useExplorerFileManager({
   scripts,
   onCreateScript,
   onOpenScriptEditor,
+  onShareToLibrary,
 }) {
   // ── Drag & Drop primitives (defined first: file-ops' handleFileUpload and
   // commitFolderRename both need moveItemToFolder) ────────────────────────
@@ -113,7 +125,11 @@ export function useExplorerFileManager({
  
   const handleFolderDragOver = useCallback((e, itemKind, dropKey) => {
     const isOsFile = isOsFileDrag(e.dataTransfer);
-    if (!dragHasItemKind(e.dataTransfer, itemKind) && !(isOsFile && itemKind === 'media')) return;
+    const acceptsItem = acceptedKindsFor(itemKind).some((k) => dragHasItemKind(e.dataTransfer, k));
+    // OS files are media: accepted by the media section and by the Shared
+    // Library (which stores them as shared media).
+    const acceptsOsFile = isOsFile && (itemKind === 'media' || itemKind === 'shared');
+    if (!acceptsItem && !acceptsOsFile) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     setDragOverKeyState((prev) => (prev !== dropKey ? dropKey : prev));
@@ -413,6 +429,29 @@ export default class NewScript extends CanvasComponent {
   }, [scripts, currentLocation, onCreateScript, onOpenScriptEditor]);
  
   // ── Folder drop (needs handleFileUpload + moveItemToFolder, both above) ─
+  // Copies project items into the Shared Library, optionally into a
+  // subfolder. onShareToLibrary resolves once the item is stored; the item
+  // is then filed into the folder (same "extra folder" bookkeeping as a move).
+  const copyToLibrary = useCallback(async (kind, item, folderName) => {
+    if (!onShareToLibrary || !item) return;
+    const stored = await onShareToLibrary(kind, item);
+    if (folderName) {
+      if (stored?.id) moveItemToFolder('shared', stored.id, folderName);
+      else setExtraFoldersFor('shared', (prev) => (prev.includes(folderName) ? prev : [...prev, folderName]));
+    }
+  }, [onShareToLibrary, moveItemToFolder, setExtraFoldersFor]);
+ 
+  // Resolves a dragged item's full object from the current lists (the drag
+  // payload only reliably carries the id for multi-select).
+  const findItem = useCallback((kind, id) => {
+    const list =
+      kind === 'prefab' ? itemsBySection.prefabs
+      : kind === 'script' ? itemsBySection.scripts
+      : kind === 'media' ? itemsBySection.media
+      : itemsBySection.shared;
+    return (list || []).find((i) => i.id === id) || null;
+  }, [itemsBySection]);
+ 
   const handleFolderDrop = useCallback((e, section, folderName, itemKind) => {
     const isOsFile = isOsFileDrag(e.dataTransfer);
     const hasFiles = (e.dataTransfer?.files?.length ?? 0) > 0;
@@ -425,13 +464,47 @@ export default class NewScript extends CanvasComponent {
       return;
     }
  
-    if (!dragHasItemKind(e.dataTransfer, itemKind)) return;
+    // OS files dropped on the Shared Library: import as media, then share.
+    if (isOsFile && hasFiles && itemKind === 'shared' && onShareToLibrary) {
+      e.preventDefault();
+      e.stopPropagation();
+      setDragOverKeyState(null);
+      importMediaFiles({
+        files: e.dataTransfer.files,
+        mediaAssets: [],
+        onAddMediaAsset: (asset, file) => {
+          // Share straight from the picked File so nothing needs to be added
+          // to the current project first.
+          copyToLibrary('media', { ...asset, file }, folderName || null);
+        },
+      });
+      return;
+    }
+ 
+    const accepted = acceptedKindsFor(itemKind);
+    const dragKind = accepted.find((k) => dragHasItemKind(e.dataTransfer, k));
+    if (!dragKind) return;
     e.preventDefault();
     e.stopPropagation();
     setDragOverKeyState(null);
     const payload = readDragPayload(e.dataTransfer);
     const draggedId = payload?.itemData?.id;
     if (!draggedId) return;
+ 
+    // Project item -> Shared Library: COPY (never moves the original).
+    if (itemKind === 'shared' && dragKind !== 'shared') {
+      const key = selKey(dragKind, draggedId);
+      const ids = selectedItems.has(key) && selectedItems.size > 1
+        ? [...selectedItems].map((k) => k.split(':')).filter(([kKind]) => kKind === dragKind).map(([, id]) => id)
+        : [draggedId];
+      ids.forEach((id) => {
+        // Prefer the live item; fall back to the drag payload's own copy.
+        const item = findItem(dragKind, id) || (id === draggedId ? payload.itemData : null);
+        copyToLibrary(dragKind, item, folderName || null);
+      });
+      return;
+    }
+ 
     const key = selKey(section, draggedId);
     if (selectedItems.has(key) && selectedItems.size > 1) {
       selectedItems.forEach((k) => {
@@ -441,7 +514,7 @@ export default class NewScript extends CanvasComponent {
     } else {
       moveItemToFolder(section, draggedId, folderName);
     }
-  }, [isOsFileDrag, handleFileUpload, selectedItems, moveItemToFolder]);
+  }, [isOsFileDrag, handleFileUpload, selectedItems, moveItemToFolder, onShareToLibrary, copyToLibrary, findItem]);
  
   return {
     // drag & drop

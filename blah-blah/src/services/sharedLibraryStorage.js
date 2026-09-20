@@ -1,5 +1,5 @@
 /**
- * App-wide Shared Library storage — prefabs & scripts that live OUTSIDE any
+ * App-wide Shared Library storage — prefabs, scripts & media that live OUTSIDE any
  * single project directory so they persist across every project (Feature 2:
  * the app-wide shared folder). Nothing here touches the File System Access
  * project handle: storage is browser-side only.
@@ -7,9 +7,13 @@
  *   interface SharedItem {
  *     id: string;
  *     name: string;
- *     type: 'prefab' | 'script';
- *     data: any;        // prefab JSON (project-prefab shape) or script
- *                       // { name, code, description }
+ *     type: 'prefab' | 'script' | 'media';
+ *     data: any;        // prefab JSON (project-prefab shape), script
+ *                       // { name, code, description }, or media
+ *                       // { blob, mediaType: 'video'|'audio', duration,
+ *                       //   size, mimeType }. The Blob itself is stored
+ *                       // (IndexedDB structured-clones Blobs) because a
+ *                       // blob:/asset URL would not survive a reload.
  *     createdAt: number;
  *     folder?: string;  // optional one-level subfolder name within the
  *                       // Shared Library section (same model as project
@@ -106,7 +110,12 @@ function lsList() {
  
 function lsWriteAll(items) {
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify(items));
+    // A Blob JSON-stringifies to "{}", which would persist a silently broken
+    // media item. The fallback can't hold binary data, so media is left out
+    // of it (media sharing simply needs IndexedDB, which every real target
+    // — the Tauri webview and modern browsers — has).
+    const storable = items.filter((i) => i?.type !== 'media');
+    localStorage.setItem(LS_KEY, JSON.stringify(storable));
     return true;
   } catch {
     return false; // quota/disabled — shared library silently unavailable
@@ -175,6 +184,27 @@ export function makeSharedPrefabItem(prefab) {
     name: prefab?.name || 'Prefab',
     type: 'prefab',
     data: JSON.parse(JSON.stringify(prefab || {})),
+    createdAt: Date.now(),
+  };
+}
+ 
+/**
+ * Convenience: build a media SharedItem (not yet stored).
+ * @param {{ name: string, type: 'video'|'audio', duration?: number, size?: number }} asset
+ * @param {Blob} blob  the file's actual bytes
+ */
+export function makeSharedMediaItem(asset, blob) {
+  return {
+    id: `shared-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: asset?.name || 'Media',
+    type: 'media',
+    data: {
+      blob,
+      mediaType: asset?.type === 'video' ? 'video' : 'audio',
+      duration: asset?.duration,
+      size: blob?.size ?? asset?.size,
+      mimeType: blob?.type || '',
+    },
     createdAt: Date.now(),
   };
 }

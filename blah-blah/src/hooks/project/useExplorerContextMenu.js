@@ -35,8 +35,8 @@ import { openProjectInExplorer, revealPathInExplorer } from '../../services/ideL
  * @param {(id:string) => void} params.onEnterPrefabMode
  * @param {(item:any) => void} params.onAddPrefabToTimeline
  * @param {(item:any) => void} params.onReplaceMediaAsset
- * @param {(item:any) => void} params.onSharePrefab
- * @param {(item:any) => void} params.onShareScript
+ * @param {(kind:'prefab'|'script'|'media', item:any) => any} params.onShareToLibrary
+ *   Copies one project item into the app-wide Shared Library.
  * @param {{path?:string}|null} params.projectFolderHandle - project root (Tauri handles carry `.path`)
  */
 export function useExplorerContextMenu({
@@ -65,8 +65,7 @@ export function useExplorerContextMenu({
   onEnterPrefabMode,
   onAddPrefabToTimeline,
   onReplaceMediaAsset,
-  onSharePrefab,
-  onShareScript,
+  onShareToLibrary,
   projectFolderHandle,
 }) {
   const closeCtxMenu = useCallback(() => setCtxMenu(null), [setCtxMenu]);
@@ -261,12 +260,10 @@ export function useExplorerContextMenu({
     } else if (action === 'share') {
       setCtxMenu(null);
       if (target.kind === 'multi') {
-        target.items.forEach(({ kind, item }) => {
-          if (kind === 'prefab') onSharePrefab?.(item);
-          else if (kind === 'script') onShareScript?.(item);
-        });
-      } else if (target.kind === 'prefab') onSharePrefab?.(target.item);
-      else if (target.kind === 'script') onShareScript?.(target.item);
+        target.items.forEach(({ kind, item }) => onShareToLibrary?.(kind, item));
+      } else {
+        onShareToLibrary?.(target.kind, target.item);
+      }
     }
   }, [
     ctxMenu,
@@ -289,8 +286,7 @@ export function useExplorerContextMenu({
     clearSelection,
     deleteItem,
     deleteFolder,
-    onSharePrefab,
-    onShareScript,
+    onShareToLibrary,
     resolveDiskTarget,
   ]);
  

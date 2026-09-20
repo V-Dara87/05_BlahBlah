@@ -44,12 +44,12 @@ export const MEDIA_SORT_OPTIONS = [
  
 // Composite selection key `${kind}:${id}` (Feature 1).
 export const selKey = (kind, id) => `${kind}:${id}`;
-
+ 
 export const ROOT_LOCATION = Object.freeze({ section: null, folder: null });
-
+ 
 export const isSameLocation = (a, b) =>
   Boolean(a && b && a.section === b.section && a.folder === b.folder);
-
+ 
 export const formatFileSize = (bytes) => {
   if (!bytes || typeof bytes !== 'number' || isNaN(bytes)) return '—';
   if (bytes < 1024) return `${bytes} B`;
@@ -60,7 +60,7 @@ export const formatFileSize = (bytes) => {
   const gb = mb / 1024;
   return `${gb.toFixed(2)} GB`;
 };
-
+ 
 export const formatDate = (timestamp) => {
   if (!timestamp) return '—';
   try {
@@ -73,10 +73,10 @@ export const formatDate = (timestamp) => {
     const mins = String(d.getMinutes()).padStart(2, '0');
     return `${year}-${month}-${day} ${hours}:${mins}`;
   } catch {
-    return '—';
+    return '��';
   }
 };
-
+ 
 export const SECTIONS_CONFIG = {
   prefabs: {
     key: 'prefabs',
@@ -115,7 +115,7 @@ export const SECTIONS_CONFIG = {
     title: 'Shared Library',
     colorClass: 'text-violet',
     accentColor: '#a78bfa',
-    emptyHint: 'App-wide library — share a prefab or script to keep it available across every project.',
-    subfolderEmptyHint: 'Empty folder — drop shared items here.',
+    emptyHint: 'App-wide library — drag a prefab, script or media file here (or use Share) to keep it available across every project.',
+    subfolderEmptyHint: 'Empty folder — drop prefabs, scripts or media here.',
   },
-};
+};

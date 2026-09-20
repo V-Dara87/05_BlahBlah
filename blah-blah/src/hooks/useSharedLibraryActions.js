@@ -4,12 +4,13 @@ import { useCallback } from 'react';
  * useSharedLibraryActions — App-level handlers around useSharedLibrary.
  *
  * useSharedLibrary (hooks/useSharedLibrary.js) owns the app-wide shared
- * prefab/script library's own state (items, storage sync). This hook is
- * the thin translation layer between that library and the current
- * project: share = copy a project prefab/script into the app-wide
+ * prefab/script/media library's own state (items, storage sync). This hook
+ * is the thin translation layer between that library and the current
+ * project: share = copy a project prefab/script/media into the app-wide
  * library; import = bring a shared item into THIS project (scripts must
  * exist in the project to run, prefabs are copied into the project's
- * prefab list so they persist with the folder on disk).
+ * prefab list so they persist with the folder on disk, media is re-created
+ * from its stored bytes and saved into the project's media/ folder).
  *
  * Split out from useSharedLibrary itself (rather than folded into it)
  * because importing needs project-scoped operations — handleCreateScript
@@ -23,13 +24,18 @@ export function useSharedLibraryActions({
   setPrefabs,
   handleCreateScript,
   onOpenScriptEditor,
+  onAddMediaAsset,
 }) {
   const handleSharePrefab = useCallback(
-    (prefab) => { sharedLibrary.addPrefab(prefab); },
+    (prefab) => sharedLibrary.addPrefab(prefab),
     [sharedLibrary]
   );
   const handleShareScript = useCallback(
-    (script) => { sharedLibrary.addScript(script); },
+    (script) => sharedLibrary.addScript(script),
+    [sharedLibrary]
+  );
+  const handleShareMedia = useCallback(
+    (asset) => sharedLibrary.addMedia(asset),
     [sharedLibrary]
   );
   const handleRemoveSharedItem = useCallback(
@@ -53,6 +59,27 @@ export function useSharedLibraryActions({
       };
       await handleCreateScript(newScript);
       onOpenScriptEditor(newScript);
+    } else if (sharedItem.type === 'media') {
+      const blob = data.blob;
+      if (!(blob instanceof Blob)) return;
+      const mediaType = data.mediaType === 'video' ? 'video' : 'audio';
+      // Rebuild a File so the normal import path (saveMediaFileToFolder in
+      // useMediaAssets) copies it into the project's media/ folder.
+      const file = new File([blob], sharedItem.name || 'Media', {
+        type: blob.type || data.mimeType || '',
+      });
+      await onAddMediaAsset?.(
+        {
+          id: `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          name: file.name,
+          type: mediaType,
+          url: URL.createObjectURL(file),
+          duration: data.duration,
+          size: file.size,
+          createdAt: Date.now(),
+        },
+        file
+      );
     } else if (sharedItem.type === 'prefab') {
       if (!data || typeof data !== 'object' || !data.name) return;
       if (Array.isArray(data.embeddedScripts)) {
@@ -73,11 +100,12 @@ export function useSharedLibraryActions({
         { ...JSON.parse(JSON.stringify(data)), id: `prefab-${Date.now()}` },
       ]);
     }
-  }, [handleCreateScript, setPrefabs, scripts, onOpenScriptEditor]);
+  }, [handleCreateScript, setPrefabs, scripts, onOpenScriptEditor, onAddMediaAsset]);
  
   return {
     handleSharePrefab,
     handleShareScript,
+    handleShareMedia,
     handleRemoveSharedItem,
     handleMoveSharedItem,
     handleImportSharedItem,

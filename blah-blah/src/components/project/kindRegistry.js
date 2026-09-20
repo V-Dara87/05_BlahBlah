@@ -16,8 +16,9 @@
  *    scriptKindFilter) that don't fit a uniform getAllItems() shape without
  *    smuggling filter logic in here too. They stay as local variables in
  *    ProjectPanel.jsx.
- *  - the "share" action (prefab/script only, no media/shared) — not a 4-way
- *    branch, stays as its own special case.
+ *  - the "share" action (prefab/script/media -> Shared Library; not offered
+ *    for shared items) — not a 4-way branch, lives in ProjectPanel's
+ *    shareToLibrary.
  *  - ctxMenu.target.kind values ('empty' | 'folder' | 'multi' | ...) — a
  *    different, unrelated use of the word "kind".
  */
