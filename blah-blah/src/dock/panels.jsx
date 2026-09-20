@@ -3,6 +3,7 @@ import { memo, useState, useCallback, useMemo } from 'react';
 import { ProjectPanel } from '../components/ProjectPanel';
 import { EntityRenderer } from '../components/entity/EntityRenderer';
 import { UnityInspector } from '../components/UnityInspector';
+import { MultiInspector } from '../components/inspector/MultiInspector';
 import { Timeline } from '../components/Timeline/Timeline';
 import { PrefabModeBar } from '../components/Timeline/PrefabModeBar';
 import { Dopesheet } from '../components/Dopesheet/Dopesheet';
@@ -100,8 +101,8 @@ export const PreviewDockPanel = memo(function PreviewDockPanel() {
  
 export const InspectorDockPanel = memo(function InspectorDockPanel() {
   const {
-    entities, selectedEntityId, tracks, scripts, prefabs,
-    handleUpdateEntity, handleDeleteEntity,
+    entities, selectedEntityId, selectedIds, setSelectedIds, setSelectedEntityId, tracks, scripts, prefabs,
+    handleUpdateEntity, handleUpdateClips, handleDeleteEntity,
     onOpenScriptEditor, handleSaveAsPrefab,
     handleAttachScriptToEntity,
     autoKeyEnabled, setAutoKeyEnabled,
@@ -137,6 +138,41 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
  
   const currentTime = useCurrentTime();
   const selectedEntity = entities.find((e) => e.id === activeEntityId);
+ 
+  // Multi-select: 2+ existing clips selected on the timeline (and the
+  // Inspector isn't pinned to one entity via the lock) -> shared editing.
+  // Stale ids (deleted clips) are filtered out so a delete can't leave the
+  // panel showing a phantom selection.
+  const handleDeleteMany = useCallback((ids) => {
+    handleDeleteEntity(ids);
+    setSelectedIds([]);
+    setSelectedEntityId(null);
+  }, [handleDeleteEntity, setSelectedIds, setSelectedEntityId]);
+ 
+  const multiEntities = useMemo(() => {
+    if (isLocked || !selectedIds || selectedIds.length < 2) return [];
+    const idSet = new Set(selectedIds);
+    return entities.filter((e) => idSet.has(e.id));
+  }, [isLocked, selectedIds, entities]);
+ 
+  if (multiEntities.length >= 2) {
+    return (
+      <div className="dock-panel-root">
+        <MultiInspector
+          selectedEntities={multiEntities}
+          entities={entities}
+          tracks={tracks}
+          scripts={scripts}
+          mediaAssets={mediaAssets}
+          onUpdateClips={handleUpdateClips}
+          onDeleteEntities={handleDeleteMany}
+          currentTime={currentTime}
+          autoKeyEnabled={autoKeyEnabled}
+          setAutoKeyEnabled={setAutoKeyEnabled}
+        />
+      </div>
+    );
+  }
  
   return (
     <div className="dock-panel-root">
@@ -197,10 +233,15 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
  
   const handleToggleSelect = useCallback((id) => {
     setSelectedIds((prev) => {
-      if (prev.includes(id)) return prev.filter((i) => i !== id);
-      return [...prev, id];
+      // Ctrl+click toggles membership. When nothing is in the multi-list
+      // yet, the clip that is currently single-selected counts as the
+      // first member — otherwise Ctrl+clicking a second clip produced a
+      // one-element list and never became a real multi-selection.
+      const base = prev.length === 0 && selectedEntityId ? [selectedEntityId] : prev;
+      if (base.includes(id)) return base.filter((i) => i !== id);
+      return [...base, id];
     });
-  }, [setSelectedIds]);
+  }, [setSelectedIds, selectedEntityId]);
  
   const handleRangeSelect = useCallback((endId) => {
     if (!selectedEntityId || selectedEntityId === endId) return;
@@ -216,6 +257,17 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
   const handleClearSelection = useCallback(() => {
     setSelectedIds([]);
   }, [setSelectedIds]);
+ 
+  // A plain (non-modifier) click selects ONE clip. ClipItem only calls
+  // onSelectClip for that case (Ctrl/Shift go through onToggleSelect /
+  // onRangeSelect), but it never told the multi-selection to reset — so a
+  // stale selectedIds list survived and the Inspector kept showing the old
+  // multi-selection. Keep clicks inside the current multi-selection alone
+  // (e.g. starting a drag on one of several selected clips).
+  const handleSelectClip = useCallback((id) => {
+    setSelectedEntityId(id);
+    setSelectedIds((prev) => (id && prev.includes(id) ? prev : []));
+  }, [setSelectedEntityId, setSelectedIds]);
  
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', overflow: 'hidden' }}>
@@ -241,7 +293,7 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
         recordingStartTime={recordingStartTime}
         recordingLevel={recordingLevel}
         onSeek={(t) => store.seek(t)}
-        onSelectClip={setSelectedEntityId}
+        onSelectClip={handleSelectClip}
         onUpdateClip={handleUpdateEntity}
         onUpdateClips={handleUpdateClips}
         onDuplicateClips={handleDuplicateClips}
