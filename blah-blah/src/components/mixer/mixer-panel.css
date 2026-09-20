@@ -1,0 +1,148 @@
+.mixer-panel {
+  display: flex;
+  flex-direction: row;
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: var(--unity-dark);
+  user-select: none;
+}
+
+.mixer-panel-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--unity-text-dim);
+  font-size: 12px;
+  padding: 24px;
+  text-align: center;
+}
+
+.mixer-strip {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 84px;
+  min-width: 84px;
+  border-right: 1px solid var(--unity-border);
+  background: var(--unity-panel);
+  padding: 8px 6px 10px;
+  gap: 8px;
+}
+
+.mixer-strip.is-master {
+  background: var(--unity-subtle);
+  border-right: 2px solid var(--unity-border-light);
+}
+
+.mixer-strip.is-silenced {
+  opacity: 0.45;
+}
+
+.mixer-strip-name {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--unity-text);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 2px;
+}
+
+.mixer-strip-plugin-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 22px;
+  border: 1px dashed var(--unity-border-light);
+  border-radius: 4px;
+  color: var(--unity-text-dim);
+  font-size: 9px;
+  cursor: not-allowed;
+  background: var(--unity-darkest);
+}
+
+.mixer-strip-plugin-slot:hover {
+  color: var(--unity-text-muted);
+  border-color: var(--unity-text-dim);
+}
+
+.mixer-fader-row {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 120px;
+}
+
+.mixer-fader-track {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+
+/* Vertical range slider via rotation — cross-browser-consistent approach,
+   avoids relying on non-standard writing-mode: vertical-lr slider support. */
+.mixer-fader-input {
+  width: 100px;
+  transform: rotate(-90deg);
+  accent-color: var(--unity-accent-blue, #38bdf8);
+  cursor: pointer;
+  background: transparent;
+}
+
+.mixer-fader-value {
+  font-size: 9px;
+  color: var(--unity-text-muted);
+  font-family: var(--font-mono);
+  text-align: center;
+}
+
+.mixer-strip-buttons {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+}
+
+.mixer-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 20px;
+  border-radius: 3px;
+  border: 1px solid var(--unity-border-light);
+  background: var(--unity-hover);
+  color: var(--unity-text-muted);
+  cursor: pointer;
+  padding: 0;
+}
+
+.mixer-btn:hover {
+  color: var(--unity-text);
+  border-color: var(--unity-text-dim);
+}
+
+.mixer-btn.mixer-btn-mute.active {
+  background: var(--unity-accent-red, #ef4444);
+  border-color: var(--unity-accent-red, #ef4444);
+  color: #fff;
+}
+
+.mixer-btn.mixer-btn-solo.active {
+  background: var(--unity-accent-amber, #f59e0b);
+  border-color: var(--unity-accent-amber, #f59e0b);
+  color: #1a1a1a;
+}
+
+.mixer-strip-meter-label {
+  font-size: 8px;
+  color: var(--unity-text-dim);
+  text-align: center;
+}

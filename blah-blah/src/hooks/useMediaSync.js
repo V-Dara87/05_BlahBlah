@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { setMediaElementVolume, setMediaElementRate, resumeAudioContext, disconnectMediaGainChain } from '../utils/mediaAudio';
+import { resolveEffectiveVolume, findEntityTrack } from '../utils/trackAudio';
  
 /**
  * Keeps <video>/<audio> elements glued to the timeline during playback and
@@ -15,6 +16,14 @@ import { setMediaElementVolume, setMediaElementRate, resumeAudioContext, disconn
  * utils/mediaAudio.js) so it can exceed 1.0 — element.volume is clamped to
  * [0,1] by the platform.
  *
+ * Volume ALSO now factors in the clip's owning track's mixer state
+ * (volume/mute/solo — see utils/trackAudio.js) before it ever reaches
+ * setMediaElementVolume. Previously a track's own volume/muted fields sat
+ * on the data unused here — muting a track only changed the track-header
+ * button's look, the audio kept playing. tracks is a new required param
+ * for exactly this; every existing caller (EntityRenderer.jsx) already has
+ * tracks in scope, so this is a same-file two-line change at the call site.
+ *
  * FIXED — silent preview on play: resumeAudioContext() is now awaited
  * BEFORE the element is routed through the gain chain (setMediaElementVolume)
  * and before play() is called. Previously resumeAudioContext() was fired
@@ -24,7 +33,7 @@ import { setMediaElementVolume, setMediaElementRate, resumeAudioContext, disconn
  * sound until something else happened to resume the context later. See
  * utils/mediaAudio.js for the full explanation.
  */
-export function useMediaSync({ entities, activeVideoItems, computedEntities, currentTime, isPlaying }) {
+export function useMediaSync({ entities, activeVideoItems, computedEntities, currentTime, isPlaying, tracks = [] }) {
   const videoRefs = useRef({});
   const audioRefs = useRef({});
   const wasPlayingRef = useRef(isPlaying);
@@ -61,7 +70,9 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
           // VideoRenderer volume to 0) so a video without an explicit volume
           // never plays its own audio track in preview, and a volume slider
           // on the video clip never silently does nothing.
-          setMediaElementVolume(vidEl, videoComp.volume ?? 0);
+          const track = findEntityTrack(entity, tracks);
+          const effectiveVolume = resolveEffectiveVolume(videoComp.volume ?? 0, track, tracks);
+          setMediaElementVolume(vidEl, effectiveVolume);
           setMediaElementRate(vidEl, speed);
  
           if (isPlaying) {
@@ -97,7 +108,7 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
         delete videoRefs.current[id];
       }
     });
-  }, [currentTime, isPlaying, activeVideoItems, entities]);
+  }, [currentTime, isPlaying, activeVideoItems, entities, tracks]);
  
   // Audio — same rate/volume/seek treatment as video above, but audio
   // elements are created imperatively here (no <audio> in JSX) since
@@ -127,7 +138,9 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
           const speed = (audioComp.speed || 1) * (transform?.speed ?? 1);
           const offset = audioComp.mediaOffset || 0;
           const localTime = (currentTime - entity.startTime) * speed + offset;
-          setMediaElementVolume(aud, audioComp.volume ?? 1);
+          const track = findEntityTrack(entity, tracks);
+          const effectiveVolume = resolveEffectiveVolume(audioComp.volume ?? 1, track, tracks);
+          setMediaElementVolume(aud, effectiveVolume);
           setMediaElementRate(aud, speed);
  
           if (isPlaying) {
@@ -162,7 +175,7 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
         delete audioRefs.current[id];
       }
     });
-  }, [currentTime, isPlaying, computedEntities, entities]);
+  }, [currentTime, isPlaying, computedEntities, entities, tracks]);
  
   // Cleanup on unmount — stop and disconnect every element this hook
   // ever created/tracked (mirrors EntityRenderer's own unmount cleanup,

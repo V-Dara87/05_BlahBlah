@@ -7,6 +7,7 @@ import { updateCanvasComponent, unmountCanvasComponent } from './canvasRunner.js
 import { computeActiveEntitiesAtTime } from './renderPipeline.js';
 import { isScriptComponent, isVideoEntity, isAudioEntity } from './ecs.js';
 import { getSharedGLTransitionRenderer } from './glTransitions.js';
+import { resolveEffectiveVolume, findEntityTrack } from '../utils/trackAudio.js';
 import {
   resolveTextRendererText,
   cssFontFamily,
@@ -648,8 +649,15 @@ export function clearExportAudioCache() {
  * Only entities that overlap the export's [start, start+duration) window at
  * all are included; per-entity trims for partial-overlap clips are handled
  * by the caller when scheduling.
+ *
+ * Also filters out anything on a track that's fully silenced by the mixer
+ * (muted, or every track soloed elsewhere) via resolveEffectiveVolume — see
+ * utils/trackAudio.js. This is only an early skip so a track-silenced clip
+ * never gets decoded at all; the real per-clip gain (including the track
+ * multiplier) is computed again in mixdownAudio below, since a track's
+ * volume can be anywhere in (0, 1] and isn't just an on/off skip.
  */
-function collectAudioSources({ entities, exportStartTime, exportDuration }) {
+function collectAudioSources({ entities, exportStartTime, exportDuration, tracks = [] }) {
   const exportEndTime = exportStartTime + exportDuration;
   const sources = [];
  
@@ -657,6 +665,9 @@ function collectAudioSources({ entities, exportStartTime, exportDuration }) {
     if (!entity.active) continue;
     const entityEnd = entity.startTime + entity.duration;
     if (entityEnd <= exportStartTime || entity.startTime >= exportEndTime) continue;
+ 
+    const track = findEntityTrack(entity, tracks);
+    if (resolveEffectiveVolume(1, track, tracks) <= 0) continue;
  
     const audioComp = entity.components?.find((c) => c.type === 'AudioSource');
     const videoComp = entity.components?.find((c) => c.type === 'VideoRenderer');
@@ -681,15 +692,19 @@ function collectAudioSources({ entities, exportStartTime, exportDuration }) {
  * mediaOffset/speed/volume are read the same way the live AudioSource /
  * VideoRenderer DOM elements apply them (see PlaybackStoreBridge.jsx /
  * EntityRenderer.jsx), so a clip's in-point trim and gain match what you'd
- * hear scrubbing the timeline.
+ * hear scrubbing the timeline. Track mixer state (volume/mute/solo) is
+ * applied the same way too, through resolveEffectiveVolume — see
+ * utils/trackAudio.js — so an exported file matches what the mixer tab
+ * shows, not just what each individual clip's own volume says.
  */
 export async function mixdownAudio({
   entities,
   exportStartTime,
   exportDuration,
   sampleRate = 48000,
+  tracks = [],
 }) {
-  const sources = collectAudioSources({ entities, exportStartTime, exportDuration });
+  const sources = collectAudioSources({ entities, exportStartTime, exportDuration, tracks });
   if (sources.length === 0) return null;
  
   const totalFrames = Math.max(1, Math.ceil(exportDuration * sampleRate));
@@ -731,7 +746,10 @@ export async function mixdownAudio({
     const transformSpeed = localTransformSpeed ?? parentTransformSpeed ?? 1;
     const speed = (comp.speed || 1) * transformSpeed;
     const mediaOffset = comp.mediaOffset || 0;
-    const volume = comp.volume ?? 1;
+    const clipVolume = comp.volume ?? 1;
+    const track = findEntityTrack(entity, tracks);
+    const volume = resolveEffectiveVolume(clipVolume, track, tracks);
+    if (volume <= 0) continue;
  
     // Same clamped-overlap math as the video seek path: figure out what
     // slice of this entity's timeline range actually falls inside the

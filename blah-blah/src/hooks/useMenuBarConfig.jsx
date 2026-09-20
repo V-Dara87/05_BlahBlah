@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import {
   FilePlus, FolderOpen, Save, Download, Undo2, Redo2, Scissors, Trash2,
   Code, MousePointer2, Settings, Sliders, PlaySquare, Clock, Layers,
-  Activity, Copy, ExternalLink, Maximize2, RotateCcw, BookOpen,
+  Activity, Copy, ExternalLink, Maximize2, RotateCcw, BookOpen, Volume2,
 } from 'lucide-react';
 import { isTauri } from '../services/tauriFsAdapter';
 import { openProjectInExplorer, openProjectInVsCode, openProjectInCursor } from '../services/ideLauncher';
@@ -92,6 +92,7 @@ export function useMenuBarConfig({
         { label: 'Dopesheet', icon: <Layers size={13} />, onClick: () => openOrFocusPanel('dopesheet', 'Dopesheet') },
         { label: 'Curves', icon: <Activity size={13} />, onClick: () => openOrFocusPanel('curveEditor', 'Curves') },
         { label: 'Silence Remover', icon: <Scissors size={13} />, onClick: () => openOrFocusPanel('silenceRemover', 'Silence Remover') },
+        { label: 'Mixer', icon: <Volume2 size={13} />, onClick: () => openOrFocusPanel('mixer', 'Mixer') },
         { type: 'separator' },
         { label: 'New Inspector Tab', icon: <Copy size={13} />, onClick: () => addNewPanelInstance('inspector', 'Inspector') },
         { label: 'New Preview Tab', icon: <Copy size={13} />, onClick: () => addNewPanelInstance('preview', 'Preview') },

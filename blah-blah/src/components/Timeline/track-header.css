@@ -1,4 +1,4 @@
-﻿.track-header-row {
+.track-header-row {
   display: flex;
   align-items: center;
   background: var(--unity-panel);
@@ -108,6 +108,16 @@
 .track-btn.active-off { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
 
 .track-btn.active-lock { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+
+.track-btn.track-solo-btn {
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.track-btn.track-solo-btn.active-solo {
+  background: #f59e0b;
+  color: #1a1a1a;
+}
 
 .track-btn.record-track-btn {
   color: #f87171;

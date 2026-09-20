@@ -171,6 +171,7 @@ export function EntityRenderer({
     computedEntities,
     currentTime,
     isPlaying,
+    tracks,
   });
  
   // Drives canvas-kind script components every frame — see

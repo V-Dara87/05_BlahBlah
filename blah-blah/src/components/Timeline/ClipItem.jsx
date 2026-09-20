@@ -237,7 +237,7 @@ export const ClipItem = memo(function ClipItem({
     // gated on whether the pointer ever moved (draggedMovedRef).
     const ctrlHeldOnDown = e.ctrlKey || e.metaKey;
  
-    // ── Alt/Option + drag = duplicate ─────────────────────────────────────
+    // ── Alt/Option + drag = duplicate ���────────────────────────────────────
     // The copy is created immediately and parked exactly on top of the
     // original, then dragged like a normal move. On release without an
     // actual drag the copy is removed again (Alt+click ≠ duplicate).
@@ -664,12 +664,34 @@ export const ClipItem = memo(function ClipItem({
   // passing this window through to WaveformCanvas, the waveform always
   // showed the FULL original file stretched across the clip's current
   // width, regardless of trims — the actual audio played back correctly,
-  // but the picture didn't match it. mediaOffset + clip.duration gives
-  // the exact [start, end) slice of the source file this clip now plays.
+  // but the picture didn't match it.
   const mediaOffset = useMemo(() => {
     const audioComp = clip.components?.find((c) => c.type === 'AudioSource' || c.type === 'VideoRenderer');
     return audioComp?.mediaOffset || 0;
   }, [clip.components]);
+ 
+  // Effective playback rate for this clip's audio, matching exactly how
+  // mixdownAudio (engine/exportRunner.js) and the live preview resolve it:
+  // AudioSource/VideoRenderer.speed (content rate inside the clip) ×
+  // Transform.speed (clip-level rate, inherited from a parent entity if
+  // this clip has none of its own). A sped-up clip consumes MORE of the
+  // source file per second of timeline duration — a 2x clip that's 5s
+  // long on the timeline actually plays 10s of source audio — so the
+  // amount of source file consumed is clip.duration * speed, not
+  // clip.duration. Without this, endSec below silently reverted to the
+  // speed=1 assumption for any sped-up (or slowed-down) clip, so the
+  // waveform showed the wrong slice of the file — right in step with the
+  // trim, but increasingly wrong the further speed strays from 1x.
+  const speed = useMemo(() => {
+    const audioComp = clip.components?.find((c) => c.type === 'AudioSource' || c.type === 'VideoRenderer');
+    const contentSpeed = audioComp?.speed || 1;
+    const localTransformSpeed = clip.components?.find((c) => c.type === 'Transform')?.speed;
+    const parentTransformSpeed = clip.parentId
+      ? allClips.find((c) => c.id === clip.parentId)?.components?.find((c) => c.type === 'Transform')?.speed
+      : undefined;
+    const transformSpeed = localTransformSpeed ?? parentTransformSpeed ?? 1;
+    return contentSpeed * transformSpeed;
+  }, [clip.components, clip.parentId, allClips]);
  
   const showWaveform = hasAudio && audioUrl && widthPx > 30; // only audio clips get waveforms
  
@@ -841,7 +863,7 @@ export const ClipItem = memo(function ClipItem({
               color={hasAudio ? 'rgba(139, 92, 246, 0.55)' : 'rgba(56, 189, 248, 0.4)'}
               mirror
               startSec={mediaOffset}
-              endSec={mediaOffset + clip.duration}
+              endSec={mediaOffset + clip.duration * speed}
             />
           </div>
         )}

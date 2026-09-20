@@ -8,6 +8,7 @@ export const INITIAL_TRACKS = [
     type: 'layer',
     parentTrackId: null,
     muted: false,
+    solo: false,
     locked: false,
     visible: true,
     volume: 1.0
@@ -18,6 +19,7 @@ export const INITIAL_TRACKS = [
     type: 'layer',
     parentTrackId: null,
     muted: false,
+    solo: false,
     locked: false,
     visible: true,
     volume: 1.0
@@ -28,6 +30,7 @@ export const INITIAL_TRACKS = [
     type: 'layer',
     parentTrackId: null,
     muted: false,
+    solo: false,
     locked: false,
     visible: true,
     volume: 1.0
@@ -38,6 +41,7 @@ export const INITIAL_TRACKS = [
     type: 'layer',
     parentTrackId: null,
     muted: false,
+    solo: false,
     locked: false,
     visible: true,
     volume: 1.0

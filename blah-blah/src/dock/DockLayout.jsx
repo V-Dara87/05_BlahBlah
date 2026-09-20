@@ -10,6 +10,7 @@ import {
   DopesheetDockPanel,
   CurveEditorDockPanel,
   SilenceRemoverDockPanel,
+  MixerDockPanel,
 } from './panels';
 import { useEditorContext } from './EditorContext';
 import 'dockview-react/dist/styles/dockview.css';
@@ -30,6 +31,7 @@ const DOCK_COMPONENTS = {
   dopesheet: DopesheetDockPanel,
   curveEditor: CurveEditorDockPanel,
   silenceRemover: SilenceRemoverDockPanel,
+  mixer: MixerDockPanel,
   // Fallbacks for removed tabs from previous builds
   clips: FallbackPanel,
 };
@@ -96,6 +98,13 @@ function buildDefaultLayout(api) {
     id: 'silenceRemover',
     component: 'silenceRemover',
     title: 'Silence Remover',
+    position: { direction: 'within', referencePanel: dopesheetPanel },
+  });
+
+  api.addPanel({
+    id: 'mixer',
+    component: 'mixer',
+    title: 'Mixer',
     position: { direction: 'within', referencePanel: dopesheetPanel },
   });
 }

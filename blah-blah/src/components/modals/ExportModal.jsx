@@ -323,6 +323,7 @@ export function ExportModal({
             exportStartTime,
             exportDuration,
             sampleRate: AUDIO_SAMPLE_RATE,
+            tracks,
           });
         } catch (err) {
           console.warn('Export audio: mixdown failed, exporting video only:', err);

@@ -283,6 +283,14 @@ export const TrackHeader = memo(function TrackHeader({
           >
             {track.muted ? <VolumeX size={10} /> : <Volume2 size={10} />}
           </button>
+
+          <button
+            className={`track-btn track-solo-btn ${track.solo ? 'active-solo' : ''}`}
+            title={track.solo ? 'Unsolo Track' : 'Solo Track'}
+            onClick={() => onUpdateTrack(track.id, { solo: !track.solo })}
+          >
+            S
+          </button>
  
           <button
             className={`track-btn ${track.locked ? 'active-lock' : ''}`}

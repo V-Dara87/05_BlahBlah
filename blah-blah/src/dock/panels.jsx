@@ -9,6 +9,7 @@ import { PrefabModeBar } from '../components/Timeline/PrefabModeBar';
 import { Dopesheet } from '../components/Dopesheet/Dopesheet';
 import { CurveEditorTab } from '../components/shared/CurveEditor';
 import { SilenceRemoverPanel } from '../components/silence-remover/SilenceRemoverPanel';
+import { MixerPanel } from '../components/mixer/MixerPanel';
 import { setKeyframeCurve, findKeyframeById, DEFAULT_CP1, DEFAULT_CP2 } from '../engine/keyframes';
 import { useEditorContext } from './EditorContext';
 import { useCurrentTime, useIsPlaying, useIsLooping, usePlaybackStore } from '../hooks/PlaybackContext';
@@ -448,6 +449,17 @@ export const SilenceRemoverDockPanel = memo(function SilenceRemoverDockPanel() {
       mediaAssets={mediaAssets}
       onApplyCutSilence={handleCutSilence}
       onUpdatePreviewCuts={setSilencePreviewCuts}
+    />
+  );
+});
+
+export const MixerDockPanel = memo(function MixerDockPanel() {
+  const { tracks, handleUpdateTrack } = useEditorContext();
+
+  return (
+    <MixerPanel
+      tracks={tracks}
+      onUpdateTrack={handleUpdateTrack}
     />
   );
 });
