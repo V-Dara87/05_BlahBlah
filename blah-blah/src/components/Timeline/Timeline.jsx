@@ -752,15 +752,6 @@ export const Timeline = memo(function Timeline({
     window.addEventListener('pointerup', onUp);
   };
  
-  // Committed selection for the track-header right-click menu: the multi
-  // selection, or the single selected clip when the list is empty (same
-  // resolution ClipItem and the shortcuts use). Memoized so memo(TrackHeader)
-  // doesn't re-render on unrelated Timeline renders.
-  const headerSelectedIds = useMemo(
-    () => (selectedIds.length > 0 ? selectedIds : (selectedClipId ? [selectedClipId] : [])),
-    [selectedIds, selectedClipId]
-  );
- 
   // Compute which clips are inside the box selection in real-time
   const boxSelectedIds = useMemo(() => {
     if (!boxSelect) return [];
@@ -974,7 +965,6 @@ export const Timeline = memo(function Timeline({
                       onToggleRecordTrack={onToggleRecordTrack}
                       onOpenSilenceRemoverForTrack={onOpenSilenceRemoverForTrack}
                       allClips={clips}
-                      selectedIds={headerSelectedIds}
                       onUpdateClips={onUpdateClips}
                     />
                   </div>

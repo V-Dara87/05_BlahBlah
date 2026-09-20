@@ -12,11 +12,15 @@ import {
   Trash2,
   Scissors,
   ArrowLeftToLine,
+  ChevronsLeft,
 } from 'lucide-react';
 import { TRACK_HEIGHT, clampTrackHeight } from '../../utils/timelineLayout';
 import { usePlaybackStore } from '../../hooks/PlaybackContext';
 import { ContextMenu } from '../shared/ContextMenu';
-import { buildGapRemovalUpdates } from '../../utils/removeGaps';
+import {
+  buildTrackGapRemovalUpdates,
+  buildTrackBringToFrontUpdates,
+} from '../../utils/removeGaps';
 import './track-header.css';
  
 export const TrackHeader = memo(function TrackHeader({
@@ -32,7 +36,6 @@ export const TrackHeader = memo(function TrackHeader({
   onToggleRecordTrack,
   onOpenSilenceRemoverForTrack,
   allClips = [],
-  selectedIds = [],
   onUpdateClips,
 }) {
   const recording = !!isRecordingTarget;
@@ -141,31 +144,32 @@ export const TrackHeader = memo(function TrackHeader({
     }
   };
  
-  // ── Right-click menu: Remove Gaps ────────────────────────────────
-  // Acts on the SELECTED clips. "This track" only considers the selected
-  // clips that live on this track; "all selected" runs the same close-the-
-  // gaps pass across every track the selection touches (each track is still
-  // handled independently by buildGapRemovalUpdates).
+  // ── Right-click menu: track-level clip arrangement ───────────────
+  // Both actions work on EVERY clip in this track, no selection needed:
+  //  - Remove Gaps:  pack the track's clips back to back (first one stays).
+  //  - Bring to Front: slide the track left so its first clip is at 00:00
+  //    (spacing between clips is kept).
+  // The menu always opens on a header right-click; an action that can't run
+  // is greyed out and says why, instead of the menu silently not appearing.
   const [menu, setMenu] = useState(null); // { x, y } | null
   const closeMenu = () => setMenu(null);
  
-  // Same behaviour as the clip menu: pack ALL selected clips (any track)
-  // back to back. The menu ALWAYS opens on a header right-click; when Remove
-  // Gaps can't run it is greyed out and says why, instead of the whole menu
-  // silently not appearing.
   const gapUpdates = useMemo(
-    () => (selectedIds.length > 1 ? buildGapRemovalUpdates(allClips, selectedIds) : []),
-    [selectedIds, allClips]
+    () => (onUpdateClips ? buildTrackGapRemovalUpdates(allClips, track.id) : []),
+    [allClips, track.id, onUpdateClips]
   );
-  const gapUnavailableReason = !onUpdateClips
-    ? 'Unavailable'
-    : track.locked
-      ? 'Track locked'
-      : selectedIds.length < 2
-        ? 'Select 2+ clips'
-        : gapUpdates.length === 0
-          ? 'No gaps'
-          : null;
+  const frontUpdates = useMemo(
+    () => (onUpdateClips ? buildTrackBringToFrontUpdates(allClips, track.id) : []),
+    [allClips, track.id, onUpdateClips]
+  );
+ 
+  const unavailableReason = (updates, emptyReason) => {
+    if (!onUpdateClips) return 'Unavailable';
+    if (track.locked) return 'Track locked';
+    return updates.length === 0 ? emptyReason : null;
+  };
+  const gapUnavailableReason = unavailableReason(gapUpdates, 'No gaps');
+  const frontUnavailableReason = unavailableReason(frontUpdates, 'At 00:00');
  
   const handleContextMenu = (e) => {
     // Let the rename <input> keep its native text menu.
@@ -174,9 +178,9 @@ export const TrackHeader = memo(function TrackHeader({
     e.stopPropagation();
     setMenu({ x: e.clientX, y: e.clientY });
   };
-  const runGapRemoval = () => {
+  const runUpdates = (updates, reason) => {
     closeMenu();
-    if (!gapUnavailableReason) onUpdateClips(gapUpdates);
+    if (!reason) onUpdateClips(updates);
   };
  
   return (
@@ -306,14 +310,25 @@ export const TrackHeader = memo(function TrackHeader({
       <ContextMenu x={menu.x} y={menu.y} onClose={closeMenu} className="clip-context-menu" minWidth={200}>
         <button
           className="ctx-menu-item ctx-menu-row"
-          onClick={runGapRemoval}
+          onClick={() => runUpdates(gapUpdates, gapUnavailableReason)}
           disabled={!!gapUnavailableReason}
           title={gapUnavailableReason
             ? `Remove Gaps: ${gapUnavailableReason}`
-            : 'Close the empty space between the selected clips'}
+            : `Close the empty space between every clip in ${track.name}`}
         >
           <span className="ctx-menu-label"><ArrowLeftToLine size={12} /> Remove Gaps</span>
           {gapUnavailableReason && <span className="ctx-menu-hint">{gapUnavailableReason}</span>}
+        </button>
+        <button
+          className="ctx-menu-item ctx-menu-row"
+          onClick={() => runUpdates(frontUpdates, frontUnavailableReason)}
+          disabled={!!frontUnavailableReason}
+          title={frontUnavailableReason
+            ? `Bring to Front: ${frontUnavailableReason}`
+            : `Move ${track.name} so its first clip starts at 00:00`}
+        >
+          <span className="ctx-menu-label"><ChevronsLeft size={12} /> Bring to Front (00:00)</span>
+          {frontUnavailableReason && <span className="ctx-menu-hint">{frontUnavailableReason}</span>}
         </button>
       </ContextMenu>
     )}
