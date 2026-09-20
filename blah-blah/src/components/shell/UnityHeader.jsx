@@ -38,7 +38,7 @@ export function UnityHeader({
   snappingEnabled,
   hasSelectedEntity,
   projectFolderHandle,
-  saveStatus = 'saved', // 'saved' | 'saving' | 'in-memory'
+  saveStatus = 'saved', // 'saved' | 'saving' | 'unsaved' | 'in-memory' (last save failed)
   schemaWarning = null,
   canUndo = false,
   canRedo = false,
@@ -108,7 +108,7 @@ export function UnityHeader({
             <span>Save</span>
           </button>
         )}
-
+ 
         {projectFolderHandle && isTauri() && (
           <>
             <button 
@@ -134,9 +134,24 @@ export function UnityHeader({
  
         {/* Save Status Badge */}
         {projectFolderHandle ? (
-          <div className="save-status-box" title="Auto-saving enabled to local disk">
+          <div
+            className="save-status-box"
+            title={
+              saveStatus === 'saving'
+                ? 'Writing changes to the project folder…'
+                : saveStatus === 'unsaved'
+                ? 'Changes are not on disk yet. Autosave will write them (see Settings > Autosave), or press Save.'
+                : saveStatus === 'in-memory'
+                ? 'The last save failed, so recent changes exist only in memory. Use Save to try again.'
+                : 'All changes are saved to the project folder'
+            }
+          >
             {saveStatus === 'saving' ? (
               <span className="save-status-saving">Saving...</span>
+            ) : saveStatus === 'unsaved' || saveStatus === 'in-memory' ? (
+              <span className="save-status-memory">
+                <HardDrive size={11} /> Unsaved
+              </span>
             ) : (
               <span className="save-status-saved">
                 <CheckCircle2 size={11} /> Saved
@@ -148,7 +163,7 @@ export function UnityHeader({
             <HardDrive size={11} /> In-Memory
           </span>
         )}
-
+ 
         {/* P1 #6 — schemaVersion-too-new warning. Previously console.warn
             only; this is the first UI-visible surface for it. */}
         {schemaWarning && (

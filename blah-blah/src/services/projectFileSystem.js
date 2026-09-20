@@ -76,6 +76,122 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 // scanning media/ on disk and must not stamp a placeholder duration.
 import { probeMediaElementDuration, MEDIA_FALLBACK_DURATION } from './mediaImport';
  
+// ─── Save coordination: per-project lock + "last synced" cache ───────────────
+//
+// Three different code paths write files into a project folder: the debounced
+// autosave (saveProjectToDirectory), the direct single-file writers the UI
+// calls on explicit actions (writeScriptFile / renameScriptFile /
+// writePrefabFile / delete*), and — in the other direction — hot-reload, which
+// pulls external edits from disk into memory. Left uncoordinated they race:
+// an autosave that snapshotted state a moment earlier can finish AFTER a
+// direct write and clobber it with the stale snapshot. That is the "my script
+// got overwritten" failure mode.
+//
+// Two pieces of per-project state (keyed by the directory handle, so a
+// different project or a re-opened handle starts clean) prevent that:
+//
+//  1. `lock` — a promise chain. Every writer runs inside withProjectLock, so
+//     writes are strictly serialized and an autosave takes its state snapshot
+//     only once it owns the lock (see saveProjectToDirectory).
+//  2. Caches of what we last put on / verified against disk:
+//       - projectFingerprint / prefabs: what was last WRITTEN, so an unchanged
+//         file isn't rewritten (the Settings > Autosave "skip unchanged" switch);
+//       - scripts: the last code known to match disk for each script file. This
+//         is the "base" of a 3-way decision (memory / disk / base) that decides
+//         whether memory or disk is the newer side — no file timestamps are
+//         used, because the Tauri file adapter's getFile() stamps every File
+//         with "now" instead of the real modification time.
+//       - tombstones: script files that were just deleted/renamed, so a stale
+//         snapshot can't resurrect them.
+const projectSyncStates = new WeakMap();
+const SCRIPT_TOMBSTONE_TTL_MS = 5000;
+ 
+function getSyncState(dirHandle) {
+  if (!dirHandle || (typeof dirHandle !== 'object' && typeof dirHandle !== 'function')) return null;
+  let state = projectSyncStates.get(dirHandle);
+  if (!state) {
+    state = {
+      lock: Promise.resolve(),
+      projectFingerprint: null,
+      prefabs: new Map(),
+      scripts: new Map(),
+      tombstones: new Map(),
+    };
+    projectSyncStates.set(dirHandle, state);
+  }
+  return state;
+}
+ 
+/** Runs `task` after every previously queued write for this project finished. */
+function withProjectLock(dirHandle, task) {
+  const state = getSyncState(dirHandle);
+  if (!state) return Promise.resolve().then(task);
+  const run = state.lock.then(task, task);
+  state.lock = run.then(() => undefined, () => undefined);
+  return run;
+}
+ 
+const prefabFileName = (name) => (name.endsWith('.json') ? name : `${name}.prefab.json`);
+ 
+/**
+ * Brings one scripts/<fileName> in line with `code` — but only when memory is
+ * genuinely the newer side. Returns nothing; the outcome is the file state.
+ *
+ *   known   = last code we know matched disk (state.scripts), or undefined
+ *   code    = what memory holds
+ *   disk    = what is on disk right now
+ *
+ *   code === known                -> nothing to push (don't even read disk).
+ *                                    This also makes a stale in-flight snapshot
+ *                                    harmless: if hot-reload already adopted an
+ *                                    external edit, the snapshot still equals
+ *                                    `known` and is skipped.
+ *   disk  === code                -> already in sync, just remember it.
+ *   disk  === known (or unknown)  -> memory changed since the last sync: write.
+ *   disk differs from both        -> disk was edited externally AND memory
+ *                                    differs: keep disk, hot-reload will pull it.
+ */
+async function syncScriptFile(scriptsDirHandle, state, fileName, code) {
+  const known = state ? state.scripts.get(fileName) : undefined;
+  if (known !== undefined && known === code) return;
+ 
+  if (state) {
+    const removedAt = state.tombstones.get(fileName);
+    if (removedAt !== undefined) {
+      if (Date.now() - removedAt < SCRIPT_TOMBSTONE_TTL_MS) return;
+      state.tombstones.delete(fileName);
+    }
+  }
+ 
+  let existingHandle = null;
+  try {
+    existingHandle = await scriptsDirHandle.getFileHandle(fileName, { create: false });
+  } catch {
+    // NotFoundError: the file doesn't exist yet, fall through and create it.
+  }
+ 
+  if (existingHandle) {
+    const diskCode = await (await existingHandle.getFile()).text();
+    if (diskCode === code) {
+      if (state) state.scripts.set(fileName, code);
+      return;
+    }
+    if (known !== undefined && diskCode !== known) {
+      console.warn(
+        `Autosave kept the on-disk version of scripts/${fileName}: it was edited outside the app ` +
+        'and differs from the in-memory copy. The external version will be reloaded.'
+      );
+      return;
+    }
+  }
+ 
+  const fileHandle = existingHandle || (await scriptsDirHandle.getFileHandle(fileName, { create: true }));
+  const writable = await fileHandle.createWritable();
+  await writable.write(code);
+  await writable.close();
+  if (state) state.scripts.set(fileName, code);
+}
+ 
 /**
  * Write (or overwrite) the vendored `@blahblah/sdk` copy — index.d.ts +
  * index.js — plus scripts/jsconfig.json into a project's scripts/ folder.
@@ -366,6 +482,16 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
  
   // 2. Read scripts/ folder
   const loadedScripts = [];
+  // A fresh load is the ground truth for what is on disk: reset this handle's
+  // write caches (they may be left over from an earlier open of the same
+  // folder) and seed the scripts cache below with exactly what we read.
+  const syncState = getSyncState(dirHandle);
+  if (syncState) {
+    syncState.projectFingerprint = null;
+    syncState.prefabs.clear();
+    syncState.scripts.clear();
+    syncState.tombstones.clear();
+  }
   try {
     const scriptsDirHandle = await dirHandle.getDirectoryHandle('scripts', { create: true });
     // Self-heal projects created/opened before @blahblah/sdk existed (or
@@ -389,6 +515,7 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
         // that have no index entry yet (e.g. a file dropped into scripts/
         // by hand, or a project saved before scriptIndex existed).
         const indexed = scriptIndex.get(entry.name);
+        if (syncState) syncState.scripts.set(toScriptFileName(entry.name), code);
         loadedScripts.push({
           id: indexed ? indexed.id : `script-${entry.name.replace(/\.[^.]+$/, '')}`,
           name: entry.name,
@@ -604,102 +731,161 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
 /**
  * Save project state to disk.
  * Writes project.json, scripts/, and prefabs/.
+ *
+ * `projectStateOrGetter` may be a function; it is then called only AFTER this
+ * save owns the project lock, so the snapshot is as fresh as possible and can
+ * never predate a direct write (writeScriptFile etc.) that ran while this save
+ * was queued.
+ *
+ * @param {FileSystemDirectoryHandle} dirHandle
+ * @param {object|Function} projectStateOrGetter
+ * @param {object}  [options]
+ * @param {boolean} [options.force=false]         Rewrite project.json and every prefab even if unchanged
+ *                                                (manual "Save Project to Disk").
+ * @param {boolean} [options.skipUnchanged=true]  Skip project.json / prefab files whose serialized
+ *                                                content matches what was last written. Scripts are
+ *                                                always reconciled against disk (see syncScriptFile).
  */
-export async function saveProjectToDirectory(dirHandle, projectState) {
+export async function saveProjectToDirectory(dirHandle, projectStateOrGetter, options = {}) {
   if (!dirHandle) return false;
+  const { force = false, skipUnchanged = true } = options || {};
+  const skipIfUnchanged = skipUnchanged && !force;
  
-  const hasPerm = await verifyPermission(dirHandle, true);
-  if (!hasPerm) {
-    throw new Error('Permission to write to directory was not granted.');
-  }
- 
-  // 1. Write project.json
-  const projectJson = {
-    name: projectState.projectName,
-    version: '1.0',
-    schemaVersion: CURRENT_SCHEMA_VERSION,
-    lastModified: Date.now(),
-    resolution: sanitizeResolution(projectState.resolution),
-    tracks: projectState.tracks,
-    entities: (projectState.entities || []).map(e => ({
-      ...e,
-      id: e.id,
-      name: e.name,
-      parentId: e.parentId || null,
-      trackId: e.trackId,
-      startTime: e.startTime,
-      duration: e.duration,
-      type: e.type,
-      src: e.src,
-      active: e.active !== false,
-      color: e.color,
-      tag: e.tag || 'Untagged',
-      layer: e.layer || 'Default',
-      components: e.components,
-      keyframes: e.keyframes,
-    })),
-    // Filename -> id (+ description) map so loadProjectFromDirectory can
-    // restore each script's ORIGINAL id instead of re-deriving one from the
-    // filename. Without this, any script whose id wasn't already
-    // filename-shaped (e.g. `script-${Date.now()}`) gets a new id on
-    // reload that no ScriptComponent's `scriptId` matches anymore, so the
-    // attached script silently stops resolving.
-    scriptIndex: (projectState.scripts || []).map(s => ({
-      name: toScriptFileName(s.name),
-      id: s.id,
-      description: s.description,
-      folder: s.folder || null,
-      createdAt: s.createdAt || null,
-    })),
-  };
- 
-  const projectFileHandle = await dirHandle.getFileHandle('project.json', { create: true });
-  const projectWritable = await projectFileHandle.createWritable();
-  await projectWritable.write(JSON.stringify(projectJson, null, 2));
-  await projectWritable.close();
- 
-  // 2. Sync scripts to scripts/ folder
-  if (projectState.scripts && projectState.scripts.length > 0) {    const scriptsDirHandle = await dirHandle.getDirectoryHandle('scripts', { create: true });
-    for (const script of projectState.scripts) {
-      const fileName = toScriptFileName(script.name);
- 
-      const scriptFileHandle = await scriptsDirHandle.getFileHandle(fileName, { create: true });
-      const scriptWritable = await scriptFileHandle.createWritable();
-      await scriptWritable.write(script.code || '');
-      await scriptWritable.close();
+  return withProjectLock(dirHandle, async () => {
+    const hasPerm = await verifyPermission(dirHandle, true);
+    if (!hasPerm) {
+      throw new Error('Permission to write to directory was not granted.');
     }
-  }
  
-  // 3. Sync prefabs to prefabs/ folder
-  if (projectState.prefabs && projectState.prefabs.length > 0) {
-    const prefabsDirHandle = await dirHandle.getDirectoryHandle('prefabs', { create: true });
-    for (const prefab of projectState.prefabs) {
-      const fileName = prefab.name.endsWith('.json') ? prefab.name : `${prefab.name}.prefab.json`;
-      const prefabFileHandle = await prefabsDirHandle.getFileHandle(fileName, { create: true });
-      const prefabWritable = await prefabFileHandle.createWritable();
-      await prefabWritable.write(JSON.stringify(prefab, null, 2));
-      await prefabWritable.close();
+    const projectState =
+      typeof projectStateOrGetter === 'function' ? projectStateOrGetter() : projectStateOrGetter;
+    const syncState = getSyncState(dirHandle);
+ 
+    // 1. Write project.json
+    //
+    // `lastModified` changes on every call, so it is left out of the
+    // fingerprint — otherwise no two saves would ever compare equal.
+    const buildProjectJson = (lastModified) => ({
+      name: projectState.projectName,
+      version: '1.0',
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      lastModified,
+      resolution: sanitizeResolution(projectState.resolution),
+      tracks: projectState.tracks,
+      entities: (projectState.entities || []).map(e => ({
+        ...e,
+        id: e.id,
+        name: e.name,
+        parentId: e.parentId || null,
+        trackId: e.trackId,
+        startTime: e.startTime,
+        duration: e.duration,
+        type: e.type,
+        src: e.src,
+        active: e.active !== false,
+        color: e.color,
+        tag: e.tag || 'Untagged',
+        layer: e.layer || 'Default',
+        components: e.components,
+        keyframes: e.keyframes,
+      })),
+      // Filename -> id (+ description) map so loadProjectFromDirectory can
+      // restore each script's ORIGINAL id instead of re-deriving one from the
+      // filename. Without this, any script whose id wasn't already
+      // filename-shaped (e.g. `script-${Date.now()}`) gets a new id on
+      // reload that no ScriptComponent's `scriptId` matches anymore, so the
+      // attached script silently stops resolving.
+      scriptIndex: (projectState.scripts || []).map(s => ({
+        name: toScriptFileName(s.name),
+        id: s.id,
+        description: s.description,
+        folder: s.folder || null,
+        createdAt: s.createdAt || null,
+      })),
+    });
+ 
+    const projectFingerprint = JSON.stringify(buildProjectJson(0));
+    if (!(skipIfUnchanged && syncState && syncState.projectFingerprint === projectFingerprint)) {
+      const projectFileHandle = await dirHandle.getFileHandle('project.json', { create: true });
+      const projectWritable = await projectFileHandle.createWritable();
+      await projectWritable.write(JSON.stringify(buildProjectJson(Date.now()), null, 2));
+      await projectWritable.close();
+      if (syncState) syncState.projectFingerprint = projectFingerprint;
     }
-  }
  
-  return true;
+    // 2. Sync scripts to scripts/ folder
+    //
+    // This used to rewrite EVERY script on EVERY autosave, which is what made
+    // scripts "randomly get overwritten": whatever stale copy memory held at
+    // that moment replaced the file on disk, including an edit made in VS Code
+    // a moment earlier. Now each file goes through syncScriptFile, which only
+    // writes when memory is the newer side (see its comment).
+    const scripts = Array.isArray(projectState.scripts) ? projectState.scripts : [];
+    if (scripts.length > 0) {
+      const scriptsDirHandle = await dirHandle.getDirectoryHandle('scripts', { create: true });
+ 
+      // Two scripts can canonicalize to the same file (legacy `Foo.js` next to
+      // `Foo.jsx`). Writing both would make them overwrite each other on every
+      // save, so each file is synced once, preferring the one already named
+      // with the canonical extension.
+      const byFile = new Map();
+      for (const script of scripts) {
+        const fileName = toScriptFileName(script.name);
+        const previous = byFile.get(fileName);
+        if (!previous || (script.name === fileName && previous.name !== fileName)) {
+          byFile.set(fileName, script);
+        }
+      }
+      for (const [fileName, script] of byFile) {
+        await syncScriptFile(scriptsDirHandle, syncState, fileName, script.code || '');
+      }
+    }
+ 
+    // 3. Sync prefabs to prefabs/ folder
+    if (projectState.prefabs && projectState.prefabs.length > 0) {
+      const prefabsDirHandle = await dirHandle.getDirectoryHandle('prefabs', { create: true });
+      for (const prefab of projectState.prefabs) {
+        const fileName = prefabFileName(prefab.name);
+        const text = JSON.stringify(prefab, null, 2);
+        if (skipIfUnchanged && syncState && syncState.prefabs.get(fileName) === text) continue;
+        const prefabFileHandle = await prefabsDirHandle.getFileHandle(fileName, { create: true });
+        const prefabWritable = await prefabFileHandle.createWritable();
+        await prefabWritable.write(text);
+        await prefabWritable.close();
+        if (syncState) syncState.prefabs.set(fileName, text);
+      }
+    }
+ 
+    return true;
+  });
 }
  
 /**
  * Save a single script file to scripts/ folder (e.g. when edited in editor).
+ * Runs under the project lock so it can't interleave with an autosave, and
+ * records what it wrote as the script's last-synced content.
  */
 export async function writeScriptFile(dirHandle, scriptName, scriptCode) {
   if (!dirHandle) return;
-  await verifyPermission(dirHandle, true);
-  const scriptsDirHandle = await dirHandle.getDirectoryHandle('scripts', { create: true });
-  // Canonical .jsx on write — the extension never meant anything to the
-  // engine (everything compiles through the same JSX/TS loader), so a
-  // single canonical extension removes the .js-vs-.jsx confusion.
-  const fileName = toScriptFileName(scriptName);
-  const fileHandle = await scriptsDirHandle.getFileHandle(fileName, { create: true });
-  const writable = await fileHandle.createWritable();
-  await writable.write(scriptCode);
-  await writable.close();
+  await withProjectLock(dirHandle, async () => {
+    await verifyPermission(dirHandle, true);
+    const scriptsDirHandle = await dirHandle.getDirectoryHandle('scripts', { create: true });
+    // Canonical .jsx on write — the extension never meant anything to the
+    // engine (everything compiles through the same JSX/TS loader), so a
+    // single canonical extension removes the .js-vs-.jsx confusion.
+    const fileName = toScriptFileName(scriptName);
+    const text = typeof scriptCode === 'string' ? scriptCode : String(scriptCode ?? '');
+    const fileHandle = await scriptsDirHandle.getFileHandle(fileName, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(text);
+    await writable.close();
+ 
+    const syncState = getSyncState(dirHandle);
+    if (syncState) {
+      syncState.scripts.set(fileName, text);
+      syncState.tombstones.delete(fileName);
+    }
+  });
 }
  
 /**
@@ -710,33 +896,44 @@ export async function writeScriptFile(dirHandle, scriptName, scriptCode) {
  */
 export async function renameScriptFile(dirHandle, oldName, newName, scriptCode) {
   if (!dirHandle) return;
-  await verifyPermission(dirHandle, true);
-  const scriptsDirHandle = await dirHandle.getDirectoryHandle('scripts', { create: true });
-  const oldFileName = toScriptFileName(oldName);
-  const newFileName = toScriptFileName(newName);
-  if (oldFileName === newFileName) return;
+  await withProjectLock(dirHandle, async () => {
+    await verifyPermission(dirHandle, true);
+    const scriptsDirHandle = await dirHandle.getDirectoryHandle('scripts', { create: true });
+    const oldFileName = toScriptFileName(oldName);
+    const newFileName = toScriptFileName(newName);
+    if (oldFileName === newFileName) return;
  
-  try {
-    await scriptsDirHandle.getFileHandle(newFileName, { create: false });
-    throw new Error(`A script named "${newFileName}" already exists.`);
-  } catch (err) {
-    if (err?.message?.includes('already exists')) throw err;
-    // NotFoundError is expected: the destination is available.
-  }
+    try {
+      await scriptsDirHandle.getFileHandle(newFileName, { create: false });
+      throw new Error(`A script named "${newFileName}" already exists.`);
+    } catch (err) {
+      if (err?.message?.includes('already exists')) throw err;
+      // NotFoundError is expected: the destination is available.
+    }
  
-  const nextHandle = await scriptsDirHandle.getFileHandle(newFileName, { create: true });
-  const writable = await nextHandle.createWritable();
-  await writable.write(scriptCode || '');
-  await writable.close();
+    const text = scriptCode || '';
+    const nextHandle = await scriptsDirHandle.getFileHandle(newFileName, { create: true });
+    const writable = await nextHandle.createWritable();
+    await writable.write(text);
+    await writable.close();
  
-  try {
-    await scriptsDirHandle.removeEntry(oldFileName);
-  } catch (err) {
-    // Do not report a false success: both files would otherwise appear after
-    // reload and users could unknowingly edit the stale one.
-    try { await scriptsDirHandle.removeEntry(newFileName); } catch { /* best effort rollback */ }
-    throw new Error(`Renamed file was created, but the old file could not be removed: ${err?.message || err}`);
-  }
+    try {
+      await scriptsDirHandle.removeEntry(oldFileName);
+    } catch (err) {
+      // Do not report a false success: both files would otherwise appear after
+      // reload and users could unknowingly edit the stale one.
+      try { await scriptsDirHandle.removeEntry(newFileName); } catch { /* best effort rollback */ }
+      throw new Error(`Renamed file was created, but the old file could not be removed: ${err?.message || err}`);
+    }
+ 
+    const syncState = getSyncState(dirHandle);
+    if (syncState) {
+      syncState.scripts.delete(oldFileName);
+      syncState.tombstones.set(oldFileName, Date.now());
+      syncState.scripts.set(newFileName, text);
+      syncState.tombstones.delete(newFileName);
+    }
+  });
 }
  
 /**
@@ -945,99 +1142,146 @@ export async function renameFolderInProject(dirHandle, section, oldName, newName
  
 /**
  * Delete a script file from scripts/ on disk.
+ * Leaves a short-lived tombstone so an autosave that snapshotted state before
+ * the delete can't recreate the file.
  */
 export async function deleteScriptFileFromFolder(dirHandle, scriptName, subfolder = null) {
   if (!dirHandle || !scriptName) return;
-  try {
-    await verifyPermission(dirHandle, true);
-    let scriptsDir = await dirHandle.getDirectoryHandle('scripts', { create: false });
-    if (subfolder) {
-      scriptsDir = await scriptsDir.getDirectoryHandle(subfolder, { create: false });
-    }
+  await withProjectLock(dirHandle, async () => {
     const fileName = toScriptFileName(scriptName);
-    await scriptsDir.removeEntry(fileName);
-  } catch (err) {
-    console.warn(`Could not remove script ${scriptName} from disk:`, err);
-  }
+    try {
+      await verifyPermission(dirHandle, true);
+      let scriptsDir = await dirHandle.getDirectoryHandle('scripts', { create: false });
+      if (subfolder) {
+        scriptsDir = await scriptsDir.getDirectoryHandle(subfolder, { create: false });
+      }
+      await scriptsDir.removeEntry(fileName);
+    } catch (err) {
+      console.warn(`Could not remove script ${scriptName} from disk:`, err);
+    }
+    const syncState = getSyncState(dirHandle);
+    if (syncState) {
+      syncState.scripts.delete(fileName);
+      syncState.tombstones.set(fileName, Date.now());
+    }
+  });
 }
  
-/**
- * Delete a prefab file from prefabs/ on disk.
- */
 export async function deletePrefabFileFromFolder(dirHandle, prefabName, subfolder = null) {
   if (!dirHandle || !prefabName) return;
-  try {
-    await verifyPermission(dirHandle, true);
-    let prefabsDir = await dirHandle.getDirectoryHandle('prefabs', { create: false });
-    if (subfolder) {
-      prefabsDir = await prefabsDir.getDirectoryHandle(subfolder, { create: false });
+  await withProjectLock(dirHandle, async () => {
+    const fileName = prefabFileName(prefabName);
+    try {
+      await verifyPermission(dirHandle, true);
+      let prefabsDir = await dirHandle.getDirectoryHandle('prefabs', { create: false });
+      if (subfolder) {
+        prefabsDir = await prefabsDir.getDirectoryHandle(subfolder, { create: false });
+      }
+      await prefabsDir.removeEntry(fileName);
+    } catch (err) {
+      console.warn(`Could not remove prefab ${prefabName} from disk:`, err);
     }
-    const fileName = prefabName.endsWith('.json') ? prefabName : `${prefabName}.prefab.json`;
-    await prefabsDir.removeEntry(fileName);
-  } catch (err) {
-    console.warn(`Could not remove prefab ${prefabName} from disk:`, err);
-  }
+    const syncState = getSyncState(dirHandle);
+    if (syncState && !subfolder) syncState.prefabs.delete(fileName);
+  });
 }
  
 /**
- * Write a prefab file to prefabs/ on disk.
+ * Write a single prefab file (root prefabs/ or a subfolder). Runs under the
+ * project lock; a root-level write also updates the autosave's "last written"
+ * cache so the next autosave doesn't redundantly rewrite the same content.
  */
 export async function writePrefabFile(dirHandle, prefabName, prefabData, subfolder = null) {
   if (!dirHandle || !prefabName || !prefabData) return;
-  try {
-    await verifyPermission(dirHandle, true);
-    let prefabsDir = await dirHandle.getDirectoryHandle('prefabs', { create: true });
-    if (subfolder) {
-      prefabsDir = await prefabsDir.getDirectoryHandle(subfolder, { create: true });
+  await withProjectLock(dirHandle, async () => {
+    try {
+      await verifyPermission(dirHandle, true);
+      let prefabsDir = await dirHandle.getDirectoryHandle('prefabs', { create: true });
+      if (subfolder) {
+        prefabsDir = await prefabsDir.getDirectoryHandle(subfolder, { create: true });
+      }
+      const fileName = prefabFileName(prefabName);
+      const text = JSON.stringify(prefabData, null, 2);
+      const fileHandle = await prefabsDir.getFileHandle(fileName, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(text);
+      await writable.close();
+      const syncState = getSyncState(dirHandle);
+      if (syncState && !subfolder) syncState.prefabs.set(fileName, text);
+    } catch (err) {
+      console.warn(`Could not write prefab ${prefabName} to disk:`, err);
     }
-    const fileName = prefabName.endsWith('.json') ? prefabName : `${prefabName}.prefab.json`;
-    const fileHandle = await prefabsDir.getFileHandle(fileName, { create: true });
-    const writable = await fileHandle.createWritable();
-    await writable.write(JSON.stringify(prefabData, null, 2));
-    await writable.close();
-  } catch (err) {
-    console.warn(`Could not write prefab ${prefabName} to disk:`, err);
-  }
+  });
 }
- 
  
 /**
  * Check scripts/ directory for external changes (e.g. edited in VS Code) for hot-reload.
+ *
+ * Returns the new scripts array when something changed (a file's content, a
+ * new file, or a file that was deleted outside the app), otherwise null.
  */
 export async function checkScriptsForChanges(dirHandle, existingScripts) {
   if (!dirHandle) return null;
  
   try {
     const scriptsDirHandle = await dirHandle.getDirectoryHandle('scripts', { create: false });
+    const syncState = getSyncState(dirHandle);
     let hasChanges = false;
-    const currentScriptsMap = new Map(existingScripts.map(s => [s.name, s]));
+    // Key by the CANONICAL on-disk filename (always .jsx). Scripts are written
+    // as `<name>.jsx` (see toScriptFileName), so an in-memory script named
+    // `Foo.js` lives on disk as `Foo.jsx`; keying by the raw in-memory name
+    // meant that script never matched its own file, was treated as brand new
+    // every poll, and got re-created (losing its metadata) each time.
+    const currentScriptsMap = new Map(
+      (existingScripts || []).map((s) => [toScriptFileName(s.name), s])
+    );
     const updatedScripts = [];
+    const seen = new Set();
  
     for await (const entry of scriptsDirHandle.values()) {
       if (entry.kind === 'file' && isScriptFile(entry.name)) {
         const file = await entry.getFile();
         const code = await file.text();
-        const existing = currentScriptsMap.get(entry.name);
+        const canonical = toScriptFileName(entry.name);
+        const existing = currentScriptsMap.get(canonical);
+        seen.add(canonical);
  
         if (!existing || existing.code !== code) {
           hasChanges = true;
         }
  
         updatedScripts.push({
-          // Unchanged: hot-reload polling already keeps the in-memory id
-          // (via `existing`) for any file it already knew about, and only
-          // derives a fresh id for genuinely new files — this path was
-          // never the source of the save/reload bug, only the initial
-          // directory load in loadProjectFromDirectory was.
+          // Spread `existing` FIRST so every panel-level field the disk file
+          // can't carry (folder, description, createdAt, ...) survives a
+          // hot-reload. Previously this rebuilt the object from scratch with
+          // only id/name/code/lastModified, silently dropping the script's
+          // folder assignment and description on every external edit.
+          ...(existing || {}),
           id: existing ? existing.id : `script-${entry.name.replace(/\.[^.]+$/, '')}`,
-          name: entry.name,
+          name: existing ? existing.name : entry.name,
           code: code,
           lastModified: file.lastModified,
         });
       }
     }
  
-    if (hasChanges || updatedScripts.length !== existingScripts.length) {
+    // A script that is in memory but has no file on disk is one of two things:
+    //  - never written yet (just created / added from a prefab, write still in
+    //    flight): keep it, the next save will create the file;
+    //  - known to have been on disk before (its file is in the last-synced
+    //    cache) and now gone: it was deleted outside the app, so drop it — the
+    //    same as the hot-reload always did before.
+    for (const [canonical, script] of currentScriptsMap) {
+      if (seen.has(canonical)) continue;
+      if (syncState && syncState.scripts.has(canonical)) {
+        syncState.scripts.delete(canonical);
+        hasChanges = true;
+      } else {
+        updatedScripts.push(script);
+      }
+    }
+ 
+    if (hasChanges) {
       return updatedScripts;
     }
   } catch {

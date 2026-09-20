@@ -31,9 +31,6 @@ export const Timeline = memo(function Timeline({
   onUpdateClip,
   onUpdateClips,
   onDuplicateClips,
-  onCopySelected,
-  onCutSelected,
-  onPasteClips,
   onUpdateTrack,
   onDeleteTrack,
   onAddTrack,
@@ -84,23 +81,6 @@ export const Timeline = memo(function Timeline({
   const zoomAccumRef = useRef(0);
   const zoomFrameRef = useRef(null);
   const zoomAnchorTimeRef = useRef(null);
-  // pixelsPerSecond is app-level state, not owned by this component —
-  // other zoom controls outside Timeline (e.g. UnityHeader's toolbar
-  // zoom +/- buttons) call onSetPixelsPerSecond directly with no scroll
-  // compensation of their own. applyZoomStep below already keeps the
-  // playhead/seekbar under the same screen x for the wheel gesture and
-  // Timeline's OWN zoom buttons; these two refs extend that same
-  // centering to ANY change of the pixelsPerSecond prop, regardless of
-  // which control caused it — see the reanchorExternalZoom effect below.
-  // selfInitiatedZoomRef: set just before applyZoomStep changes pps, so
-  // the effect can tell "I already reanchored this one inline" apart
-  // from "this came from outside and still needs centering".
-  const selfInitiatedZoomRef = useRef(false);
-  // prevPpsRef: the pixelsPerSecond value the view is currently laid
-  // out against, kept in sync at the end of every reanchor (self- or
-  // externally-initiated) so the next external change always has the
-  // correct "before" value to compute the old anchor screen position from.
-  const prevPpsRef = useRef(pixelsPerSecond);
  
   // ── Custom horizontal minimap scrollbar ────────────────────────
   // Mirrors lanesScrollRef's scrollLeft/scrollWidth/clientWidth as a
@@ -203,6 +183,81 @@ export const Timeline = memo(function Timeline({
     onSetExportRange(null);
   }, [onSetExportRange]);
  
+  // Shared zoom-and-reanchor: used by both the ctrl+wheel gesture handler
+  // and the toolbar zoom in/out buttons, so both paths keep the same
+  // instant (the playhead/seekbar position) under the same screen x
+  // instead of drifting the view — previously the toolbar buttons just
+  // called setPixelsPerSecond with no scroll compensation at all, so
+  // clicking them shifted the whole view relative to the left edge
+  // rather than staying centered on the seekbar.
+  const applyZoomStep = useCallback((delta) => {
+    const scroller = lanesScrollRef.current;
+    const anchorTime = playbackStore.getCurrentTime();
+    const anchorScreenX = scroller
+      ? HEADER_WIDTH + anchorTime * pixelsPerSecond - scroller.scrollLeft
+      : null;
+ 
+    const nextPps = Math.max(4, Math.min(240, pixelsPerSecond + delta));
+ 
+    const reanchor = () => {
+      if (!scroller || anchorScreenX === null) return;
+      // Wait one more frame so totalWidth/scrollWidth have repainted for
+      // the new pixelsPerSecond before we clamp against them.
+      requestAnimationFrame(() => {
+        const s = lanesScrollRef.current;
+        if (!s) return;
+        const maxScroll = Math.max(0, s.scrollWidth - s.clientWidth);
+        const desiredScrollLeft = HEADER_WIDTH + anchorTime * nextPps - anchorScreenX;
+        s.scrollLeft = Math.max(0, Math.min(maxScroll, desiredScrollLeft));
+        if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = s.scrollLeft;
+        updateScrollMetrics();
+      });
+    };
+ 
+    if (onSetPixelsPerSecond) {
+      onSetPixelsPerSecond(nextPps);
+    } else if (delta > 0) {
+      onZoomIn?.();
+    } else {
+      onZoomOut?.();
+    }
+    reanchor();
+  }, [pixelsPerSecond, playbackStore, onSetPixelsPerSecond, onZoomIn, onZoomOut, updateScrollMetrics]);
+ 
+  // Defined BEFORE handleZoomInBtn/handleZoomOutBtn: a useCallback dependency
+  // array is evaluated during render, so referencing a `const` declared further
+  // down throws "Cannot access 'stopSmoothScroll' before initialization" (TDZ)
+  // and crashes the whole Timeline. It only depends on refs, so its position
+  // among the other hooks doesn't change behavior.
+  const stopSmoothScroll = useCallback(() => {
+    if (smoothScrollAnimIdRef.current) {
+      cancelAnimationFrame(smoothScrollAnimIdRef.current);
+      smoothScrollAnimIdRef.current = null;
+    }
+    velocityRef.current = 0;
+  }, []);
+ 
+  useEffect(() => {
+    return () => {
+      if (smoothScrollAnimIdRef.current) {
+        cancelAnimationFrame(smoothScrollAnimIdRef.current);
+      }
+    };
+  }, []);
+
+  // Toolbar +/- buttons: same fixed step the old handleZoomIn/handleZoomOut
+  // used (15), just routed through applyZoomStep so they re-center on the
+  // seekbar the same way the wheel gesture does.
+  const handleZoomInBtn = useCallback(() => {
+    stopSmoothScroll();
+    applyZoomStep(15);
+  }, [applyZoomStep, stopSmoothScroll]);
+ 
+  const handleZoomOutBtn = useCallback(() => {
+    stopSmoothScroll();
+    applyZoomStep(-15);
+  }, [applyZoomStep, stopSmoothScroll]);
+ 
   // Auto-scroll timeline to keep playhead visible ONLY during active playback
   useEffect(() => {
     const unsub = playbackStore.registerFrameCallback((time) => {
@@ -228,138 +283,6 @@ export const Timeline = memo(function Timeline({
     });
     return unsub;
   }, [playbackStore, pixelsPerSecond]);
- 
-  const stopSmoothScroll = useCallback(() => {
-    if (smoothScrollAnimIdRef.current) {
-      cancelAnimationFrame(smoothScrollAnimIdRef.current);
-      smoothScrollAnimIdRef.current = null;
-    }
-    velocityRef.current = 0;
-  }, []);
- 
-  // Shared zoom-and-reanchor: used by both the ctrl+wheel gesture handler
-  // and the toolbar zoom in/out buttons, so both paths keep the same
-  // instant (the playhead/seekbar position) under the same screen x
-  // instead of drifting the view — previously the toolbar buttons just
-  // called setPixelsPerSecond with no scroll compensation at all, so
-  // clicking them shifted the whole view relative to the left edge
-  // rather than staying centered on the seekbar.
-  // NOTE: declared after stopSmoothScroll (not before, as in an earlier
-  // pass) — handleZoomInBtn/handleZoomOutBtn below call stopSmoothScroll,
-  // and const declarations aren't hoisted, so defining them earlier threw
-  // "Cannot access 'stopSmoothScroll' before initialization" on mount.
-  const applyZoomStep = useCallback((delta) => {
-    const scroller = lanesScrollRef.current;
-    const anchorTime = playbackStore.getCurrentTime();
-    const anchorScreenX = scroller
-      ? HEADER_WIDTH + anchorTime * pixelsPerSecond - scroller.scrollLeft
-      : null;
- 
-    const nextPps = Math.max(4, Math.min(240, pixelsPerSecond + delta));
- 
-    const reanchor = () => {
-      if (!scroller || anchorScreenX === null) return;
-      // Wait one more frame so totalWidth/scrollWidth have repainted for
-      // the new pixelsPerSecond before we clamp against them.
-      requestAnimationFrame(() => {
-        const s = lanesScrollRef.current;
-        if (!s) return;
-        const maxScroll = Math.max(0, s.scrollWidth - s.clientWidth);
-        const desiredScrollLeft = HEADER_WIDTH + anchorTime * nextPps - anchorScreenX;
-        s.scrollLeft = Math.max(0, Math.min(maxScroll, desiredScrollLeft));
-        if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = s.scrollLeft;
-        updateScrollMetrics();
-      });
-    };
- 
-    // Mark this change as already handled so the external-change effect
-    // below doesn't ALSO try to reanchor it (which would double-apply
-    // the scroll compensation against a stale anchorScreenX). Only set
-    // when nextPps actually differs from the current value — at the
-    // min/max zoom clamp, delta can produce nextPps === pixelsPerSecond,
-    // in which case onSetPixelsPerSecond doesn't change the prop, the
-    // effect's [pixelsPerSecond] dependency never re-fires, and this
-    // flag would otherwise stay stuck "true" — silently swallowing the
-    // NEXT real external zoom (e.g. from UnityHeader) with no reanchor
-    // at all. That stuck-flag case was the "works sometimes, not
-    // others" bug: it only ever bit after a zoom button had been
-    // clicked past the clamp.
-    if (nextPps !== pixelsPerSecond) {
-      selfInitiatedZoomRef.current = true;
-    }
-    prevPpsRef.current = nextPps;
- 
-    if (onSetPixelsPerSecond) {
-      onSetPixelsPerSecond(nextPps);
-    } else if (delta > 0) {
-      onZoomIn?.();
-    } else {
-      onZoomOut?.();
-    }
-    reanchor();
-  }, [pixelsPerSecond, playbackStore, onSetPixelsPerSecond, onZoomIn, onZoomOut, updateScrollMetrics]);
- 
-  // Re-centers the view on the playhead whenever pixelsPerSecond changes
-  // for a reason OTHER than this component's own applyZoomStep (wheel
-  // gesture / Timeline's +/- buttons, which already reanchor themselves
-  // inline above). Covers every other writer of the shared pps state —
-  // today that's UnityHeader's toolbar zoom buttons, previously the one
-  // path where zooming shifted the whole view relative to the left edge
-  // instead of staying centered on the seekbar, exactly like the bug
-  // applyZoomStep was written to fix for the wheel/toolbar paths.
-  //
-  // scrollLeft is untouched by an external setPixelsPerSecond call (only
-  // the lane content's width changes), so the anchor's PRE-change screen
-  // x can still be recovered after the fact using prevPpsRef (the pps
-  // the current scrollLeft was laid out against) against the unmoved
-  // scrollLeft — no "before" snapshot needs to be taken pre-emptively by
-  // whichever control triggered the change.
-  useEffect(() => {
-    if (selfInitiatedZoomRef.current) {
-      selfInitiatedZoomRef.current = false;
-      return;
-    }
-    const prevPps = prevPpsRef.current;
-    prevPpsRef.current = pixelsPerSecond;
-    if (prevPps === pixelsPerSecond) return;
- 
-    const scroller = lanesScrollRef.current;
-    if (!scroller) return;
- 
-    const anchorTime = playbackStore.getCurrentTime();
-    const anchorScreenX = HEADER_WIDTH + anchorTime * prevPps - scroller.scrollLeft;
- 
-    requestAnimationFrame(() => {
-      const s = lanesScrollRef.current;
-      if (!s) return;
-      const maxScroll = Math.max(0, s.scrollWidth - s.clientWidth);
-      const desiredScrollLeft = HEADER_WIDTH + anchorTime * pixelsPerSecond - anchorScreenX;
-      s.scrollLeft = Math.max(0, Math.min(maxScroll, desiredScrollLeft));
-      if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = s.scrollLeft;
-      updateScrollMetrics();
-    });
-  }, [pixelsPerSecond, playbackStore, updateScrollMetrics]);
- 
-  // Toolbar +/- buttons: same fixed step the old handleZoomIn/handleZoomOut
-  // used (15), just routed through applyZoomStep so they re-center on the
-  // seekbar the same way the wheel gesture does.
-  const handleZoomInBtn = useCallback(() => {
-    stopSmoothScroll();
-    applyZoomStep(15);
-  }, [applyZoomStep, stopSmoothScroll]);
- 
-  const handleZoomOutBtn = useCallback(() => {
-    stopSmoothScroll();
-    applyZoomStep(-15);
-  }, [applyZoomStep, stopSmoothScroll]);
- 
-  useEffect(() => {
-    return () => {
-      if (smoothScrollAnimIdRef.current) {
-        cancelAnimationFrame(smoothScrollAnimIdRef.current);
-      }
-    };
-  }, []);
  
   // Drag the minimap thumb (or click-to-jump on its track) to scroll.
   const handleMiniScrollbarPointerDown = useCallback((e) => {
@@ -964,8 +887,6 @@ export const Timeline = memo(function Timeline({
                       isAnyTrackRecording={!!recordingTrackId}
                       onToggleRecordTrack={onToggleRecordTrack}
                       onOpenSilenceRemoverForTrack={onOpenSilenceRemoverForTrack}
-                      allClips={clips}
-                      onUpdateClips={onUpdateClips}
                     />
                   </div>
                   <TrackLane
@@ -987,10 +908,6 @@ export const Timeline = memo(function Timeline({
                     onUpdateClip={onUpdateClip}
                     onUpdateClips={onUpdateClips}
                     onDuplicateClips={onDuplicateClips}
-                    onCopySelected={onCopySelected}
-                    onCutSelected={onCutSelected}
-                    onPasteClips={onPasteClips}
-                    onSeek={onSeek}
                     onAttachScriptToEntity={onAttachScriptToEntity}
                     onDropItemOnTrack={onDropItemOnTrack}
                     onAddMediaAsset={onAddMediaAsset}
@@ -1031,3 +948,5 @@ export const Timeline = memo(function Timeline({
     </section>
   );
 });
+ 
+ 

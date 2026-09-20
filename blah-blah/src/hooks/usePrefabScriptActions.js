@@ -182,17 +182,48 @@ export function usePrefabScriptActions({
   const handleCreateScript = async (newScript) => {
     setScripts((prev) => [...prev, newScript]);
     if (projectFolderHandle) {
-      await writeScriptFile(projectFolderHandle, newScript.name, newScript.code).catch(() => {});
+      await writeScriptFile(projectFolderHandle, newScript.name, newScript.code).catch(
+        (err) => console.warn('Could not write new script file:', err)
+      );
       precompileWithBundler(newScript.code, projectFolderHandle).catch(() => {});
     }
   };
 
-  const handleSaveScript = async (name, code) => {
-    const scriptObj = scripts.find((s) => s.name === name);
-    setScripts((prev) => prev.map((s) => (s.name === name ? { ...s, code } : s)));
-    if (projectFolderHandle && scriptObj) {
-      await writeScriptFile(projectFolderHandle, name, code).catch(() => {});
-      precompileWithBundler(code, projectFolderHandle).catch(() => {});
+  // Save from the Script Editor modal. The modal calls this as
+  // `onSaveScript(script.id, { name, code })`, so the first argument is the
+  // script's ID (not its name) and the second is an update object. This used
+  // to be declared `(name, code)`, which meant `name` received the id and
+  // `code` received the whole `{ name, code }` object: the lookup by name
+  // never matched, the in-memory script silently kept its old code, and the
+  // next autosave then wrote that stale code back over the file on disk.
+  const handleSaveScript = async (scriptId, updates = {}) => {
+    const scriptObj = (scripts || []).find((s) => s.id === scriptId);
+    if (!scriptObj) return;
+
+    const nextCode = typeof updates.code === 'string' ? updates.code : scriptObj.code || '';
+    const nextName = updates.name || scriptObj.name;
+    const renamed = nextName !== scriptObj.name;
+
+    // Disk first for a rename, so a colliding/failed rename never leaves the
+    // Project panel claiming success (same rule as handleRenameScript).
+    if (projectFolderHandle && renamed) {
+      await renameScriptFile(projectFolderHandle, scriptObj.name, nextName, nextCode);
+    }
+
+    setScripts((prev) =>
+      prev.map((s) =>
+        s.id === scriptId ? { ...s, name: nextName, code: nextCode, lastModified: Date.now() } : s
+      )
+    );
+
+    if (projectFolderHandle) {
+      // A rename already wrote the new file via renameScriptFile.
+      if (!renamed) {
+        await writeScriptFile(projectFolderHandle, nextName, nextCode).catch(
+          (err) => console.warn('Could not write script file:', err)
+        );
+      }
+      precompileWithBundler(nextCode, projectFolderHandle).catch(() => {});
     }
   };
 

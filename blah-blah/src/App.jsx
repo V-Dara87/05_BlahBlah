@@ -7,6 +7,8 @@ import { useSharedLibrary } from './hooks/useSharedLibrary';
 import { useSharedLibraryActions } from './hooks/useSharedLibraryActions';
 import { useDockPanels } from './hooks/useDockPanels';
 import { useProjectPersistence } from './hooks/useProjectPersistence';
+import { useProjectAutosave } from './hooks/useProjectAutosave';
+import { useAutosaveSettings } from './hooks/useAutosaveSettings';
 import { useAudioRecording } from './hooks/useAudioRecording';
 import { usePrefabEditing } from './hooks/usePrefabEditing';
 import { useOsFileDrop } from './hooks/useOsFileDrop';
@@ -54,8 +56,12 @@ import './styles/shared.css';
  *                         handlers, layout reset, Alt+P/Alt+F hotkeys
  *                         (hooks/useDockPanels.js)
  *   - useProjectPersistence → disk folder handle, save status/schema
- *                         warning, manual save + debounced autosave
- *                         (hooks/useProjectPersistence.js)
+ *                         warning, manual save + the one-at-a-time save
+ *                         queue (hooks/useProjectPersistence.js)
+ *   - useProjectAutosave → WHEN to autosave: debounce on real document
+ *                         changes, blur/close flush, driven by the
+ *                         Settings > Autosave values (useAutosaveSettings)
+ *                         (hooks/useProjectAutosave.js)
  *   - useAudioRecording → mic capture for per-track voice recording,
  *                         arm/stop/finalize, stop-on-pause sync
  *                         (hooks/useAudioRecording.js)
@@ -84,7 +90,9 @@ import './styles/shared.css';
  * doesn't get `projectState` itself until later, once useProjectStore and
  * useMediaAssets have produced the pieces `projectState` is built from —
  * see that hook's header for how the lazy `getProjectState` getter
- * resolves that circular dependency.
+ * resolves that circular dependency. useProjectAutosave is the opposite:
+ * it is called AFTER `projectState` is built (it depends on the document
+ * pieces themselves, not on a getter).
  */
 export function App() {
   // Which top-level screen is showing. 'hub' is the landing screen (recent
@@ -153,6 +161,8 @@ export function App() {
   const [isScriptDocsOpen, setIsScriptDocsOpen] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  // Global autosave preferences (Settings > Autosave). Shared with the modal below.
+  const { autosaveSettings, updateAutosaveSettings } = useAutosaveSettings();
   const [silenceTarget, setSilenceTarget] = useState({ type: 'clip', id: null });
   const [silencePreviewData, setSilencePreviewData] = useState(null);
  
@@ -167,6 +177,7 @@ export function App() {
     schemaWarning,
     setSchemaWarning,
     handleSaveProjectToDisk,
+    requestSave,
   } = useProjectPersistence({
     getProjectState: () => projectState,
     onNeedNewProject: () => setIsNewProjectOpen(true),
@@ -422,6 +433,17 @@ export function App() {
     mediaAssets,
     entities
   }), [projectName, resolution, tracks, scripts, prefabs, mediaAssets, entities]);
+ 
+  // Autosave — decides WHEN to write projectState to disk (debounce on real
+  // document changes, flush on blur/close, honoring Settings > Autosave).
+  // Must come after projectState; the save itself runs through requestSave.
+  useProjectAutosave({
+    projectFolderHandle,
+    projectState,
+    requestSave,
+    setSaveStatus,
+    settings: autosaveSettings,
+  });
  
   // Global keyboard shortcuts live in EditorPlaybackShortcuts (inside
   // PlaybackProvider) so App never re-renders on every playback frame.
@@ -710,6 +732,8 @@ export function App() {
         onSettingsChanged={handleAudioSettingsChanged}
         resolution={resolution}
         onResolutionChange={setResolution}
+        autosaveSettings={autosaveSettings}
+        onAutosaveSettingsChange={updateAutosaveSettings}
       />
     </div>
     </PlaybackProvider>
