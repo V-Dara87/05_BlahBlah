@@ -29,6 +29,8 @@ export function useEditorPlaybackHandlers({
   handleDeleteEntity,
   handleRippleTrimToPlayhead,
   handleDuplicateClips,
+  handleCopyClips,
+  handlePasteClips,
   setSnappingEnabled,
   handleZoomIn,
   handleZoomOut,
@@ -93,6 +95,44 @@ export function useEditorPlaybackHandlers({
     }
   }, [selectedIds, selectedEntityId, isPrefabMode, prefabEntityActions, handleDuplicateClips, setSelectedIds, setSelectedEntityId]);
  
+  // Copy / Cut / Paste. Selection resolves the same way as Duplicate/Delete
+  // (multi-selection wins, else the single selected clip). The clipboard is
+  // a module-level store (utils/clipClipboard.js), so a clip copied in prefab
+  // mode can be pasted into the scene and vice-versa.
+  const onCopySelected = useCallback(() => {
+    const ids = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
+    if (ids.length === 0) return;
+    const copy = isPrefabMode ? prefabEntityActions.handleCopyClips : handleCopyClips;
+    copy(ids);
+  }, [selectedIds, selectedEntityId, isPrefabMode, prefabEntityActions, handleCopyClips]);
+ 
+  // Cut = copy, then delete the originals. Descendants are stored by Copy
+  // (see copyToClipboard), because deleting a parent cascades to its
+  // children — so nothing is lost. Copy runs first, so if it stored nothing
+  // we don't delete anything.
+  const onCutSelected = useCallback(() => {
+    const ids = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
+    if (ids.length === 0) return;
+    const copy = isPrefabMode ? prefabEntityActions.handleCopyClips : handleCopyClips;
+    const stored = copy(ids);
+    if (!stored) return;
+    if (isPrefabMode) prefabEntityActions.handleDeleteEntity(ids);
+    else handleDeleteEntity(ids);
+    setSelectedIds([]);
+    setSelectedEntityId(null);
+  }, [selectedIds, selectedEntityId, isPrefabMode, prefabEntityActions, handleCopyClips, handleDeleteEntity, setSelectedIds, setSelectedEntityId]);
+ 
+  const onPasteClips = useCallback(() => {
+    const paste = isPrefabMode ? prefabEntityActions.handlePasteClips : handlePasteClips;
+    const newIds = paste();
+    if (newIds && newIds.length > 0) {
+      // Select every pasted clip so the group can be moved / edited (and
+      // shows up in the shared multi-clip Inspector) right away.
+      setSelectedIds(newIds);
+      setSelectedEntityId(newIds[0]);
+    }
+  }, [isPrefabMode, prefabEntityActions, handlePasteClips, setSelectedIds, setSelectedEntityId]);
+ 
   const onSelectAll = useCallback(() => {
     const allIds = activeEntities.map(e => e.id);
     setSelectedIds(allIds);
@@ -115,6 +155,9 @@ export function useEditorPlaybackHandlers({
     onRippleDeleteBefore,
     onRippleDeleteAfter,
     onDuplicateSelected,
+    onCopySelected,
+    onCutSelected,
+    onPasteClips,
     onSelectAll,
     onClearSelection,
     onToggleSnapping,

@@ -28,6 +28,9 @@ export const SHORTCUT_ACTIONS = [
   { id: 'selectAll', label: 'Select All', group: 'Selection', default: 'Ctrl+A' },
   { id: 'clearSelection', label: 'Deselect', group: 'Selection', default: 'Escape' },
   { id: 'duplicateSelected', label: 'Duplicate Clip', group: 'Selection', default: 'Ctrl+D' },
+  { id: 'copySelected', label: 'Copy Clip(s)', group: 'Selection', default: 'Ctrl+C' },
+  { id: 'cutSelected', label: 'Cut Clip(s)', group: 'Selection', default: 'Ctrl+X' },
+  { id: 'pasteClips', label: 'Paste Clip(s)', group: 'Selection', default: 'Ctrl+V' },
  
   // Timeline editing
   { id: 'splitSelected', label: 'Split Clip (Cut)', group: 'Timeline', default: 'W' },

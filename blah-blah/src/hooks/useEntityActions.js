@@ -7,6 +7,11 @@ import {
 } from '../engine/ecs';
 import { detectScriptKind, extractScriptProps } from '../engine/scriptRunner';
 import { computeTrimmedOffset } from '../utils/mediaOffset';
+import {
+  copyToClipboard,
+  getClipboardClips,
+  buildPastedClips,
+} from '../utils/clipClipboard';
  
 /**
  * useEntityActions — entity/clip editing, splitting, media/prefab/script
@@ -242,6 +247,29 @@ export function useEntityActions({
     }
     return newIds;
   }, [entities, setEntities, setSelectedEntityId]);
+ 
+  // Copy the given clips (plus their descendants — a Cut deletes children
+  // along with the parent, so they must travel with it) to the clipboard.
+  // Returns how many clips were stored (0 = nothing to copy).
+  const handleCopyClips = useCallback((clipIds) => {
+    const ids = Array.isArray(clipIds) ? clipIds : (clipIds ? [clipIds] : []);
+    return copyToClipboard(entities, ids);
+  }, [entities]);
+ 
+  // Paste the clipboard at the playhead: the group's left edge lands on the
+  // playhead and every clip keeps its relative offset and its own track.
+  // Overlaps with existing clips are left as-is (same as Duplicate).
+  // Returns the new ids so the caller can select them.
+  const handlePasteClips = useCallback(() => {
+    const clips = getClipboardClips();
+    if (clips.length === 0) return [];
+    const newClips = buildPastedClips(clips, getPlaybackTime(), tracks.map((t) => t.id));
+    if (newClips.length === 0) return [];
+    setEntities((prev) => [...prev, ...newClips]);
+    const newIds = newClips.map((c) => c.id);
+    setSelectedEntityId(newIds[0]);
+    return newIds;
+  }, [tracks, getPlaybackTime, setEntities, setSelectedEntityId]);
  
   // Split entity (or entities) at playhead
   const handleSplitEntity = useCallback((entityIdOrIds) => {
@@ -1119,6 +1147,8 @@ export function useEntityActions({
     handleUpdateEntity,
     handleUpdateClips,
     handleDuplicateClips,
+    handleCopyClips,
+    handlePasteClips,
     handleDeleteEntity,
     handleRippleTrimToPlayhead,
     handleSplitEntity,

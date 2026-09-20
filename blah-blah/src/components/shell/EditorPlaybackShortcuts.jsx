@@ -26,6 +26,9 @@ export function EditorPlaybackShortcuts({
   onRippleDeleteBefore,
   onRippleDeleteAfter,
   onDuplicateSelected,
+  onCopySelected,
+  onCutSelected,
+  onPasteClips,
   onSelectAll,
   onClearSelection,
   onSaveProject,
@@ -90,6 +93,30 @@ export function EditorPlaybackShortcuts({
         case 'duplicateSelected':
           e.preventDefault();
           onDuplicateSelected?.();
+          return;
+ 
+        // Copy / Cut / Paste clips. The early-return above already skips
+        // text fields, so Ctrl+C/X/V still copy/cut/paste TEXT there.
+        // Copy/Cut only claim the keystroke when clips are selected — with
+        // no selection, and while text is highlighted elsewhere on the page,
+        // the browser's own copy keeps working.
+        case 'copySelected':
+          if (selectedIds.length > 0 || selectedEntityId) {
+            e.preventDefault();
+            onCopySelected?.();
+          }
+          return;
+ 
+        case 'cutSelected':
+          if (selectedIds.length > 0 || selectedEntityId) {
+            e.preventDefault();
+            onCutSelected?.();
+          }
+          return;
+ 
+        case 'pasteClips':
+          e.preventDefault();
+          onPasteClips?.();
           return;
  
         case 'undo':
@@ -217,6 +244,9 @@ export function EditorPlaybackShortcuts({
     onRippleDeleteBefore,
     onRippleDeleteAfter,
     onDuplicateSelected,
+    onCopySelected,
+    onCutSelected,
+    onPasteClips,
     onSelectAll,
     onClearSelection,
     onSaveProject,
