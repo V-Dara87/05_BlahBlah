@@ -24,7 +24,7 @@ import {
   Unlink,
 } from 'lucide-react';
 import { getFieldKeyframes, setKeyframe, evaluateField } from '../engine/keyframes';
-import { isScriptComponent } from '../engine/ecs';
+import { isScriptComponent, isTransitionClipEntity } from '../engine/ecs';
 import { useReferencePicker } from './inspector/ReferencePickerHost';
 import { useComponentCardActions, scriptKindLabel, SCRIPT_KINDS } from '../hooks/useComponentCardActions';
 import { TransformCard } from './inspector/TransformCard';
@@ -32,6 +32,7 @@ import { TextRendererCard } from './inspector/TextRendererCard';
 import { ShapeRendererCard } from './inspector/ShapeRendererCard';
 import { MediaSettingsCard } from './inspector/MediaSettingsCard';
 import { TransitionCard } from './inspector/TransitionCard';
+import { TransitionClipInspector } from './inspector/TransitionClipInspector';
 import { SubtitleTrackCard } from './inspector/SubtitleTrackCard';
 import { ScriptCard, scriptKindMeta } from './inspector/ScriptCard';
 import './unity-inspector.css';
@@ -229,6 +230,14 @@ export const UnityInspector = memo(function UnityInspector({
     }
     return null;
   };
+ 
+  // A TransitionClip (ecs.js) draws nothing itself: it blends the clips on
+  // either side of its cut. It has no Transform, no renderer and nothing to
+  // attach a script to, so it gets its own inspector body instead of the
+  // component stack, and the Add Component / Save as Prefab footer actions
+  // (which would only produce controls that do nothing, or a prefab that
+  // resolves to nothing on its own) are hidden for it.
+  const isTransitionClip = isTransitionClipEntity(selectedEntity);
  
   const transformComp = selectedEntity.components.find(c => c.type === 'Transform') || {
     x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1
@@ -435,7 +444,7 @@ export const UnityInspector = memo(function UnityInspector({
             </div>
           </div>
         )}
-
+ 
         <div className="inspector-header-field">
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '2px' }}>
             <label className="field-label-sm">GameObject Name</label>
@@ -493,7 +502,21 @@ export const UnityInspector = memo(function UnityInspector({
       {/* Component Stack */}
       <div className="inspector-scroll-area">
  
+        {/* ========== TRANSITION CLIP — replaces the whole component stack ========== */}
+        {isTransitionClip && (
+          <TransitionClipInspector
+            entity={selectedEntity}
+            entities={entities}
+            mediaAssets={mediaAssets}
+            onUpdateEntity={onUpdateEntity}
+            isOpen={openFoldouts.TransitionClip !== false}
+            onToggle={() => toggleFoldout('TransitionClip')}
+          />
+        )}
+ 
         {/* ========== AUTO KEY TOGGLE ========== */}
+        {!isTransitionClip && (
+          <>
         <div className="inspector-auto-key-bar">
           <button
             className={`inspector-auto-key-btn${autoKeyEnabled ? ' active' : ''}`}
@@ -657,10 +680,13 @@ export const UnityInspector = memo(function UnityInspector({
             />
           );
         })}
+          </>
+        )}
       </div>
  
       {/* Footer Actions */}
       <div className="inspector-footer">
+        {!isTransitionClip && (
         <div className="add-comp-wrapper">
           <button
             className="unity-btn unity-btn-secondary full-width"
@@ -781,11 +807,14 @@ export const UnityInspector = memo(function UnityInspector({
             </div>
           )}
         </div>
+        )}
  
-        <button className="unity-btn unity-btn-prefab full-width" onClick={handleSavePrefabClick}>
-          {savedPrefab ? <Check size={13} /> : <Package size={13} />}
-          <span>{savedPrefab ? 'Saved to Prefabs!' : 'Save as Prefab'}</span>
-        </button>
+        {!isTransitionClip && (
+          <button className="unity-btn unity-btn-prefab full-width" onClick={handleSavePrefabClick}>
+            {savedPrefab ? <Check size={13} /> : <Package size={13} />}
+            <span>{savedPrefab ? 'Saved to Prefabs!' : 'Save as Prefab'}</span>
+          </button>
+        )}
  
         <button className="unity-btn unity-btn-danger-text full-width" onClick={() => onDeleteEntity(selectedEntity.id)}>
           <Trash2 size={12} />

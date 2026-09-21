@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { setMediaElementVolume, setMediaElementRate, resumeAudioContext, disconnectMediaGainChain } from '../utils/mediaAudio';
 import { resolveEffectiveVolume, findEntityTrack } from '../utils/trackAudio';
+import { resolveTransitionAudioForEntity } from '../engine/renderPipeline';
  
 /**
  * Keeps <video>/<audio> elements glued to the timeline during playback and
@@ -33,16 +34,46 @@ import { resolveEffectiveVolume, findEntityTrack } from '../utils/trackAudio';
  * sound until something else happened to resume the context later. See
  * utils/mediaAudio.js for the full explanation.
  */
-export function useMediaSync({ entities, activeVideoItems, computedEntities, currentTime, isPlaying, tracks = [] }) {
+export function useMediaSync({ entities, activeVideoItems, computedEntities, currentTime, isPlaying, tracks = [], transitionPlan = null, transitionAudioWindows = null }) {
   const videoRefs = useRef({});
   const audioRefs = useRef({});
   const wasPlayingRef = useRef(isPlaying);
+  // Step 5: entities keyed by id, for resolveTransitionAudioForEntity's
+  // parent fallback (an AudioSource child clip fades with its video
+  // parent). Cheap to rebuild each effect run; entities is already the
+  // full list both effects below iterate.
+  const entityMapRef = useRef(new Map());
+  entityMapRef.current = new Map((entities || []).map((e) => [e.id, e]));
  
   // Video — elements are created declaratively in JSX (ref callback sets
   // videoRefs.current[entity.id]); this effect only drives an existing element.
   useEffect(() => {
     const isStateTransition = wasPlayingRef.current !== isPlaying;
     wasPlayingRef.current = isPlaying;
+ 
+    // TransitionClips: while one is active, its neighbours A and B must both
+    // keep playing/seeking even though one of them is OUTSIDE its own clip
+    // window (so it is not in activeVideoItems). Add the missing side(s) and
+    // give each the resolver's EXTENDED media time + rate (transitionPlan.
+    // seekTimes, the same numbers export seeks to) instead of the normal
+    // (currentTime − startTime) × speed + offset. For a side that is inside
+    // its own window the two are identical, so B does not jump at the cut.
+    // With no active transition clip transitionPlan.seekTimes is empty and
+    // syncItems === activeVideoItems: behaviour is unchanged.
+    const seekTimes = transitionPlan?.seekTimes;
+    let syncItems = activeVideoItems;
+    if (seekTimes && seekTimes.size > 0) {
+      const present = new Set(activeVideoItems.map(({ entity }) => entity.id));
+      const extra = [];
+      for (const t of transitionPlan.transitions) {
+        for (const side of [t.from, t.to]) {
+          if (!side || present.has(side.entity.id)) continue;
+          present.add(side.entity.id);
+          extra.push({ entity: side.entity, transform: null });
+        }
+      }
+      if (extra.length) syncItems = [...activeVideoItems, ...extra];
+    }
  
     // Resume the shared AudioContext FIRST and wait for it to actually be
     // running before routing/playing anything this tick. Cheap no-op when
@@ -52,16 +83,17 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
         await resumeAudioContext();
       }
  
-      activeVideoItems.forEach(({ entity, transform }) => {
+      syncItems.forEach(({ entity, transform }) => {
         const videoComp = entity.components.find((c) => c.type === 'VideoRenderer') || { src: entity.src };
         const vidSrc = videoComp.src || entity.src;
         if (!vidSrc) return;
  
         const vidEl = videoRefs.current[entity.id];
         if (vidEl) {
-          const speed = (videoComp.speed || 1) * (transform?.speed ?? 1);
+          const ext = seekTimes?.get(entity.id);
+          const speed = ext ? ext.rate : (videoComp.speed || 1) * (transform?.speed ?? 1);
           const offset = videoComp.mediaOffset || 0;
-          const localTime = (currentTime - entity.startTime) * speed + offset;
+          const localTime = ext ? ext.mediaTime : (currentTime - entity.startTime) * speed + offset;
  
           // Default video volume to 0 (silent) — a video clip's audio is
           // owned by its linked AudioSource entity (handleAddMediaToTimeline
@@ -71,7 +103,15 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
           // never plays its own audio track in preview, and a volume slider
           // on the video clip never silently does nothing.
           const track = findEntityTrack(entity, tracks);
-          const effectiveVolume = resolveEffectiveVolume(videoComp.volume ?? 0, track, tracks);
+          let effectiveVolume = resolveEffectiveVolume(videoComp.volume ?? 0, track, tracks);
+          // Step 5: crossfade A/B's own gain across a transition window
+          // touching this clip, same 0..1 envelope the export mixdown
+          // applies (getTransitionAudioWindows in renderPipeline.js) — so
+          // scrubbing/playing across a cut sounds like the picture blends,
+          // not an abrupt swap. No-op (gainAt undefined) for any clip not
+          // touching a transition.
+          const videoTransitionAudio = resolveTransitionAudioForEntity(entity, transitionAudioWindows, entityMapRef.current);
+          if (videoTransitionAudio) effectiveVolume *= videoTransitionAudio.gainAt(currentTime);
           setMediaElementVolume(vidEl, effectiveVolume, track?.id);
           setMediaElementRate(vidEl, speed);
  
@@ -94,7 +134,7 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
  
     // Pause any videos outside the active timeline window
     Object.keys(videoRefs.current).forEach((id) => {
-      if (!activeVideoItems.some(({ entity }) => entity.id === id)) {
+      if (!syncItems.some(({ entity }) => entity.id === id)) {
         const el = videoRefs.current[id];
         if (el && !el.paused) el.pause();
       }
@@ -108,7 +148,7 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
         delete videoRefs.current[id];
       }
     });
-  }, [currentTime, isPlaying, activeVideoItems, entities, tracks]);
+  }, [currentTime, isPlaying, activeVideoItems, entities, tracks, transitionPlan, transitionAudioWindows]);
  
   // Audio — same rate/volume/seek treatment as video above, but audio
   // elements are created imperatively here (no <audio> in JSX) since
@@ -139,7 +179,15 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
           const offset = audioComp.mediaOffset || 0;
           const localTime = (currentTime - entity.startTime) * speed + offset;
           const track = findEntityTrack(entity, tracks);
-          const effectiveVolume = resolveEffectiveVolume(audioComp.volume ?? 1, track, tracks);
+          let effectiveVolume = resolveEffectiveVolume(audioComp.volume ?? 1, track, tracks);
+          // Step 5: same crossfade as the video branch above. This entity
+          // may itself be an AudioSource child of a video clip that is the
+          // A/B side of a transition (handleAddMediaToTimeline: "Audio is
+          // ALWAYS child of video") — resolveTransitionAudioForEntity's
+          // parent-id fallback covers that case as well as a bare audio
+          // clip that happens to be a transition side directly.
+          const audioTransitionAudio = resolveTransitionAudioForEntity(entity, transitionAudioWindows, entityMapRef.current);
+          if (audioTransitionAudio) effectiveVolume *= audioTransitionAudio.gainAt(currentTime);
           setMediaElementVolume(aud, effectiveVolume, track?.id);
           setMediaElementRate(aud, speed);
  
@@ -175,7 +223,7 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
         delete audioRefs.current[id];
       }
     });
-  }, [currentTime, isPlaying, computedEntities, entities, tracks]);
+  }, [currentTime, isPlaying, computedEntities, entities, tracks, transitionAudioWindows]);
  
   // Cleanup on unmount — stop and disconnect every element this hook
   // ever created/tracked (mirrors EntityRenderer's own unmount cleanup,

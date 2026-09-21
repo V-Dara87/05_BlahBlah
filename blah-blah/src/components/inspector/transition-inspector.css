@@ -159,3 +159,83 @@
   opacity: 1;
   text-decoration: underline;
 }
+ 
+/* ── TransitionClipInspector (TransitionClipInspector.jsx) ─────────────── */
+ 
+.transition-clip-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 1.4;
+  border: 1px solid transparent;
+}
+ 
+.transition-clip-status > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+ 
+.transition-clip-status.ok {
+  color: #6ee7b7;
+  background: rgba(16, 185, 129, 0.1);
+  border-color: rgba(16, 185, 129, 0.25);
+}
+ 
+.transition-clip-status.warn {
+  color: #fcd34d;
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.3);
+}
+ 
+.transition-clip-status.bad {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.35);
+}
+ 
+.transition-clip-inline-btn {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 3px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+ 
+.transition-clip-inline-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+ 
+.transition-clip-hint {
+  font-size: 10px;
+  color: var(--unity-text-dim, #6e6e6e);
+  margin: -2px 0 2px;
+  line-height: 1.3;
+}
+ 
+/* A quiet text action: same footprint as .remove-comp-link but neutral, for
+   harmless actions (that class is red and reads as "destructive"). */
+.transition-clip-quiet-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--unity-text-dim, #8a8a8a);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.12s;
+}
+ 
+.transition-clip-quiet-link:hover {
+  color: #e5e7eb;
+  text-decoration: underline;
+}
+ 

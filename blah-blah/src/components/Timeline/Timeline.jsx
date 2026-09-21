@@ -12,7 +12,7 @@ const HEADER_WIDTH = 180;
 // live in utils/timelineLayout.js (shared with TrackLane / TrackHeader and
 // unit-tested). Re-exported here so existing importers stay unchanged.
 export { TRACK_HEIGHT } from '../../utils/timelineLayout';
-import { TRACK_HEIGHT, computeTrackLanes } from '../../utils/timelineLayout';
+import { TRACK_HEIGHT, computeTrackLanes, isTransitionClipLike } from '../../utils/timelineLayout';
 import './timeline.css';
  
 export const Timeline = memo(function Timeline({
@@ -31,6 +31,7 @@ export const Timeline = memo(function Timeline({
   onUpdateClip,
   onUpdateClips,
   onDuplicateClips,
+  onDeleteClip,
   onUpdateTrack,
   onDeleteTrack,
   onAddTrack,
@@ -159,6 +160,10 @@ export const Timeline = memo(function Timeline({
     points.add(0);
     points.add(playbackStore.getCurrentTime());
     clips.forEach((clip) => {
+      // A transition's edges are not meaningful edit points: it is centred on
+      // a cut, so its start/end sit half a transition either side of one and
+      // would pull other clips to an arbitrary offset from the real cut.
+      if (isTransitionClipLike(clip)) return;
       points.add(clip.startTime);
       points.add(clip.startTime + clip.duration);
     });
@@ -908,6 +913,7 @@ export const Timeline = memo(function Timeline({
                     onUpdateClip={onUpdateClip}
                     onUpdateClips={onUpdateClips}
                     onDuplicateClips={onDuplicateClips}
+                    onDeleteClip={onDeleteClip}
                     onAttachScriptToEntity={onAttachScriptToEntity}
                     onDropItemOnTrack={onDropItemOnTrack}
                     onAddMediaAsset={onAddMediaAsset}
@@ -948,5 +954,3 @@ export const Timeline = memo(function Timeline({
     </section>
   );
 });
- 
- 

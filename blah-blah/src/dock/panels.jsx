@@ -210,10 +210,10 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
     tracks, entities, mediaAssets, calculatedDuration, pixelsPerSecond,
     selectedEntityId, setSelectedEntityId, snappingEnabled,
     selectedIds, setSelectedIds,
-    handleUpdateEntity, handleUpdateClips, handleDuplicateClips,
+    handleUpdateEntity, handleUpdateClips, handleDuplicateClips, handleDeleteEntity,
     onCopySelected, onCutSelected, onPasteClips,
     handleUpdateTrack, handleDeleteTrack,
-    handleAddTrack, handleAddEmptyClip,
+    handleAddTrack, handleAddEmptyClip, handleAddTransitionClip,
     handleDropItemOnTrack, handleAttachScriptToEntity,
     onAddMediaAsset,
     recordingTrackId, recordingStartTime, recordingLevel, onToggleRecordTrack,
@@ -300,6 +300,7 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
         onUpdateClip={handleUpdateEntity}
         onUpdateClips={handleUpdateClips}
         onDuplicateClips={handleDuplicateClips}
+        onDeleteClip={handleDeleteEntity}
         onCopySelected={onCopySelected}
         onCutSelected={onCutSelected}
         onPasteClips={onPasteClips}
@@ -307,6 +308,7 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
         onDeleteTrack={handleDeleteTrack}
         onAddTrack={handleAddTrack}
         onAddEmptyClip={handleAddEmptyClip}
+        onAddTransitionClip={handleAddTransitionClip}
         onDropItemOnTrack={handleDropItemOnTrack}
         onAttachScriptToEntity={handleAttachScriptToEntity}
         onAddMediaAsset={onAddMediaAsset}

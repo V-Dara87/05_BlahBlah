@@ -7,7 +7,7 @@ import { getCompiledReactComponent, detectScriptKind, extractScriptProps } from 
 import { resolveScriptProps } from '../../engine/referenceTypes';
 import { resolveTextRendererText, cssFontFamily, DEFAULT_TEXT_FONT_SIZE, DEFAULT_TEXT_FONT_COLOR, DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_WEIGHT } from '../../engine/textRenderer';
 import { isScriptComponent, isVideoEntity, isAudioEntity } from '../../engine/ecs';
-import { computeActiveEntitiesAtTime } from '../../engine/renderPipeline';
+import { computeActiveEntitiesAtTime, resolveTransitionFramePlan, getTransitionAudioWindows } from '../../engine/renderPipeline';
 import { EntityErrorBoundary } from './EntityErrorBoundary';
 import { usePreviewViewport } from '../../hooks/usePreviewViewport';
 import { useGizmoDrag } from '../../hooks/useGizmoDrag';
@@ -162,9 +162,48 @@ export function EntityRenderer({
     [computedEntities]
   );
  
+  // TransitionClips — the SAME resolver export uses (renderPipeline.js
+  // resolveTransitionFramePlan), so what plays here and what exports cannot
+  // drift. `blends` adds, per active transition, the pose the single GL
+  // canvas is drawn with: the pose of whichever of A/B is active this frame
+  // (keyframes/scripts applied), else the stored Transform — identical to
+  // exportRunner.js. Empty for projects with no transition clips.
+  //
+  // mediaDurations is left empty on purpose: the preview never needs to
+  // clamp because the browser itself clamps a video's currentTime to its
+  // real duration, which IS the hold-last-frame behaviour.
+  const transitionPlan = useMemo(() => {
+    const plan = resolveTransitionFramePlan({ entities, tracks, time: currentTime });
+    if (plan.transitions.length === 0) return plan;
+    const poseOf = (side) => {
+      if (!side) return null;
+      const active = computedEntities.find(({ entity }) => entity.id === side.entity.id);
+      return active?.transform || side.entity.components?.find((c) => c.type === 'Transform') || null;
+    };
+    const blends = plan.transitions.map((t) => ({
+      transition: t,
+      trackEntity: t.from?.entity || t.to?.entity,
+      transform: poseOf(t.from) || poseOf(t.to) || { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1 },
+    }));
+    return { ...plan, blends };
+  }, [entities, tracks, currentTime, computedEntities]);
+ 
   // Video/audio playback sync (rate, volume, seek-to-timeline) — see
   // hooks/useMediaSync.js. It owns videoRefs/audioRefs; videoRefs is also
   // used below to attach the <video> elements themselves.
+  // Step 5: crossfade windows for every clip on either side of a
+  // TransitionClip's cut — the preview's counterpart to what
+  // ExportModal.jsx now computes once before mixdownAudio. UNLIKE
+  // transitionPlan above this does NOT depend on currentTime (a clip's
+  // crossfade window is a property of the project, not of the playhead),
+  // so it only recomputes when entities/tracks themselves change, not
+  // every frame — cheap for a project with no transition clips (empty
+  // map, see getTransitionAudioWindows).
+  const transitionAudioWindows = useMemo(
+    () => getTransitionAudioWindows({ entities, tracks }),
+    [entities, tracks]
+  );
+ 
   const { videoRefs, audioRefs } = useMediaSync({
     entities,
     activeVideoItems,
@@ -172,6 +211,8 @@ export function EntityRenderer({
     currentTime,
     isPlaying,
     tracks,
+    transitionPlan,
+    transitionAudioWindows,
   });
  
   // Drives canvas-kind script components every frame — see
@@ -330,6 +371,7 @@ export function EntityRenderer({
             handleMoveGizmoPointerDown={handleMoveGizmoPointerDown}
             handleRotateGizmoPointerDown={handleRotateGizmoPointerDown}
             handleScaleGizmoPointerDown={handleScaleGizmoPointerDown}
+            transitionPlan={transitionPlan}
           />
  
           {/* 2. Foreground Overlay GameObjects (Scripts, Text, Shapes, Prefabs) */}

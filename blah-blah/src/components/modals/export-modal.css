@@ -3,7 +3,7 @@
    alone; generic modifier classes (.active/.danger/.disabled) travel with the
    component that owns the rest of the selector.
    App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
-
+ 
 .export-hub-modal {
   width: 94%;
   max-width: 880px;
@@ -397,3 +397,58 @@
 .export-saved-path svg {
   flex-shrink: 0;
 }
+ 
+/* Pre-export heads-up for transition clips that will not render as a full
+   blend (ExportModal.jsx, renderPipeline.js auditTransitionClips). Amber, not
+   red: export still runs, so this is a warning, not an error. */
+.export-transition-warning {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #fcd34d;
+}
+ 
+.export-transition-warning-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+}
+ 
+.export-transition-warning-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 120px;
+  overflow-y: auto;
+  color: #e5d5a1;
+}
+ 
+.export-transition-warning-list li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+ 
+.export-transition-warning-time {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: #fbbf24;
+}
+ 
+.export-transition-warning-foot {
+  font-size: 10px;
+  color: #b8a570;
+}
+ 

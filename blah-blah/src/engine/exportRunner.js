@@ -1,10 +1,15 @@
-
+ 
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { getCompiledReactComponent, detectScriptKind } from './scriptRunner.js';
 import { updateCanvasComponent, unmountCanvasComponent } from './canvasRunner.js';
-import { computeActiveEntitiesAtTime } from './renderPipeline.js';
+import {
+  computeActiveEntitiesAtTime,
+  resolveTransitionFramePlan,
+  getTransitionAudioWindows,
+  resolveTransitionAudioForEntity,
+} from './renderPipeline.js';
 import { isScriptComponent, isVideoEntity, isAudioEntity } from './ecs.js';
 import { getSharedGLTransitionRenderer } from './glTransitions.js';
 import { resolveEffectiveVolume, findEntityTrack } from '../utils/trackAudio.js';
@@ -17,7 +22,7 @@ import {
   DEFAULT_TEXT_FONT_FAMILY,
   DEFAULT_TEXT_FONT_WEIGHT,
 } from './textRenderer.js';
-
+ 
 /**
  * P1 #11 — export-time equivalent of EntityRenderer.jsx's live preview.
  *
@@ -39,15 +44,19 @@ import {
  * preview behavior it mirrors — when the preview's CSS/DOM changes, the
  * matching helper here has to change with it.
  */
-
+ 
 // Re-exported so ExportModal.jsx keeps importing computeActiveEntitiesAtTime
 // from this module — the implementation now lives in renderPipeline.js.
-export { computeActiveEntitiesAtTime } from './renderPipeline.js';
-
+export {
+  computeActiveEntitiesAtTime,
+  resolveTransitionFramePlan,
+  getTransitionAudioWindows,
+} from './renderPipeline.js';
+ 
 // ---------------------------------------------------------------------------
 // Offscreen <div> pool for script-driven (canvas-kind + react-kind) entities
 // ---------------------------------------------------------------------------
-
+ 
 /**
  * Canvas-kind scripts mount into a real DOM container (see canvasRunner.js
  * onMount({ container })), same as live playback, and react-kind scripts
@@ -58,7 +67,7 @@ export { computeActiveEntitiesAtTime } from './renderPipeline.js';
  */
 // React roots mounted into pooled containers (react-kind export).
 const reactRoots = new Map(); // container -> Root
-
+ 
 export function createCanvasContainerPool() {
   const root = document.createElement('div');
   root.style.position = 'fixed';
@@ -66,13 +75,13 @@ export function createCanvasContainerPool() {
   root.style.top = '-99999px';
   root.style.pointerEvents = 'none';
   document.body.appendChild(root);
-
+ 
   // Keyed by `entityId::scriptId` so multiple script components on one
   // entity each get their own container (mirrors canvasRunner's mount
   // keys).
   const containers = new Map(); // mountKey -> HTMLDivElement
   const mountKeyFor = (entityId, scriptId = '') => `${entityId}::${scriptId || ''}`;
-
+ 
   return {
     /**
      * Get (creating if needed) the offscreen container for this
@@ -149,11 +158,11 @@ export function createCanvasContainerPool() {
     },
   };
 }
-
+ 
 // ---------------------------------------------------------------------------
 // Deterministic video-frame provider
 // ---------------------------------------------------------------------------
-
+ 
 /**
  * Live playback (EntityRenderer.jsx) tolerates ~0.6s of drift between a
  * <video> element's currentTime and the target time, because it's syncing
@@ -164,19 +173,19 @@ export function createCanvasContainerPool() {
  */
 export function createVideoFrameProvider() {
   const videos = new Map(); // entityId -> HTMLVideoElement
-
+ 
   return {
     /** Create (if needed) and fully preload one <video> per entity, up front. */
     async preload(entityId, src) {
       if (videos.has(entityId)) return videos.get(entityId);
-
+ 
       const video = document.createElement('video');
       video.crossOrigin = 'anonymous';
       video.src = src;
       video.muted = true; // Phase 1 is silent video; also avoids autoplay-policy issues.
       video.playsInline = true;
       video.preload = 'auto';
-
+ 
       await new Promise((resolve, reject) => {
         const onReady = () => {
           video.removeEventListener('loadedmetadata', onReady);
@@ -191,11 +200,11 @@ export function createVideoFrameProvider() {
         video.addEventListener('loadedmetadata', onReady);
         video.addEventListener('error', onError);
       });
-
+ 
       videos.set(entityId, video);
       return video;
     },
-
+ 
     /**
      * Seek this entity's video to `localTime` (already adjusted for the
      * component's speed/mediaOffset by the caller) and resolve only once the
@@ -210,10 +219,10 @@ export function createVideoFrameProvider() {
       const video = videos.get(entityId) || (await this.preload(entityId, src));
       video.playbackRate = playbackRate;
       const clamped = Math.max(0, Math.min(localTime, video.duration || localTime));
-
+ 
       // Already close enough (same frame) — skip the seek/await round-trip.
       if (Math.abs(video.currentTime - clamped) < 1 / 240) return;
-
+ 
       await new Promise((resolve) => {
         const onSeeked = () => {
           video.removeEventListener('seeked', onSeeked);
@@ -223,11 +232,48 @@ export function createVideoFrameProvider() {
         video.currentTime = clamped;
       });
     },
-
+ 
     getVideoElement(entityId) {
       return videos.get(entityId) || null;
     },
-
+ 
+    /**
+     * { [entityId]: source-file duration in seconds } for every preloaded
+     * video. Fed to the transition resolver so it can tell when a clip's
+     * extended media time runs past the real end of the file (no tail
+     * footage) and hold the last frame instead of seeking into nothing.
+     * Only finite, positive durations are reported.
+     */
+    getMediaDurations() {
+      const out = {};
+      for (const [id, video] of videos) {
+        if (Number.isFinite(video.duration) && video.duration > 0) out[id] = video.duration;
+      }
+      return out;
+    },
+ 
+    /**
+     * Seek several videos to arbitrary media times in parallel. A transition
+     * window seeks BOTH neighbours, each outside its own clip window.
+     * `plan` is resolveTransitionFramePlan().seekTimes:
+     * Map<entityId, { mediaTime, rate }>; `srcOf(entityId)` supplies each
+     * source URL (keeps this provider free of entity knowledge). Ids with no
+     * source are skipped.
+     *
+     * Every element is created once by preload() and only ever seeked, never
+     * paused/removed between frames, so a video stays alive for the whole
+     * transition window and is not re-loaded when the window ends.
+     */
+    async seekMany(plan, srcOf) {
+      const jobs = [];
+      for (const [entityId, { mediaTime, rate }] of plan) {
+        const src = srcOf(entityId);
+        if (!src) continue;
+        jobs.push(this.seekTo(entityId, src, null, mediaTime, rate));
+      }
+      await Promise.all(jobs);
+    },
+ 
     disposeAll() {
       for (const video of videos.values()) {
         video.pause();
@@ -238,11 +284,11 @@ export function createVideoFrameProvider() {
     },
   };
 }
-
+ 
 // ---------------------------------------------------------------------------
 // Per-frame draw
 // ---------------------------------------------------------------------------
-
+ 
 /**
  * Draws one fully-composited frame into `ctx` for the given absolute `time`.
  *
@@ -265,7 +311,7 @@ export function createVideoFrameProvider() {
  * ascending-by-track-index is exactly right: lowest track drawn first
  * (furthest back), highest track drawn last (frontmost).
  */
-export function drawExportFrame({
+export async function drawExportFrame({
   ctx,
   width,
   height,
@@ -288,12 +334,12 @@ export function drawExportFrame({
 }) {
   ctx.fillStyle = '#000000';
   ctx.fillRect(0, 0, width, height);
-
+ 
   // Project-space frame size, and the uniform fit onto the output.
   const W = projectWidth > 0 ? projectWidth : width;
   const H = projectHeight > 0 ? projectHeight : height;
   const fit = Math.min(width / W, height / H);
-
+ 
   const computed = computeActiveEntitiesAtTime({
     entities,
     tracks,
@@ -304,16 +350,52 @@ export function drawExportFrame({
     // against the real media library, not an empty list.
     allAssets: mediaAssets,
   });
-
+ 
   const trackZIndexOf = (trackId) => {
     const idx = tracks.findIndex((t) => t.id === trackId);
     return idx === -1 ? 0 : idx + 1;
   };
-
+ 
+  // TransitionClips (renderPipeline.js resolveTransitionFramePlan). While one
+  // is active its neighbours A and B are drawn TOGETHER as one GL blend, so
+  // their normal draw is suppressed below — otherwise B would pop in over the
+  // blend at the cut and A would vanish from under it. Projects with no
+  // transition clips get an empty plan, so nothing here changes for them.
+  const transitionPlan = resolveTransitionFramePlan({
+    entities,
+    tracks,
+    time,
+    mediaDurations: videoFrameProvider?.getMediaDurations?.() || {},
+  });
+ 
   // Stable sort by track order so entities on the same track keep their
   // original relative draw order — matching EntityRenderer.jsx's
   // live-preview zIndex (trackZIndexOf there too).
-  const drawOrder = computed
+  // A transition blend takes the draw slot A and B would have had: same
+  // track, so same z-index. It is added as one pseudo-item tagged
+  // `transitionBlend` and sorted together with the ordinary items, which
+  // keeps it correctly behind higher tracks and in front of lower ones.
+  //
+  // Pose: A and B are outside their own clip window for half the transition
+  // each, so computeActiveEntitiesAtTime has no resolved Transform for the
+  // side that is not active. Use the pose of whichever side IS active this
+  // frame (its keyframes/scripts already applied), else the entity's stored
+  // Transform values. The blend is one image, so it takes one pose.
+  const poseOfSide = (side) => {
+    if (!side) return null;
+    const active = computed.find(({ entity }) => entity.id === side.entity.id);
+    return active?.transform || side.entity.components?.find((c) => c.type === 'Transform') || null;
+  };
+  const blendItems = transitionPlan.transitions.map((t) => ({
+    transitionBlend: t,
+    entity: t.from?.entity || t.to?.entity, // supplies trackId for z-order
+    transform: poseOfSide(t.from) || poseOfSide(t.to) || { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1 },
+  }));
+ 
+  const drawOrder = [
+    ...computed.filter(({ entity }) => !transitionPlan.suppressedIds.has(entity.id)),
+    ...blendItems,
+  ]
     .map((item, originalIndex) => ({ item, originalIndex }))
     .sort((a, b) => {
       const aKey = trackZIndexOf(a.item.entity.trackId);
@@ -322,7 +404,7 @@ export function drawExportFrame({
       return diff !== 0 ? diff : a.originalIndex - b.originalIndex;
     })
     .map(({ item }) => item);
-
+ 
   ctx.save();
   try {
     // Project space -> output space, clipped to the project frame (the
@@ -332,10 +414,18 @@ export function drawExportFrame({
     ctx.beginPath();
     ctx.rect(0, 0, W, H);
     ctx.clip();
-
-    for (const { entity, transform, localTime, transitionState } of drawOrder) {
+ 
+    for (const { entity, transform, localTime, transitionState, transitionBlend } of drawOrder) {
+      if (transitionBlend) {
+        try {
+          drawTransitionBlend(ctx, transitionBlend, transform, W, H, videoFrameProvider);
+        } catch (err) {
+          console.warn('Export: render error on transition clip:', err);
+        }
+        continue;
+      }
       if (isAudioEntity(entity)) continue;
-
+ 
       try {
         if (isVideoEntity(entity)) {
           const videoComp = entity.components.find((c) => c.type === 'VideoRenderer') || { src: entity.src };
@@ -343,7 +433,7 @@ export function drawExportFrame({
           if (!src) continue;
           const video = videoFrameProvider.getVideoElement(entity.id);
           if (!video) continue;
-
+ 
           let mediaToDraw = video;
           if (transitionState) {
             const isOut = transitionState.type === 'out';
@@ -364,7 +454,7 @@ export function drawExportFrame({
               }
             }
           }
-
+ 
           // Preview: the <video> element has a black background over its
           // whole frame-sized box (video-layer.css), so letterbox bars are
           // opaque black. While a GL transition runs the video is hidden and
@@ -372,7 +462,7 @@ export function drawExportFrame({
           drawTransformedMedia(ctx, mediaToDraw, transform, W, H, { backdrop: mediaToDraw === video });
           continue;
         }
-
+ 
         // Preview (OverlayLayer.jsx) fades non-video entities through their
         // transition: opacity × (progress when transitioning in, 1 − progress
         // when out). Video transitions are handled by the GL pass above.
@@ -385,7 +475,7 @@ export function drawExportFrame({
           transitionFactor === 1
             ? transform
             : { ...transform, opacity: (transform.opacity ?? 1) * transitionFactor };
-
+ 
         // Preview pivots around `pivot × (the entity's own box size)` — for
         // overlays that is the first component's width/height (180 fallback),
         // NOT the frame size (OverlayLayer.jsx baseWidth/baseHeight).
@@ -393,25 +483,24 @@ export function drawExportFrame({
           w: entity.components.find((c) => c.width)?.width || 180,
           h: entity.components.find((c) => c.height)?.height || 180,
         };
-
+ 
         const shapeComp = entity.components.find((c) => c.type === 'ShapeRenderer');
         const textComp = entity.components.find((c) => c.type === 'TextRenderer');
-
+ 
         // Script-driven visuals — ONE component type (ScriptComponent),
         // dispatched per script kind: 'canvas' mounts the compiled class into
         // a pooled offscreen container (updateCanvasComponent, same lifecycle
-        // as live preview) and rasterizes its <canvas> subtree; 'react'
-        // mounts the compiled component via the same pooled container with
-        // flushSync (see drawReactComponentContents for the exact scope:
-        // canvas-rooted components; arbitrary DOM-only output is skipped
-        // rather than guessed at). Multiple script components on one entity
-        // each draw into their own container.
+        // as live preview) and rasterizes its <canvas> AND DOM output;
+        // 'react' mounts the compiled component via the same pooled
+        // container with flushSync and rasterizes its output the same way
+        // (see drawReactComponentContents). Multiple script components on
+        // one entity each draw into their own container.
         for (const comp of entity.components) {
           if (!isScriptComponent(comp) || comp.enabled === false) continue;
           const scriptDef = scripts.find((s) => s.id === comp.scriptId);
           if (!scriptDef || !scriptDef.code) continue;
           const kind = detectScriptKind(scriptDef.code);
-
+ 
           if (kind === 'canvas') {
             const container = canvasContainers.getContainer(entity.id, comp.scriptId, { width: W, height: H });
             updateCanvasComponent({
@@ -444,12 +533,12 @@ export function drawExportFrame({
               allEntities: entities,
               allAssets: mediaAssets,
             });
-            drawCanvasContainerContents(ctx, container, overlayTransform, W, H, pivotBase);
+            await drawCanvasContainerContents(ctx, container, overlayTransform, W, H, pivotBase);
           } else if (kind === 'react') {
             const CompiledComponent = getCompiledReactComponent(scriptDef.code);
             if (typeof CompiledComponent === 'function') {
               const container = canvasContainers.getContainer(entity.id, comp.scriptId);
-              drawReactComponentContents({
+              await drawReactComponentContents({
                 ctx,
                 container,
                 Component: CompiledComponent,
@@ -465,7 +554,7 @@ export function drawExportFrame({
             }
           }
         }
-
+ 
         if (shapeComp) {
           drawShape(ctx, shapeComp, overlayTransform, W, H, pivotBase);
         } else if (textComp) {
@@ -478,7 +567,7 @@ export function drawExportFrame({
   } finally {
     ctx.restore();
   }
-
+ 
   // Active mount keys for prune: every (entity, script) pair with an
   // enabled script component (whether or not its kind produced drawable
   // output this frame), so containers are released exactly when a script
@@ -491,12 +580,12 @@ export function drawExportFrame({
     )
   );
 }
-
+ 
 // ---------------------------------------------------------------------------
 // Drawing helpers — translate the same transform math EntityRenderer.jsx
 // applies via CSS transform/opacity into direct canvas 2D drawing.
 // ---------------------------------------------------------------------------
-
+ 
 /**
  * Canvas equivalent of the preview's CSS
  *   transform: translate(x, y) rotate(r) scale(sx, sy);
@@ -522,7 +611,86 @@ function applyTransform(ctx, transform, width, height, pivotBaseW = width, pivot
   ctx.translate(-px, -py);
   ctx.globalAlpha = Math.max(0, Math.min(1, transform.opacity ?? 1));
 }
-
+ 
+// Scratch canvases used to letterbox each side of a transition to the project
+// frame before the GL pass. Module-level so a long export does not allocate
+// two canvases per frame.
+let transitionSideCanvasA = null;
+let transitionSideCanvasB = null;
+ 
+/**
+ * Render one side (a <video>) into a W×H canvas with `object-fit: contain`
+ * letterboxing on an opaque black background — exactly what the preview's
+ * <video> box looks like (video-layer.css). The GL renderer stretches each
+ * input texture to fill its whole output, so without this pre-fit two clips
+ * of different aspect ratio would be distorted instead of letterboxed.
+ * Returns null when the side is missing (the GL renderer then blends against
+ * its empty texture, the same as the legacy per-clip transition).
+ */
+function fitVideoToFrameCanvas(existing, video, W, H) {
+  if (!video) return { canvas: existing, ready: false };
+  const canvas = existing || document.createElement('canvas');
+  const cw = Math.max(1, Math.round(W));
+  const ch = Math.max(1, Math.round(H));
+  if (canvas.width !== cw || canvas.height !== ch) {
+    canvas.width = cw;
+    canvas.height = ch;
+  }
+  const c = canvas.getContext('2d');
+  c.fillStyle = '#000000';
+  c.fillRect(0, 0, cw, ch);
+  const mw = video.videoWidth || cw;
+  const mh = video.videoHeight || ch;
+  const scale = Math.min(cw / mw, ch / mh);
+  const dw = mw * scale;
+  const dh = mh * scale;
+  try {
+    c.drawImage(video, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+  } catch (err) {
+    console.warn('Export: failed to draw transition side:', err);
+    return { canvas, ready: false };
+  }
+  return { canvas, ready: true };
+}
+ 
+/**
+ * Draw one active TransitionClip: clip A's frame as `from`, clip B's frame as
+ * `to`, through the shared GL renderer at the transition's own progress.
+ * Both videos were already seeked to the resolver's extended media times by
+ * the caller (ExportModal's seek loop), so this only reads their current
+ * frame. The result is drawn through the same transform + letterbox path as
+ * an ordinary video (drawTransformedMedia).
+ */
+function drawTransitionBlend(ctx, t, transform, W, H, videoFrameProvider) {
+  const renderer = getSharedGLTransitionRenderer();
+  if (!renderer) return;
+  const videoA = t.from ? videoFrameProvider.getVideoElement(t.from.entity.id) : null;
+  const videoB = t.to ? videoFrameProvider.getVideoElement(t.to.entity.id) : null;
+  if (!videoA && !videoB) return;
+ 
+  const a = fitVideoToFrameCanvas(transitionSideCanvasA, videoA, W, H);
+  const b = fitVideoToFrameCanvas(transitionSideCanvasB, videoB, W, H);
+  transitionSideCanvasA = a.canvas;
+  transitionSideCanvasB = b.canvas;
+ 
+  const glCanvas = renderer.render({
+    from: a.ready ? a.canvas : null,
+    to: b.ready ? b.canvas : null,
+    progress: t.progress,
+    presetId: t.presetId,
+    customGlsl: t.customGlsl,
+    params: t.params,
+    width: W,
+    height: H,
+  });
+  if (!glCanvas) return;
+ 
+  // The GL canvas already IS the full letterboxed frame (W×H), so draw it
+  // 1:1 with the entity pose applied. backdrop: opaque black under it, like
+  // the video element's own background in the preview.
+  drawTransformedMedia(ctx, glCanvas, transform, W, H, { backdrop: true });
+}
+ 
 /**
  * Draw a video frame (or GL-transition canvas) the way the preview shows it:
  * `object-fit: contain` inside the frame-sized box (video-layer.css), i.e.
@@ -538,7 +706,7 @@ function drawTransformedMedia(ctx, mediaEl, transform, width, height, { backdrop
   const scale = Math.min(width / mw, height / mh);
   const drawW = mw * scale;
   const drawH = mh * scale;
-
+ 
   ctx.save();
   applyTransform(ctx, transform, width, height);
   if (backdrop) {
@@ -552,7 +720,7 @@ function drawTransformedMedia(ctx, mediaEl, transform, width, height, { backdrop
   }
   ctx.restore();
 }
-
+ 
 /**
  * Preview: `.rendered-shape-node` is `box-sizing: border-box` with a CSS
  * border, so the stroke sits INSIDE the w×h box (outer size never grows) and
@@ -565,10 +733,10 @@ function drawShape(ctx, shapeComp, transform, width, height, pivotBase) {
   const isCircle = shapeComp.shapeType === 'circle';
   // CSS clamps the radius to half the shorter side.
   const outerRadius = Math.max(0, Math.min(shapeComp.borderRadius ?? 0, Math.min(w, h) / 2));
-
+ 
   ctx.save();
   applyTransform(ctx, transform, width, height, pivotBase.w, pivotBase.h);
-
+ 
   ctx.fillStyle = shapeComp.color || '#ffffff';
   ctx.beginPath();
   if (isCircle) {
@@ -577,7 +745,7 @@ function drawShape(ctx, shapeComp, transform, width, height, pivotBase) {
     drawRoundedRectPath(ctx, -w / 2, -h / 2, w, h, outerRadius);
   }
   ctx.fill();
-
+ 
   const sw = shapeComp.strokeWidth || 0;
   if (sw > 0) {
     // Stroke along the centre-line of the inside border: inset by sw/2.
@@ -593,10 +761,10 @@ function drawShape(ctx, shapeComp, transform, width, height, pivotBase) {
     ctx.strokeStyle = shapeComp.strokeColor || '#38bdf8';
     ctx.stroke();
   }
-
+ 
   ctx.restore();
 }
-
+ 
 function drawRoundedRectPath(ctx, x, y, w, h, r) {
   const radius = Math.max(0, Math.min(r, Math.min(w, h) / 2));
   ctx.beginPath();
@@ -611,7 +779,7 @@ function drawRoundedRectPath(ctx, x, y, w, h, r) {
   ctx.arcTo(x, y, x + radius, y, radius);
   ctx.closePath();
 }
-
+ 
 /**
  * Split text into lines the way the preview's `.rendered-text-node`
  * (`white-space: pre-wrap`) does: explicit newlines are kept, and lines wrap
@@ -637,20 +805,20 @@ function layoutTextLines(ctx, text, maxWidth) {
   }
   return lines;
 }
-
+ 
 function drawText(ctx, textComp, entity, transform, width, height, allEntities = [], time = 0, pivotBase, pixelScale = 1) {
   const text = resolveTextRendererText(textComp, entity, allEntities, time);
   const fontSize = textComp.fontSize || DEFAULT_TEXT_FONT_SIZE;
   const fontFamily = cssFontFamily(textComp.fontFamily || DEFAULT_TEXT_FONT_FAMILY);
   const fontWeight = textComp.fontWeight || DEFAULT_TEXT_FONT_WEIGHT;
-
+ 
   ctx.save();
   applyTransform(ctx, transform, width, height, pivotBase?.w, pivotBase?.h);
-
+ 
   ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-
+ 
   // Canvas shadow blur/offset are in OUTPUT pixels (the transform doesn't
   // scale them), so scale them by the project→output fit to keep the same
   // look at every export resolution.
@@ -662,9 +830,9 @@ function drawText(ctx, textComp, entity, transform, width, height, allEntities =
     ctx.shadowBlur = 12 * pixelScale;
     ctx.shadowOffsetY = 3 * pixelScale;
   }
-
+ 
   ctx.fillStyle = textComp.fontColor || DEFAULT_TEXT_FONT_COLOR;
-
+ 
   const lines = layoutTextLines(ctx, text, width / 2);
   if (lines.length === 1) {
     // Single line: unchanged behavior.
@@ -676,68 +844,413 @@ function drawText(ctx, textComp, entity, transform, width, height, allEntities =
     const top = (-(lines.length - 1) * lineHeight) / 2;
     lines.forEach((line, i) => ctx.fillText(line, 0, top + i * lineHeight));
   }
-
+ 
   ctx.restore();
 }
-
+ 
 /**
  * CanvasRenderer scripts draw into arbitrary DOM/canvas/WebGL content inside
- * their mounted container. Every <canvas> in the container is drawn (raw
- * Canvas2D/Three.js/WebGL all render to one), at the size and position the
- * browser actually laid it out — read back from the pooled container, which
- * has the preview's size and flex-centering (see getContainer) — so a
- * `width:100%` canvas fills the frame and a natural-size one is centred,
- * exactly as in the live preview. Anything that isn't a <canvas> (DOM-only
- * output from a script) is skipped for rasterization rather than attempted
- * with an html-to-canvas approximation, since that's out of scope for now.
+ * their mounted container. The live preview shows ALL of it, so the export
+ * has to as well:
+ *
+ *   - <canvas> elements (raw Canvas2D / Three.js / WebGL) are copied
+ *     directly, at the size and position the browser actually laid them out.
+ *   - Everything else (plain DOM a script builds with divs, text, SVG, CSS —
+ *     the docs promise "DOM/Canvas/WebGL" for canvas scripts) is rasterized
+ *     through an SVG <foreignObject> snapshot (see rasterizeDomToImage).
+ *
+ * BUG FIX: this used to draw <canvas> elements only and `return` early when
+ * the container had none, so any Canvas Component that renders DOM (or mixes
+ * DOM with a canvas) exported as nothing / lost its DOM half, even though the
+ * preview showed it correctly.
+ *
+ * Both kinds are composited in DOM order. A container with no <canvas> is
+ * one DOM snapshot; a container mixing both is split into DOM "runs" between
+ * canvases so a label above a canvas stays above it.
+ *
+ * The pooled container is laid out at the preview's size with the preview's
+ * flex-centering (see getContainer), so reading its rects back is exact.
  */
-function drawCanvasContainerContents(ctx, container, transform, width, height, pivotBase) {
-  const canvases = container.querySelectorAll('canvas');
-  if (canvases.length === 0) return;
-
+async function drawCanvasContainerContents(ctx, container, transform, width, height, pivotBase) {
+  if (!container || !container.firstChild) return;
+ 
   const containerRect = container.getBoundingClientRect();
-
+  if (containerRect.width <= 0 || containerRect.height <= 0) return;
+ 
+  const layers = await collectContainerLayers(container);
+  if (layers.length === 0) return;
+ 
   ctx.save();
   applyTransform(ctx, transform, width, height, pivotBase?.w, pivotBase?.h);
-  for (const canvasEl of canvases) {
-    const rect = canvasEl.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) continue;
-    // Position relative to the container's centre — which is the entity's
-    // origin, since the preview centres the container on the frame.
-    const dx = rect.left - containerRect.left - containerRect.width / 2;
-    const dy = rect.top - containerRect.top - containerRect.height / 2;
+  for (const layer of layers) {
+    // Position relative to the container's centre — the entity's origin,
+    // since the preview centres the container on the frame.
+    const dx = layer.rect.left - containerRect.left - containerRect.width / 2;
+    const dy = layer.rect.top - containerRect.top - containerRect.height / 2;
     try {
-      ctx.drawImage(canvasEl, dx, dy, rect.width, rect.height);
+      ctx.drawImage(layer.image, dx, dy, layer.rect.width, layer.rect.height);
     } catch (err) {
       console.warn('Export: failed to draw CanvasRenderer output:', err);
     }
   }
   ctx.restore();
 }
-
+ 
+/**
+ * Split a container into an ordered list of drawable layers: each <canvas>
+ * (snapshotted) and each maximal run of non-canvas DOM (rasterized).
+ * Returns [{ image, rect }].
+ */
+async function collectContainerLayers(container) {
+  const canvases = Array.from(container.querySelectorAll('canvas'));
+ 
+  // Fast path — DOM only. One snapshot of the whole container.
+  if (canvases.length === 0) {
+    const rect = container.getBoundingClientRect();
+    const image = await rasterizeDomToImage(container, { hideCanvases: false });
+    return image ? [{ image, rect }] : [];
+  }
+ 
+  const layers = [];
+  const containerRect = container.getBoundingClientRect();
+ 
+  // DOM underneath / around the canvases: rasterize the container once with
+  // every <canvas> hidden, and draw it FIRST. Canvas layers then go on top in
+  // DOM order. (Text overlaid on a canvas is the common mixed case; the
+  // reverse — DOM hidden behind a canvas — is rare and stays correct because
+  // an opaque canvas simply covers it, as in the preview.)
+  const hasNonCanvasContent = containerHasVisibleNonCanvasContent(container);
+  if (hasNonCanvasContent) {
+    const domImage = await rasterizeDomToImage(container, { hideCanvases: true });
+    if (domImage) layers.push({ image: domImage, rect: containerRect });
+  }
+ 
+  for (const canvasEl of canvases) {
+    const rect = canvasEl.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    const snap = snapshotCanvas(canvasEl);
+    if (snap) layers.push({ image: snap, rect });
+  }
+  return layers;
+}
+ 
+/** True when the container holds anything visible besides <canvas> elements. */
+function containerHasVisibleNonCanvasContent(container) {
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+  while (node) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      if (node.nodeValue && node.nodeValue.trim() !== '') return true;
+    } else {
+      const tag = node.tagName;
+      if (tag === 'IMG' || tag === 'VIDEO' || tag === 'SVG' || tag === 'svg') return true;
+      if (tag !== 'CANVAS' && tag !== 'DIV' && tag !== 'SPAN' && tag !== 'STYLE' && tag !== 'SCRIPT') return true;
+      if (tag === 'DIV' || tag === 'SPAN') {
+        const cs = getComputedStyle(node);
+        const hasBg = cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent';
+        const hasBgImg = cs.backgroundImage && cs.backgroundImage !== 'none';
+        const hasBorder = parseFloat(cs.borderTopWidth) > 0 || parseFloat(cs.borderLeftWidth) > 0 ||
+          parseFloat(cs.borderRightWidth) > 0 || parseFloat(cs.borderBottomWidth) > 0;
+        if (hasBg || hasBgImg || hasBorder) return true;
+      }
+    }
+    node = walker.nextNode();
+  }
+  return false;
+}
+ 
+/**
+ * Copy a live <canvas> into a plain 2D canvas immediately.
+ *
+ * WebGL / Three.js canvases are only guaranteed readable in the same task
+ * that rendered them (unless created with preserveDrawingBuffer: true);
+ * reading them after the frame is composited can return a cleared buffer,
+ * i.e. an empty rectangle in the export. Copying right here — synchronously,
+ * straight after the script's onUpdate — captures the frame that was just
+ * rendered and gives the later async DOM work a stable bitmap to draw from.
+ */
+function snapshotCanvas(canvasEl) {
+  const w = canvasEl.width;
+  const h = canvasEl.height;
+  if (!w || !h) return null;
+  try {
+    const copy = document.createElement('canvas');
+    copy.width = w;
+    copy.height = h;
+    copy.getContext('2d').drawImage(canvasEl, 0, 0);
+    return copy;
+  } catch (err) {
+    console.warn('Export: failed to snapshot <canvas>:', err);
+    return null;
+  }
+}
+ 
+// ---------------------------------------------------------------------------
+// DOM -> image (SVG <foreignObject>), browser built-ins only
+// ---------------------------------------------------------------------------
+ 
+// Properties inlined onto every cloned element so the snapshot looks like the
+// live DOM without needing the page's stylesheets (which don't travel into an
+// SVG <img>). Covers layout + typography + paint used by script-built DOM.
+const INLINED_STYLE_PROPS = [
+  'display', 'position', 'top', 'left', 'right', 'bottom', 'z-index',
+  'box-sizing', 'width', 'height', 'min-width', 'min-height', 'max-width', 'max-height',
+  'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+  'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+  'border-top-width', 'border-right-width', 'border-bottom-width', 'border-left-width',
+  'border-top-style', 'border-right-style', 'border-bottom-style', 'border-left-style',
+  'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color',
+  'border-top-left-radius', 'border-top-right-radius', 'border-bottom-right-radius', 'border-bottom-left-radius',
+  'background-color', 'background-image', 'background-size', 'background-position', 'background-repeat',
+  'color', 'opacity', 'visibility', 'overflow', 'overflow-x', 'overflow-y',
+  'transform', 'transform-origin', 'filter', 'mix-blend-mode', 'clip-path', 'mask-image',
+  'box-shadow', 'text-shadow', 'outline',
+  'font-family', 'font-size', 'font-weight', 'font-style', 'font-variant',
+  'line-height', 'letter-spacing', 'word-spacing', 'text-align', 'text-decoration',
+  'text-transform', 'text-indent', 'text-overflow', 'white-space', 'word-break', 'overflow-wrap',
+  'vertical-align', 'direction', 'writing-mode',
+  'flex-direction', 'flex-wrap', 'flex-grow', 'flex-shrink', 'flex-basis',
+  'justify-content', 'align-items', 'align-content', 'align-self', 'gap', 'row-gap', 'column-gap', 'order',
+  'grid-template-columns', 'grid-template-rows', 'grid-column', 'grid-row', 'grid-auto-flow',
+  'object-fit', 'object-position', 'fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'stroke-dashoffset',
+];
+ 
+const XHTML_NS = 'http://www.w3.org/1999/xhtml';
+ 
+// Fetched-once cache: image URL -> data: URI (an SVG <img> can't load external
+// resources, so <img>/url() sources have to be embedded).
+const dataUriCache = new Map();
+ 
+async function urlToDataUri(url) {
+  if (!url || url.startsWith('data:')) return url;
+  if (dataUriCache.has(url)) return dataUriCache.get(url);
+  const p = (async () => {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    return await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = () => reject(fr.error);
+      fr.readAsDataURL(blob);
+    });
+  })().catch((err) => {
+    dataUriCache.delete(url);
+    console.warn('Export: could not embed image for DOM snapshot:', url, err);
+    return null;
+  });
+  dataUriCache.set(url, p);
+  return p;
+}
+ 
+// Font-face CSS embedded into the snapshot so script text uses the same
+// fonts as the preview (an SVG <img> can't see the page's @font-face rules).
+let fontCssPromise = null;
+async function getEmbeddedFontCss() {
+  if (fontCssPromise) return fontCssPromise;
+  fontCssPromise = (async () => {
+    const chunks = [];
+    for (const sheet of Array.from(document.styleSheets)) {
+      let rules;
+      try {
+        rules = sheet.cssRules;
+      } catch {
+        continue; // cross-origin stylesheet: unreadable
+      }
+      if (!rules) continue;
+      for (const rule of Array.from(rules)) {
+        if (rule.type !== CSSRule.FONT_FACE_RULE) continue;
+        let css = rule.cssText;
+        const urlRe = /url\((["']?)([^)"']+)\1\)/g;
+        const matches = Array.from(css.matchAll(urlRe));
+        for (const m of matches) {
+          const raw = m[2];
+          if (raw.startsWith('data:')) continue;
+          let abs = raw;
+          try {
+            abs = new URL(raw, sheet.href || document.baseURI).href;
+          } catch {
+            // keep raw
+          }
+          const data = await urlToDataUri(abs);
+          if (data) css = css.split(m[0]).join(`url("${data}")`);
+        }
+        chunks.push(css);
+      }
+    }
+    return chunks.join('\n');
+  })().catch(() => '');
+  return fontCssPromise;
+}
+ 
+/** Drop the cached font CSS (e.g. when the project's fonts may have changed). */
+export function clearExportDomCaches() {
+  fontCssPromise = null;
+  dataUriCache.clear();
+}
+ 
+/**
+ * Clone `source` and inline the computed styles onto every element, so the
+ * serialized markup renders the same standalone. <canvas> children become
+ * <img> (data: URI) unless `hideCanvases`, in which case they become
+ * same-size invisible spacers (layout is preserved; the caller draws the real
+ * canvas itself on top).
+ */
+async function cloneWithInlinedStyles(source, { hideCanvases }) {
+  const clone = source.cloneNode(false);
+ 
+  if (source.nodeType === Node.ELEMENT_NODE) {
+    const tag = source.tagName;
+ 
+    // Replaced / special elements first.
+    if (tag === 'CANVAS') {
+      const spacer = document.createElementNS(XHTML_NS, 'div');
+      const cs = getComputedStyle(source);
+      const rect = source.getBoundingClientRect();
+      spacer.setAttribute(
+        'style',
+        `display:${cs.display === 'inline' ? 'inline-block' : cs.display};width:${rect.width}px;height:${rect.height}px;` +
+          `margin:${cs.margin};position:${cs.position};visibility:${hideCanvases ? 'hidden' : 'visible'};`
+      );
+      if (!hideCanvases) {
+        try {
+          const img = document.createElementNS(XHTML_NS, 'img');
+          img.setAttribute('src', source.toDataURL('image/png'));
+          img.setAttribute('style', `width:${rect.width}px;height:${rect.height}px;display:block;`);
+          spacer.appendChild(img);
+        } catch {
+          // tainted canvas — leave the spacer blank
+        }
+      }
+      return spacer;
+    }
+ 
+    if (tag === 'SCRIPT') return document.createComment('script removed');
+    if (tag === 'VIDEO' || tag === 'IFRAME' || tag === 'OBJECT' || tag === 'EMBED') {
+      // Can't be embedded in a static snapshot; keep an empty, same-size box.
+      const box = document.createElementNS(XHTML_NS, 'div');
+      const rect = source.getBoundingClientRect();
+      box.setAttribute('style', `width:${rect.width}px;height:${rect.height}px;display:inline-block;`);
+      return box;
+    }
+ 
+    // Inline computed style.
+    const cs = getComputedStyle(source);
+    let styleText = '';
+    for (const prop of INLINED_STYLE_PROPS) {
+      const v = cs.getPropertyValue(prop);
+      if (v) styleText += `${prop}:${v};`;
+    }
+ 
+    // url(...) backgrounds must be embedded.
+    const bg = cs.getPropertyValue('background-image');
+    if (bg && bg.includes('url(')) {
+      let out = bg;
+      const re = /url\((["']?)([^)"']+)\1\)/g;
+      for (const m of Array.from(bg.matchAll(re))) {
+        if (m[2].startsWith('data:')) continue;
+        const data = await urlToDataUri(m[2]);
+        if (data) out = out.split(m[0]).join(`url("${data}")`);
+      }
+      styleText = styleText.replace(`background-image:${bg};`, `background-image:${out};`);
+    }
+ 
+    clone.setAttribute('style', styleText);
+ 
+    // <img> sources must be embedded too.
+    if (tag === 'IMG') {
+      const raw = source.currentSrc || source.src;
+      const data = await urlToDataUri(raw);
+      if (data) clone.setAttribute('src', data);
+      clone.removeAttribute('srcset');
+    }
+ 
+    // Form controls: reflect current value into the markup.
+    if (tag === 'INPUT') clone.setAttribute('value', source.value);
+    if (tag === 'TEXTAREA') clone.textContent = source.value;
+  }
+ 
+  for (const child of Array.from(source.childNodes)) {
+    const childClone = await cloneWithInlinedStyles(child, { hideCanvases });
+    if (childClone) clone.appendChild(childClone);
+  }
+  return clone;
+}
+ 
+/**
+ * Rasterize an element's current DOM to an image via SVG <foreignObject>.
+ * Sized to the element's own layout box (device-pixel-ratio 1 — the export
+ * canvas does its own scaling). Resolves to an HTMLImageElement, or null if
+ * the snapshot can't be produced (never throws: a failed script snapshot
+ * must not abort the whole export).
+ */
+async function rasterizeDomToImage(element, { hideCanvases }) {
+  const rect = element.getBoundingClientRect();
+  const w = Math.max(1, Math.ceil(rect.width));
+  const h = Math.max(1, Math.ceil(rect.height));
+ 
+  try {
+    // The container itself is the root: keep its children, but drop its own
+    // off-screen positioning so it renders at 0,0 inside the SVG.
+    const root = await cloneWithInlinedStyles(element, { hideCanvases });
+    if (root.setAttribute) {
+      const existing = root.getAttribute('style') || '';
+      root.setAttribute('style', `${existing}position:relative;left:0;top:0;margin:0;width:${w}px;height:${h}px;`);
+    }
+ 
+    const serializer = new XMLSerializer();
+    const markup = serializer.serializeToString(root);
+    const fontCss = await getEmbeddedFontCss();
+ 
+    const svg =
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">` +
+      (fontCss ? `<defs><style type="text/css"><![CDATA[${fontCss}]]></style></defs>` : '') +
+      `<foreignObject x="0" y="0" width="100%" height="100%">` +
+      `<div xmlns="${XHTML_NS}" style="width:${w}px;height:${h}px;">${markup}</div>` +
+      `</foreignObject></svg>`;
+ 
+    const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    const img = new Image();
+    img.decoding = 'sync';
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = () => reject(new Error('SVG foreignObject failed to decode'));
+      img.src = url;
+    });
+    // Ensure the bitmap is decoded before the caller draws it this frame.
+    if (typeof img.decode === 'function') {
+      try {
+        await img.decode();
+      } catch {
+        // onload already fired; drawImage will still work
+      }
+    }
+    return img;
+  } catch (err) {
+    console.warn('Export: DOM snapshot of script output failed:', err);
+    return null;
+  }
+}
+ 
 /**
  * ReactRenderer export — mounts the compiled component into the pooled
  * offscreen container (the same DOM-mounting approach the live preview
  * uses, just off-page) and rasterizes its output.
  *
- * SCOPE (deliberate): a ReactRenderer script's contract is "a function
- * component returning JSX" — no guarantee it renders a <canvas> at all.
- * Rasterizing arbitrary DOM to a 2D context would need a DOM-to-image
- * library (a new dependency with imperfect CSS fidelity) — out of scope
- * for this pass. So this mounts + flushSync-renders the component, then
- * draws its <canvas> subtree if one exists (mirroring
- * drawCanvasContainerContents, which is the common case — raw
- * Canvas2D/Three.js/WebGL all render to one), and otherwise skips the
- * entity exactly as export did before this branch existed. Not a
- * regression: DOM-only ReactRenderer clips previously never exported at
- * all.
+ * SCOPE: a ReactRenderer script's contract is "a function component
+ * returning JSX" — it may render a <canvas>, plain DOM, or a mix. This
+ * mounts + flushSync-renders the component, then composites its output with
+ * the same collectContainerLayers path canvas-kind scripts use: <canvas>
+ * elements are copied directly, and non-canvas DOM is rasterized through an
+ * SVG <foreignObject> snapshot (browser built-ins only — no new dependency).
+ * Videos/iframes inside a React script are drawn as empty boxes (they can't
+ * be embedded in a static snapshot).
  *
  * flushSync is used (not an await) because the export frame loop is
  * synchronous per frame — this is called from drawExportFrame. React's
  * "flushSync from inside lifecycle" warning does not apply here: this
  * runs from the export loop, not from React's render/commit phases.
  */
-function drawReactComponentContents({
+async function drawReactComponentContents({
   ctx,
   container,
   Component,
@@ -755,7 +1268,7 @@ function drawReactComponentContents({
     root = createRoot(container);
     reactRoots.set(container, root);
   }
-
+ 
   flushSync(() => {
     root.render(
       React.createElement(Component, {
@@ -766,20 +1279,35 @@ function drawReactComponentContents({
       })
     );
   });
-
-  const innerCanvas = container.querySelector('canvas');
-  if (!innerCanvas) return; // DOM-only output — skipped (see scope note above)
-
+ 
+  // BUG FIX: DOM-only React output used to be skipped here ("out of scope"),
+  // so any React script that isn't canvas-rooted vanished from the export
+  // while showing fine in the preview. It now goes through the same
+  // DOM-aware path as canvas-kind scripts. The React container is an
+  // unsized shrink-to-fit box (matching the preview, where a react component
+  // is plain DOM inside the entity layer), so its own rect is the entity's
+  // box and it is centred on the entity origin.
+  if (!container.firstChild) return;
+  const containerRect = container.getBoundingClientRect();
+  if (containerRect.width <= 0 || containerRect.height <= 0) return;
+ 
+  const layers = await collectContainerLayers(container);
+  if (layers.length === 0) return;
+ 
   ctx.save();
   applyTransform(ctx, transform, width, height, pivotBase?.w, pivotBase?.h);
-  try {
-    ctx.drawImage(innerCanvas, -innerCanvas.width / 2, -innerCanvas.height / 2, innerCanvas.width, innerCanvas.height);
-  } catch (err) {
-    console.warn('Export: failed to draw ReactRenderer output:', err);
+  for (const layer of layers) {
+    const dx = layer.rect.left - containerRect.left - containerRect.width / 2;
+    const dy = layer.rect.top - containerRect.top - containerRect.height / 2;
+    try {
+      ctx.drawImage(layer.image, dx, dy, layer.rect.width, layer.rect.height);
+    } catch (err) {
+      console.warn('Export: failed to draw ReactRenderer output:', err);
+    }
   }
   ctx.restore();
 }
-
+ 
 // ---------------------------------------------------------------------------
 // Phase 2 — deterministic audio mixdown
 // ---------------------------------------------------------------------------
@@ -791,15 +1319,15 @@ function drawReactComponentContents({
 // it into a single offline render at the right offset/gain/duration — same
 // "pure function of an explicit time range" contract as the video frame
 // loop, just rendered as one shot instead of per-frame.
-
+ 
 // Cache: src URL -> Promise<AudioBuffer>, so multiple entities/clips sharing
 // one source file (or repeated exports of the same project) don't refetch
 // and re-decode it every time.
 const decodedBufferCache = new Map();
-
+ 
 async function decodeAudioSource(src, referenceSampleRate) {
   if (decodedBufferCache.has(src)) return decodedBufferCache.get(src);
-
+ 
   const promise = (async () => {
     const response = await fetch(src);
     const arrayBuffer = await response.arrayBuffer();
@@ -812,16 +1340,16 @@ async function decodeAudioSource(src, referenceSampleRate) {
     decodedBufferCache.delete(src);
     throw err;
   });
-
+ 
   decodedBufferCache.set(src, promise);
   return promise;
 }
-
+ 
 /** Clear the decoded-audio-buffer cache (e.g. on project load). */
 export function clearExportAudioCache() {
   decodedBufferCache.clear();
 }
-
+ 
 /**
  * The time window in which an entity is actually audible in the live
  * preview, or null if it never is.
@@ -832,8 +1360,19 @@ export function clearExportAudioCache() {
  * intersection of windows is computed here so the export mixes exactly the
  * same audio — previously a clip on a hidden/locked track, or one outliving
  * its parent, was silent in the preview but still exported.
+ *
+ * TransitionClip extension (Step 5): a clip that is the A or B side of a
+ * valid transition keeps playing past its own [startTime, startTime +
+ * duration) for the length of the transition — that's the whole point of
+ * "both sides keep playing under the blend" (Step 4's preview behaviour;
+ * this brings export audio in line with it). `transitionAudioWindows` is
+ * getTransitionAudioWindows()'s per-entity map; when the entity (or its
+ * video parent, for an AudioSource child clip) is a transition side, its
+ * intersected window is UNIONED with the transition's extension rather than
+ * narrowed by it — the transition window is additional audible time, not a
+ * competing constraint from the same ancestor chain.
  */
-function resolveAudibleWindow(entity, entityMap, trackMap) {
+function resolveAudibleWindow(entity, entityMap, trackMap, transitionAudioWindows) {
   let start = -Infinity;
   let end = Infinity;
   const visited = new Set();
@@ -849,9 +1388,16 @@ function resolveAudibleWindow(entity, entityMap, trackMap) {
     if (!curr.parentId) break;
     curr = entityMap.get(curr.parentId);
   }
-  return end > start ? { start, end } : null;
+  if (!(end > start)) return null;
+ 
+  const transitionAudio = resolveTransitionAudioForEntity(entity, transitionAudioWindows, entityMap);
+  if (transitionAudio) {
+    start = Math.min(start, transitionAudio.start);
+    end = Math.max(end, transitionAudio.end);
+  }
+  return { start, end };
 }
-
+ 
 /**
  * Collect every entity that contributes audio to the export: entities with
  * an AudioSource component, or a VideoRenderer component with volume > 0
@@ -868,34 +1414,50 @@ function resolveAudibleWindow(entity, entityMap, trackMap) {
  * never gets decoded at all; the real per-clip gain (including the track
  * multiplier) is computed again in mixdownAudio below, since a track's
  * volume can be anywhere in (0, 1] and isn't just an on/off skip.
+ *
+ * `transitionAudioWindows` (Step 5, getTransitionAudioWindows() in
+ * renderPipeline.js) is threaded through to resolveAudibleWindow so a clip
+ * that is the A/B side of a valid TransitionClip — or the AudioSource child
+ * of one — has its audible window extended to cover the transition. Each
+ * returned source also carries `gainAt`: a 0..1 crossfade function of
+ * timeline time (identity/`null` outside any transition), so mixdownAudio
+ * can fade this clip's gain the same way its picture blends. Callers with
+ * no transition clips in the project pass an empty map and every source's
+ * `gainAt` is null, matching prior behaviour exactly.
  */
-function collectAudioSources({ entities, exportStartTime, exportDuration, tracks = [] }) {
+function collectAudioSources({ entities, exportStartTime, exportDuration, tracks = [], transitionAudioWindows = new Map() }) {
   const exportEndTime = exportStartTime + exportDuration;
   const entityMap = new Map((entities || []).map((e) => [e.id, e]));
   const trackMap = new Map((tracks || []).map((t) => [t.id, t]));
   const sources = [];
-
+ 
   for (const entity of entities) {
-    const window = resolveAudibleWindow(entity, entityMap, trackMap);
+    const window = resolveAudibleWindow(entity, entityMap, trackMap, transitionAudioWindows);
     if (!window) continue;
     if (window.end <= exportStartTime || window.start >= exportEndTime) continue;
-
+ 
     const track = findEntityTrack(entity, tracks);
     if (resolveEffectiveVolume(1, track, tracks) <= 0) continue;
-
+ 
     const audioComp = entity.components?.find((c) => c.type === 'AudioSource');
     const videoComp = entity.components?.find((c) => c.type === 'VideoRenderer');
-
+ 
+    // The crossfade envelope (if any) for THIS entity — or its video
+    // parent, for an AudioSource child clip (same fallback as the window
+    // extension above) — so a clip's paired audio fades along with it.
+    const transitionAudio = resolveTransitionAudioForEntity(entity, transitionAudioWindows, entityMap);
+    const gainAt = transitionAudio ? transitionAudio.gainAt : null;
+ 
     if (audioComp && (audioComp.src || entity.src) && (audioComp.volume ?? 1) > 0) {
-      sources.push({ entity, comp: audioComp, src: audioComp.src || entity.src, window });
+      sources.push({ entity, comp: audioComp, src: audioComp.src || entity.src, window, gainAt });
     } else if (videoComp && videoComp.src && (videoComp.volume ?? 0) > 0) {
-      sources.push({ entity, comp: videoComp, src: videoComp.src, window });
+      sources.push({ entity, comp: videoComp, src: videoComp.src, window, gainAt });
     }
   }
-
+ 
   return sources;
 }
-
+ 
 /**
  * Render a single deterministic stereo mixdown of every audio-bearing
  * entity active during [exportStartTime, exportStartTime + exportDuration),
@@ -917,31 +1479,37 @@ export async function mixdownAudio({
   exportDuration,
   sampleRate = 48000,
   tracks = [],
+  // Step 5: getTransitionAudioWindows({ entities, tracks }) — the crossfade
+  // envelope for every clip that is the A/B side of a valid TransitionClip.
+  // Callers with no transition clips can omit this entirely; every source's
+  // gainAt is then null and scheduling below is byte-for-byte what it was
+  // before this step (a single flat gain value, no automation).
+  transitionAudioWindows = new Map(),
 }) {
-  const sources = collectAudioSources({ entities, exportStartTime, exportDuration, tracks });
+  const sources = collectAudioSources({ entities, exportStartTime, exportDuration, tracks, transitionAudioWindows });
   if (sources.length === 0) return null;
-
+ 
   const totalFrames = Math.max(1, Math.ceil(exportDuration * sampleRate));
   const offlineCtx = new OfflineAudioContext(2, totalFrames, sampleRate);
-
+ 
   const decoded = await Promise.all(
-    sources.map(async ({ entity, comp, src, window }) => {
+    sources.map(async ({ entity, comp, src, window, gainAt }) => {
       try {
         const buffer = await decodeAudioSource(src, sampleRate);
-        return { entity, comp, buffer, window };
+        return { entity, comp, buffer, window, gainAt };
       } catch (err) {
         console.warn(`Export audio: failed to decode source for "${entity.name}":`, err);
         return null;
       }
     })
   );
-
+ 
   let scheduledAny = false;
-
+ 
   for (const item of decoded) {
     if (!item) continue;
-    const { entity, comp, buffer, window } = item;
-
+    const { entity, comp, buffer, window, gainAt } = item;
+ 
     // Effective rate = AudioSource.speed (content rate inside the clip) ×
     // Transform.speed (clip-level rate), matching how the live preview
     // computes media rate (EntityRenderer.jsx) and the video frame
@@ -964,7 +1532,7 @@ export async function mixdownAudio({
     const track = findEntityTrack(entity, tracks);
     const volume = resolveEffectiveVolume(clipVolume, track, tracks);
     if (volume <= 0) continue;
-
+ 
     // Same clamped-overlap math as the video seek path: figure out what
     // slice of this entity's audible window actually falls inside the
     // export window, then map that back to a source-buffer offset via
@@ -973,19 +1541,19 @@ export async function mixdownAudio({
     const clipStart = Math.max(window.start, exportStartTime);
     const clipEnd = Math.min(window.end, exportStartTime + exportDuration);
     if (clipEnd <= clipStart) continue;
-
+ 
     const whenInMix = clipStart - exportStartTime;
     const localTimeAtClipStart = clipStart - entityStart;
     const sourceOffset = mediaOffset + localTimeAtClipStart * speed;
     const playDuration = (clipEnd - clipStart) * speed;
-
+ 
     if (sourceOffset >= buffer.duration) continue;
     // Seconds of SOURCE audio this clip consumes (buffer time, not real time).
     const sourceSeconds = Math.min(playDuration, buffer.duration - sourceOffset);
     if (sourceSeconds <= 0) continue;
-
+ 
     const bufferSource = offlineCtx.createBufferSource();
-
+ 
     if (Math.abs(speed - 1) < 1e-4) {
       bufferSource.buffer = buffer;
       // start(when, offset, duration): `duration` is in BUFFER seconds and is
@@ -1003,7 +1571,7 @@ export async function mixdownAudio({
       const from = Math.max(0, Math.floor(sourceOffset * sr));
       const to = Math.min(buffer.length, Math.ceil((sourceOffset + sourceSeconds) * sr));
       if (to - from < 2) continue;
-
+ 
       const slice = [];
       for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
         slice.push(buffer.getChannelData(ch).subarray(from, to));
@@ -1011,28 +1579,53 @@ export async function mixdownAudio({
       const stretched = await timeStretchChannels(slice, sr, speed);
       const stretchedBuffer = offlineCtx.createBuffer(stretched.length, stretched[0].length, sr);
       stretched.forEach((data, ch) => stretchedBuffer.copyToChannel(data, ch));
-
+ 
       bufferSource.buffer = stretchedBuffer;
       bufferSource.start(whenInMix);
     }
-
+ 
     const gainNode = offlineCtx.createGain();
-    gainNode.gain.value = Math.max(0, volume);
-
+ 
+    // Step 5: crossfade the clip's own gain across any transition window
+    // touching it, on top of its normal volume. `gainAt` is null for a clip
+    // with no transition (the common case) — flat gain, unchanged from
+    // before this step. Where present, it's sampled at fixed steps across
+    // just the audible slice actually being scheduled (clipStart..clipEnd,
+    // not the whole clip) and written as AudioParam automation breakpoints,
+    // so the ramp lines up exactly with the picture's blend (both read the
+    // same 0..1 progress off the same transition window — see
+    // getTransitionAudioWindows in renderPipeline.js) regardless of how the
+    // export window happens to be sliced relative to the transition.
+    if (gainAt) {
+      // Fine enough to sound like a smooth ramp (well under audible
+      // stepping) without scheduling one breakpoint per sample.
+      const STEP = 1 / 100;
+      const t0 = gainAt(clipStart);
+      gainNode.gain.setValueAtTime(Math.max(0, volume * t0), whenInMix);
+      for (let t = clipStart + STEP; t < clipEnd; t += STEP) {
+        const g = Math.max(0, volume * gainAt(t));
+        gainNode.gain.linearRampToValueAtTime(g, whenInMix + (t - clipStart));
+      }
+      const gEnd = Math.max(0, volume * gainAt(clipEnd));
+      gainNode.gain.linearRampToValueAtTime(gEnd, whenInMix + (clipEnd - clipStart));
+    } else {
+      gainNode.gain.value = Math.max(0, volume);
+    }
+ 
     bufferSource.connect(gainNode);
     gainNode.connect(offlineCtx.destination);
     scheduledAny = true;
   }
-
+ 
   if (!scheduledAny) return null;
-
+ 
   return offlineCtx.startRendering();
 }
-
+ 
 // ---------------------------------------------------------------------------
 // AAC encode of the rendered mixdown into the same muxer as the video track
 // ---------------------------------------------------------------------------
-
+ 
 /**
  * Encode a full AudioBuffer (from mixdownAudio) as AAC via WebCodecs
  * AudioEncoder and push every chunk into `muxer`. Chunked into ~1-second
@@ -1044,9 +1637,9 @@ export async function encodeAudioTrack({ audioBuffer, muxer, sampleRate = 48000 
   if (typeof AudioEncoder === 'undefined') {
     throw new Error('This browser does not support WebCodecs (AudioEncoder), which audio export requires.');
   }
-
+ 
   const numberOfChannels = audioBuffer.numberOfChannels;
-
+ 
   const audioEncoder = new AudioEncoder({
     output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
     error: (e) => {
@@ -1059,23 +1652,23 @@ export async function encodeAudioTrack({ audioBuffer, muxer, sampleRate = 48000 
     numberOfChannels,
     bitrate: 192_000,
   });
-
+ 
   const chunkFrames = sampleRate; // ~1s per AudioData chunk fed to the encoder
   const totalFrames = audioBuffer.length;
-
+ 
   // Interleave once up front (AudioData wants interleaved planar-per-channel
   // or interleaved data depending on format; we use 'f32' interleaved here).
   for (let start = 0; start < totalFrames; start += chunkFrames) {
     const frameCount = Math.min(chunkFrames, totalFrames - start);
     const interleaved = new Float32Array(frameCount * numberOfChannels);
-
+ 
     for (let ch = 0; ch < numberOfChannels; ch++) {
       const channelData = audioBuffer.getChannelData(ch);
       for (let i = 0; i < frameCount; i++) {
         interleaved[i * numberOfChannels + ch] = channelData[start + i];
       }
     }
-
+ 
     const audioData = new AudioData({
       format: 'f32',
       sampleRate,
@@ -1084,10 +1677,10 @@ export async function encodeAudioTrack({ audioBuffer, muxer, sampleRate = 48000 
       timestamp: Math.round((start / sampleRate) * 1_000_000),
       data: interleaved,
     });
-
+ 
     audioEncoder.encode(audioData);
     audioData.close();
-
+ 
     if (audioEncoder.encodeQueueSize > 4) {
       await new Promise((resolve) => {
         const check = () => {
@@ -1098,7 +1691,8 @@ export async function encodeAudioTrack({ audioBuffer, muxer, sampleRate = 48000 
       });
     }
   }
-
+ 
   await audioEncoder.flush();
   audioEncoder.close();
 }
+ 

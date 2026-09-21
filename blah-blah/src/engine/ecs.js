@@ -148,6 +148,81 @@ export const isVideoEntity = (entity) =>
 export const isAudioEntity = (entity) =>
   entity?.type === 'audio' || Boolean(entity?.components?.some((c) => c.type === 'AudioSource'));
  
+// ─── TransitionClip (A → B transition placed on the cut between two clips) ──
+ 
+/**
+ * Component type carried by a TransitionClip entity. Holds the preset id,
+ * optional custom GLSL and params. The entity's own `duration` is the
+ * TOTAL transition length (half on each side of the cut).
+ *
+ * Deliberately a different component type from the legacy per-clip
+ * `TransitionComponent` (createTransitionComponent above), which stays
+ * untouched so existing projects render exactly as before.
+ */
+export const TRANSITION_CLIP_COMPONENT = 'TransitionClipComponent';
+ 
+/** Entity `type` of a TransitionClip. NOT 'video' — see isTransitionClipEntity. */
+export const TRANSITION_CLIP_TYPE = 'transition';
+ 
+export function createTransitionClipComponent(config = {}) {
+  return {
+    type: TRANSITION_CLIP_COMPONENT,
+    enabled: config.enabled ?? true,
+    preset: config.preset ?? 'crossfade',
+    customGlsl: config.customGlsl,
+    params: config.params ?? {},
+  };
+}
+ 
+/**
+ * Build a TransitionClip entity. It is a plain timeline clip (id, trackId,
+ * startTime, duration…) so the existing timeline/undo/save plumbing treats
+ * it like any other entity, but it carries NO Transform and NO VideoRenderer:
+ * it draws nothing itself and instead blends the clips on either side of its
+ * cut (see resolveTransitionClipAtTime in renderPipeline.js).
+ */
+export function createTransitionClipEntity({
+  name = 'Transition',
+  trackId = 'track-1',
+  startTime = 0,
+  duration = 1,
+  preset = 'crossfade',
+  customGlsl,
+  params = {},
+  color = '#f59e0b',
+} = {}) {
+  return {
+    id: `go-${crypto.randomUUID()}`,
+    name,
+    tag: 'Untagged',
+    layer: 'Default',
+    active: true,
+    parentId: null,
+    trackId,
+    startTime,
+    duration,
+    type: TRANSITION_CLIP_TYPE,
+    src: '',
+    color,
+    components: [createTransitionClipComponent({ preset, customGlsl, params })],
+  };
+}
+ 
+/**
+ * True for a TransitionClip entity. Checked by component too (not only by
+ * `type`) so a stale `type` cannot make the two disagree, the same reasoning
+ * as isVideoEntity below. Must be tested BEFORE isVideoEntity wherever both
+ * could apply, and a TransitionClip never has a VideoRenderer, so it is never
+ * mistaken for a video clip.
+ */
+export const isTransitionClipEntity = (entity) =>
+  entity?.type === TRANSITION_CLIP_TYPE ||
+  Boolean(entity?.components?.some((c) => c.type === TRANSITION_CLIP_COMPONENT));
+ 
+/** The TransitionClipComponent of a TransitionClip entity, or null. */
+export const getTransitionClipComponent = (entity) =>
+  entity?.components?.find((c) => c.type === TRANSITION_CLIP_COMPONENT) || null;
+ 
 /**
  * Migrate a saved project's entities (and prefab component lists) to the
  * unified model: ReactRenderer/CanvasRenderer/MonoBehaviour components
@@ -315,7 +390,7 @@ export function removeEntitiesByIds(entities, idsToRemove) {
  
   return list.filter((e) => !doomed.has(e.id));
 }
-
+ 
 /**
  * Synchronize timeline instances of a prefab with its updated snapshots.
  * - Updates components, duration, name, and keyframes of existing instance clips.
@@ -327,15 +402,15 @@ export function syncPrefabInstances(entities, prefabAssetId, prefabSnapshots, ro
   if (!Array.isArray(entities) || !prefabAssetId || !Array.isArray(prefabSnapshots) || prefabSnapshots.length === 0) {
     return entities;
   }
-
+ 
   const snapMap = new Map();
   prefabSnapshots.forEach((s) => snapMap.set(s.id, s));
   const snapRoot = (rootId ? snapMap.get(rootId) : null) ||
     prefabSnapshots.find((s) => !s.parentId) ||
     prefabSnapshots[0];
-
+ 
   const validSnapIds = new Set(prefabSnapshots.map((s) => s.id));
-
+ 
   // Group entities by prefabInstanceId (or fallback to entity.id)
   const instanceGroups = new Map();
   entities.forEach((e) => {
@@ -345,32 +420,32 @@ export function syncPrefabInstances(entities, prefabAssetId, prefabSnapshots, ro
       instanceGroups.get(key).push(e);
     }
   });
-
+ 
   if (instanceGroups.size === 0) return entities;
-
+ 
   const newEntities = [];
   const handledInstanceIds = new Set();
-
+ 
   for (const e of entities) {
     if (e.prefabAssetId !== prefabAssetId) {
       newEntities.push(e);
       continue;
     }
-
+ 
     const instId = e.prefabInstanceId || e.id;
     if (handledInstanceIds.has(instId)) {
       continue;
     }
     handledInstanceIds.add(instId);
-
+ 
     const groupClips = instanceGroups.get(instId) || [e];
     const rootClip = groupClips.find((c) => !c.parentId) || groupClips[0];
     const rootStartTime = rootClip.startTime || 0;
-
+ 
     // Map existing clips by snapId
     const existingBySnap = new Map();
     const clipIdBySnapId = new Map();
-
+ 
     groupClips.forEach((c) => {
       let snapId = c.prefabSourceSnapId;
       if (!snapId && c.id === rootClip.id && snapRoot) {
@@ -381,25 +456,25 @@ export function syncPrefabInstances(entities, prefabAssetId, prefabSnapshots, ro
         clipIdBySnapId.set(snapId, c.id);
       }
     });
-
+ 
     if (snapRoot && !clipIdBySnapId.has(snapRoot.id)) {
       clipIdBySnapId.set(snapRoot.id, rootClip.id);
     }
-
+ 
     // Allocate IDs for any new snapshots
     prefabSnapshots.forEach((snap) => {
       if (!clipIdBySnapId.has(snap.id)) {
         clipIdBySnapId.set(snap.id, `go-${crypto.randomUUID()}`);
       }
     });
-
+ 
     // Output synchronized clips for each snapshot in the prefab
     prefabSnapshots.forEach((snap) => {
       const existing = existingBySnap.get(snap.id);
       const isRoot = snap.id === (snapRoot ? snapRoot.id : null);
       const clipId = clipIdBySnapId.get(snap.id);
       const parentClipId = isRoot ? null : (snap.parentId ? (clipIdBySnapId.get(snap.parentId) || rootClip.id) : null);
-
+ 
       if (existing) {
         newEntities.push({
           ...existing,
@@ -437,7 +512,7 @@ export function syncPrefabInstances(entities, prefabAssetId, prefabSnapshots, ro
       }
     });
   }
-
+ 
   return newEntities;
 }
  

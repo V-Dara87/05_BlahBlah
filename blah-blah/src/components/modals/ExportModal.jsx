@@ -18,13 +18,16 @@ import {
   Cpu
 } from 'lucide-react';
 import { formatTimecode } from '../../utils/timeFormat';
-import { isVideoEntity } from '../../engine/ecs';
+import { isVideoEntity, isTransitionClipEntity } from '../../engine/ecs';
+import { auditTransitionClips, buildMediaDurationsFromAssets } from '../../engine/renderPipeline';
 import { isTauri } from '../../services/tauriFsAdapter';
 import {
   drawExportFrame,
   createCanvasContainerPool,
   createVideoFrameProvider,
   computeActiveEntitiesAtTime,
+  resolveTransitionFramePlan,
+  getTransitionAudioWindows,
   mixdownAudio,
   encodeAudioTrack,
 } from '../../engine/exportRunner';
@@ -208,6 +211,25 @@ export function ExportModal({
   });
   const audioSupported = typeof AudioEncoder !== 'undefined';
  
+  // Transition clips that will NOT render as the blend the timeline shows
+  // (no neighbour on one side, or no spare footage past the cut). Export
+  // handles them without failing — an orphan is skipped and the clips play
+  // normally, a footage-starved side freezes on one frame — so this is a
+  // heads-up, not a blocker. Same rules as the resolver and the timeline
+  // (renderPipeline.js auditTransitionClips). Source durations here are the
+  // probed media-asset ones; export re-measures from the loaded files.
+  // Computed only when there are transition clips at all, so a project
+  // without any pays nothing.
+  const hasTransitionClips = clips.some(isTransitionClipEntity);
+  const transitionWarnings = hasTransitionClips
+    ? auditTransitionClips({
+        entities: clips,
+        tracks,
+        mediaDurations: buildMediaDurationsFromAssets(clips, mediaAssets),
+        exportRange,
+      })
+    : [];
+ 
   const handleCancelExport = () => {
     abortRef.current = true;
   };
@@ -318,12 +340,20 @@ export function ExportModal({
       }
       if (hasWebCodecsAudio) {
         try {
+          // Step 5: computed once (not per-frame like resolveTransitionFramePlan
+          // below, since a clip's crossfade window doesn't depend on which
+          // instant we're drawing) and passed in so the mixdown extends and
+          // crossfades audio for any clip on either side of a TransitionClip's
+          // cut — empty for a project with no transition clips, so this changes
+          // nothing for existing projects.
+          const transitionAudioWindows = getTransitionAudioWindows({ entities: clips, tracks });
           mixedAudioBuffer = await mixdownAudio({
             entities: clips,
             exportStartTime,
             exportDuration,
             sampleRate: AUDIO_SAMPLE_RATE,
             tracks,
+            transitionAudioWindows,
           });
         } catch (err) {
           console.warn('Export audio: mixdown failed, exporting video only:', err);
@@ -403,9 +433,29 @@ export function ExportModal({
           // here (this lookup decides each video's seek time/speed).
           allAssets: mediaAssets,
         });
+        // TransitionClips: while one is active, its neighbours A and B are
+        // seeked to the resolver's EXTENDED media times (A past its end, B
+        // before its start, using the source file's spare footage) instead
+        // of their normal clip-relative time — and only ONE of the two
+        // seeks may run, since each clip has a single <video> element.
+        // Empty plan (no transition clips / none active) = no change.
+        const transitionPlan = resolveTransitionFramePlan({
+          entities: clips,
+          tracks,
+          time,
+          mediaDurations: videoFrameProvider.getMediaDurations(),
+        });
+        const srcOfEntity = (id) => {
+          const e = clips.find((c) => c.id === id);
+          const vc = e?.components?.find((c) => c.type === 'VideoRenderer');
+          return vc?.src || e?.src || '';
+        };
+        await videoFrameProvider.seekMany(transitionPlan.seekTimes, srcOfEntity);
+ 
         await Promise.all(
           activeAtFrame.map(({ entity, transform }) => {
             if (!isVideoEntity(entity)) return Promise.resolve();
+            if (transitionPlan.suppressedIds.has(entity.id)) return Promise.resolve();
             const videoComp = entity.components.find((c) => c.type === 'VideoRenderer') || { src: entity.src };
             const src = videoComp.src || entity.src;
             if (!src) return Promise.resolve();
@@ -418,7 +468,10 @@ export function ExportModal({
  
         if (abortRef.current) break;
  
-        drawExportFrame({
+        // drawExportFrame is async: script-built DOM (Canvas/React components)
+        // is rasterized through an SVG snapshot, which must finish decoding
+        // before this frame is handed to the encoder below.
+        await drawExportFrame({
           ctx,
           width: encodeWidth,
           height: encodeHeight,
@@ -902,6 +955,30 @@ export function ExportModal({
                     </>
                   )}
                 </div>
+ 
+                {transitionWarnings.length > 0 && (
+                  <div className="export-transition-warning" role="alert">
+                    <div className="export-transition-warning-title">
+                      <AlertCircle size={13} />
+                      <span>
+                        {transitionWarnings.length === 1
+                          ? '1 transition will not render as a full blend'
+                          : `${transitionWarnings.length} transitions will not render as a full blend`}
+                      </span>
+                    </div>
+                    <ul className="export-transition-warning-list">
+                      {transitionWarnings.map((w) => (
+                        <li key={w.id}>
+                          <span className="export-transition-warning-time">{formatTimecode(w.time, targetFps)}</span>
+                          <span>{w.message}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="export-transition-warning-foot">
+                      You can still export. Fix them on the timeline first if you want the full effect.
+                    </div>
+                  </div>
+                )}
  
                 <button
                   className="unity-btn unity-btn-primary render-submit-btn"

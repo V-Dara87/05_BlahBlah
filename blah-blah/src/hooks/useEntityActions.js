@@ -2,9 +2,11 @@ import { useCallback } from 'react';
 import {
   createGameObject,
   createDefaultTransform,
+  createTransitionClipEntity,
   removeEntitiesByIds,
   syncPrefabInstances,
 } from '../engine/ecs';
+import { planTransitionPlacement, buildMediaDurationsFromAssets, TRANSITION_DEFAULT_DURATION } from '../engine/renderPipeline';
 import { detectScriptKind, extractScriptProps } from '../engine/scriptRunner';
 import { computeTrimmedOffset } from '../utils/mediaOffset';
 import {
@@ -634,6 +636,80 @@ export function useEntityActions({
     setSelectedEntityId(newGO.id);
   }, [getPlaybackTime]);
  
+  // Add a TransitionClip on the cut between two back-to-back video clips.
+  //
+  // All of the "which cut, how long" logic is planTransitionPlacement in
+  // engine/renderPipeline.js (a pure function, so the menu, the drop path and
+  // this action cannot disagree, and it is checked by a Node script). This
+  // function only feeds it the project state, then applies the result.
+  //
+  //   targetTrackId  track to look on; defaults to the selected clip's track,
+  //                  then the first track that has a touching pair.
+  //   referenceTime  picks the nearest cut when a track has several; defaults
+  //                  to the playhead.
+  //   options        { preset, duration } — preset id and requested length.
+  //
+  // Returns the new clip's id, or null when nothing was added. When nothing
+  // can be added the user is told why (alert(), like the project's other
+  // refusals) instead of the action silently doing nothing.
+  const handleAddTransitionClip = useCallback((targetTrackId, referenceTime, options = {}) => {
+    const at = Number.isFinite(referenceTime) ? referenceTime : getPlaybackTime();
+
+    // { [clipId]: source file seconds }, so A's tail handle can be measured.
+    const mediaDurations = buildMediaDurationsFromAssets(entities, mediaAssets);
+
+    // Which track: explicit > selected clip's track > any track with a pair.
+    const candidateTrackIds = [];
+    if (targetTrackId) candidateTrackIds.push(targetTrackId);
+    else {
+      const selected = entities.find((e) => e.id === selectedEntityId);
+      if (selected?.trackId) candidateTrackIds.push(selected.trackId);
+      for (const t of tracks) if (!candidateTrackIds.includes(t.id)) candidateTrackIds.push(t.id);
+    }
+
+    let plan = null;
+    let firstFailure = null;
+    for (const trackId of candidateTrackIds) {
+      const track = tracks.find((t) => t.id === trackId);
+      if (track?.locked) continue;
+      const attempt = planTransitionPlacement({
+        entities,
+        trackId,
+        referenceTime: at,
+        duration: options.duration ?? TRANSITION_DEFAULT_DURATION,
+        mediaDurations,
+      });
+      if (attempt.ok) { plan = attempt; break; }
+      // Report the most useful reason: "already has one" beats "no pair".
+      if (!firstFailure || attempt.reason === 'already-has-transition') firstFailure = attempt;
+    }
+
+    if (!plan) {
+      alert(firstFailure?.message
+        || 'A transition needs two video clips that touch on the same track. Place the clips back to back first.');
+      return null;
+    }
+
+    const clip = createTransitionClipEntity({
+      name: 'Transition',
+      trackId: plan.trackId,
+      startTime: plan.startTime,
+      duration: plan.duration,
+      preset: options.preset,
+    });
+    setEntities((prev) => [...prev, clip]);
+    setSelectedEntityId(clip.id);
+
+    // Tell the user when we had to shorten it, or when there is nothing to
+    // borrow, so a 0.4s transition never looks like a bug.
+    if (plan.noHandles) {
+      alert('Added a short transition. These clips have no spare footage past their cut, so each side will hold its first/last frame during the blend.');
+    } else if (plan.clamped) {
+      alert(`Transition shortened to ${plan.duration.toFixed(2)}s, the most the spare footage around this cut allows.`);
+    }
+    return clip.id;
+  }, [entities, tracks, mediaAssets, selectedEntityId, setEntities, setSelectedEntityId, getPlaybackTime]);
+
   // Attach a script to an entity (Add Component click, or dropping a script
   // card from the Project panel onto a timeline clip / the Inspector).
   const handleAttachScriptToEntity = useCallback((entityId, scriptId) => {
@@ -1154,6 +1230,7 @@ export function useEntityActions({
     handleSplitEntity,
     handleCutSilence,
     handleAddEmptyClip,
+    handleAddTransitionClip,
     handleAddPrefabToTimeline,
     handleAddMediaToTimeline,
     handleSplitVideoAndAudio,

@@ -1,6 +1,7 @@
 import { Fragment } from 'react';
 import { EntityErrorBoundary } from '../entity/EntityErrorBoundary';
 import { getSharedGLTransitionRenderer } from '../../engine/glTransitions';
+import { TransitionBlendCanvas } from './TransitionBlendCanvas';
 import './video-layer.css';
  
 /**
@@ -30,10 +31,44 @@ export function VideoLayer({
   handleMoveGizmoPointerDown,
   handleRotateGizmoPointerDown,
   handleScaleGizmoPointerDown,
+  // TransitionClip plan from EntityRenderer (see renderPipeline.js
+  // resolveTransitionFramePlan + the blends built there). Empty for projects
+  // with no transition clips, in which case this component renders exactly
+  // as before.
+  transitionPlan = null,
 }) {
-  return items.map((item) => {
-    const { entity, transform, localTransform, transitionState } = item;
-    const isSelected = entity.id === selectedEntityId;
+  const suppressedIds = transitionPlan?.suppressedIds;
+  const blends = transitionPlan?.blends || [];
+ 
+  // While a transition clip is active, BOTH neighbours must keep a mounted
+  // <video> (one of them is outside its own clip window, so it is not in
+  // `items`): the blend canvas reads their frames and useMediaSync seeks
+  // them. They are appended as extra items and rendered `hidden` below with
+  // the SAME key as their normal render, so a clip going from "drawn
+  // normally" to "feeding the blend" is not remounted (a remount would
+  // reload the file and flash).
+  let all = items;
+  if (suppressedIds && suppressedIds.size > 0) {
+    const present = new Set(items.map((i) => i.entity.id));
+    const extra = [];
+    for (const b of blends) {
+      for (const side of [b.transition.from, b.transition.to]) {
+        if (!side || present.has(side.entity.id)) continue;
+        present.add(side.entity.id);
+        const tr = side.entity.components?.find((c) => c.type === 'Transform') || {};
+        extra.push({ entity: side.entity, transform: tr, localTransform: tr, transitionState: null });
+      }
+    }
+    if (extra.length) all = [...items, ...extra];
+  }
+ 
+  const rendered = all.map((item) => {
+    const { entity, transform, localTransform, transitionState: rawTransitionState } = item;
+    const hidden = Boolean(suppressedIds?.has(entity.id));
+    // A hidden clip is only a frame source for the blend; the old per-clip
+    // transition overlay must not also run on it.
+    const transitionState = hidden ? null : rawTransitionState;
+    const isSelected = !hidden && entity.id === selectedEntityId;
     const videoComp = entity.components.find((c) => c.type === 'VideoRenderer') || { src: entity.src };
     const vidSrc = videoComp.src || entity.src;
     // Mount-time seek target: raw (un-keyframed) clip rate, since this
@@ -66,6 +101,9 @@ export function VideoLayer({
           // visible on top while you're actively editing it,
           // regardless of its track.
           zIndex: (isSelected ? 1000 : 0) + 100 + layerZIndexOf(item),
+          // visibility (not display:none) keeps the element decoding so the
+          // blend canvas can still draw its frames.
+          ...(hidden ? { visibility: 'hidden', pointerEvents: 'none' } : null),
         }}
         onClick={(e) => {
           e.stopPropagation();
@@ -248,5 +286,21 @@ export function VideoLayer({
       </Fragment>
     );
   });
+ 
+  return (
+    <>
+      {rendered}
+      {blends.map((b) => (
+        <TransitionBlendCanvas
+          key={`blend-${b.transition.entity.id}`}
+          blend={b}
+          videoRefs={videoRefs}
+          safeResWidth={safeResWidth}
+          safeResHeight={safeResHeight}
+          zIndex={100 + layerZIndexOf({ entity: b.trackEntity })}
+        />
+      ))}
+    </>
+  );
 }
  

@@ -79,9 +79,31 @@ const OVERLAP_EPSILON = 1e-6;
  *          clipId -> which sub-lane it occupies and how many sub-lanes
  *          its overlap group needs in total.
  */
+/**
+ * True for a TransitionClip entity (ecs.js isTransitionClipEntity). Repeated
+ * here, deliberately, so this file stays dependency-free like the rest of the
+ * layout math; it is the same two-way check (entity type OR component type),
+ * so a stale `type` cannot make the two disagree.
+ */
+export function isTransitionClipLike(clip) {
+  return clip?.type === 'transition'
+    || Boolean(clip?.components?.some((c) => c?.type === 'TransitionClipComponent'));
+}
+
+/**
+ * Clips that take part in DaVinci-style sub-lane packing. A transition clip
+ * is NOT one of them: it sits centred on a cut, so it always overlaps its two
+ * neighbours by design, and packing it would squeeze both of them to half
+ * height around every cut. It is drawn as an overlay strip on top of the row
+ * instead (see TransitionClipItem.jsx).
+ */
+export function getPackableClips(clips = []) {
+  return (clips || []).filter((c) => !isTransitionClipLike(c));
+}
+
 export function computeClipSubLanes(clips = []) {
   const result = new Map();
-  const valid = (clips || []).filter((c) => Number.isFinite(c?.startTime) && Number.isFinite(c?.duration));
+  const valid = getPackableClips(clips).filter((c) => Number.isFinite(c?.startTime) && Number.isFinite(c?.duration));
   if (valid.length === 0) return result;
  
   const sorted = [...valid].sort((a, b) => a.startTime - b.startTime);
@@ -190,4 +212,3 @@ export function computeSubStripSegmentLayout(segments = [], clipStartTime = 0, c
  
   return result;
 }
- 

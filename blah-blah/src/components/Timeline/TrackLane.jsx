@@ -1,10 +1,11 @@
 import { useState, memo, useMemo } from 'react';
 import { ClipboardPaste } from 'lucide-react';
 import { ClipItem } from './ClipItem';
+import { TransitionClipItem } from './TransitionClipItem';
 import { ContextMenu } from '../shared/ContextMenu';
 import { hasClipboardClips } from '../../utils/clipClipboard';
 import { LiveRecordingClipPreview } from './LiveRecordingClipPreview';
-import { TRACK_HEIGHT, computeClipSubLanes, getTickIntervalSeconds } from '../../utils/timelineLayout';
+import { TRACK_HEIGHT, computeClipSubLanes, getTickIntervalSeconds, isTransitionClipLike } from '../../utils/timelineLayout';
 import { importMediaFiles, detectMediaKind } from '../../services/mediaImport';
 import './track-lane.css';
  
@@ -36,6 +37,7 @@ export const TrackLane = memo(function TrackLane({
   onUpdateClip,
   onUpdateClips,
   onDuplicateClips,
+  onDeleteClip,
   onCopySelected,
   onCutSelected,
   onPasteClips,
@@ -217,6 +219,29 @@ export const TrackLane = memo(function TrackLane({
         style={{ height: rowHeight }}
       >
         {clips.map((clip) => {
+          // Transition clips are overlays centred on a cut, not packable clips:
+          // own component, full row height, no sub-lane (see TransitionClipItem).
+          if (isTransitionClipLike(clip)) {
+            return (
+              <TransitionClipItem
+                key={clip.id}
+                clip={clip}
+                allClips={fullClipList}
+                tracks={tracks}
+                mediaAssets={mediaAssets}
+                isLocked={track.locked}
+                pixelsPerSecond={pixelsPerSecond}
+                selectedClipId={selectedClipId}
+                selectedIds={selectedIds}
+                rowHeight={rowHeight}
+                onSelectClip={onSelectClip}
+                onToggleSelect={onToggleSelect}
+                onRangeSelect={onRangeSelect}
+                onUpdateClip={onUpdateClip}
+                onDeleteClip={onDeleteClip}
+              />
+            );
+          }
           const lane = subLanes.get(clip.id) || { laneIndex: 0, laneCount: 1 };
           let clipSilenceCuts = null;
           let clipSilenceAdjustHandler = null;
