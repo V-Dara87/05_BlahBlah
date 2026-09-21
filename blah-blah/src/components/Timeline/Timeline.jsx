@@ -703,7 +703,23 @@ export const Timeline = memo(function Timeline({
     });
     return selected;
   }, [boxSelect, clips, pixelsPerSecond, layout]);
- 
+
+  // PERF FIX: previously this merge was built inline as
+  // `[...new Set([...selectedIds, ...boxSelectedIds])]` at the TrackLane
+  // call site below, which allocates a brand-new array every single
+  // Timeline render regardless of whether the actual selection changed.
+  // Every ClipItem is wrapped in React.memo and compares this array by
+  // reference, so a new array each render meant every clip on every track
+  // re-rendered on any Timeline re-render (zoom, scroll, playhead tick,
+  // unrelated state changes) — not just on real selection changes. Memoizing
+  // it here means ClipItem's memo comparison actually holds when the
+  // selection hasn't changed, which is the single biggest win available
+  // without restructuring the component tree.
+  const mergedSelectedIds = useMemo(
+    () => [...new Set([...selectedIds, ...boxSelectedIds])],
+    [selectedIds, boxSelectedIds]
+  );
+
   return (
     <section className="timeline-editor-panel">
       {/* Top Header of Timeline */}
@@ -906,7 +922,7 @@ export const Timeline = memo(function Timeline({
                     recordingStartTime={recordingStartTime}
                     recordingLevel={recordingLevel}
                     selectedClipId={selectedClipId}
-                    selectedIds={[...new Set([...selectedIds, ...boxSelectedIds])]}
+                    selectedIds={mergedSelectedIds}
                     onSelectClip={onSelectClip}
                     onToggleSelect={onToggleSelect}
                     onRangeSelect={onRangeSelect}
