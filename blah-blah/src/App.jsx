@@ -9,6 +9,8 @@ import { useDockPanels } from './hooks/useDockPanels';
 import { useProjectPersistence } from './hooks/useProjectPersistence';
 import { useProjectAutosave } from './hooks/useProjectAutosave';
 import { useAutosaveSettings } from './hooks/useAutosaveSettings';
+import { useEditorSettings } from './hooks/useEditorSettings';
+import { useExportSettings } from './hooks/useExportSettings';
 import { useAudioRecording } from './hooks/useAudioRecording';
 import { usePrefabEditing } from './hooks/usePrefabEditing';
 import { useOsFileDrop } from './hooks/useOsFileDrop';
@@ -62,6 +64,10 @@ import './styles/shared.css';
  *                         changes, blur/close flush, driven by the
  *                         Settings > Autosave values (useAutosaveSettings)
  *                         (hooks/useProjectAutosave.js)
+ *   - useEditorSettings / useExportSettings → live copies of the global
+ *                         Settings > Timeline / Export defaults, owned here
+ *                         so the modal and their consumers share one state
+ *                         (hooks/useEditorSettings.js, useExportSettings.js)
  *   - useAudioRecording → mic capture for per-track voice recording,
  *                         arm/stop/finalize, stop-on-pause sync
  *                         (hooks/useAudioRecording.js)
@@ -163,6 +169,11 @@ export function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   // Global autosave preferences (Settings > Autosave). Shared with the modal below.
   const { autosaveSettings, updateAutosaveSettings } = useAutosaveSettings();
+  // Global editor + export defaults (Settings > Timeline / Export). Called before
+  // useProjectStore on purpose: the store creates its undo history, which needs
+  // the undo depth.
+  const { editorSettings, updateEditorSettings } = useEditorSettings();
+  const { exportSettings, updateExportSettings } = useExportSettings();
   const [silenceTarget, setSilenceTarget] = useState({ type: 'clip', id: null });
   const [silencePreviewData, setSilencePreviewData] = useState(null);
  
@@ -734,6 +745,10 @@ export function App() {
         onResolutionChange={setResolution}
         autosaveSettings={autosaveSettings}
         onAutosaveSettingsChange={updateAutosaveSettings}
+        editorSettings={editorSettings}
+        onEditorSettingsChange={updateEditorSettings}
+        exportSettings={exportSettings}
+        onExportSettingsChange={updateExportSettings}
       />
     </div>
     </PlaybackProvider>

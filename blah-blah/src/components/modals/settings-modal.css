@@ -1,4 +1,5 @@
-/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/SettingsModal.jsx and its markup.
+/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/modals/SettingsModal.jsx and the tabs in
+   src/components/modals/settings/.
    A rule moves here when the narrowest class in its selector is used by this file
    alone; generic modifier classes (.active/.danger/.disabled) travel with the
    component that owns the rest of the selector.
@@ -43,54 +44,6 @@
   color: var(--unity-text-dim);
   min-width: 32px;
   text-align: right;
-}
- 
-.settings-modal {
-  max-width: 560px;
-}
- 
-.settings-tab-bar {
-  display: flex;
-  gap: 2px;
-  padding: 0 20px;
-  border-bottom: 1px solid var(--unity-border);
-  flex-shrink: 0;
-}
- 
-.settings-tab-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 12px;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--unity-text-muted);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.12s;
-}
- 
-.settings-tab-btn:hover {
-  color: #fff;
-}
- 
-.settings-tab-btn.active {
-  color: var(--unity-accent, #38bdf8);
-  border-bottom-color: var(--unity-accent, #38bdf8);
-}
- 
-.shortcuts-body {
-  max-height: 420px;
-  overflow-y: auto;
-}
- 
-.shortcuts-header-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
 }
  
 .shortcut-conflict-box {
@@ -184,4 +137,470 @@
 .shortcut-reset-btn:hover {
   color: #fff;
   border-color: var(--unity-border);
+}
+
+/* ==========================================================================
+   Modal layout: header / [sidebar | content] / footer
+   ========================================================================== */
+
+.settings-modal {
+  width: 92%;
+  max-width: 820px;
+  display: flex;
+  flex-direction: column;
+  max-height: min(86vh, 640px);
+}
+
+/* Prefers 460px of height, but shrinks (and lets the content pane scroll)
+   when the window is short. min-height: 0 is what allows the shrink. */
+.settings-layout {
+  display: flex;
+  flex: 1 1 460px;
+  min-height: 0;
+}
+
+.settings-footer {
+  flex-shrink: 0;
+  margin-top: 0;
+  padding: 10px 16px;
+  border-top: 1px solid var(--unity-border);
+}
+
+/* --- Sidebar ------------------------------------------------------------- */
+
+.settings-sidebar {
+  width: 200px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--unity-dark);
+  border-right: 1px solid var(--unity-border);
+  min-height: 0;
+}
+
+.settings-search {
+  position: relative;
+  padding: 10px 10px 6px;
+  flex-shrink: 0;
+}
+
+.settings-search-icon {
+  position: absolute;
+  left: 20px;
+  top: 50%;
+  transform: translateY(-30%);
+  color: var(--unity-text-dim);
+  pointer-events: none;
+}
+
+.settings-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px 6px 26px;
+  background: var(--unity-darkest);
+  border: 1px solid var(--unity-border);
+  border-radius: 5px;
+  color: var(--unity-text);
+  font-size: 11px;
+  transition: border-color 0.12s;
+}
+
+.settings-search-input::placeholder {
+  color: var(--unity-text-dim);
+}
+
+.settings-search-input:focus {
+  outline: none;
+  border-color: var(--unity-accent-blue);
+}
+
+.settings-nav-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 8px 10px;
+}
+
+.settings-nav-section + .settings-nav-section {
+  margin-top: 10px;
+}
+
+.settings-nav-heading {
+  padding: 6px 8px 4px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--unity-text-dim);
+}
+
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  background: none;
+  border: none;
+  border-left: 2px solid transparent;
+  border-radius: 4px;
+  color: var(--unity-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.settings-nav-item svg {
+  flex-shrink: 0;
+}
+
+.settings-nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-nav-item:hover {
+  background: var(--unity-hover);
+  color: #fff;
+}
+
+.settings-nav-item.active {
+  background: var(--unity-subtle);
+  color: var(--unity-accent-blue);
+  border-left-color: var(--unity-accent-blue);
+}
+
+.settings-nav-item:focus-visible,
+.settings-search-input:focus-visible {
+  outline: 1px solid var(--unity-accent-blue);
+  outline-offset: -1px;
+}
+
+.settings-nav-empty {
+  margin: 14px 8px;
+  font-size: 11px;
+  color: var(--unity-text-dim);
+  font-style: italic;
+}
+
+/* --- Content pane -------------------------------------------------------- */
+
+.settings-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-content-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px 10px;
+  border-bottom: 1px solid var(--unity-border);
+  flex-shrink: 0;
+}
+
+.settings-content-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+}
+
+/* The content pane owns scrolling, so long tabs (Shortcuts) never nest a
+   second scrollbar inside the modal. */
+.settings-content-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* --- Global / This project badge ---------------------------------------- */
+
+.settings-scope-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--unity-border-light);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--unity-text-muted);
+  cursor: help;
+}
+
+.settings-scope-badge.project {
+  color: var(--unity-accent-amber);
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.settings-scope-badge.global {
+  color: var(--unity-accent-blue);
+  border-color: rgba(56, 189, 248, 0.4);
+  background: rgba(56, 189, 248, 0.08);
+}
+
+/* ==========================================================================
+   Reusable tab building blocks (replace inline styles in the tabs)
+   ========================================================================== */
+
+/* A checkbox + multi-line label. */
+.settings-check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+/* A hint that sits under a control on its own line. */
+.settings-hint-block {
+  display: block;
+}
+
+/* Extra breathing room above / below a hint. */
+.settings-hint-spaced {
+  margin-top: 10px;
+}
+
+.settings-hint-below {
+  margin-bottom: 8px;
+}
+
+/* Greys out a group whose controls are inactive (e.g. autosave is off). */
+.settings-group-dimmed {
+  opacity: 0.5;
+}
+
+/* A row of buttons. */
+.settings-action-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+/* --- System tab / info rows ---------------------------------------------- */
+
+.settings-group-spaced {
+  margin-top: 16px;
+}
+
+.settings-hint-footnote {
+  margin-top: 12px;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.modal-alert-box.success {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  color: var(--unity-accent-blue);
+  font-size: 12px;
+}
+
+.settings-alert-mono {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.settings-alert-text {
+  font-size: 12px;
+  word-break: break-word;
+}
+
+/* --- Narrow windows: collapse the sidebar into a compact rail ------------ */
+
+@media (max-width: 640px) {
+  .settings-sidebar {
+    width: 56px;
+  }
+  .settings-sidebar .settings-search,
+  .settings-nav-heading,
+  .settings-nav-label,
+  .settings-nav-empty {
+    display: none;
+  }
+  .settings-nav-item {
+    justify-content: center;
+    padding: 9px 0;
+  }
+}
+
+/* ==========================================================================
+   Alerts, inline rows and small controls shared by several tabs
+   ========================================================================== */
+
+.modal-alert-box.warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: #fcd34d;
+  font-size: 12px;
+}
+
+.settings-alert-icon {
+  flex-shrink: 0;
+}
+
+/* A button that sits at the right edge of an alert (Retry, Use System Default). */
+.settings-alert-action {
+  margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* A control with a companion button on its right (device select + Refresh). */
+.settings-field-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.settings-field-row .modal-text-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-refresh-btn {
+  flex-shrink: 0;
+}
+
+@keyframes settings-spin {
+  to { transform: rotate(360deg); }
+}
+
+.settings-spin {
+  animation: settings-spin 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-spin {
+    animation: none;
+  }
+}
+
+/* Plain explanatory text, e.g. "No shortcuts match ...". */
+.settings-empty-note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--unity-text-dim);
+  font-style: italic;
+}
+
+/* A small "3 modified" / "All default" chip. */
+.settings-count-pill {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--unity-border-light);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--unity-text-dim);
+  white-space: nowrap;
+}
+
+.settings-count-pill.active {
+  color: var(--unity-accent-amber);
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+/* Label / value rows (System > Runtime Environment). */
+.settings-info-list {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--unity-border);
+  border-radius: 6px;
+  background: var(--unity-darkest);
+}
+
+.settings-info-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 12px;
+}
+
+.settings-info-row + .settings-info-row {
+  border-top: 1px solid var(--unity-border);
+}
+
+.settings-info-row dt {
+  font-size: 11px;
+  color: var(--unity-text-muted);
+}
+
+.settings-info-row dd {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--unity-text);
+  text-align: right;
+}
+
+.settings-info-row dd.ok {
+  color: var(--unity-accent-emerald);
+}
+
+.settings-info-row dd.warn {
+  color: var(--unity-accent-amber);
+}
+
+/* ==========================================================================
+   Keyboard Shortcuts tab: sticky header (search, count, reset + prompts)
+   ========================================================================== */
+
+/* Stays pinned while the list scrolls, so a rebind-conflict or reset prompt
+   is always on screen no matter how far down the list you are. The negative
+   margins cancel .modal-body's padding so the bar spans the full pane. */
+.shortcuts-sticky-top {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: -18px -20px 0;
+  padding: 12px 20px;
+  background: var(--unity-panel);
+  border-bottom: 1px solid var(--unity-border);
+}
+
+.shortcuts-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* The sidebar search box, reused inline in the toolbar. */
+.settings-search-inline {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+}
+
+.settings-search-inline .settings-search-icon {
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
 }

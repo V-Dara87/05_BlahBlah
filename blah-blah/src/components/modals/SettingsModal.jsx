@@ -1,34 +1,25 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Settings, X, Mic, AlertCircle, Keyboard, RotateCcw, Pencil, Cpu, CheckCircle2, MonitorPlay, Save } from 'lucide-react';
-import { loadAudioSettings, saveAudioSettings, listAudioInputDevices } from '../../services/audioSettings';
-import { useAudioRecorder } from '../../hooks/useAudioRecorder';
-import { getFfmpegVersion, isFfmpegAvailable } from '../../services/ffmpegRunner';
-import { isTauri } from '../../services/tauriFsAdapter';
+import { useState, useMemo, useEffect } from 'react';
+import { Settings, X, Search, Globe, FolderOpen } from 'lucide-react';
 import {
-  AUTOSAVE_DEFAULTS,
-  AUTOSAVE_DELAY_PRESETS_MS,
-  getAutosaveMaxWaitMs,
-} from '../../services/autosaveSettings';
-import { RESOLUTION_PRESETS, DEFAULT_RESOLUTION } from '../../types';
-import {
-  SHORTCUT_ACTIONS,
-  loadKeybindSettings,
-  saveKeybindSettings,
-  resetKeybindSettings,
-  normalizeKeyEvent,
-  findConflict,
-  getDefaultBinding,
-} from '../../services/keybindSettings';
+  DEFAULT_SETTINGS_TAB_ID,
+  getSettingsTab,
+  groupSettingsTabs,
+} from './settings/settingsTabs';
 import './settings-modal.css';
  
-const TABS = [
-  { id: 'project', label: 'Project', icon: MonitorPlay },
-  { id: 'autosave', label: 'Autosave', icon: Save },
-  { id: 'audio', label: 'Audio', icon: Mic },
-  { id: 'shortcuts', label: 'Keyboard Shortcuts', icon: Keyboard },
-  { id: 'system', label: 'System', icon: Cpu },
-];
- 
+/**
+ * Settings modal shell — title bar, sidebar navigation, and footer.
+ *
+ * This component is deliberately generic. It does not know what any tab
+ * contains: the list of tabs, their sections, order, subtitles, and the props
+ * each one needs all come from ./settings/settingsTabs.js. To add or move a
+ * tab, edit that file (its header comment is the how-to guide) — only touch
+ * this file if a new tab needs data that App.jsx does not pass in yet.
+ *
+ * Every prop the modal receives is bundled into one `ctx` object and handed to
+ * each tab's `getProps(ctx)`, so this signature is the single list of "what
+ * Settings can see".
+ */
 export function SettingsModal({
   isOpen,
   onClose,
@@ -37,61 +28,48 @@ export function SettingsModal({
   onResolutionChange,
   autosaveSettings,
   onAutosaveSettingsChange,
+  editorSettings,
+  onEditorSettingsChange,
+  exportSettings,
+  onExportSettingsChange,
 }) {
-  const [activeTab, setActiveTab] = useState('project');
+  const [activeTabId, setActiveTabId] = useState(DEFAULT_SETTINGS_TAB_ID);
+  const [query, setQuery] = useState('');
  
-  const [inputDeviceId, setInputDeviceId] = useState('default');
-  const [devices, setDevices] = useState([]);
-  const [devicesError, setDevicesError] = useState(null);
- 
-  const { isMonitoring, level, error, startMonitoring, stopMonitoring } = useAudioRecorder({ inputDeviceId });
- 
-  // Load persisted settings + device list whenever the modal opens.
+  // Start from a clean sidebar every time the modal is reopened, so a stale
+  // search never hides tabs the next time someone opens Settings.
   useEffect(() => {
-    if (!isOpen) return;
- 
-    const stored = loadAudioSettings();
-    setInputDeviceId(stored.inputDeviceId);
- 
-    (async () => {
-      try {
-        // Request a throwaway permission grant first so device labels
-        // are populated (browsers blank them out until mic access has
-        // been granted at least once).
-        const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        tempStream.getTracks().forEach((t) => t.stop());
-        const list = await listAudioInputDevices();
-        setDevices(list);
-        setDevicesError(null);
-      } catch (err) {
-        setDevicesError(err.message || 'Microphone permission was not granted');
-      }
-    })();
+    if (isOpen) setQuery('');
   }, [isOpen]);
  
-  // Start/stop the live level meter while the modal is open — and only
-  // while the Audio tab is actually visible, so switching to Keyboard
-  // Shortcuts doesn't keep the mic hot in the background.
-  useEffect(() => {
-    if (isOpen && activeTab === 'audio') {
-      startMonitoring();
-    } else {
-      stopMonitoring();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, activeTab, inputDeviceId]);
+  const groups = useMemo(() => groupSettingsTabs(query), [query]);
+  const activeTab = getSettingsTab(activeTabId) || getSettingsTab(DEFAULT_SETTINGS_TAB_ID);
  
-  const handleDeviceChange = useCallback((e) => {
-    const next = e.target.value;
-    setInputDeviceId(next);
-    const settings = { inputDeviceId: next };
-    saveAudioSettings(settings);
-    onSettingsChanged?.(settings);
-  }, [onSettingsChanged]);
+  // Searching narrows the sidebar. If that hides the tab currently on screen,
+  // jump to the first match so the highlighted item and the content agree
+  // (otherwise you would be reading "System" with nothing selected in the list).
+  useEffect(() => {
+    if (groups.length === 0) return;
+    const visible = groups.some((g) => g.tabs.some((t) => t.id === activeTab.id));
+    if (!visible) setActiveTabId(groups[0].tabs[0].id);
+  }, [groups, activeTab.id]);
  
   if (!isOpen) return null;
  
-  const levelPercent = Math.round(level * 100);
+  const ctx = {
+    onSettingsChanged,
+    resolution,
+    onResolutionChange,
+    autosaveSettings,
+    onAutosaveSettingsChange,
+    editorSettings,
+    onEditorSettingsChange,
+    exportSettings,
+    onExportSettingsChange,
+  };
+ 
+  const ActiveComponent = activeTab.Component;
+  const isProjectScope = activeTab.scope === 'project';
  
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -103,594 +81,83 @@ export function SettingsModal({
             </div>
             <div>
               <h3>Settings</h3>
-              <p className="modal-subtitle">
-                {activeTab === 'project'
-                  ? 'Project canvas resolution'
-                  : activeTab === 'autosave'
-                  ? 'When and how the project is saved to disk'
-                  : activeTab === 'audio'
-                  ? 'Audio input device for voice recording'
-                  : activeTab === 'shortcuts'
-                  ? 'Customize your keyboard shortcuts'
-                  : 'Desktop environment and background sidecars'}
-              </p>
+              <p className="modal-subtitle">{activeTab.subtitle}</p>
             </div>
           </div>
-          <button className="modal-close-btn" onClick={onClose}>
+          <button type="button" className="modal-close-btn" onClick={onClose} aria-label="Close settings">
             <X size={16} />
           </button>
         </div>
  
-        <div className="settings-tab-bar">
-          {TABS.map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                className={`settings-tab-btn ${activeTab === tab.id ? 'active' : ''}`}
-                onClick={() => setActiveTab(tab.id)}
-              >
-                <Icon size={13} />
-                {tab.label}
-              </button>
-            );
-          })}
-        </div>
- 
-        {activeTab === 'project' && (
-          <ProjectTab resolution={resolution} onResolutionChange={onResolutionChange} />
-        )}
- 
-        {activeTab === 'autosave' && (
-          <AutosaveTab settings={autosaveSettings} onChange={onAutosaveSettingsChange} />
-        )}
- 
-        {activeTab === 'audio' && (
-          <div className="modal-body settings-body">
-            {(devicesError || error) && (
-              <div className="modal-alert-box error">
-                <AlertCircle size={14} />
-                <span>{devicesError || error}</span>
-              </div>
-            )}
- 
-            <div className="form-field-group">
-              <label className="form-label">Input Device</label>
-              <select
-                className="modal-text-input settings-select"
-                value={inputDeviceId}
-                onChange={handleDeviceChange}
-              >
-                <option value="default">System Default</option>
-                {devices.map((d) => (
-                  <option key={d.deviceId} value={d.deviceId}>{d.label}</option>
-                ))}
-              </select>
+        <div className="settings-layout">
+          <nav className="settings-sidebar" aria-label="Settings sections">
+            <div className="settings-search">
+              <Search size={12} className="settings-search-icon" />
+              <input
+                type="text"
+                className="settings-search-input"
+                placeholder="Search settings"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                aria-label="Search settings"
+              />
             </div>
  
-            <div className="form-field-group">
-              <label className="form-label">Mic Level</label>
-              <div className="level-meter-row">
-                <Mic size={16} className={isMonitoring ? 'text-cyan' : 'text-dim'} />
-                <div className="level-meter-track">
-                  <div
-                    className={`level-meter-fill ${levelPercent > 85 ? 'hot' : ''}`}
-                    style={{ width: `${levelPercent}%` }}
-                  />
+            <div className="settings-nav-scroll">
+              {groups.length === 0 && (
+                <p className="settings-nav-empty">No settings match “{query.trim()}”.</p>
+              )}
+ 
+              {groups.map(({ section, tabs }) => (
+                <div className="settings-nav-section" key={section.id}>
+                  <div className="settings-nav-heading">{section.label}</div>
+                  {tabs.map((tab) => {
+                    const Icon = tab.icon;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        className={`settings-nav-item ${activeTab.id === tab.id ? 'active' : ''}`}
+                        onClick={() => setActiveTabId(tab.id)}
+                        aria-current={activeTab.id === tab.id ? 'page' : undefined}
+                      >
+                        <Icon size={13} />
+                        <span className="settings-nav-label">{tab.label}</span>
+                      </button>
+                    );
+                  })}
                 </div>
-                <span className="level-meter-value">{levelPercent}%</span>
-              </div>
-              <p className="hint-text-sm">
-                {isMonitoring ? 'Listening — speak to check your levels.' : 'Requesting microphone access...'}
-              </p>
+              ))}
+            </div>
+          </nav>
+ 
+          <div className="settings-content">
+            <div className="settings-content-header">
+              <h4 className="settings-content-title">{activeTab.label}</h4>
+              <span
+                className={`settings-scope-badge ${isProjectScope ? 'project' : 'global'}`}
+                title={
+                  isProjectScope
+                    ? 'Saved inside this project and applies only to it.'
+                    : 'Saved on this computer and applies to every project.'
+                }
+              >
+                {isProjectScope ? <FolderOpen size={10} /> : <Globe size={10} />}
+                {isProjectScope ? 'This project' : 'Global'}
+              </span>
+            </div>
+ 
+            <div className="settings-content-body">
+              <ActiveComponent key={activeTab.id} {...activeTab.getProps(ctx)} />
             </div>
           </div>
-        )}
+        </div>
  
-        {activeTab === 'shortcuts' && <KeyboardShortcutsTab />}
-        {activeTab === 'system' && <SystemTab />}
- 
-        <div className="modal-footer">
+        <div className="modal-footer settings-footer">
           <button type="button" className="btn-secondary" onClick={onClose}>
             Done
           </button>
         </div>
-      </div>
-    </div>
-  );
-}
- 
-/**
- * Project tab — lets the user change the project's canvas resolution
- * mid-project, not just at creation time (see NewProjectModal, which
- * offers the same preset picker for the initial pick). App.jsx's
- * `resolution` state already flows straight into projectState (what
- * gets persisted to project.json) and into EntityRenderer's preview
- * frame, so applying a change here is just a `setResolution` call —
- * no separate "apply" step or reload needed.
- *
- * Existing clips are NOT repositioned or rescaled when resolution
- * changes: their Transform values are pixel-space coordinates set
- * against the OLD canvas size, so a same-aspect-ratio change (e.g.
- * 1080p -> 4K) still looks right, but a differently-shaped canvas
- * (e.g. 16:9 -> 9:16) will leave clips sitting in what are now the
- * wrong positions. We warn before applying in that case rather than
- * attempting an automatic re-layout, which would be guessing at
- * intent (crop? letterbox? re-center?) the user hasn't stated.
- */
-function ProjectTab({ resolution, onResolutionChange }) {
-  const current = resolution?.width > 0 && resolution?.height > 0 ? resolution : DEFAULT_RESOLUTION;
- 
-  const matchingPreset = RESOLUTION_PRESETS.find(
-    (p) => p.width === current.width && p.height === current.height
-  );
- 
-  const [resolutionId, setResolutionId] = useState(matchingPreset ? matchingPreset.id : 'custom');
-  const [customWidth, setCustomWidth] = useState(current.width);
-  const [customHeight, setCustomHeight] = useState(current.height);
-  const [pendingWarning, setPendingWarning] = useState(null); // { width, height } awaiting confirmation
- 
-  const isCustomResolution = resolutionId === 'custom';
-  const selectedPreset = RESOLUTION_PRESETS.find((p) => p.id === resolutionId) || RESOLUTION_PRESETS[0];
-  const nextResolution = isCustomResolution
-    ? {
-        width: Math.max(1, Math.round(customWidth) || DEFAULT_RESOLUTION.width),
-        height: Math.max(1, Math.round(customHeight) || DEFAULT_RESOLUTION.height),
-      }
-    : { width: selectedPreset.width, height: selectedPreset.height };
- 
-  const isDirty = nextResolution.width !== current.width || nextResolution.height !== current.height;
- 
-  // Aspect ratios within this tolerance are treated as "the same shape"
-  // (absorbs rounding noise from custom width/height entry) and skip the
-  // warning; anything wider counts as a reshape that will misplace clips.
-  const ASPECT_EPSILON = 0.01;
-  const aspectChanged =
-    isDirty && Math.abs(current.width / current.height - nextResolution.width / nextResolution.height) > ASPECT_EPSILON;
- 
-  const applyResolution = (res) => {
-    onResolutionChange?.(res);
-    setPendingWarning(null);
-  };
- 
-  const handleApply = () => {
-    if (!isDirty) return;
-    if (aspectChanged) {
-      setPendingWarning(nextResolution);
-      return;
-    }
-    applyResolution(nextResolution);
-  };
- 
-  return (
-    <div className="modal-body settings-body">
-      {pendingWarning && (
-        <div className="modal-alert-box error">
-          <AlertCircle size={14} />
-          <span>
-            Switching to {pendingWarning.width} × {pendingWarning.height} changes the canvas's aspect ratio.
-            Existing clips keep their current Transform values and won't be repositioned, so they may end up
-            framed incorrectly. Continue anyway?
-          </span>
-          <div className="shortcut-conflict-actions">
-            <button type="button" className="btn-secondary btn-xs" onClick={() => setPendingWarning(null)}>
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="btn-primary-create btn-xs"
-              onClick={() => applyResolution(pendingWarning)}
-            >
-              Change Resolution
-            </button>
-          </div>
-        </div>
-      )}
- 
-      <div className="form-field-group">
-        <label className="form-label">Resolution</label>
-        <p className="hint-text-sm" style={{ marginBottom: '8px' }}>
-          Current: {current.width} × {current.height}
-        </p>
-        <select
-          className="modal-text-input"
-          value={resolutionId}
-          onChange={(e) => setResolutionId(e.target.value)}
-        >
-          {RESOLUTION_PRESETS.map((preset) => (
-            <option key={preset.id} value={preset.id}>
-              {preset.label}
-            </option>
-          ))}
-        </select>
-        {isCustomResolution && (
-          <div className="custom-resolution-row">
-            <input
-              type="number"
-              className="modal-text-input custom-resolution-input"
-              value={customWidth}
-              min={1}
-              onChange={(e) => setCustomWidth(e.target.value)}
-              placeholder="Width"
-              aria-label="Custom width in pixels"
-            />
-            <span className="custom-resolution-sep">×</span>
-            <input
-              type="number"
-              className="modal-text-input custom-resolution-input"
-              value={customHeight}
-              min={1}
-              onChange={(e) => setCustomHeight(e.target.value)}
-              placeholder="Height"
-              aria-label="Custom height in pixels"
-            />
-            <span className="custom-resolution-unit">px</span>
-          </div>
-        )}
-      </div>
- 
-      <button
-        type="button"
-        className="btn-primary-create"
-        disabled={!isDirty}
-        onClick={handleApply}
-      >
-        Apply Resolution
-      </button>
-    </div>
-  );
-}
- 
-/**
- * Autosave tab — every knob of useProjectAutosave (hooks/useProjectAutosave.js).
- * Values are global (localStorage, see services/autosaveSettings.js) and apply
- * to the very next change: App owns the state and passes it to both this tab
- * and the autosave hook, so there is nothing to "apply" or reload.
- */
-function AutosaveTab({ settings, onChange }) {
-  const current = settings || AUTOSAVE_DEFAULTS;
-  const update = (patch) => onChange?.({ ...current, ...patch });
- 
-  // The preset list plus whatever value is currently stored (e.g. from an
-  // older build), so the <select> never shows a value that isn't an option.
-  const delayOptions = useMemo(() => {
-    const values = new Set(AUTOSAVE_DELAY_PRESETS_MS);
-    values.add(current.delayMs);
-    return Array.from(values).sort((a, b) => a - b);
-  }, [current.delayMs]);
- 
-  const formatSeconds = (ms) => {
-    const seconds = ms / 1000;
-    return `${seconds} second${seconds === 1 ? '' : 's'}`;
-  };
-  const maxWaitSeconds = Math.round(getAutosaveMaxWaitMs(current.delayMs) / 1000);
-  const isDefault = Object.keys(AUTOSAVE_DEFAULTS).every((key) => current[key] === AUTOSAVE_DEFAULTS[key]);
- 
-  const checkRowStyle = { display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' };
-  const dimmed = (on) => ({ opacity: on ? 1 : 0.5 });
- 
-  return (
-    <div className="modal-body settings-body">
-      <div className="form-field-group">
-        <label className="form-label">Autosave</label>
-        <label style={checkRowStyle}>
-          <input
-            type="checkbox"
-            checked={current.enabled}
-            onChange={(e) => update({ enabled: e.target.checked })}
-          />
-          <span>
-            Save changes to the project folder automatically
-            <span className="hint-text-sm" style={{ display: 'block' }}>
-              When off, nothing is written until you save manually (File &gt; Save Project). The header
-              shows “Unsaved” while changes are waiting.
-            </span>
-          </span>
-        </label>
-      </div>
- 
-      <div className="form-field-group" style={dimmed(current.enabled)}>
-        <label className="form-label">Save delay</label>
-        <select
-          className="modal-text-input settings-select"
-          value={current.delayMs}
-          disabled={!current.enabled}
-          onChange={(e) => update({ delayMs: Number(e.target.value) })}
-        >
-          {delayOptions.map((ms) => (
-            <option key={ms} value={ms}>
-              {formatSeconds(ms)}
-              {ms === AUTOSAVE_DEFAULTS.delayMs ? ' (default)' : ''}
-            </option>
-          ))}
-        </select>
-        <p className="hint-text-sm">
-          Waits this long after your last change before saving, so a burst of edits becomes one save.
-          If you never pause, a save is still forced about every {maxWaitSeconds} seconds.
-        </p>
-      </div>
- 
-      <div className="form-field-group" style={dimmed(current.enabled)}>
-        <label className="form-label">Saving on leave</label>
-        <label style={checkRowStyle}>
-          <input
-            type="checkbox"
-            checked={current.saveOnBlur}
-            disabled={!current.enabled}
-            onChange={(e) => update({ saveOnBlur: e.target.checked })}
-          />
-          <span>
-            Save right away when the window loses focus or closes
-            <span className="hint-text-sm" style={{ display: 'block' }}>
-              Switching to VS Code flushes any pending change first. On close this is best effort: the
-              operating system may end the app before the write finishes.
-            </span>
-          </span>
-        </label>
-      </div>
- 
-      <div className="form-field-group" style={dimmed(current.enabled)}>
-        <label className="form-label">Disk writes</label>
-        <label style={checkRowStyle}>
-          <input
-            type="checkbox"
-            checked={current.skipUnchanged}
-            disabled={!current.enabled}
-            onChange={(e) => update({ skipUnchanged: e.target.checked })}
-          />
-          <span>
-            Skip project and prefab files that haven't changed
-            <span className="hint-text-sm" style={{ display: 'block' }}>
-              Avoids rewriting large files for nothing. Turn off to rewrite project.json and every prefab on
-              each autosave. A manual save always writes everything.
-            </span>
-          </span>
-        </label>
-        <p className="hint-text-sm" style={{ marginTop: '10px' }}>
-          Scripts are handled separately and are never overwritten blindly: autosave only writes a script
-          when the copy in the editor is newer than the file, so edits made in VS Code are kept.
-        </p>
-      </div>
- 
-      <button
-        type="button"
-        className="btn-secondary btn-xs"
-        disabled={isDefault}
-        onClick={() => onChange?.({ ...AUTOSAVE_DEFAULTS })}
-      >
-        <RotateCcw size={12} />
-        Reset to Defaults
-      </button>
-    </div>
-  );
-}
- 
-/**
- * Keyboard Shortcuts tab — lists every rebindable action (grouped, per
- * SHORTCUT_ACTIONS in services/keybindSettings.js), each with its
- * current binding and a "rebind" control. Click a shortcut's key chip to
- * start listening for the next keypress; the very next non-modifier key
- * becomes its new binding. Conflicts with another action are flagged and
- * require confirmation before the old owner is cleared, so a rebind
- * can't silently break a different shortcut.
- */
-function KeyboardShortcutsTab() {
-  const [bindings, setBindings] = useState(() => loadKeybindSettings());
-  const [listeningFor, setListeningFor] = useState(null); // action id currently capturing a keypress
-  const [conflict, setConflict] = useState(null); // { actionId, binding, conflictsWith } awaiting confirmation
- 
-  const groups = useMemo(() => {
-    const byGroup = new Map();
-    for (const action of SHORTCUT_ACTIONS) {
-      if (!byGroup.has(action.group)) byGroup.set(action.group, []);
-      byGroup.get(action.group).push(action);
-    }
-    return Array.from(byGroup.entries());
-  }, []);
- 
-  // Captures the next keydown while a rebind is in progress. Attached
-  // only while `listeningFor` is set, and stops propagation so it never
-  // also triggers EditorPlaybackShortcuts' own listener (which reads
-  // localStorage, not this component's in-progress edit) while the user
-  // is picking a new key.
-  useEffect(() => {
-    if (!listeningFor) return;
- 
-    const handleCapture = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
- 
-      if (e.key === 'Escape') {
-        setListeningFor(null);
-        return;
-      }
- 
-      const binding = normalizeKeyEvent(e);
-      if (!binding) return; // bare modifier — keep listening
- 
-      const conflictsWith = findConflict(bindings, binding, listeningFor);
-      if (conflictsWith) {
-        setConflict({ actionId: listeningFor, binding, conflictsWith });
-        setListeningFor(null);
-        return;
-      }
- 
-      commitBinding(listeningFor, binding);
-      setListeningFor(null);
-    };
- 
-    window.addEventListener('keydown', handleCapture, true);
-    return () => window.removeEventListener('keydown', handleCapture, true);
-  }, [listeningFor, bindings]);
- 
-  const commitBinding = (actionId, binding) => {
-    const next = { ...bindings, [actionId]: binding };
-    setBindings(next);
-    saveKeybindSettings(next);
-  };
- 
-  const handleConfirmConflict = () => {
-    if (!conflict) return;
-    // Reassign: the new action gets the binding, the old owner is
-    // cleared entirely (set to '' — "unbound") rather than left with a
-    // duplicate, since two actions sharing one binding would make the
-    // reverse-lookup in EditorPlaybackShortcuts ambiguous.
-    const next = { ...bindings, [conflict.actionId]: conflict.binding, [conflict.conflictsWith]: '' };
-    setBindings(next);
-    saveKeybindSettings(next);
-    setConflict(null);
-  };
- 
-  const handleResetAll = () => {
-    setBindings(resetKeybindSettings());
-  };
- 
-  const handleResetOne = (actionId) => {
-    commitBinding(actionId, getDefaultBinding(actionId));
-  };
- 
-  const conflictAction = conflict ? SHORTCUT_ACTIONS.find((a) => a.id === conflict.conflictsWith) : null;
-  const rebindingAction = conflict ? SHORTCUT_ACTIONS.find((a) => a.id === conflict.actionId) : null;
- 
-  return (
-    <div className="modal-body settings-body shortcuts-body">
-      {conflict && (
-        <div className="modal-alert-box error shortcut-conflict-box">
-          <AlertCircle size={14} />
-          <span>
-            <strong>{conflict.binding}</strong> is already used by "{conflictAction?.label}". Reassign it to
-            "{rebindingAction?.label}"?
-          </span>
-          <div className="shortcut-conflict-actions">
-            <button type="button" className="btn-secondary btn-xs" onClick={() => setConflict(null)}>
-              Cancel
-            </button>
-            <button type="button" className="btn-primary-create btn-xs" onClick={handleConfirmConflict}>
-              Reassign
-            </button>
-          </div>
-        </div>
-      )}
- 
-      <div className="shortcuts-header-row">
-        <p className="hint-text-sm">Click a shortcut to change it, then press a new key combo. Esc cancels.</p>
-        <button type="button" className="btn-secondary btn-xs" onClick={handleResetAll}>
-          <RotateCcw size={12} />
-          Reset All to Defaults
-        </button>
-      </div>
- 
-      {groups.map(([groupName, actions]) => (
-        <div className="form-field-group shortcut-group" key={groupName}>
-          <label className="form-label">{groupName}</label>
-          <div className="shortcut-list">
-            {actions.map((action) => {
-              const binding = bindings[action.id];
-              const isListening = listeningFor === action.id;
-              const isCustomized = binding !== action.default;
-              return (
-                <div className="shortcut-row" key={action.id}>
-                  <span className="shortcut-row-label">{action.label}</span>
-                  <div className="shortcut-row-controls">
-                    <button
-                      type="button"
-                      className={`shortcut-key-chip ${isListening ? 'listening' : ''}`}
-                      onClick={() => setListeningFor(action.id)}
-                      title="Click to rebind"
-                    >
-                      {isListening ? 'Press a key…' : (binding || 'Unbound')}
-                      {!isListening && <Pencil size={11} />}
-                    </button>
-                    {isCustomized && (
-                      <button
-                        type="button"
-                        className="shortcut-reset-btn"
-                        title={`Reset to default (${action.default})`}
-                        onClick={() => handleResetOne(action.id)}
-                      >
-                        <RotateCcw size={12} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
- 
-function SystemTab() {
-  const [checking, setChecking] = useState(false);
-  const [ffmpegStatus, setFfmpegStatus] = useState(null);
-  const [errorMsg, setErrorMsg] = useState(null);
- 
-  const tauriActive = isTauri();
- 
-  const handleCheckFfmpeg = async () => {
-    setChecking(true);
-    setFfmpegStatus(null);
-    setErrorMsg(null);
-    try {
-      const version = await getFfmpegVersion();
-      setFfmpegStatus(version);
-    } catch (err) {
-      setErrorMsg(err?.message || String(err));
-    } finally {
-      setChecking(false);
-    }
-  };
- 
-  return (
-    <div className="modal-body settings-body">
-      <div className="form-field-group">
-        <label className="form-label">Runtime Environment</label>
-        <p className="hint-text-sm" style={{ color: tauriActive ? '#00f0ff' : '#aaa' }}>
-          {tauriActive ? '● Tauri Desktop Application (IPC Available)' : '○ Web Browser (IPC Unavailable)'}
-        </p>
-      </div>
- 
-      <div className="form-field-group" style={{ marginTop: '16px' }}>
-        <label className="form-label">FFmpeg Sidecar Status</label>
-        <p className="hint-text-sm" style={{ marginBottom: '10px' }}>
-          Verify that the FFmpeg sidecar binary is bundled, permissioned, and callable end-to-end.
-        </p>
- 
-        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px' }}>
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={handleCheckFfmpeg}
-            disabled={checking}
-          >
-            {checking ? 'Checking FFmpeg...' : 'Check FFmpeg'}
-          </button>
-        </div>
- 
-        {ffmpegStatus && (
-          <div className="modal-alert-box" style={{ background: 'rgba(0, 240, 255, 0.1)', borderColor: 'rgba(0, 240, 255, 0.3)', color: '#00f0ff' }}>
-            <CheckCircle2 size={16} />
-            <span style={{ fontFamily: 'monospace', fontSize: '11px', wordBreak: 'break-all' }}>
-              {ffmpegStatus}
-            </span>
-          </div>
-        )}
- 
-        {errorMsg && (
-          <div className="modal-alert-box error">
-            <AlertCircle size={16} />
-            <span style={{ fontSize: '12px', wordBreak: 'break-word' }}>
-              {errorMsg}
-            </span>
-          </div>
-        )}
- 
-        <p className="hint-text-sm" style={{ marginTop: '12px', fontSize: '11px', opacity: 0.7 }}>
-          Target sidecar binary location: <code>src-tauri/binaries/ffmpeg-&lt;target-triple&gt;</code>
-        </p>
       </div>
     </div>
   );
