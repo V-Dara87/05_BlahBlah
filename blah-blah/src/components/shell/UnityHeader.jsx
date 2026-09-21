@@ -25,6 +25,7 @@ import {
 import { formatTimecode } from '../../utils/timeFormat';
 import { isTauri } from '../../services/tauriFsAdapter';
 import { openProjectInVsCode, openProjectInExplorer } from '../../services/ideLauncher';
+import { useTimelineView } from '../../dock/TimelineViewContext';
 import './unity-header.css';
  
 export function UnityHeader({
@@ -34,7 +35,6 @@ export function UnityHeader({
   totalDuration,
   isPlaying,
   isLooping,
-  pixelsPerSecond,
   snappingEnabled,
   hasSelectedEntity,
   projectFolderHandle,
@@ -45,7 +45,6 @@ export function UnityHeader({
   onTogglePlay,
   onSeek,
   onToggleLoop,
-  onSetPixelsPerSecond,
   onSetSnappingEnabled,
   onSplitSelected,
   onDeleteSelected,
@@ -59,6 +58,12 @@ export function UnityHeader({
   onOpenSettings,
   onGoToHub,
 }) {
+  // Zoom live-readout / controls read the hot timeline-view context directly
+  // instead of being props threaded through App — see
+  // dock/TimelineViewContext.jsx. Keeping them off App state means a zoom
+  // tick re-renders only this header and the timeline, not the whole editor.
+  const { pixelsPerSecond, setPixelsPerSecond: onSetPixelsPerSecond } = useTimelineView();
+
   return (
     <header className="unity-header">
       {/* Left: Unity Brand & Project Actions */}

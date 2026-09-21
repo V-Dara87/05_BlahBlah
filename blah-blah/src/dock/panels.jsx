@@ -12,6 +12,7 @@ import { SilenceRemoverPanel } from '../components/silence-remover/SilenceRemove
 import { MixerPanel } from '../components/mixer/MixerPanel';
 import { setKeyframeCurve, findKeyframeById, DEFAULT_CP1, DEFAULT_CP2 } from '../engine/keyframes';
 import { useEditorContext } from './EditorContext';
+import { useTimelineView } from './TimelineViewContext';
 import { useCurrentTime, useIsPlaying, useIsLooping, usePlaybackStore } from '../hooks/PlaybackContext';
  
 export const ProjectDockPanel = memo(function ProjectDockPanel() {
@@ -207,7 +208,7 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
  
 export const TimelineDockPanel = memo(function TimelineDockPanel() {
   const {
-    tracks, entities, mediaAssets, calculatedDuration, pixelsPerSecond,
+    tracks, entities, mediaAssets, calculatedDuration,
     selectedEntityId, setSelectedEntityId, snappingEnabled,
     selectedIds, setSelectedIds,
     handleUpdateEntity, handleUpdateClips, handleDuplicateClips, handleDeleteEntity,
@@ -217,7 +218,6 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
     handleDropItemOnTrack, handleAttachScriptToEntity,
     onAddMediaAsset,
     recordingTrackId, recordingStartTime, recordingLevel, onToggleRecordTrack,
-    onZoomIn, onZoomOut, setPixelsPerSecond,
     exportRange, setExportRange,
     onSplitVideoAndAudio,
     onOpenSilenceRemover,
@@ -229,11 +229,14 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
     onSaveCurrentPrefab,
     onSyncPrefabToSceneInstances,
     isPrefabSaved,
-    isPrefabSynced,
-  } = useEditorContext();
- 
+    isPrefabSynced,  } = useEditorContext();
+
   const store = usePlaybackStore();
- 
+  // Hot zoom state comes from its own narrow context (see
+  // dock/TimelineViewContext.jsx) so zoom only re-renders the timeline,
+  // not every EditorContext consumer.
+  const { pixelsPerSecond, setPixelsPerSecond, zoomIn: onZoomIn, zoomOut: onZoomOut } = useTimelineView();
+
   const handleToggleSelect = useCallback((id) => {
     setSelectedIds((prev) => {
       // Ctrl+click toggles membership. When nothing is in the multi-list

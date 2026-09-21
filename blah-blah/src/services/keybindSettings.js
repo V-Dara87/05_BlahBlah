@@ -40,6 +40,7 @@ export const SHORTCUT_ACTIONS = [
   { id: 'toggleSnapping', label: 'Toggle Snapping', group: 'Timeline', default: 'N' },
   { id: 'zoomIn', label: 'Zoom In', group: 'Timeline', default: '=' },
   { id: 'zoomOut', label: 'Zoom Out', group: 'Timeline', default: '-' },
+  { id: 'centerOnPlayhead', label: 'Center View on Playhead', group: 'Timeline', default: 'Ctrl+Home' },
   { id: 'setInPoint', label: 'Set Export In Point', group: 'Timeline', default: 'I' },
   { id: 'setOutPoint', label: 'Set Export Out Point', group: 'Timeline', default: 'O' },
  

@@ -14,8 +14,10 @@ import { useCallback } from 'react';
  * assembling the tree.
  *
  * Everything referenced (isPrefabMode, prefabEntityActions, the main
- * scene handlers, selection state/setters, zoom handlers) is owned
- * elsewhere in App.jsx and injected as params.
+ * scene handlers, selection state/setters) is owned elsewhere in App.jsx
+ * and injected as params. Zoom is NOT here — it lives in
+ * dock/TimelineViewContext.jsx and is read directly by the shortcut
+ * dispatcher, so a zoom tick never flows through App state.
  */
 export function useEditorPlaybackHandlers({
   isPrefabMode,
@@ -32,8 +34,6 @@ export function useEditorPlaybackHandlers({
   handleCopyClips,
   handlePasteClips,
   setSnappingEnabled,
-  handleZoomIn,
-  handleZoomOut,
 }) {
   const onSplitSelected = useCallback(() => {
     const ids = selectedIds.length > 0 ? selectedIds : (selectedEntityId ? [selectedEntityId] : []);
@@ -161,7 +161,5 @@ export function useEditorPlaybackHandlers({
     onSelectAll,
     onClearSelection,
     onToggleSnapping,
-    onZoomIn: handleZoomIn,
-    onZoomOut: handleZoomOut,
   };
 }

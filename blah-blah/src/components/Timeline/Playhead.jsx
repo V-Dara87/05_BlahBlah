@@ -1,5 +1,6 @@
 import { useRef, useEffect, memo } from 'react';
 import { usePlaybackStore } from '../../hooks/PlaybackContext';
+import { applyEdgeAutoScroll, getTimelineElements } from '../../utils/timelineAutoScroll';
 import './playhead.css';
 
 // Track header column width — clips/lanes start after this, so anything
@@ -28,17 +29,18 @@ function usePlayheadDrag({ pixelsPerSecond, onSeek, onDragPosition, isDraggingRe
       if (!isDraggingRef.current) return;
       const { x, time } = dragStartRef.current;
 
-      // Auto-scroll when scrubbing near edge
-      const lanesWrapper = document.querySelector('.lanes-wrapper');
-      if (lanesWrapper) {
-        const wrapRect = lanesWrapper.getBoundingClientRect();
-        const edgeMargin = 50;
-        const scrollSpeed = 12;
-        if (moveEvent.clientX < wrapRect.left + HEADER_WIDTH + edgeMargin) {
-          lanesWrapper.scrollLeft = Math.max(0, lanesWrapper.scrollLeft - scrollSpeed);
-        } else if (moveEvent.clientX > wrapRect.right - edgeMargin) {
-          lanesWrapper.scrollLeft += scrollSpeed;
-        }
+      // Auto-scroll when scrubbing near the edge. The shared helper also
+      // mirrors the position onto the ruler's scroll container, so dragging
+      // the playhead handle near an edge no longer desyncs the ticks.
+      {
+        const { lanesEl, rulerEl } = getTimelineElements();
+        applyEdgeAutoScroll(moveEvent.clientX, {
+          lanesEl,
+          rulerEl,
+          headerWidth: HEADER_WIDTH,
+          edgeMargin: 50,
+          scrollSpeed: 12,
+        });
       }
 
       const deltaPx = moveEvent.clientX - x;

@@ -26,11 +26,12 @@ import { SettingsModal } from './components/modals/SettingsModal';
 import { HubScreen } from './components/shell/HubScreen';
 import { DockLayout } from './dock/DockLayout';
 import { EditorContext } from './dock/EditorContext';
+import { TimelineViewProvider } from './dock/TimelineViewContext';
 import { PlaybackProvider } from './hooks/PlaybackContext';
 import { EditorHeader } from './components/shell/EditorHeader';
 import { EditorPlaybackShortcuts } from './components/shell/EditorPlaybackShortcuts';
 import { PlaybackStoreBridge } from './components/shell/PlaybackStoreBridge';
-import { INITIAL_TRACKS, DEFAULT_PIXELS_PER_SECOND, DEFAULT_RESOLUTION } from './types';
+import { INITIAL_TRACKS, DEFAULT_RESOLUTION } from './types';
 import { loadKeybindSettings } from './services/keybindSettings';
 import { precompileAllProjectScripts } from './engine/scriptRunner';
 import { isTauri } from './services/tauriFsAdapter';
@@ -128,7 +129,6 @@ export function App() {
  
   const [selectedEntityId, setSelectedEntityId] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]); // multi-select for timeline clips
-  const [pixelsPerSecond, setPixelsPerSecond] = useState(DEFAULT_PIXELS_PER_SECOND);
   const [snappingEnabled, setSnappingEnabled] = useState(true);
   const [autoKeyEnabled, setAutoKeyEnabled] = useState(false);
  
@@ -150,14 +150,6 @@ export function App() {
     floatActivePanel,
     focusDockPanel,
   } = useDockPanels();
- 
-  const handleZoomIn = () => {
-    setPixelsPerSecond(prev => Math.min(prev + 15, 240));
-  };
- 
-  const handleZoomOut = () => {
-    setPixelsPerSecond(prev => Math.max(prev - 15, 4));
-  };
  
   // Modals
   const [isNewProjectOpen, setIsNewProjectOpen] = useState(false);
@@ -413,8 +405,6 @@ export function App() {
     handleCopyClips,
     handlePasteClips,
     setSnappingEnabled,
-    handleZoomIn,
-    handleZoomOut,
   });
  
   const activeDuration = useMemo(() => {
@@ -548,6 +538,10 @@ export function App() {
     <ErrorBoundary>
      <PlaybackProvider totalDuration={activeDuration}>
       <PlaybackStoreBridge storeRef={playbackStoreRef} />
+      {/* Hot timeline zoom state lives in its own provider so a wheel-zoom
+          tick no longer re-renders App / rebuilds the EditorContext value
+          (and therefore no longer re-renders the unrelated dock panels). */}
+      <TimelineViewProvider>
       <EditorPlaybackShortcuts
         entities={activeEntities}
         selectedEntityId={selectedEntityId}
@@ -571,7 +565,6 @@ export function App() {
         projectName={projectName}
         setProjectName={setProjectName}
         totalDuration={activeDuration}
-        pixelsPerSecond={pixelsPerSecond}
         snappingEnabled={snappingEnabled}
         hasSelectedEntity={!!selectedEntityId}
         projectFolderHandle={projectFolderHandle}
@@ -579,7 +572,6 @@ export function App() {
         schemaWarning={schemaWarning}
         canUndo={canUndo}
         canRedo={canRedo}
-        onSetPixelsPerSecond={setPixelsPerSecond}
         onSetSnappingEnabled={setSnappingEnabled}
         onSplitSelected={() => selectedEntityId && (isPrefabMode ? prefabEntityActions.handleSplitEntity(selectedEntityId) : handleSplitEntity(selectedEntityId))}
         onDeleteSelected={() => selectedEntityId && (isPrefabMode ? prefabEntityActions.handleDeleteEntity(selectedEntityId) : handleDeleteEntity(selectedEntityId))}
@@ -606,7 +598,7 @@ export function App() {
           tracks, scripts, prefabs, mediaAssets,
           projectFolderHandle,
           calculatedDuration: activeDuration,
-          selectedEntityId, pixelsPerSecond, snappingEnabled, resolution,
+          selectedEntityId, snappingEnabled, resolution,
           fps: projectState.fps,
           autoKeyEnabled,
           isPrefabMode,
@@ -616,7 +608,6 @@ export function App() {
           // setters
           setSelectedEntityId,
           setAutoKeyEnabled,
-          setPixelsPerSecond,
           setSnappingEnabled,
           // handlers
           undo, redo, canUndo, canRedo,
@@ -683,8 +674,6 @@ export function App() {
           onRemoveSharedItem: handleRemoveSharedItem,
           onMoveSharedItem: handleMoveSharedItem,
           onImportSharedItem: handleImportSharedItem,
-          onZoomIn: handleZoomIn,
-          onZoomOut: handleZoomOut,
           exportRange, setExportRange,
           setDockApi,
           setResetLayout,
@@ -753,6 +742,7 @@ export function App() {
         onExportSettingsChange={updateExportSettings}
       />
     </div>
+      </TimelineViewProvider>
     </PlaybackProvider>
     </ErrorBoundary>
   );

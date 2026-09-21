@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { usePlaybackStore } from '../../hooks/PlaybackContext';
+import { useTimelineView } from '../../dock/TimelineViewContext';
+import { centerTimelineViewOnPlayhead } from '../../services/timelineViewControls';
 import { loadKeybindSettings, normalizeKeyEvent } from '../../services/keybindSettings';
  
 /**
@@ -35,13 +37,14 @@ export function EditorPlaybackShortcuts({
   onUndo,
   onRedo,
   onToggleSnapping,
-  onZoomIn,
-  onZoomOut,
   onSetExportRange,
   exportRange,
   totalDuration,
 }) {
   const store = usePlaybackStore();
+  // Zoom state comes from its own narrow context, not App state — see
+  // dock/TimelineViewContext.jsx for why.
+  const { zoomIn, zoomOut } = useTimelineView();
  
   // Bindings are read via a ref (not React state) so a rebind in
   // Settings is picked up by the very next keydown without needing to
@@ -203,11 +206,20 @@ export function EditorPlaybackShortcuts({
           return;
  
         case 'zoomIn':
-          onZoomIn();
+          zoomIn();
           return;
  
         case 'zoomOut':
-          onZoomOut();
+          zoomOut();
+          return;
+
+        // Scrolls the timeline so the playhead sits in the middle of the
+        // visible lanes. Leaves the zoom level alone. The actual scroll
+        // lives on the mounted Timeline, which registers it in
+        // services/timelineViewControls.js.
+        case 'centerOnPlayhead':
+          e.preventDefault();
+          centerTimelineViewOnPlayhead();
           return;
  
         case 'setInPoint': {
@@ -253,8 +265,8 @@ export function EditorPlaybackShortcuts({
     onUndo,
     onRedo,
     onToggleSnapping,
-    onZoomIn,
-    onZoomOut,
+    zoomIn,
+    zoomOut,
     onSetExportRange,
     exportRange,
     totalDuration,

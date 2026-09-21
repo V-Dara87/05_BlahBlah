@@ -1,6 +1,7 @@
 import { useRef, memo } from 'react';
 import { formatTimecode } from '../../utils/timeFormat';
 import { getTickIntervalSeconds } from '../../utils/timelineLayout';
+import { applyEdgeAutoScroll } from '../../utils/timelineAutoScroll';
 import './time-ruler.css';
  
 export const TimeRuler = memo(function TimeRuler({
@@ -40,18 +41,16 @@ export const TimeRuler = memo(function TimeRuler({
  
     const handlePointerMove = (moveEvent) => {
       if (!rulerRef.current) return;
-      // Auto-scroll when scrubbing near edges
-      const lanesWrapper = document.querySelector('.lanes-wrapper');
-      if (lanesWrapper) {
-        const wrapRect = lanesWrapper.getBoundingClientRect();
-        const edgeMargin = 50;
-        const scrollSpeed = 12;
-        if (moveEvent.clientX < wrapRect.left + HEADER_WIDTH + edgeMargin) {
-          lanesWrapper.scrollLeft = Math.max(0, lanesWrapper.scrollLeft - scrollSpeed);
-        } else if (moveEvent.clientX > wrapRect.right - edgeMargin) {
-          lanesWrapper.scrollLeft += scrollSpeed;
-        }
-      }
+      // Auto-scroll when scrubbing near edges. The shared helper also mirrors
+      // the position onto our own `.ruler-wrapper` so the ticks move with the
+      // lanes (this component previously scrolled only the lanes).
+      applyEdgeAutoScroll(moveEvent.clientX, {
+        lanesEl: document.querySelector('.lanes-wrapper'),
+        rulerEl: rulerRef.current?.closest('.ruler-wrapper') || null,
+        headerWidth: HEADER_WIDTH,
+        edgeMargin: 50,
+        scrollSpeed: 12,
+      });
  
       const curRect = rulerRef.current.getBoundingClientRect();
       const moveOffsetX = moveEvent.clientX - curRect.left - HEADER_WIDTH;

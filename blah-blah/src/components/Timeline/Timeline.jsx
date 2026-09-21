@@ -6,6 +6,8 @@ import { TrackHeader } from './TrackHeader';
 import { TrackLane } from './TrackLane';
 import { PlayheadHandle, PlayheadLine } from './Playhead';
 import { usePlaybackStore } from '../../hooks/PlaybackContext';
+import { registerTimelineCenterOnPlayhead } from '../../services/timelineViewControls';
+import { applyEdgeAutoScroll } from '../../utils/timelineAutoScroll';
 const HEADER_WIDTH = 180;
  
 // Vertical layout constants + pure lane geometry for the flat timeline
@@ -64,6 +66,12 @@ export const Timeline = memo(function Timeline({
   const scrollAreaRef = useRef(null);
   const justDraggedRef = useRef(false);
   const lastUserScrollTimeRef = useRef(0);
+  // Raw last-observed scrollLeft plus a short "restoring" flag — see
+  // handleLanesScroll / restoreScrollPosition below. dockview hides panels
+  // (display:none / zero-size) rather than unmounting them, and some
+  // browsers reset an element's scrollLeft to 0 while it is hidden.
+  const lastScrollLeftRef = useRef(0);
+  const restoringScrollRef = useRef(false);
   const velocityRef = useRef(0);
   const smoothScrollAnimIdRef = useRef(null);
   const miniScrollbarTrackRef = useRef(null);
@@ -92,6 +100,11 @@ export const Timeline = memo(function Timeline({
   const updateScrollMetrics = useCallback(() => {
     const el = lanesScrollRef.current;
     if (!el) return;
+    // Hidden/collapsed panel: clientWidth is 0, so maxScroll/thumbRatio below
+    // are meaningless and would (a) clamp the minimap thumb to a wrong spot
+    // and (b) let callers derive a bogus scroll target. Keep the last good
+    // metrics instead of overwriting them with garbage.
+    if (el.clientWidth === 0) return;
     const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth);
     const thumbRatio = el.clientWidth > 0 ? Math.min(1, el.clientWidth / el.scrollWidth) : 1;
     const scrollRatio = maxScroll > 0 ? el.scrollLeft / maxScroll : 0;
@@ -130,13 +143,43 @@ export const Timeline = memo(function Timeline({
  
   const handleLanesScroll = () => {
     lastUserScrollTimeRef.current = Date.now();
-    if (!lanesScrollRef.current) return;
+    const el = lanesScrollRef.current;
+    if (!el) return;
+    // Remember the raw last-observed position. This is deliberately NOT
+    // recomputed from clientWidth/scrollWidth (which are meaningless while
+    // hidden), and it is skipped during the restore window so the browser's
+    // own "scrollLeft reset to 0 while hidden" event can't clobber the real
+    // value before restoreScrollPosition re-applies it.
+    if (el.clientWidth > 0 && !restoringScrollRef.current) {
+      lastScrollLeftRef.current = el.scrollLeft;
+    }
     // Sync horizontal: lanes → ruler
     if (rulerScrollRef.current) {
-      rulerScrollRef.current.scrollLeft = lanesScrollRef.current.scrollLeft;
+      rulerScrollRef.current.scrollLeft = el.scrollLeft;
     }
     updateScrollMetrics();
   };
+
+  // Re-apply the last user scroll position after the panel comes back from
+  // being hidden. Waiting one frame lets layout settle so the clamp uses the
+  // real clientWidth (a clamp against clientWidth === 0 either pins the view
+  // to 0 or leaves it over-scrolled).
+  const restoreScrollPosition = useCallback(() => {
+    restoringScrollRef.current = true;
+    requestAnimationFrame(() => {
+      const el = lanesScrollRef.current;
+      if (el && el.clientWidth > 0) {
+        const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth);
+        const target = Math.max(0, Math.min(lastScrollLeftRef.current, maxScroll));
+        if (Math.abs(el.scrollLeft - target) > 0.5) {
+          el.scrollLeft = target;
+          if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = target;
+        }
+        updateScrollMetrics();
+      }
+      restoringScrollRef.current = false;
+    });
+  }, [updateScrollMetrics]);
  
   // Recompute the minimap thumb whenever the scrollable content's size
   // could have changed (zoom, track/clip changes, panel resize) — not
@@ -146,13 +189,46 @@ export const Timeline = memo(function Timeline({
     updateScrollMetrics();
   }, [updateScrollMetrics, totalWidth, layout.surfaceY]);
  
+  // Detect "was hidden, is now visible again" from two independent signals:
+  // a ResizeObserver whose clientWidth goes 0 -> >0, and an
+  // IntersectionObserver that reports the element intersecting again.
+  // IntersectionObserver is the reliable cross-browser signal for a dockview
+  // tab switch (which may hide by display:none and/or collapsing size);
+  // ResizeObserver covers the size-driven case. Both funnel into the same
+  // idempotent restore, so a double-fire is harmless.
   useEffect(() => {
     const el = lanesScrollRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => updateScrollMetrics());
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [updateScrollMetrics]);
+    if (!el) return undefined;
+
+    let wasHidden = el.clientWidth === 0;
+    let wasIntersecting = true;
+
+    let resizeObserver = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => {
+        const hidden = el.clientWidth === 0;
+        if (wasHidden && !hidden) restoreScrollPosition();
+        wasHidden = hidden;
+        updateScrollMetrics();
+      });
+      resizeObserver.observe(el);
+    }
+
+    let intersectionObserver = null;
+    if (typeof IntersectionObserver !== 'undefined') {
+      intersectionObserver = new IntersectionObserver((entries) => {
+        const visible = entries.some((entry) => entry.isIntersecting);
+        if (visible && !wasIntersecting) restoreScrollPosition();
+        wasIntersecting = visible;
+      });
+      intersectionObserver.observe(el);
+    }
+
+    return () => {
+      resizeObserver?.disconnect();
+      intersectionObserver?.disconnect();
+    };
+  }, [restoreScrollPosition, updateScrollMetrics]);
  
   const snappingPoints = useMemo(() => {
     if (!snappingEnabled) return [];
@@ -210,7 +286,9 @@ export const Timeline = memo(function Timeline({
       // the new pixelsPerSecond before we clamp against them.
       requestAnimationFrame(() => {
         const s = lanesScrollRef.current;
-        if (!s) return;
+        // Skip the re-anchor while the panel is hidden (clientWidth 0): the
+        // clamp would be computed against a meaningless maxScroll.
+        if (!s || s.clientWidth === 0) return;
         const maxScroll = Math.max(0, s.scrollWidth - s.clientWidth);
         const desiredScrollLeft = HEADER_WIDTH + anchorTime * nextPps - anchorScreenX;
         s.scrollLeft = Math.max(0, Math.min(maxScroll, desiredScrollLeft));
@@ -262,6 +340,35 @@ export const Timeline = memo(function Timeline({
     stopSmoothScroll();
     applyZoomStep(-15);
   }, [applyZoomStep, stopSmoothScroll]);
+
+  // Center the view on the playhead WITHOUT changing zoom. Same anchor math
+  // as applyZoomStep, but solved so the playhead lands in the middle of the
+  // visible lanes area instead of staying under a fixed screen x. The ruler's
+  // scroll is kept in sync exactly like every other scroll-writing path here.
+  const handleCenterOnPlayhead = useCallback(() => {
+    const scroller = lanesScrollRef.current;
+    // Nothing meaningful to center while hidden (clientWidth 0).
+    if (!scroller || scroller.clientWidth === 0) return;
+    stopSmoothScroll();
+    const anchorTime = playbackStore.getCurrentTime();
+    const playheadX = HEADER_WIDTH + anchorTime * pixelsPerSecond;
+    const maxScroll = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+    const desiredScrollLeft = playheadX - scroller.clientWidth / 2;
+    scroller.scrollLeft = Math.max(0, Math.min(maxScroll, desiredScrollLeft));
+    if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = scroller.scrollLeft;
+    // Treat this as user scroll activity so playback auto-scroll doesn't
+    // immediately drag the view back off-center.
+    lastUserScrollTimeRef.current = Date.now();
+    updateScrollMetrics();
+  }, [pixelsPerSecond, playbackStore, updateScrollMetrics, stopSmoothScroll]);
+
+  // Publish the command so the global shortcut dispatcher can call it. The
+  // Timeline owns the scroll element; EditorPlaybackShortcuts only resolves
+  // the keybinding (see services/timelineViewControls.js).
+  useEffect(
+    () => registerTimelineCenterOnPlayhead(handleCenterOnPlayhead),
+    [handleCenterOnPlayhead]
+  );
  
   // Auto-scroll timeline to keep playhead visible ONLY during active playback
   useEffect(() => {
@@ -274,9 +381,12 @@ export const Timeline = memo(function Timeline({
  
       const scroll = lanesScrollRef.current;
       if (!scroll) return;
+      const viewWidth = scroll.clientWidth;
+      // Panel hidden/collapsed — clientWidth is 0 and any scroll write here
+      // would be clamped against a meaningless max. Leave the position alone.
+      if (viewWidth <= 0) return;
       const px = HEADER_WIDTH + time * pixelsPerSecond;
       const scrollLeft = scroll.scrollLeft;
-      const viewWidth = scroll.clientWidth;
  
       // Push view forward smoothly only when playhead approaches the right edge
       if (px > scrollLeft + viewWidth - 80) {
@@ -615,18 +725,15 @@ export const Timeline = memo(function Timeline({
       }
       setBoxSelect({ startX, startY, endX, endY });
  
-      // Edge auto-scroll during lasso
-      const scrollEl = lanesScrollRef.current;
-      if (scrollEl) {
-        const wrapRect = scrollEl.getBoundingClientRect();
-        const edgeMargin = 40;
-        const scrollSpeed = 10;
-        if (me.clientX < wrapRect.left + HEADER_WIDTH + edgeMargin) {
-          scrollEl.scrollLeft = Math.max(0, scrollEl.scrollLeft - scrollSpeed);
-        } else if (me.clientX > wrapRect.right - edgeMargin) {
-          scrollEl.scrollLeft += scrollSpeed;
-        }
-      }
+      // Edge auto-scroll during lasso. The shared helper also mirrors the
+      // scroll onto the ruler so its tick marks stay aligned with the lanes.
+      applyEdgeAutoScroll(me.clientX, {
+        lanesEl: lanesScrollRef.current,
+        rulerEl: rulerScrollRef.current,
+        headerWidth: HEADER_WIDTH,
+        edgeMargin: 40,
+        scrollSpeed: 10,
+      });
     };
  
     const onUp = (upEvent) => {

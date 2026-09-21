@@ -4,6 +4,7 @@ import { WaveformCanvas } from '../shared/WaveformCanvas';
 import { isScriptComponent, isVideoEntity, isAudioEntity } from '../../engine/ecs';
 import { dragHasItemKind, ITEM_KIND_SCRIPT, setDragPayload, ITEM_KIND_ENTITY } from '../../utils/dragData';
 import { computeTrimmedOffset } from '../../utils/mediaOffset';
+import { applyEdgeAutoScroll, getTimelineElements } from '../../utils/timelineAutoScroll';
 import { ContextMenu } from '../shared/ContextMenu';
 import { hasClipboardClips } from '../../utils/clipClipboard';
 import { buildGapRemovalUpdates } from '../../utils/removeGaps';
@@ -317,14 +318,33 @@ export const ClipItem = memo(function ClipItem({
     let ctrlParentTargetEl = null;
     let ctrlParentBadge = null;
     let ctrlParentActive = false;
- 
+
     const updateCtrlParentBadgePos = (ev) => {
       if (ctrlParentBadge) {
         ctrlParentBadge.style.left = `${ev.clientX + 14}px`;
         ctrlParentBadge.style.top = `${ev.clientY + 14}px`;
       }
     };
- 
+
+    // Coalesce drag commits to at most one per animation frame: a fast
+    // pointermove can fire several times per rendered frame, and each commit
+    // rebuilds the entity array and re-renders every clip. The final position
+    // is always flushed in handlePointerUp, so nothing is dropped.
+    let pendingMoveUpdates = null;
+    let moveFrameId = null;
+    const flushMoveUpdates = () => {
+      moveFrameId = null;
+      if (!pendingMoveUpdates) return;
+      const updates = pendingMoveUpdates;
+      pendingMoveUpdates = null;
+      if (onUpdateClips) onUpdateClips(updates);
+      else updates.forEach((u) => onUpdateClip(u.id, u.updates));
+    };
+    const scheduleMoveUpdates = (updates) => {
+      pendingMoveUpdates = updates;
+      if (moveFrameId == null) moveFrameId = requestAnimationFrame(flushMoveUpdates);
+    };
+
     const handlePointerMove = (moveEvent) => {
       if (!isDraggingRef.current) return;
       const deltaPx = moveEvent.clientX - startX;
@@ -395,17 +415,11 @@ export const ClipItem = memo(function ClipItem({
         }
       }
  
-      // Auto-scroll when dragging near timeline edges
-      const scrollEl = document.querySelector('.lanes-wrapper');
-      if (scrollEl) {
-        const scrollRect = scrollEl.getBoundingClientRect();
-        const edgeMargin = 60;
-        const scrollSpeed = 10;
-        if (moveEvent.clientX < scrollRect.left + 180 + edgeMargin) {
-          scrollEl.scrollLeft = Math.max(0, scrollEl.scrollLeft - scrollSpeed);
-        } else if (moveEvent.clientX > scrollRect.right - edgeMargin) {
-          scrollEl.scrollLeft += scrollSpeed;
-        }
+      // Auto-scroll when dragging near timeline edges (shared helper also
+      // keeps the ruler's scroll in sync with the lanes).
+      {
+        const { lanesEl, rulerEl } = getTimelineElements();
+        applyEdgeAutoScroll(moveEvent.clientX, { lanesEl, rulerEl, edgeMargin: 60, scrollSpeed: 10 });
       }
  
       // Clamp deltaTime so NO clip goes below 0
@@ -454,16 +468,19 @@ export const ClipItem = memo(function ClipItem({
           updates: { startTime: newStart, trackId: newTrackId },
         };
       });
- 
-      if (onUpdateClips) {
-        onUpdateClips(batchUpdates);
-      } else {
-        batchUpdates.forEach((u) => onUpdateClip(u.id, u.updates));
-      }
+
+      scheduleMoveUpdates(batchUpdates);
     };
- 
+
     const handlePointerUp = () => {
       isDraggingRef.current = false;
+      // Flush any coalesced move first so releasing commits exactly where the
+      // pointer was (the scheduled rAF may not have fired yet).
+      if (moveFrameId != null) {
+        cancelAnimationFrame(moveFrameId);
+        moveFrameId = null;
+      }
+      flushMoveUpdates();
       const didDrag = draggedMovedRef.current;
  
       // Finalize a ctrl-drag-to-parent gesture: set parentId on the
@@ -511,23 +528,33 @@ export const ClipItem = memo(function ClipItem({
     if (isLocked) return;
     e.stopPropagation();
     onSelectClip(clip.id);
- 
+
     const startX = e.clientX;
     const origStartTime = clip.startTime;
     const origDuration = clip.duration;
- 
+
+    // Coalesce trim commits to one per animation frame (same rationale as the
+    // drag handler), flushed on pointerup so the final size always sticks.
+    let pendingTrimUpdate = null;
+    let trimFrameId = null;
+    const flushTrimUpdate = () => {
+      trimFrameId = null;
+      if (!pendingTrimUpdate) return;
+      const next = pendingTrimUpdate;
+      pendingTrimUpdate = null;
+      onUpdateClip(clip.id, next);
+    };
+    const scheduleTrimUpdate = (updates) => {
+      pendingTrimUpdate = updates;
+      if (trimFrameId == null) trimFrameId = requestAnimationFrame(flushTrimUpdate);
+    };
+
     const handlePointerMove = (moveEvent) => {
-      // Auto-scroll when trimming near edges
-      const scrollEl = document.querySelector('.lanes-wrapper');
-      if (scrollEl) {
-        const scrollRect = scrollEl.getBoundingClientRect();
-        const edgeMargin = 60;
-        const scrollSpeed = 8;
-        if (moveEvent.clientX < scrollRect.left + 180 + edgeMargin) {
-          scrollEl.scrollLeft = Math.max(0, scrollEl.scrollLeft - scrollSpeed);
-        } else if (moveEvent.clientX > scrollRect.right - edgeMargin) {
-          scrollEl.scrollLeft += scrollSpeed;
-        }
+      // Auto-scroll when trimming near edges (shared helper also keeps the
+      // ruler's scroll in sync with the lanes).
+      {
+        const { lanesEl, rulerEl } = getTimelineElements();
+        applyEdgeAutoScroll(moveEvent.clientX, { lanesEl, rulerEl, edgeMargin: 60, scrollSpeed: 8 });
       }
  
       const deltaPx = moveEvent.clientX - startX;
@@ -555,16 +582,20 @@ export const ClipItem = memo(function ClipItem({
           }
           return c;
         });
- 
-        onUpdateClip(clip.id, {
+        scheduleTrimUpdate({
           startTime: newStartTime,
           duration: newDuration,
           components: updatedComps || clip.components,
         });
       }
     };
- 
+
     const handlePointerUp = () => {
+      if (trimFrameId != null) {
+        cancelAnimationFrame(trimFrameId);
+        trimFrameId = null;
+      }
+      flushTrimUpdate();
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
@@ -577,23 +608,33 @@ export const ClipItem = memo(function ClipItem({
     if (isLocked) return;
     e.stopPropagation();
     onSelectClip(clip.id);
- 
+
     const startX = e.clientX;
     const origDuration = clip.duration;
     const origStartTime = clip.startTime;
- 
+
+    // Coalesce trim commits to one per animation frame (same rationale as the
+    // left-trim handler), flushed on pointerup so the final size always sticks.
+    let pendingTrimUpdate = null;
+    let trimFrameId = null;
+    const flushTrimUpdate = () => {
+      trimFrameId = null;
+      if (!pendingTrimUpdate) return;
+      const next = pendingTrimUpdate;
+      pendingTrimUpdate = null;
+      onUpdateClip(clip.id, next);
+    };
+    const scheduleTrimUpdate = (updates) => {
+      pendingTrimUpdate = updates;
+      if (trimFrameId == null) trimFrameId = requestAnimationFrame(flushTrimUpdate);
+    };
+
     const handlePointerMove = (moveEvent) => {
-      // Auto-scroll when trimming near edges
-      const scrollEl = document.querySelector('.lanes-wrapper');
-      if (scrollEl) {
-        const scrollRect = scrollEl.getBoundingClientRect();
-        const edgeMargin = 60;
-        const scrollSpeed = 8;
-        if (moveEvent.clientX < scrollRect.left + 180 + edgeMargin) {
-          scrollEl.scrollLeft = Math.max(0, scrollEl.scrollLeft - scrollSpeed);
-        } else if (moveEvent.clientX > scrollRect.right - edgeMargin) {
-          scrollEl.scrollLeft += scrollSpeed;
-        }
+      // Auto-scroll when trimming near edges (shared helper also keeps the
+      // ruler's scroll in sync with the lanes).
+      {
+        const { lanesEl, rulerEl } = getTimelineElements();
+        applyEdgeAutoScroll(moveEvent.clientX, { lanesEl, rulerEl, edgeMargin: 60, scrollSpeed: 8 });
       }
  
       const deltaPx = moveEvent.clientX - startX;
@@ -605,11 +646,16 @@ export const ClipItem = memo(function ClipItem({
       if (snappedEnd !== targetEnd) {
         rawNewDuration = Math.max(0.2, snappedEnd - origStartTime);
       }
- 
-      onUpdateClip(clip.id, { duration: rawNewDuration });
+
+      scheduleTrimUpdate({ duration: rawNewDuration });
     };
- 
+
     const handlePointerUp = () => {
+      if (trimFrameId != null) {
+        cancelAnimationFrame(trimFrameId);
+        trimFrameId = null;
+      }
+      flushTrimUpdate();
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
