@@ -67,7 +67,7 @@ All four support:
 
 Any script (motion, canvas, or react) can declare a \`static props\` object.
 Each field automatically becomes an editable control in the Inspector, and
-(except for \`entity\`/\`asset\` refs) becomes keyframeable.
+(except for \`entity\`/\`asset\` refs and \`font\`) becomes keyframeable.
 
 \`\`\`js
 static props = {
@@ -76,6 +76,7 @@ static props = {
   enabled: { type: 'boolean', default: true },
   mode:    { type: 'select', default: 'a', options: ['a', 'b', 'c'] },
   note:    { type: 'string', default: 'hello' },
+  font:    { type: 'font', default: 'Inter', label: 'Font' },   // searchable font picker
   target:  { type: 'entity', label: 'Target Clip' },   // reference to another clip
   clip:    { type: 'asset', label: 'Media Asset' },    // reference to a media asset
 };
@@ -89,7 +90,13 @@ static props = { speed: 2.5, color: '#ff0000', label: 'hello' };
 \`\`\`
 
 Field \`type\` values: \`number\`, \`color\`, \`boolean\`, \`select\`, \`string\`,
-\`textarea\`, \`entity\`, \`asset\`, \`struct\`, \`struct[]\`.
+\`textarea\`, \`font\`, \`entity\`, \`asset\`, \`struct\`, \`struct[]\`.
+
+\`font\` renders the same searchable Font Family picker the Text Component uses
+(a curated list plus the fonts installed on the user's PC). The script receives a
+plain family-name string such as \`'Inter'\` or \`'Noto Sans Khmer'\`. It is **not**
+keyframeable. Apply it in CSS with quotes and a fallback, e.g.
+\`el.style.fontFamily = '"' + props.fontFamily + '", system-ui, sans-serif'\`.
 
 \`struct\` groups several fields into one object; \`struct[]\` is an editable
 list of such objects. Both take a \`fields\` sub-schema, and \`entity\` /
@@ -114,6 +121,7 @@ static props = {
   **never keyframeable** — the slot itself is the whole control. At runtime
   their stored ID is automatically resolved into an \`EntityRef\` / \`AssetRef\`
   object (see §4) before your script sees it — you never see a raw ID string.
+- \`font\` fields are also not keyframeable (a family name can't be interpolated).
 - All other typed fields are keyframeable from the Dopesheet.
 
 ---
@@ -433,7 +441,7 @@ CANVAS   → class, onMount/onUpdate/onUnmount({ container, props, canvasWidth, 
 REACT    → function returning JSX (or h(tag, props, children))
 SHADER   → GLSL: uniform ...; vec4 transition(vec2 uv) { ... getFromColor/getToColor/progress ... }
 
-static props = { name: { type: 'number'|'color'|'boolean'|'select'|'string'|'entity'|'asset', default, min, max, step, options, label } };
+static props = { name: { type: 'number'|'color'|'boolean'|'select'|'string'|'textarea'|'font'|'entity'|'asset', default, min, max, step, options, label } };
 
 tween.to/from/spring/punch/shake/sine(target, props, options)  // motion onStart only
 Tween.progress/between/loop/pingPong/stagger/ease/lerp/remap    // generic, all script kinds

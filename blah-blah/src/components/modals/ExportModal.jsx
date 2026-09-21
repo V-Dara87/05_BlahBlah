@@ -398,6 +398,10 @@ export function ExportModal({
           scripts,
           time,
           fps: targetFps,
+          // Same inputs the preview and drawExportFrame use, so a motion
+          // script that reads an asset-typed prop resolves it identically
+          // here (this lookup decides each video's seek time/speed).
+          allAssets: mediaAssets,
         });
         await Promise.all(
           activeAtFrame.map(({ entity, transform }) => {
@@ -418,6 +422,14 @@ export function ExportModal({
           ctx,
           width: encodeWidth,
           height: encodeHeight,
+          // Entities (positions, sizes, fonts, script canvas size) are
+          // authored in PROJECT pixels. Passing the project resolution lets
+          // drawExportFrame render in that space and scale to the chosen
+          // output preset, exactly like the preview scales its frame — so
+          // e.g. 720p/4K exports of a 1080p project don't shift or resize
+          // anything. Equal to the output size for the 'Project' preset.
+          projectWidth: hasProjectRes ? resolution.width : encodeWidth,
+          projectHeight: hasProjectRes ? resolution.height : encodeHeight,
           time,
           entities: clips,
           tracks,

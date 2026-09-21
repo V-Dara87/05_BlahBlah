@@ -581,7 +581,10 @@ export function buildStructDefault(subfields) {
  * Extracts public props schema for the Unity-style Inspector.
  *
  * Supported types: number | boolean | string | color | select | textarea |
- *                  entity | asset | struct | struct[]
+ *                  font | entity | asset | struct | struct[]
+ *
+ * `font` renders the searchable Font Family picker in the Inspector and
+ * gives the script a plain family-name string (not keyframeable).
  *
  * struct / struct[] shape:
  *   { type: 'struct',   label: 'My Group', fields: { key: { type, default, ...} } }
@@ -1101,3 +1104,4 @@ export function getCompiledReactComponent(scriptCode) {
 export function getScriptError(scriptCode) {
   return lastErrorCache.get(scriptCode) || null;
 }
+ 

@@ -1,6 +1,7 @@
 import { DragNumber } from '../shared/DragNumber';
 import { trackKeyFor, getFieldKeyframes, setKeyframe, removeKeyframe } from '../../engine/keyframes';
 import { EntityRefSlot, AssetRefSlot } from './RefSlot';
+import { FontFamilyPicker } from './FontFamilyPicker';
 import { ArrayFieldEditor } from '../shared/ArrayFieldEditor';
 import { buildStructDefault } from '../../engine/scriptRunner';
 import { useState } from 'react';
@@ -183,7 +184,7 @@ function StructArrayEditor({ field, value, onChange, entities, mediaAssets }) {
  * Field shape (matches extractScriptProps' output exactly):
  *   { name, type, defaultVal, label, min, max, step, options, fields }
  * `type` is one of: 'number' | 'color' | 'boolean' | 'select' | 'string' |
- *                   'textarea' | 'entity' | 'asset' | 'struct' | 'struct[]'.
+ *                   'textarea' | 'font' | 'entity' | 'asset' | 'struct' | 'struct[]'.
  *
  * This replaces the near-identical hand-written field-switch blocks that
  * used to live inline in UnityInspector.jsx, one per script component
@@ -292,6 +293,17 @@ export function InspectorField({ field, value, onChange, trackKey, fieldName, se
             onChange={(e) => onChange(e.target.value)}
           />
         );
+      case 'font':
+        // Searchable family picker (curated list + installed PC fonts), the
+        // same control the Text Component uses. The stored value is just a
+        // family-name string, so it flows through resolveScriptProps
+        // unchanged and scripts receive e.g. "Noto Sans Khmer".
+        return (
+          <FontFamilyPicker
+            value={currentVal || 'Inter'}
+            onChange={onChange}
+          />
+        );
       case 'struct':
         // Struct fields render as a collapsible group — not keyframeable.
         return (
@@ -327,9 +339,11 @@ export function InspectorField({ field, value, onChange, trackKey, fieldName, se
   })();
  
   // Only show keyframe button if keyframing props are provided
-  // (exclude reference types and struct types — neither are keyframeable)
+  // (exclude reference types, struct types and font — none are keyframeable;
+  // a font family name can't be interpolated between keyframes)
   const isKeyframeable = field.type !== 'entity' && field.type !== 'asset'
-    && field.type !== 'struct' && field.type !== 'struct[]';
+    && field.type !== 'struct' && field.type !== 'struct[]'
+    && field.type !== 'font';
   if (selectedEntity && trackKey && fieldName && isKeyframeable) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flex: 1 }}>
