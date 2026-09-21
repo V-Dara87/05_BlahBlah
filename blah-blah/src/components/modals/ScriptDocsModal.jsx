@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { X, Copy, Check, BookOpen } from 'lucide-react';
- 
+
 /**
  * ScriptDocsModal — reference documentation for the user-script API
  * (motion / canvas / react / shader script kinds, static props, tween
@@ -19,7 +19,7 @@ import { X, Copy, Check, BookOpen } from 'lucide-react';
  * own width + scrollable body rule (.docs-modal-card / .docs-modal-body
  * in App.css) since the reference content is longer than a settings form.
  */
- 
+
 const SECTIONS = [
   { id: 'overview', label: 'Overview' },
   { id: 'props', label: 'static props' },
@@ -32,43 +32,43 @@ const SECTIONS = [
   { id: 'imports', label: 'npm imports' },
   { id: 'cheatsheet', label: 'Cheat sheet' },
 ];
- 
+
 // Kept as one plain-text constant (not JSX) so "Copy for AI" can put the
 // exact same content on the clipboard that's rendered below — no risk of
 // the copied text drifting from what's on screen.
 export const SCRIPT_API_DOCS_MARKDOWN = `# BlahBlah — User Script API Reference
- 
+
 This document describes the scripting API available to user-written scripts
 (\`ScriptComponent\`) in the BlahBlah timeline editor. Paste this whole file
 into an AI chat along with your request (e.g. "write me a canvas script that
 does X using this API") to get scripts that match the runtime contracts
 exactly.
- 
+
 There are **four kinds of script**, auto-detected from what the code exports
 (\`detectScriptKind\` in \`engine/scriptRunner.js\`) — you don't declare the kind,
 you just write to the contract and the Inspector figures out which one it is:
- 
+
 | Kind     | Shape                                              | Used for |
 |----------|-----------------------------------------------------|----------|
 | \`motion\` | Class with \`onStart\`/\`onUpdate({ transform, ... })\` | Animating a clip's position/rotation/scale/opacity |
 | \`canvas\` | Class with \`onMount\`/\`onUpdate({ container, ... })\` | Custom DOM/Canvas/WebGL rendering inside a clip |
 | \`react\`  | Function returning JSX                              | Custom React-rendered clip content |
 | \`shader\` | GLSL \`vec4 transition(vec2 uv)\`                     | Custom transitions between clips |
- 
+
 All four support:
 - \`static props = { ... }\` — declares Inspector-editable (and keyframeable)
   fields.
 - Real ES \`import\` statements for npm packages (resolved via esm.sh, cached
   offline after first use) and JSX/TypeScript syntax (transpiled automatically).
- 
+
 ---
- 
+
 ## 1. Declaring props (\`static props\`)
- 
+
 Any script (motion, canvas, or react) can declare a \`static props\` object.
 Each field automatically becomes an editable control in the Inspector, and
 (except for \`entity\`/\`asset\` refs) becomes keyframeable.
- 
+
 \`\`\`js
 static props = {
   speed:   { type: 'number', default: 2.5, min: 0, max: 10, step: 0.1, label: 'Speed' },
@@ -80,45 +80,64 @@ static props = {
   clip:    { type: 'asset', label: 'Media Asset' },    // reference to a media asset
 };
 \`\`\`
- 
+
 Shorthand form (direct values instead of \`{ type, default }\`) also works and
 infers the type:
- 
+
 \`\`\`js
 static props = { speed: 2.5, color: '#ff0000', label: 'hello' };
 \`\`\`
- 
+
 Field \`type\` values: \`number\`, \`color\`, \`boolean\`, \`select\`, \`string\`,
-\`entity\`, \`asset\`.
- 
+\`textarea\`, \`entity\`, \`asset\`, \`struct\`, \`struct[]\`.
+
+\`struct\` groups several fields into one object; \`struct[]\` is an editable
+list of such objects. Both take a \`fields\` sub-schema, and \`entity\` /
+\`asset\` fields inside them are resolved into \`EntityRef\` / \`AssetRef\` too:
+
+\`\`\`js
+static props = {
+  title: { type: 'struct', label: 'Title', fields: {
+    text:  { type: 'string', default: 'Hello' },
+    color: { type: 'color',  default: '#ffffff' },
+  }},
+  items: { type: 'struct[]', label: 'Items', fields: {
+    label: { type: 'string', default: '' },
+    size:  { type: 'number', default: 1 },
+  }},
+};
+// props.title.text, props.items[0].label ...
+\`\`\`
+
+
 - \`entity\`/\`asset\` fields render as drag-drop slots in the Inspector and are
   **never keyframeable** — the slot itself is the whole control. At runtime
   their stored ID is automatically resolved into an \`EntityRef\` / \`AssetRef\`
   object (see §4) before your script sees it — you never see a raw ID string.
 - All other typed fields are keyframeable from the Dopesheet.
- 
+
 ---
- 
+
 ## 2. \`motion\` scripts — animating a clip's transform
- 
+
 Contract (from \`engine/scriptRunner.js\`, \`executeScriptComponent\`):
- 
+
 \`\`\`js
 export default class MyMotion {
   static props = { amplitude: { type: 'number', default: 20 } };
- 
+
   onStart({ transform, tween, props, time, frame, fps, duration, Math }) {
     // called once per compile; use \`tween\` to set up DOTween-style tweens
   }
- 
+
   onUpdate({ transform, props, time, frame, fps, duration, Math, lerp, clamp, interpolate, spring }) {
     // called every evaluated frame; deterministic — must be a pure function of \`time\`
   }
 }
 \`\`\`
- 
+
 \`transform\` (in both hooks) is a proxy object:
- 
+
 \`\`\`js
 transform.position.x   // number
 transform.position.y   // number
@@ -127,11 +146,11 @@ transform.scale.y      // number
 transform.rotation     // number (degrees)
 transform.opacity      // number 0–1
 \`\`\`
- 
+
 Mutate these directly in \`onUpdate\` for frame-by-frame math (sine waves,
 noise, etc.), or use \`tween\` in \`onStart\` to declare DOTween-style animations
 that get evaluated deterministically at every \`time\`:
- 
+
 \`\`\`js
 onStart({ transform, tween }) {
   tween.to(transform.position, { y: -50 }, { duration: 1, ease: 'outBounce' });
@@ -142,19 +161,19 @@ onStart({ transform, tween }) {
   tween.sine(transform.position, { y: 10 }, { frequency: 2, phase: 0 });
 }
 \`\`\`
- 
+
 Tween options: \`duration\`, \`delay\`, \`ease\` (name string or function — see
 Easing table below), \`loop: 'yoyo'\` / \`loops: N\`, \`relative: true\`.
- 
+
 **Timing args available in both hooks:** \`time\` (local seconds since clip
 start), \`frame\`, \`fps\`, \`duration\` (clip duration in seconds).
- 
+
 ### Easing / math helpers
- 
+
 \`\`\`js
 import { Easing, Ease, LoopType, MathUtils, interpolate, spring } from '...'; // already injected, no import needed
 \`\`\`
- 
+
 - \`Easing.linear|inQuad|outQuad|inOutQuad|inCubic|outCubic|inOutCubic|inSine|outSine|inOutSine|inBack|outBack|inOutBack|inBounce|outBounce|inOutBounce|inElastic|outElastic|inOutElastic\`
   (also available capitalized as \`Ease.OutBounce\` etc.)
 - \`MathUtils.lerp(a, b, t)\`, \`.clamp(v, min, max)\`, \`.clamp01(v)\`,
@@ -193,7 +212,7 @@ onUpdate({ time, tween }) {
 |---|---|
 | \`tween.progress(time, { at, duration, ease })\` | Eased 0–1 progress, clamped outside its time window. |
 | \`tween.between(from, to, time, options)\` | A numeric value between \`from\` and \`to\`. |
-| \`tween.loop(time, duration, 'restart'\|'yoyo')\` | Repeating 0–1 progress. |
+| \`tween.loop(time, duration, mode)\` | Repeating 0–1 progress. \`mode\` is \`'restart'\` (default), \`'yoyo'\` or \`'pingpong'\` (the last two behave the same). |
 | \`tween.pingPong(time, duration)\` | Shorthand for a yoyo loop. |
 | \`tween.stagger(index, each)\` | Delay in seconds for a sequential item. |
 | \`tween.ease / lerp / clamp / clamp01 / remap\` | Stateless math helpers. |
@@ -203,36 +222,36 @@ motion script's \`onStart\`. That \`tween\` is a \`MotionTweenContext\` and is
 intentionally different from the generic helper supplied to \`onUpdate\`.
 
 ---
- 
+
 ## 3. \`canvas\` scripts — custom rendering (DOM/Canvas/WebGL)
- 
+
 Contract (from \`engine/canvasRunner.js\`):
- 
+
 \`\`\`js
 export default class MyCanvasThing {
   static props = { speed: { type: 'number', default: 1, min: 0, max: 10 } };
- 
-  onMount({ container, props, canvasWidth, canvasHeight, duration, totalFrames, progress, startTime, endTime, timeLeft }) {
+
+  onMount({ container, signal, props, canvasWidth, canvasHeight, aspect, tween, duration, totalFrames, progress, startTime, endTime, timeLeft }) {
     // container is an empty <div> owned by this clip instance. Build your DOM/canvas/WebGL here.
   }
- 
-  onUpdate({ container, time, frame, fps, props, tween, canvasWidth, canvasHeight, duration, totalFrames, progress, startTime, endTime, timeLeft }) {
+
+  onUpdate({ container, time, frame, fps, props, tween, canvasWidth, canvasHeight, aspect, duration, totalFrames, progress, startTime, endTime, timeLeft }) {
     // called every frame. \`time\` is entity-LOCAL seconds (0 at clip start).
     // tween.between(...) derives a deterministic animation value.
   }
- 
-  onSeek({ container, time, frame, fps, props, canvasWidth, canvasHeight }) {
+
+  onSeek({ container, time, frame, fps, props, tween, canvasWidth, canvasHeight, duration, totalFrames, progress, startTime, endTime, timeLeft }) {
     // optional. Fired instead of a normal onUpdate step when the playhead
     // jumps more than ~2 frames (scrub/seek) rather than advancing by one
     // tick — use it to reset any accumulated state (particles, counters).
   }
- 
+
   onUnmount({ container }) {
     // cleanup: dispose renderers, cancel loops, remove listeners
   }
 }
 \`\`\`
- 
+
 - \`canvasWidth\`/\`canvasHeight\` default to the **project's output resolution**
   (not \`container.clientWidth\`, which may be a scaled preview size or 0).
   Override per-instance by declaring \`canvasWidth\`/\`canvasHeight\` in your own
@@ -242,16 +261,26 @@ export default class MyCanvasThing {
   See §7.
 - \`onMount\` is called once per (script code, container) pair — not once per
   frame.
- 
+- \`signal\` (an \`AbortSignal\`) is passed to \`onMount\` only. It aborts when the
+  clip unmounts, so pass it to \`fetch\` / \`addEventListener\` to cancel async work.
+- \`aspect\` is \`canvasWidth / canvasHeight\`. The runner also sets
+  \`this.canvasWidth\`, \`this.canvasHeight\` and \`this.aspect\` on your instance.
+- If your instance has a \`renderer\` (a Three.js \`WebGLRenderer\`) or a \`canvas\`
+  property, its DOM element is re-attached to \`container\` if it is missing.
+- If your instance has a \`renderer\`, it is resized to the project size for you,
+  and so is \`this.camera\` when it is a \`PerspectiveCamera\` (an
+  \`OrthographicCamera\` is **not** updated). Set \`this.autoResize = false\` to turn
+  this off. A plain \`canvas\` is never resized for you.
+
 ---
- 
+
 ## 4. Reference props — \`entity\` and \`asset\` types
- 
+
 Declare a prop as \`{ type: 'entity' }\` or \`{ type: 'asset' }\` and the stored
 ID is resolved for you into one of these before your script runs:
- 
+
 ### \`EntityRef\` (reference to another clip)
- 
+
 \`\`\`ts
 declare class EntityRef {
   readonly id: string | null;
@@ -262,13 +291,35 @@ declare class EntityRef {
   exists(): boolean;
   getTransform(): { x, y, rotation, scaleX, scaleY, opacity, speed } | null;
   getComponent(type: string): object | null;  // 'VideoRenderer' | 'AudioSource' | 'TextRenderer' | 'ShapeRenderer' | 'SubtitleTrack' | ...
-  getPhraseAt(time: number): { text, index, phrase, prev, next } | null; // time = entity-LOCAL seconds
+  getPhraseAt(time: number): SubtitlePhraseContext | null; // time = entity-LOCAL seconds; null if no SubtitleTrack / no phrases
   getCurrentText(time: number): string; // '' when no subtitle or in a gap
 }
 \`\`\`
- 
+
+### \`SubtitlePhraseContext\` (returned by \`getPhraseAt\`)
+
+\`\`\`ts
+{
+  text: string;                       // what to display — see note below
+  sentenceText: string;               // text of the current sentence group
+  sentencePhrases: SubtitlePhrase[];  // phrases in the current sentence group
+  accumulatedText: string;            // text of every phrase up to now
+  accumulatedPhrases: SubtitlePhrase[];
+  index: number | null;               // null during a gap
+  phrase: SubtitlePhrase | null;      // null during a gap
+  prev: SubtitlePhrase | null;
+  next: SubtitlePhrase | null;
+}
+// SubtitlePhrase: { id, startTime, endTime, text, mode: 'set'|'add', duration?, words?, emphasis? }
+\`\`\`
+
+**\`text\` is not always just the current phrase.** In \`'set'\` mode it is only the
+active phrase. In \`'add'\` mode (per-phrase \`mode\`, or the track's \`displayMode\`)
+it is the whole sentence built up so far. Use \`phrase.text\` if you always want
+the single active phrase.
+
 ### \`AssetRef\` (reference to a media asset)
- 
+
 \`\`\`ts
 declare class AssetRef {
   readonly id: string | null;
@@ -279,12 +330,12 @@ declare class AssetRef {
   exists(): boolean;
 }
 \`\`\`
- 
+
 Usage in a script:
- 
+
 \`\`\`js
 static props = { target: { type: 'entity', label: 'Follow Target' } };
- 
+
 onUpdate({ transform, props }) {
   if (props.target?.exists()) {
     const t = props.target.getTransform();
@@ -292,45 +343,45 @@ onUpdate({ transform, props }) {
   }
 }
 \`\`\`
- 
+
 These are **read-only** — scripts read live data from other clips but never
 write back to them.
- 
+
 ---
- 
+
 ## 5. \`react\` scripts — custom React clip content
- 
+
 Any script that returns JSX and isn't a class is auto-detected as a React
 component:
- 
+
 \`\`\`jsx
 export default function MyClip({ /* not typically used — read props via static props */ }) {
   return <div style={{ color: 'red' }}>Hello</div>;
 }
 \`\`\`
- 
+
 Or without JSX, using the injected \`h()\` helper (shorthand for
 \`React.createElement\`):
- 
+
 \`\`\`js
 export default function MyClip() {
   return h('div', { style: { color: 'red' } }, 'Hello');
 }
 \`\`\`
- 
+
 \`static props\` works the same way here as for motion/canvas scripts.
- 
+
 ---
- 
+
 ## 6. \`shader\` scripts — custom transitions
- 
+
 Detected via \`vec4 transition(...)\` / \`gl_FragColor\` in the code. Compatible
 with the \`gl-transitions\` GLSL format:
- 
+
 \`\`\`glsl
 uniform float intensity; // = 1.0
 uniform float scanlines; // = 20.0
- 
+
 vec4 transition(vec2 uv) {
   vec2 p = uv;
   float d = sin(progress * 3.14159265);
@@ -340,27 +391,27 @@ vec4 transition(vec2 uv) {
   return mix(fromColor, toColor, progress); // \`progress\` (0–1) is injected automatically
 }
 \`\`\`
- 
+
 Built-ins available inside \`transition()\`: \`uv\` (arg), \`progress\` (float,
 0–1, injected), \`getFromColor(vec2)\`, \`getToColor(vec2)\`.
- 
+
 \`uniform\` declarations become Inspector-editable parameters automatically.
 Supported uniform types: \`float\`, \`int\`, \`bool\`, \`vec2\`/\`ivec2\`, \`vec3\`, \`vec4\`.
 The \`// = <value>\` comment after a uniform sets its default.
- 
+
 ---
- 
+
 ## 7. Real \`import\` statements (npm packages)
- 
+
 All script kinds support genuine ES \`import\` statements — no bundler config
 needed on your end:
- 
+
 \`\`\`js
 import * as THREE from 'three';
 import gsap from 'gsap';
 import { someHelper } from './localFile.js'; // relative imports resolve against the project's scripts/ folder
 \`\`\`
- 
+
 - Packages are fetched once from esm.sh, then cached in IndexedDB — fully
   offline after first use. The resolved version is pinned per package name,
   so \`import 'three'\` always resolves to the same version across sessions
@@ -371,40 +422,40 @@ import { someHelper } from './localFile.js'; // relative imports resolve against
 - Scripts with **no** imports compile instantly via a lightweight synchronous
   JSX/TS transpiler — no behavior change from imports-free scripts you may
   already have.
- 
+
 ---
- 
+
 ## Quick-reference cheat sheet
- 
+
 \`\`\`
 MOTION   → class, onStart/onUpdate({ transform, tween, props, time, ... })
 CANVAS   → class, onMount/onUpdate/onUnmount({ container, props, canvasWidth, canvasHeight, ... })
 REACT    → function returning JSX (or h(tag, props, children))
 SHADER   → GLSL: uniform ...; vec4 transition(vec2 uv) { ... getFromColor/getToColor/progress ... }
- 
+
 static props = { name: { type: 'number'|'color'|'boolean'|'select'|'string'|'entity'|'asset', default, min, max, step, options, label } };
- 
+
 tween.to/from/spring/punch/shake/sine(target, props, options)  // motion onStart only
 Tween.progress/between/loop/pingPong/stagger/ease/lerp/remap    // generic, all script kinds
 Easing.<name> / Ease.<Name>
 MathUtils.lerp/clamp/clamp01/remap/degToRad/radToDeg/vec2/vec3
 interpolate(value, [in...], [out...], opts)
 spring({ frame, fps, config })
- 
+
 EntityRef:  id, name, startTime, duration, parentId, exists(), getTransform(), getComponent(type), getPhraseAt(time), getCurrentText(time)
 AssetRef:   id, name, src, type, duration, exists()
- 
+
 import 'pkg';           // npm package, cached offline after first fetch
 import './local.js';     // relative, resolved against scripts/
 \`\`\`
 `;
 import './script-docs-modal.css';
- 
+
 export function ScriptDocsModal({ isOpen, onClose }) {
   const [copied, setCopied] = useState(false);
- 
+
   if (!isOpen) return null;
- 
+
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(SCRIPT_API_DOCS_MARKDOWN);
@@ -414,7 +465,7 @@ export function ScriptDocsModal({ isOpen, onClose }) {
       console.warn('Copy to clipboard failed:', err);
     }
   };
- 
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-card docs-modal-card" onClick={(e) => e.stopPropagation()}>
@@ -430,7 +481,7 @@ export function ScriptDocsModal({ isOpen, onClose }) {
             <X size={16} />
           </button>
         </div>
- 
+
         <div className="modal-body docs-modal-body">
           <nav className="docs-toc">
             {SECTIONS.map((s) => (
@@ -439,12 +490,12 @@ export function ScriptDocsModal({ isOpen, onClose }) {
               </a>
             ))}
           </nav>
- 
+
           <div className="docs-content">
             <DocsMarkdown text={SCRIPT_API_DOCS_MARKDOWN} />
           </div>
         </div>
- 
+
         <div className="script-footer docs-modal-footer">
           <span className="script-hint docs-copy-hint">
             Copies the full reference as Markdown — paste it into an AI chat along with your request.
@@ -458,7 +509,7 @@ export function ScriptDocsModal({ isOpen, onClose }) {
     </div>
   );
 }
- 
+
 /**
  * Minimal, dependency-free Markdown -> JSX renderer covering just what
  * SCRIPT_API_DOCS_MARKDOWN actually uses (headings, fenced code blocks,
@@ -471,10 +522,10 @@ function DocsMarkdown({ text }) {
   const blocks = [];
   let i = 0;
   let key = 0;
- 
+
   while (i < lines.length) {
     const line = lines[i];
- 
+
     if (line.startsWith('```')) {
       const lang = line.slice(3).trim();
       const codeLines = [];
@@ -491,7 +542,7 @@ function DocsMarkdown({ text }) {
       );
       continue;
     }
- 
+
     if (line.startsWith('#')) {
       const level = line.match(/^#+/)[0].length;
       const content = line.replace(/^#+\s*/, '');
@@ -505,13 +556,13 @@ function DocsMarkdown({ text }) {
       i++;
       continue;
     }
- 
+
     if (line.trim() === '---') {
       blocks.push(<hr key={key++} className="docs-hr" />);
       i++;
       continue;
     }
- 
+
     if (line.trim().startsWith('|')) {
       const tableLines = [];
       while (i < lines.length && lines[i].trim().startsWith('|')) {
@@ -521,7 +572,7 @@ function DocsMarkdown({ text }) {
       blocks.push(<DocsTable key={key++} lines={tableLines} />);
       continue;
     }
- 
+
     if (/^\s*-\s+/.test(line)) {
       const itemLines = [];
       while (i < lines.length && /^\s*-\s+/.test(lines[i])) {
@@ -537,12 +588,12 @@ function DocsMarkdown({ text }) {
       );
       continue;
     }
- 
+
     if (line.trim() === '') {
       i++;
       continue;
     }
- 
+
     // Plain paragraph — collect until a blank line or a new block starts.
     const paraLines = [line];
     i++;
@@ -564,18 +615,18 @@ function DocsMarkdown({ text }) {
       </p>
     );
   }
- 
+
   return <>{blocks}</>;
 }
- 
+
 function DocsTable({ lines }) {
   // lines[0] = header, lines[1] = separator (---|---), lines[2+] = rows
   const parseRow = (l) =>
     l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
- 
+
   const header = parseRow(lines[0]);
   const rows = lines.slice(2).map(parseRow);
- 
+
   return (
     <table className="docs-table">
       <thead>
@@ -597,7 +648,7 @@ function DocsTable({ lines }) {
     </table>
   );
 }
- 
+
 /** Handles `` `code` `` and `**bold**` spans within a line of text. */
 function renderInline(str) {
   const parts = str.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
