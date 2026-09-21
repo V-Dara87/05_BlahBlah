@@ -195,4 +195,102 @@ export function createTauriDirectoryHandle(dirPath, dirName) {
   };
 }
 
+/**
+ * Splits a file into chunks and hands each one to `onChunk` without ever
+ * holding the whole file in memory. Used by peakGenerator.js to stream a
+ * long FFmpeg-decoded PCM temp file into the peak-level builder.
+ *
+ * Tries the streaming `open` + `read` path first. If that is unavailable
+ * (older Tauri fs plugin, or a capability that hasn't granted `fs:allow-open`
+ * / `fs:allow-read`), it falls back to a single `readFile` and slices it —
+ * correct, just less memory-friendly — so peak generation still works.
+ *
+ * @param {string} filePath
+ * @param {number} chunkSize - bytes per chunk (rounded up to at least 1)
+ * @param {(chunk: Uint8Array) => void | Promise<void>} onChunk
+ * @param {{ signal?: { aborted: boolean } }} [options]
+ */
+export async function readFileChunks(filePath, chunkSize, onChunk, { signal } = {}) {
+  const size = Math.max(1, Math.floor(chunkSize) || 1);
+  const fs = await import('@tauri-apps/plugin-fs');
+
+  const throwIfAborted = () => {
+    if (signal?.aborted) {
+      const err = new Error('Aborted');
+      err.name = 'AbortError';
+      throw err;
+    }
+  };
+
+  let handle = null;
+  try {
+    handle = await fs.open(filePath, { read: true });
+  } catch {
+    handle = null;
+  }
+
+  if (handle) {
+    try {
+      let buffer = new Uint8Array(size);
+      for (;;) {
+        throwIfAborted();
+        const n = await handle.read(buffer);
+        if (n === null || n === 0) break;
+        await onChunk(n === buffer.length ? buffer : buffer.subarray(0, n));
+      }
+      return;
+    } finally {
+      try {
+        await handle.close();
+      } catch {
+        // already closed / resource gone — nothing to clean up
+      }
+    }
+  }
+
+  // Fallback: whole-file read, sliced. No streaming, but still hands the
+  // caller bounded pieces so downstream memory stays small.
+  const bytes = await fs.readFile(filePath);
+  for (let offset = 0; offset < bytes.length; offset += size) {
+    throwIfAborted();
+    await onChunk(bytes.subarray(offset, Math.min(offset + size, bytes.length)));
+  }
+}
+
+/** Creates a directory (and any missing parents). No-op when it exists. */
+export async function ensureDir(dirPath) {
+  if (!dirPath) return;
+  const fs = await import('@tauri-apps/plugin-fs');
+  if (!(await fs.exists(dirPath))) {
+    await fs.mkdir(dirPath, { recursive: true });
+  }
+}
+
+/**
+ * Stat a file, normalized to the two fields peak caching cares about.
+ * Returns null when the file can't be statted (missing, permission).
+ */
+export async function statFile(filePath) {
+  if (!filePath) return null;
+  try {
+    const fs = await import('@tauri-apps/plugin-fs');
+    const info = await fs.stat(filePath);
+    const mtime = info?.mtime instanceof Date ? info.mtime : null;
+    return { size: info?.size ?? 0, mtimeMs: mtime ? mtime.getTime() : 0 };
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort delete; swallows a missing file so cleanup can be unconditional. */
+export async function removeFileIfExists(filePath) {
+  if (!filePath) return;
+  try {
+    const fs = await import('@tauri-apps/plugin-fs');
+    await fs.remove(filePath);
+  } catch {
+    // already gone or not permitted — nothing else we can do
+  }
+}
+
 export { isTauri };

@@ -24,6 +24,12 @@ import {
   isFfmpegAvailable,
 } from '../../services/silenceDetector';
 import './silence-remover-panel.css';
+
+// Media longer than this is never decoded into an AudioBuffer in the desktop
+// build (see utils/audioWaveform.js) — silence detection uses the FFmpeg
+// `silencedetect` path instead. The in-memory Web Audio analyzer stays for
+// short clips and the browser build, where it is fast and needs no sidecar.
+const LONG_CLIP_DECODE_LIMIT_SEC = 10 * 60;
  
 /**
  * SilenceRemoverPanel — Dockable Panel for Audio Silence Detection & Cutting
@@ -147,20 +153,39 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
     const comp = activeClip.components?.find((c) => c.type === 'AudioSource' || c.type === 'VideoRenderer');
     if (comp?.src) url = comp.src;
  
-    // Resolve matching asset for disk file path (Tauri mode)
-    const asset = mediaAssets.find((a) => a.url === url || a.name === activeClip.name || url?.includes(a.name));
+    // Resolve matching asset for disk file path + source duration (Tauri
+    // mode). Exact URL first so the duration used to decide whether this
+    // source is too long to decode comes from the right asset; the looser
+    // name match only covers blob -> disk URL reconciliation.
+    const asset =
+      mediaAssets.find((a) => a.url === url)
+      || mediaAssets.find((a) => a.name === activeClip.name || url?.includes(a.name));
     if (asset?.path) filePath = asset.path;
  
     const mediaOffset = comp?.mediaOffset || 0;
     const duration = activeClip.duration || 0;
  
-    return { url, filePath, mediaOffset, duration };
+    return { url, filePath, mediaOffset, duration, assetDuration: asset?.duration || 0 };
   }, [activeClip, mediaAssets]);
+
+  // Long media (by SOURCE duration, not trimmed clip duration — that is what
+  // a whole-file decode would cost) forces the native FFmpeg engine and
+  // disables the in-memory decode/audition path on desktop.
+  const longClipNeedsFfmpeg =
+    isTauri() && (audioSourceInfo?.assetDuration || 0) > LONG_CLIP_DECODE_LIMIT_SEC;
  
   // Load AudioBuffer for client-side preview, Web Audio detection, and auditioning
   useEffect(() => {
     if (!isEnabled || !audioSourceInfo?.url) {
       setAudioBuffer(null);
+      return;
+    }
+ 
+    // Desktop + long source: don't decode the whole file. Detection below
+    // uses FFmpeg, and the in-memory audition player is unavailable for it.
+    if (longClipNeedsFfmpeg) {
+      setAudioBuffer(null);
+      setIsLoadingAudio(false);
       return;
     }
  
@@ -184,7 +209,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
     return () => {
       cancelled = true;
     };
-  }, [isEnabled, audioSourceInfo?.url]);
+  }, [isEnabled, audioSourceInfo?.url, longClipNeedsFfmpeg]);
  
   // Detection execution
   useEffect(() => {
@@ -193,7 +218,14 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
       return;
     }
  
-    if (useFfmpegEngine && ffmpegSupported && audioSourceInfo?.filePath) {
+    // The native engine is used when the user opted in, OR when a long
+    // source makes the in-memory analyzer impossible (desktop build).
+    const useNativeEngine =
+      (useFfmpegEngine || longClipNeedsFfmpeg)
+      && ffmpegSupported
+      && Boolean(audioSourceInfo?.filePath);
+
+    if (useNativeEngine) {
       let cancelled = false;
       setIsDetecting(true);
       detectSilenceWithFfmpeg({
@@ -248,6 +280,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
     minSilenceDuration,
     useFfmpegEngine,
     ffmpegSupported,
+    longClipNeedsFfmpeg,
   ]);
  
   // Calculate audible & silent segments with padding
@@ -786,9 +819,9 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
             <label className="silence-toggle-item">
               <input
                 type="checkbox"
-                checked={useFfmpegEngine}
+                checked={useFfmpegEngine || longClipNeedsFfmpeg}
                 onChange={(e) => setUseFfmpegEngine(e.target.checked)}
-                disabled={!isEnabled}
+                disabled={!isEnabled || longClipNeedsFfmpeg}
               />
               <span>
                 <Cpu size={11} style={{ display: 'inline', marginRight: 4 }} />

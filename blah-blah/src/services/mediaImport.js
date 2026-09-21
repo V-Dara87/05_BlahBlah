@@ -38,6 +38,8 @@
  * recognized extension is enough even when the platform can't or won't
  * report a MIME type.
  */
+import { enqueuePeakGeneration } from './peakCache.js';
+
 const METADATA_TIMEOUT_MS = 6000;
  
 // Fallback durations used when metadata probing genuinely fails (corrupt
@@ -162,18 +164,21 @@ export async function importMediaFiles({ files, onAddMediaAsset, mediaAssets = [
       if (looksDuplicate) duplicateCount++;
  
       const duration = (await probeFileDuration(file, isVideo)) || MEDIA_FALLBACK_DURATION[isVideo ? 'video' : 'audio'];
-      onAddMediaAsset(
-        {
-          id: `asset-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-          name: file.name,
-          type: isVideo ? 'video' : 'audio',
-          url: URL.createObjectURL(file),
-          duration,
-          size: file.size,
-          createdAt: Date.now(),
-        },
-        file
-      );
+      const asset = {
+        id: `asset-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        name: file.name,
+        type: isVideo ? 'video' : 'audio',
+        url: URL.createObjectURL(file),
+        duration,
+        size: file.size,
+        createdAt: Date.now(),
+      };
+      onAddMediaAsset(asset, file);
+      // Kick off background peak generation. On the Tauri path this is a
+      // no-op until useMediaAssets has written the file into media/ and
+      // given the asset a `path` (which it enqueues again below); in the
+      // browser it is a no-op by design. It never blocks the import.
+      enqueuePeakGeneration(asset);
     })
   );
  

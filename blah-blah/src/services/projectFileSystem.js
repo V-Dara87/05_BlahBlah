@@ -591,6 +591,9 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
   const loadedMedia = [];
   const readMediaEntry = async (entry, folderName) => {
     if (entry.kind !== 'file') return null;
+    // Hidden files are never media — and in particular the `.cache/` folder
+    // (generated peak files) must never be picked up by a project scan.
+    if (!entry.name || entry.name.startsWith('.')) return null;
     const ext = entry.name.toLowerCase();
     // Voice takes recorded by older builds were saved as audio-only .webm
     // (MediaRecorder/Opus) inside media/Recordings/. A bare .webm is normally a
@@ -654,6 +657,9 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
     const mediaDirHandle = await dirHandle.getDirectoryHandle('media', { create: true });
     const mediaEntries = [];
     for await (const entry of mediaDirHandle.values()) {
+      // Skip hidden entries (e.g. `.cache/`) so generated peak files are
+      // never mistaken for imported media.
+      if (!entry.name || entry.name.startsWith('.')) continue;
       if (entry.kind === 'directory') {
         const subDirHandle = await mediaDirHandle.getDirectoryHandle(entry.name, { create: false });
         for await (const subEntry of subDirHandle.values()) {
@@ -963,6 +969,91 @@ export async function saveMediaFileToFolder(dirHandle, file, subfolder = null, t
   return mediaDirHandle?.path ? joinPath(mediaDirHandle.path, fileName) : null;
 }
  
+// ─── Peak-file cache (.cache/peaks) ──────────────────────────────────────
+//
+// Waveform peaks for long media are generated once (services/peakGenerator.js)
+// and stored in a hidden `.cache/peaks/` folder inside the project, so they
+// survive restarts and are read back in slices instead of re-decoding the
+// source. These helpers are deliberately small: they only do path/handle I/O;
+// naming, the memory LRU and the generation queue live in services/peakCache.js.
+//
+// Nothing creates `.cache/` up front — a project only grows one the first
+// time it actually generates peaks (see the `.cache` guards in the media scan
+// below). New projects therefore need no changes at all.
+
+export const PROJECT_CACHE_DIR = '.cache';
+export const PEAKS_SUBDIR = 'peaks';
+export const PEAKS_TEMP_SUBDIR = 'tmp';
+
+/** Absolute `.cache/peaks` path, or null outside Tauri. */
+export function peakDirPath(dirHandle) {
+  if (!dirHandle?.path) return null;
+  return joinPath(dirHandle.path, PROJECT_CACHE_DIR, PEAKS_SUBDIR);
+}
+
+/** Absolute `.cache/peaks/tmp` path for FFmpeg's temp PCM file, or null outside Tauri. */
+export function peakTempDirPath(dirHandle) {
+  if (!dirHandle?.path) return null;
+  return joinPath(dirHandle.path, PROJECT_CACHE_DIR, PEAKS_SUBDIR, PEAKS_TEMP_SUBDIR);
+}
+
+async function getPeaksDirHandle(dirHandle, create) {
+  if (!dirHandle) return null;
+  const cacheDir = await dirHandle.getDirectoryHandle(PROJECT_CACHE_DIR, { create });
+  return cacheDir.getDirectoryHandle(PEAKS_SUBDIR, { create });
+}
+
+/** Persist a generated peak file. Returns false when there is no project handle. */
+export async function writePeakFile(dirHandle, fileName, bytes) {
+  if (!dirHandle || !fileName || !bytes) return false;
+  const dir = await getPeaksDirHandle(dirHandle, true);
+  if (!dir) return false;
+  const fileHandle = await dir.getFileHandle(fileName, { create: true });
+  const writable = await fileHandle.createWritable();
+  await writable.write(bytes);
+  await writable.close();
+  return true;
+}
+
+/** Read a peak file's bytes, or null when it is missing/unreadable. */
+export async function readPeakFile(dirHandle, fileName) {
+  if (!dirHandle || !fileName) return null;
+  try {
+    const dir = await getPeaksDirHandle(dirHandle, false);
+    if (!dir) return null;
+    const fileHandle = await dir.getFileHandle(fileName, { create: false });
+    const file = await fileHandle.getFile();
+    return new Uint8Array(await file.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+/** True when a peak file exists on disk. */
+export async function peakFileExists(dirHandle, fileName) {
+  if (!dirHandle || !fileName) return false;
+  try {
+    const dir = await getPeaksDirHandle(dirHandle, false);
+    if (!dir) return false;
+    await dir.getFileHandle(fileName, { create: false });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Best-effort delete of one cached peak file. */
+export async function deletePeakFile(dirHandle, fileName) {
+  if (!dirHandle || !fileName) return;
+  try {
+    const dir = await getPeaksDirHandle(dirHandle, false);
+    if (!dir) return;
+    await dir.removeEntry(fileName).catch(() => {});
+  } catch {
+    // nothing to delete
+  }
+}
+
 /**
  * Delete a media file from the media/ directory on disk.
  */

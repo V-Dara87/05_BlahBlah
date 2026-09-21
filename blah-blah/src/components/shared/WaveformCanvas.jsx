@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState, memo } from 'react';
 import { getWaveformPeaks } from '../../utils/audioWaveform';
+import { getAssetByUrl, getPeakStatus, subscribePeaksUpdated } from '../../services/peakCache';
  
 /**
  * WaveformCanvas — renders a true signed-envelope audio waveform (DaVinci
@@ -39,6 +40,12 @@ function detailForHeight(height) {
   if (height <= 220) return 4;
   return 6; // fully expanded track — maximum envelope resolution
 }
+
+// Trimming/zooming changes startSec/endSec/numPeaks on every pointer tick.
+// Peaks-backed clips re-slice cheaply, but anything still on the in-memory
+// decode path would re-run extractEnvelope on every tick — so these inputs
+// are debounced while the last-known envelope keeps being drawn.
+const WAVEFORM_DEBOUNCE_MS = 120;
  
 export const WaveformCanvas = memo(function WaveformCanvas({
   url,
@@ -52,6 +59,14 @@ export const WaveformCanvas = memo(function WaveformCanvas({
 }) {
   const canvasRef = useRef(null);
   const [envelope, setEnvelope] = useState(null);
+  // True while this clip's peaks are still being generated in the background
+  // — drawn as a placeholder stripe instead of an empty canvas.
+  const [placeholder, setPlaceholder] = useState(false);
+  // Bumped whenever ANY asset's peaks become ready, so an already-mounted
+  // canvas re-fetches and swaps its placeholder for the real waveform.
+  const [peaksVersion, setPeaksVersion] = useState(0);
+
+  useEffect(() => subscribePeaksUpdated(() => setPeaksVersion((v) => v + 1)), []);
  
   // Buckets requested scales with width AND the height-derived detail
   // multiplier, then snapped to a coarse grid so small height/width
@@ -60,6 +75,29 @@ export const WaveformCanvas = memo(function WaveformCanvas({
   const detail = detailForHeight(height);
   const rawBuckets = Math.max(20, Math.round(width * detail));
   const numPeaks = Math.ceil(rawBuckets / 20) * 20;
+
+  // Debounced fetch inputs. `url` and `peaksVersion` are deliberately NOT
+  // debounced: a URL change or a "peaks became ready" event must refetch
+  // immediately. The last-known envelope is kept drawn while this settles,
+  // so a trim/zoom drag never flashes an empty canvas.
+  const [debouncedWindow, setDebouncedWindow] = useState({ numPeaks, startSec, endSec });
+  const debounceRef = useRef(null);
+
+  useEffect(() => {
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setDebouncedWindow((prev) => (
+        prev.numPeaks === numPeaks && prev.startSec === startSec && prev.endSec === endSec
+          ? prev
+          : { numPeaks, startSec, endSec }
+      ));
+    }, WAVEFORM_DEBOUNCE_MS);
+    return () => clearTimeout(debounceRef.current);
+  }, [numPeaks, startSec, endSec]);
+
+  const windowNumPeaks = debouncedWindow.numPeaks;
+  const windowStartSec = debouncedWindow.startSec;
+  const windowEndSec = debouncedWindow.endSec;
  
   // Decode audio and get the min/max/rms envelope at this resolution.
   // startSec/endSec window the envelope into the clip's actual trimmed
@@ -71,14 +109,20 @@ export const WaveformCanvas = memo(function WaveformCanvas({
   useEffect(() => {
     if (!url) {
       setEnvelope(null);
+      setPlaceholder(false);
       return;
     }
     let cancelled = false;
-    getWaveformPeaks(url, numPeaks, startSec, endSec).then((env) => {
-      if (!cancelled) setEnvelope(env);
+    const asset = getAssetByUrl(url);
+    getWaveformPeaks(url, windowNumPeaks, windowStartSec, windowEndSec).then((env) => {
+      if (cancelled) return;
+      setEnvelope(env);
+      const isEmpty = !env || env.mins.length === 0;
+      const status = asset ? getPeakStatus(asset.id) : 'none';
+      setPlaceholder(isEmpty && (status === 'pending' || status === 'generating'));
     });
     return () => { cancelled = true; };
-  }, [url, numPeaks, startSec, endSec]);
+  }, [url, windowNumPeaks, windowStartSec, windowEndSec, peaksVersion]);
  
   // Draw the filled envelope on canvas.
   useEffect(() => {
@@ -90,6 +134,14 @@ export const WaveformCanvas = memo(function WaveformCanvas({
     canvas.height = Math.max(1, height * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
+
+    // Peaks are still generating for a long clip: show a neutral stripe so
+    // the user can tell the difference between "no audio here" and "still
+    // working on it". Redrawn for real when peaksVersion bumps.
+    if (placeholder) {
+      drawPlaceholder(ctx, width, height, mirror);
+      return;
+    }
  
     const { mins, maxs, rms } = envelope || {};
     if (!mins || mins.length === 0) return;
@@ -150,7 +202,7 @@ export const WaveformCanvas = memo(function WaveformCanvas({
       ctx.fillStyle = 'rgba(255,255,255,0.12)';
       ctx.fillRect(0, midY - 0.5, width, 1);
     }
-  }, [envelope, width, height, color, rmsColor, mirror]);
+  }, [envelope, placeholder, width, height, color, rmsColor, mirror]);
  
   return (
     <canvas
@@ -160,6 +212,29 @@ export const WaveformCanvas = memo(function WaveformCanvas({
   );
 });
  
+/**
+ * Neutral "peaks are still generating" fill: a faint flat bar on the centre
+ * line with diagonal hatch stripes, distinct from a real (jagged) envelope.
+ */
+function drawPlaceholder(ctx, width, height, mirror) {
+  const midY = mirror ? height / 2 : height;
+  ctx.save();
+  ctx.fillStyle = 'rgba(148, 163, 184, 0.18)';
+  ctx.fillRect(0, midY - 1, width, 2);
+
+  ctx.beginPath();
+  const stripeGap = 9;
+  const stripeWidth = 2;
+  for (let x = -height; x < width; x += stripeGap) {
+    ctx.moveTo(x, height);
+    ctx.lineTo(x + height, 0);
+  }
+  ctx.lineWidth = stripeWidth;
+  ctx.strokeStyle = 'rgba(148, 163, 184, 0.16)';
+  ctx.stroke();
+  ctx.restore();
+}
+
 /** Brightens an rgba(...)/rgb(...) color string for the inner RMS fill; falls back to the input unchanged for other formats (hex, named colors, currentColor). */
 function brighten(colorStr) {
   const m = /rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+))?\)/.exec(colorStr);

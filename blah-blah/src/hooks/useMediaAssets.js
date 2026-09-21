@@ -1,10 +1,19 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   saveMediaFileToFolder,
   deleteMediaFileFromFolder,
   moveMediaFileOnDisk,
 } from '../services/projectFileSystem';
 import { probeFileDuration, MEDIA_FALLBACK_DURATION, detectMediaKind } from '../services/mediaImport';
+import { isTauri } from '../services/tauriFsAdapter';
+import {
+  setPeakProjectDirectory,
+  setMediaAssetsSource,
+  ensurePeaksForAssets,
+  enqueuePeakGeneration,
+  resetPeakStatusForAsset,
+  deletePeaksForAsset,
+} from '../services/peakCache';
  
 /**
  * useMediaAssets — the media-asset library (state + import/remove logic).
@@ -42,6 +51,32 @@ import { probeFileDuration, MEDIA_FALLBACK_DURATION, detectMediaKind } from '../
  */
 export function useMediaAssets({ projectFolderHandle, onReconcileAssetUrl } = {}) {
   const [mediaAssets, setMediaAssets] = useState([]);
+
+  // The peak cache resolves assets out of the live library (by id and by
+  // url) and needs to know which project's `.cache/peaks` it is reading and
+  // writing. Keep both in sync here rather than threading handles through
+  // every caller.
+  const mediaAssetsRef = useRef(mediaAssets);
+
+  useEffect(() => {
+    mediaAssetsRef.current = mediaAssets;
+  }, [mediaAssets]);
+
+  useEffect(() => {
+    setMediaAssetsSource(() => mediaAssetsRef.current);
+  }, []);
+
+  useEffect(() => {
+    setPeakProjectDirectory(projectFolderHandle);
+  }, [projectFolderHandle]);
+
+  // Fill in missing peak files in the background whenever the library or the
+  // open project changes. enqueuePeakGeneration is idempotent and a no-op
+  // outside Tauri, and this only ever produces status + files — the timeline
+  // keeps drawing through the old path until peaks are actually ready.
+  useEffect(() => {
+    ensurePeaksForAssets(mediaAssets);
+  }, [mediaAssets, projectFolderHandle]);
  
   // Upload Media File
   // Returns the FINAL resolved URL for the saved asset — the disk URL if
@@ -60,10 +95,11 @@ export function useMediaAssets({ projectFolderHandle, onReconcileAssetUrl } = {}
       if (savedPath) {
         const { convertFileSrc } = await import('@tauri-apps/api/core');
         const diskUrl = convertFileSrc(savedPath);
-        setMediaAssets(prev => prev.map(a => a.id === asset.id
-          ? { ...a, url: diskUrl, path: savedPath }
-          : a
-        ));
+        const diskAsset = { ...asset, url: diskUrl, path: savedPath };
+        setMediaAssets(prev => prev.map(a => a.id === asset.id ? diskAsset : a));
+        // Now that the file is on disk with a real path, background peak
+        // generation can actually run for it.
+        enqueuePeakGeneration(diskAsset);
         // Backstop for any OTHER caller that doesn't use this function's
         // return value (see the doc comment above) — re-points any
         // entity/component that somehow still references the stale blob
@@ -92,6 +128,9 @@ export function useMediaAssets({ projectFolderHandle, onReconcileAssetUrl } = {}
     const asset = mediaAssets.find((a) => a.id === assetId);
     setMediaAssets((prev) => prev.filter((a) => a.id !== assetId));
     if (projectFolderHandle && asset) {
+      // Delete the generated peak file first, while the media file is still
+      // on disk for the size/mtime-based name to resolve.
+      await deletePeaksForAsset(asset);
       await deleteMediaFileFromFolder(
         projectFolderHandle,
         asset.name,
@@ -168,10 +207,12 @@ export function useMediaAssets({ projectFolderHandle, onReconcileAssetUrl } = {}
       const savedPath = await saveMediaFileToFolder(projectFolderHandle, newFile, asset.folder || null, asset.name).catch(() => null);
       if (savedPath) {
         const { convertFileSrc } = await import('@tauri-apps/api/core');
-        setMediaAssets(prev => prev.map(a => a.id === assetId
-          ? { ...a, url: convertFileSrc(savedPath), path: savedPath }
-          : a
-        ));
+        const replaced = { ...asset, url: convertFileSrc(savedPath), path: savedPath };
+        setMediaAssets(prev => prev.map(a => a.id === assetId ? replaced : a));
+        // The bytes changed, so the asset's old peak file no longer applies;
+        // forget its status and queue a fresh generation for the new file.
+        resetPeakStatusForAsset(assetId);
+        enqueuePeakGeneration(replaced);
       }
     }
   };
