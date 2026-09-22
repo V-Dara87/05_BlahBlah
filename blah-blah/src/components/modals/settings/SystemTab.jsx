@@ -13,7 +13,7 @@ import { RESETTABLE_SETTINGS } from './resetAllSettings';
  *                                the labels that failed (see resetAllSettings.js).
  *                                When omitted the Reset section is hidden.
  */
-export function SystemTab({ onResetAll }) {
+export function SystemTab({ onResetAll, editorSettings, onEditorSettingsChange }) {
   const tauriActive = isTauri();
   // Same test ExportModal uses before offering in-browser MP4 export.
   const webCodecsSupported = typeof VideoEncoder !== 'undefined';
@@ -140,6 +140,32 @@ export function SystemTab({ onResetAll }) {
           Target sidecar binary location: <code>src-tauri/binaries/ffmpeg-&lt;target-triple&gt;</code>
         </p>
       </div>
+
+      {/* Timeline rendering — global editor preference (services/editorSettings.js).
+          The canvas renderer draws the clip/lane area on a single canvas instead
+          of one React component per clip, which is what keeps 30-60 minute
+          projects smooth. Off by default while it reaches parity with the DOM
+          timeline (see the rollout note at the top of Timeline.jsx). */}
+      {onEditorSettingsChange && (
+        <div className="form-field-group settings-group-spaced">
+          <label className="form-label">Timeline rendering</label>
+          <label className="settings-check-row">
+            <input
+              type="checkbox"
+              checked={Boolean(editorSettings?.canvasTimeline)}
+              onChange={(e) => onEditorSettingsChange({ ...(editorSettings || {}), canvasTimeline: e.target.checked })}
+            />
+            <span>
+              Draw the timeline on a canvas (experimental)
+              <span className="hint-text-sm settings-hint-block">
+                Renders the clips, lanes and waveforms with one canvas instead of a component per
+                clip, which is much faster on very long projects. Editing tools (drag, trim, menus)
+                are still being ported to it — turn this off to get the classic timeline back.
+              </span>
+            </span>
+          </label>
+        </div>
+      )}
 
       {onResetAll && (
         <div className="form-field-group settings-group-spaced">

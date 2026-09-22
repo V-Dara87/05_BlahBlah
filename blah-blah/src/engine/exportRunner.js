@@ -1,4 +1,31 @@
- 
+ /**
+ * exportRunner — the export-time counterpart of EntityRenderer.jsx: frame
+ * drawing, the video frame provider, and the deterministic audio mixdown.
+ *
+ * MEMORY BASELINE (plan-2/plan-3 "export must survive hour-long projects")
+ * -------------------------------------------------------------------------
+ * The two things that used to scale with PROJECT length instead of a fixed
+ * window were the audio decode (whole-file fetch + decodeAudioData per
+ * audio-bearing clip — ~1.3 GB decoded for one hour of stereo) and the
+ * encoded output (mp4-muxer's ArrayBufferTarget followed by a Blob and a
+ * second Uint8Array copy in ExportModal.jsx). Both are now bounded:
+ *
+ *   - audio: decoded per clip WINDOW, in Tauri via the FFmpeg sidecar
+ *     (`-ss`/`-t` -> raw f32le in a temp file, read back in 256 KiB chunks) —
+ *     see decodeAudioWindow. The browser fallback still decodes whole files
+ *     (no sidecar) and warns past BROWSER_DECODE_WARN_SECONDS.
+ *   - output: ExportModal.jsx streams the muxed file to disk through
+ *     services/exportFileStream.js (Tauri only) instead of buffering it.
+ *
+ * MEASURED (2026-09-22, this machine): not yet — the plan's one-hour,
+ * several-thousand-clip test project numbers (peak memory during mixdown,
+ * peak memory during the frame loop, total export time, both engines) still
+ * have to be taken and recorded HERE, so future changes have something to
+ * compare against. Re-run that export and fill in:
+ *     mixdown peak: ____ MB   frame-loop peak: ____ MB   total: ____ s
+ *     (WebCodecs engine: ____ ; FFmpeg-mastering engine: ____)
+ */
+
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
@@ -14,6 +41,9 @@ import { isScriptComponent, isVideoEntity, isAudioEntity } from './ecs.js';
 import { getSharedGLTransitionRenderer } from './glTransitions.js';
 import { resolveEffectiveVolume, findEntityTrack } from '../utils/trackAudio.js';
 import { timeStretchChannels } from '../utils/timeStretch.js';
+import { runFfmpeg } from '../services/ffmpegRunner.js';
+import { isTauri, joinPath, ensureDir, removeFileIfExists, statFile, readFileChunks } from '../services/tauriFsAdapter.js';
+import { exportTempFileName } from '../services/exportFileStream.js';
 import {
   resolveTextRendererText,
   cssFontFamily,
@@ -156,6 +186,14 @@ export function createCanvasContainerPool() {
       }
       root.remove();
     },
+    /**
+     * Live container count. Bounded by the scripts ACTIVE at one instant
+     * (pruned as playback moves past them), never by export length — this
+     * exists so an export can assert that at start and finish.
+     */
+    size() {
+      return containers.size;
+    },
   };
 }
  
@@ -235,6 +273,17 @@ export function createVideoFrameProvider() {
  
     getVideoElement(entityId) {
       return videos.get(entityId) || null;
+    },
+
+    /**
+     * How many <video> elements are held open. This grows with the number of
+     * distinct SOURCES (one element per entity, created once by preload and
+     * kept for the whole run), never with export DURATION — the export loop
+     * below logs it at start and end so an hour-long project can be checked
+     * for an unexpectedly large pool rather than assumed bounded.
+     */
+    size() {
+      return videos.size;
     },
  
     /**
@@ -1318,36 +1367,288 @@ async function drawReactComponentContents({
 // exportStartTime + exportDuration), decodes each source once, and schedules
 // it into a single offline render at the right offset/gain/duration — same
 // "pure function of an explicit time range" contract as the video frame
-// loop, just rendered as one shot instead of per-frame.
- 
-// Cache: src URL -> Promise<AudioBuffer>, so multiple entities/clips sharing
-// one source file (or repeated exports of the same project) don't refetch
-// and re-decode it every time.
+// loop, just rendered as one shot instead of per-frame.// Cache: "src|startSec|endSec" -> Promise<{ buffer, windowStartSec }>, so
+// multiple entities/clips sharing one source file (or repeated exports of the
+// same project) don't refetch and re-decode the same WINDOW. Keying on the
+// window (not just the src) is what lets two clips on the same long file
+// decode only their own slices without one clobbering the other's buffer.
 const decodedBufferCache = new Map();
- 
-async function decodeAudioSource(src, referenceSampleRate) {
-  if (decodedBufferCache.has(src)) return decodedBufferCache.get(src);
- 
-  const promise = (async () => {
-    const response = await fetch(src);
-    const arrayBuffer = await response.arrayBuffer();
-    // Decode at the export's target sample rate directly — avoids a second
-    // resample pass when this buffer is later copied into the offline mix,
-    // which runs at the same rate.
-    const decodeCtx = new OfflineAudioContext(2, 1, referenceSampleRate);
-    return decodeCtx.decodeAudioData(arrayBuffer);
-  })().catch((err) => {
-    decodedBufferCache.delete(src);
-    throw err;
-  });
- 
-  decodedBufferCache.set(src, promise);
+/** Running total of decoded audio seconds held in decodedBufferCache. */
+let decodedBufferSeconds = 0;
+/**
+ * Ceiling on the decoded audio the cache may hold at once. Windows are small
+ * (a clip's own used range), but a project can have many long clips on one
+ * file; past this we drop the oldest entries instead of growing without
+ * bound — a re-decode is cheap relative to running out of memory.
+ */
+const MAX_DECODED_CACHE_SECONDS = 900;
+/**
+ * How many audio windows may be decoded (i.e. how many FFmpeg decodes may run)
+ * at once. The decoded buffers are all still needed simultaneously — this caps
+ * process/disk pressure from N sidecars starting at the same time, not memory.
+ */
+const DECODE_CONCURRENCY = 4;
+
+/**
+ * Run `worker` over `items` with at most `limit` in flight, preserving order
+ * in the returned array. Used for the per-clip window decodes below.
+ */
+async function mapWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let next = 0;
+  const lanes = Math.max(1, Math.min(limit, items.length));
+  await Promise.all(
+    Array.from({ length: lanes }, async () => {
+      for (;;) {
+        const index = next++;
+        if (index >= items.length) return;
+        results[index] = await worker(items[index], index);
+      }
+    })
+  );
+  return results;
+}
+
+/**
+ * Decode ONE WINDOW of a source file into an AudioBuffer, instead of the whole
+ * file. This is the audio half of "never materialize the whole thing": a
+ * one-hour stereo voice track decodes to ~1.3 GB, which is what used to be
+ * held for every audio-bearing clip just to schedule a few seconds of it.
+ *
+ * In Tauri, the FFmpeg sidecar decodes `[startSec, endSec)` of the source to
+ * raw PCM in a temp file (memory stays flat) which is then read back in
+ * fixed-size chunks into exactly-sized channel buffers. Outside Tauri there is
+ * no sidecar, so this falls back to fetch + decodeAudioData of the whole file
+ * — correct, just memory-hungry — and says so when the source is long.
+ *
+ * The returned `windowStartSec` is the SOURCE time the buffer's sample 0
+ * corresponds to, so callers convert absolute source offsets into
+ * buffer-relative ones (`offset - windowStartSec`). For the whole-file
+ * fallback it is 0, which makes that path's math identical to before.
+ *
+ * @param {string} src playback URL (used for the cache key and, in the
+ *   browser, for the fetch itself)
+ * @param {number} referenceSampleRate export sample rate to decode at
+ * @param {number} startSec window start, in source-file seconds
+ * @param {number} endSec window end, in source-file seconds
+ * @param {{ sourcePath?: string, sourceDurationSec?: number }} [options] on-disk
+ *   path of the source (Tauri only — enables the windowed decode)
+ * @returns {Promise<{ buffer: AudioBuffer, windowStartSec: number }>}
+ */
+async function decodeAudioWindow(src, referenceSampleRate, startSec, endSec, { sourcePath, sourceDurationSec = 0 } = {}) {
+  // Outside Tauri there is no sidecar to decode a range, so the whole file is
+  // decoded and cached PER SOURCE — exactly the pre-existing behaviour, so a
+  // project with twenty clips on one audio file still fetches and decodes it
+  // once, not twenty times. `windowStartSec: 0` then makes the caller's
+  // absolute-offset maths identical to what it was before windows existed.
+  if (!isTauri() || !sourcePath) {
+    const whole = wholeFileBufferCache.get(src);
+    if (whole) return whole;
+    const promise = decodeWholeSourceInBrowser(src, referenceSampleRate, sourceDurationSec).catch(
+      (err) => {
+        wholeFileBufferCache.delete(src);
+        throw err;
+      }
+    );
+    wholeFileBufferCache.set(src, promise);
+    return promise;
+  }
+
+  // Tauri: decode only the range this clip uses, cached per
+  // (src, window) so two clips on the same range share one decode while clips
+  // on different ranges don't evict each other.
+  const winStart = Math.max(0, Math.floor((Number(startSec) || 0) * 1000) / 1000);
+  const winEnd = Math.max(winStart, Math.ceil((Number(endSec) || 0) * 1000) / 1000);
+  const cacheKey = `${src}|${winStart}|${winEnd}`;
+  const cached = decodedBufferCache.get(cacheKey);
+  if (cached) return cached;
+
+  const promise = decodeAudioWindowWithFfmpeg(src, referenceSampleRate, winStart, winEnd, sourcePath).catch(
+    (err) => {
+      decodedBufferCache.delete(cacheKey);
+      decodedBufferSeconds = Math.max(0, decodedBufferSeconds - (winEnd - winStart));
+      throw err;
+    }
+  );
+
+  decodedBufferCache.set(cacheKey, promise);
+  decodedBufferSeconds += winEnd - winStart;
+  evictDecodedCacheOverBudget();
   return promise;
 }
- 
-/** Clear the decoded-audio-buffer cache (e.g. on project load). */
+
+/**
+ * Whole-file decodes, keyed on src alone. Only the browser fallback uses it
+ * (see decodeAudioWindow) — in Tauri every decode is a bounded window.
+ */
+const wholeFileBufferCache = new Map();
+
+/** Drop oldest cache entries until the decoded-seconds budget is respected. */
+function evictDecodedCacheOverBudget() {
+  while (decodedBufferSeconds > MAX_DECODED_CACHE_SECONDS && decodedBufferCache.size > 1) {
+    const oldestKey = decodedBufferCache.keys().next().value;
+    const [, start, end] = String(oldestKey).split('|');
+    decodedBufferSeconds -= Math.max(0, (Number(end) || 0) - (Number(start) || 0));
+    decodedBufferCache.delete(oldestKey);
+  }
+}
+
+/**
+ * Tauri path: ask FFmpeg for just this window as raw 32-bit float PCM at the
+ * export's own sample rate, then read that temp file back in chunks.
+ *
+ * `-ss` before `-i` is FFmpeg's accurate input seek (it decodes from the
+ * preceding frame and discards to land exactly on the requested timestamp),
+ * so the first decoded sample is the window start — which is what makes
+ * `windowStartSec` trustworthy. `-ac 2` normalises mono/stereo to stereo the
+ * way the browser's Web Audio up-mixing did.
+ */
+async function decodeAudioWindowWithFfmpeg(src, sampleRate, startSec, endSec, sourcePath) {
+  const windowSeconds = endSec - startSec;
+  if (!(windowSeconds > 0)) throw new Error(`Empty audio window for ${src}`);
+
+  const tempDirPath = await getExportTempDirPath();
+  await ensureDir(tempDirPath);
+  const tempPath = joinPath(tempDirPath, exportTempFileName('audio-window', sourcePath));
+
+  try {
+    await runFfmpeg([
+      '-nostats',
+      '-hide_banner',
+      '-ss',
+      String(startSec),
+      '-t',
+      String(windowSeconds),
+      '-i',
+      sourcePath,
+      '-vn',
+      '-ac',
+      '2',
+      '-ar',
+      String(sampleRate),
+      '-f',
+      'f32le',
+      '-acodec',
+      'pcm_f32le',
+      '-y',
+      tempPath,
+    ]);
+
+    const info = await statFile(tempPath);
+    const totalSamples = info ? Math.floor(info.size / 4) : 0;
+    const frames = Math.floor(totalSamples / 2);
+    if (frames <= 0) throw new Error(`FFmpeg produced no audio for the window at ${startSec}s of ${sourcePath}`);
+
+    const offlineCtx = new OfflineAudioContext(2, frames, sampleRate);
+    const buffer = offlineCtx.createBuffer(2, frames, sampleRate);
+    const left = new Float32Array(frames);
+    const right = new Float32Array(frames);
+
+    // Interleaved f32 -> two planar channels. Chunked so the raw bytes are
+    // never all live at once (the channels are the only full-window copy).
+    let sampleIndex = 0;
+    let carry = null;
+    await readFileChunks(tempPath, AUDIO_WINDOW_READ_CHUNK_BYTES, (chunk) => {
+      let bytes = chunk;
+      if (carry) {
+        const merged = new Uint8Array(carry.length + bytes.length);
+        merged.set(carry, 0);
+        merged.set(bytes, carry.length);
+        bytes = merged;
+        carry = null;
+      }
+      const usable = bytes.length - (bytes.length % 8); // whole stereo f32 frames only
+      if (usable !== bytes.length) carry = bytes.slice(usable);
+      if (usable === 0) return;
+      // Copy into a freshly aligned buffer: Float32Array needs 4-byte alignment.
+      const aligned = new Uint8Array(usable);
+      aligned.set(bytes.subarray(0, usable));
+      const samples = new Float32Array(aligned.buffer);
+      for (let i = 0; i + 1 < samples.length; i += 2) {
+        if (sampleIndex >= frames) break;
+        left[sampleIndex] = samples[i];
+        right[sampleIndex] = samples[i + 1];
+        sampleIndex++;
+      }
+    });
+
+    buffer.copyToChannel(left, 0);
+    buffer.copyToChannel(right, 1);
+    return { buffer, windowStartSec: startSec };
+  } finally {
+    await removeFileIfExists(tempPath);
+  }
+}
+
+/** Browser fallback: the old whole-file fetch + decodeAudioData. */
+async function decodeWholeSourceInBrowser(src, referenceSampleRate, sourceDurationSec) {
+  if (sourceDurationSec > BROWSER_DECODE_WARN_SECONDS) {
+    console.warn(
+      `Export audio: "${src}" is ${Math.round(sourceDurationSec)}s long and this export is running in a browser, ` +
+        `where there is no FFmpeg sidecar to decode only the used window — the whole file (roughly ` +
+        `${(sourceDurationSec * referenceSampleRate * 2 * 4 / 1e9).toFixed(2)} GB decoded) has to be held in memory. ` +
+        'Use the desktop app for long projects.'
+    );
+  }
+  const response = await fetch(src);
+  const arrayBuffer = await response.arrayBuffer();
+  // Decode at the export's target sample rate directly — avoids a second
+  // resample pass when this buffer is later copied into the offline mix,
+  // which runs at the same rate.
+  const decodeCtx = new OfflineAudioContext(2, 1, referenceSampleRate);
+  const buffer = await decodeCtx.decodeAudioData(arrayBuffer);
+  return { buffer, windowStartSec: 0 };
+}
+
+/**
+ * Source length past which a browser-only export is worth warning about:
+ * roughly 230 MB of decoded stereo float audio.
+ */
+export const BROWSER_DECODE_WARN_SECONDS = 600;
+/** PCM read chunk size for the windowed decode (256 KiB ≈ 0.68 s of 48 kHz stereo f32). */
+const AUDIO_WINDOW_READ_CHUNK_BYTES = 1 << 18;
+
+/**
+ * Temp directory for export-time PCM windows: the OS temp dir in Tauri (the
+ * save path's own folder is not necessarily writable, and the project cache
+ * may not exist for an export of an unsaved project). Cached after the first
+ * lookup.
+ */
+let exportTempDirPath = null;
+async function getExportTempDirPath() {
+  if (exportTempDirPath) return exportTempDirPath;
+  const { tempDir } = await import('@tauri-apps/api/path');
+  exportTempDirPath = await tempDir();
+  return exportTempDirPath;
+}
+
+/** Clear the decoded-audio-buffer cache (e.g. on project load / export end). */
 export function clearExportAudioCache() {
   decodedBufferCache.clear();
+  wholeFileBufferCache.clear();
+  decodedBufferSeconds = 0;
+}
+
+/**
+ * Resolve the on-disk path of a clip's media source from the project's media
+ * library, so the Tauri windowed decode can hand it to FFmpeg. Matches on URL
+ * first (the convention the rest of the app uses), then on file name — clips
+ * can hold a URL that predates a blob -> disk re-point.
+ */
+function resolveSourcePath(src, mediaAssets) {
+  if (!src || !Array.isArray(mediaAssets) || mediaAssets.length === 0) return null;
+  const exact = mediaAssets.find((a) => a?.url === src);
+  if (exact?.path) return exact.path;
+  const tail = (s) => String(s || '').split(/[/\\]/).pop();
+  const byName = mediaAssets.find((a) => a?.url && tail(a.url) === tail(src));
+  return byName?.path || null;
+}
+
+/** Media-library duration for a source URL, when the library knows it. */
+function resolveSourceDuration(src, mediaAssets) {
+  if (!src || !Array.isArray(mediaAssets)) return 0;
+  const exact = mediaAssets.find((a) => a?.url === src);
+  return Number.isFinite(exact?.duration) ? exact.duration : 0;
 }
  
 /**
@@ -1485,6 +1786,11 @@ export async function mixdownAudio({
   // gainAt is then null and scheduling below is byte-for-byte what it was
   // before this step (a single flat gain value, no automation).
   transitionAudioWindows = new Map(),
+  // Media library, used ONLY to find each source's on-disk path so the Tauri
+  // windowed decode (decodeAudioWindow) can hand just the used range to
+  // FFmpeg. Omitted/empty simply means every source decodes whole, exactly as
+  // before this change.
+  mediaAssets = [],
 }) {
   const sources = collectAudioSources({ entities, exportStartTime, exportDuration, tracks, transitionAudioWindows });
   if (sources.length === 0) return null;
@@ -1492,35 +1798,25 @@ export async function mixdownAudio({
   const totalFrames = Math.max(1, Math.ceil(exportDuration * sampleRate));
   const offlineCtx = new OfflineAudioContext(2, totalFrames, sampleRate);
  
-  const decoded = await Promise.all(
-    sources.map(async ({ entity, comp, src, window, gainAt }) => {
-      try {
-        const buffer = await decodeAudioSource(src, sampleRate);
-        return { entity, comp, buffer, window, gainAt };
-      } catch (err) {
-        console.warn(`Export audio: failed to decode source for "${entity.name}":`, err);
-        return null;
-      }
-    })
-  );
- 
-  let scheduledAny = false;
- 
-  for (const item of decoded) {
-    if (!item) continue;
-    const { entity, comp, buffer, window, gainAt } = item;
- 
-    // Effective rate = AudioSource.speed (content rate inside the clip) ×
-    // Transform.speed (clip-level rate), matching how the live preview
-    // computes media rate (EntityRenderer.jsx) and the video frame
-    // provider's playbackRate. NOTE (Work C scope constraint): the mixdown
-    // is ONE static render over the whole export window, so only the raw
-    // component values can apply — a Transform.speed that is itself
-    // keyframe-animated or script-driven can't be followed here. Video
-    // frames and live preview resolve speed per frame; audio export uses
-    // the static value. Volume goes through an (offline) GainNode below,
-    // which — unlike HTMLMediaElement.volume — accepts boosts above 1.0
-    // unchanged, so loud clips export loud.
+  // ── Timing pass (synchronous) ───────────────────────────────────────────
+  // Everything that decides WHICH range of which source is needed is computed
+  // here, once: the decode pass below needs that window, and the scheduling
+  // pass after it must not recompute it (one definition, so the decoded
+  // window and the scheduled offset can never drift apart).
+  //
+  // Effective rate = AudioSource.speed (content rate inside the clip) ×
+  // Transform.speed (clip-level rate), matching how the live preview
+  // computes media rate (EntityRenderer.jsx) and the video frame provider's
+  // playbackRate. NOTE (Work C scope constraint): the mixdown is ONE static
+  // render over the whole export window, so only the raw component values can
+  // apply — a Transform.speed that is itself keyframe-animated or
+  // script-driven can't be followed here. Video frames and live preview
+  // resolve speed per frame; audio export uses the static value. Volume goes
+  // through an (offline) GainNode below, which — unlike
+  // HTMLMediaElement.volume — accepts boosts above 1.0 unchanged, so loud
+  // clips export loud.
+  const prepared = [];
+  for (const { entity, comp, src, window, gainAt } of sources) {
     const localTransformSpeed = entity.components?.find((c) => c.type === 'Transform')?.speed;
     const parentTransformSpeed = entity.parentId
       ? entities?.find((e) => e.id === entity.parentId)?.components?.find((c) => c.type === 'Transform')?.speed
@@ -1535,7 +1831,7 @@ export async function mixdownAudio({
  
     // Same clamped-overlap math as the video seek path: figure out what
     // slice of this entity's audible window actually falls inside the
-    // export window, then map that back to a source-buffer offset via
+    // export window, then map that back to a source offset via
     // mediaOffset + speed, exactly like scrubbing would.
     const entityStart = entity.startTime;
     const clipStart = Math.max(window.start, exportStartTime);
@@ -1546,10 +1842,62 @@ export async function mixdownAudio({
     const localTimeAtClipStart = clipStart - entityStart;
     const sourceOffset = mediaOffset + localTimeAtClipStart * speed;
     const playDuration = (clipEnd - clipStart) * speed;
+    if (!(playDuration > 0)) continue;
+
+    prepared.push({
+      entity,
+      comp,
+      src,
+      window,
+      gainAt,
+      speed,
+      clipStart,
+      clipEnd,
+      whenInMix,
+      sourceOffset,
+      playDuration,
+      volume,
+      sourcePath: resolveSourcePath(src, mediaAssets),
+      sourceDuration: resolveSourceDuration(src, mediaAssets),
+    });
+  }
  
-    if (sourceOffset >= buffer.duration) continue;
+  // ── Decode pass: one WINDOW per clip ───────────────────────────────────
+  // Each clip decodes only [sourceOffset, sourceOffset + playDuration) of its
+  // file (Tauri; the browser fallback still decodes whole, see
+  // decodeWholeSourceInBrowser). Capped concurrency: decoding is mostly disk 
+  // and FFmpeg-process work, and a project can easily have a hundred clips on
+  // distinct ranges of a handful of files.
+  const decoded = await mapWithConcurrency(prepared, DECODE_CONCURRENCY, async (item) => {
+    const windowStart = Math.max(0, item.sourceOffset);
+    try {
+      const { buffer, windowStartSec } = await decodeAudioWindow(
+        item.src,
+        sampleRate,
+        windowStart,
+        windowStart + item.playDuration,
+        { sourcePath: item.sourcePath, sourceDurationSec: item.sourceDuration }
+      );
+      return { ...item, buffer, windowStartSec };
+    } catch (err) {
+      console.warn(`Export audio: failed to decode source for "${item.entity.name}":`, err);
+      return null;
+    }
+  });
+ 
+  let scheduledAny = false;
+ 
+  for (const item of decoded) {
+    if (!item) continue;
+    const { buffer, gainAt, speed, clipStart, clipEnd, whenInMix, sourceOffset, playDuration, volume, windowStartSec } = item;
+
+    // Absolute source time -> position INSIDE this windowed buffer. For the
+    // whole-file browser fallback windowStartSec is 0, so this is exactly the
+    // old `sourceOffset` and nothing downstream changes.
+    const bufferOffset = sourceOffset - windowStartSec;
+    if (bufferOffset >= buffer.duration) continue;
     // Seconds of SOURCE audio this clip consumes (buffer time, not real time).
-    const sourceSeconds = Math.min(playDuration, buffer.duration - sourceOffset);
+    const sourceSeconds = Math.min(playDuration, buffer.duration - bufferOffset);
     if (sourceSeconds <= 0) continue;
  
     const bufferSource = offlineCtx.createBufferSource();
@@ -1558,7 +1906,9 @@ export async function mixdownAudio({
       bufferSource.buffer = buffer;
       // start(when, offset, duration): `duration` is in BUFFER seconds and is
       // independent of playbackRate (MDN) — at speed 1 it is also real time.
-      bufferSource.start(whenInMix, sourceOffset, sourceSeconds);
+      // `bufferOffset` (not the absolute source time) is what offsets into a
+      // windowed buffer.
+      bufferSource.start(whenInMix, bufferOffset, sourceSeconds);
     } else {
       // Preview plays media through HTMLMediaElement, which keeps the pitch
       // when playbackRate ≠ 1. AudioBufferSourceNode.playbackRate does NOT
@@ -1567,9 +1917,18 @@ export async function mixdownAudio({
       // not real time). So time-stretch just the slice this clip uses
       // (pitch-preserving WSOLA, utils/timeStretch.js) and play the result
       // back at rate 1 — its length is already the real-time length.
+      // Step 2 of the memory work: this slice used to be cut out of a buffer
+      // holding the ENTIRE source file, and both `from`/`to` were absolute
+      // source sample indices. With a windowed buffer the zero point is the
+      // window start, so the same slice is expressed relative to it
+      // (`bufferOffset`) and lands on exactly the audio this clip uses — the
+      // window decode hands back a short buffer, so the slice is now the whole
+      // of it. sourceSeconds is likewise buffer-relative (clamped to the
+      // buffer's own length above), so the from/to maths still lines up with
+      // the window's zero point.
       const sr = buffer.sampleRate;
-      const from = Math.max(0, Math.floor(sourceOffset * sr));
-      const to = Math.min(buffer.length, Math.ceil((sourceOffset + sourceSeconds) * sr));
+      const from = Math.max(0, Math.floor(bufferOffset * sr));
+      const to = Math.min(buffer.length, Math.ceil((bufferOffset + sourceSeconds) * sr));
       if (to - from < 2) continue;
  
       const slice = [];

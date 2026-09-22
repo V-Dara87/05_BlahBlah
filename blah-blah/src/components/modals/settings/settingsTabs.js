@@ -192,7 +192,13 @@ export const SETTINGS_TABS = [
     subtitle: 'Desktop environment and background sidecars',
     keywords: ['ffmpeg', 'sidecar', 'tauri', 'desktop', 'runtime', 'diagnostics'],
     Component: SystemTab,
-    getProps: (ctx) => ({ onResetAll: () => resetAllSettings(ctx) }),
+    getProps: (ctx) => ({
+      onResetAll: () => resetAllSettings(ctx),
+      // Global editor preferences (services/editorSettings.js) — exposed here
+      // for the timeline's canvas renderer toggle; see SystemTab.jsx.
+      editorSettings: ctx.editorSettings,
+      onEditorSettingsChange: ctx.onEditorSettingsChange,
+    }),
   },
 ];
 

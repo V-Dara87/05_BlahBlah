@@ -44,8 +44,22 @@ export function getTickIntervalSeconds(pixelsPerSecond) {
  * @returns {Array<{ track, clips, rowHeight }>}
  */
 export function computeTrackLanes(tracks = [], clips = []) {
+  // ONE pass over `clips` into per-track buckets, instead of re-filtering the
+  // whole array once per track. The result is identical (each row's `clips`
+  // keeps the array's own order) but the cost drops from O(tracks x clips) to
+  // O(clips + tracks), which matters because this runs on every project change
+  // for both timeline renderers — and a long project is thousands of clips
+  // across a couple of dozen tracks.
+  const byTrack = new Map();
+  for (const clip of clips || []) {
+    if (!clip) continue;
+    const bucket = byTrack.get(clip.trackId);
+    if (bucket) bucket.push(clip);
+    else byTrack.set(clip.trackId, [clip]);
+  }
+
   return (tracks || []).map((track) => {
-    const trackClips = (clips || []).filter((c) => c.trackId === track.id);
+    const trackClips = byTrack.get(track.id) || [];
     return {
       track,
       clips: trackClips,

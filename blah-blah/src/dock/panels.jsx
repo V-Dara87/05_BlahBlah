@@ -209,6 +209,10 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
 export const TimelineDockPanel = memo(function TimelineDockPanel() {
   const {
     tracks, entities, mediaAssets, calculatedDuration,
+    // Global editor preferences: the timeline's canvas renderer toggle lives
+    // in services/editorSettings.js and is exposed here via the settings modal
+    // (Settings -> System -> Timeline rendering).
+    editorSettings,
     selectedEntityId, setSelectedEntityId, snappingEnabled,
     selectedIds, setSelectedIds,
     handleUpdateEntity, handleUpdateClips, handleDuplicateClips, handleDeleteEntity,
@@ -307,6 +311,7 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
         onCopySelected={onCopySelected}
         onCutSelected={onCutSelected}
         onPasteClips={onPasteClips}
+        canvasTimeline={Boolean(editorSettings?.canvasTimeline)}
         onUpdateTrack={handleUpdateTrack}
         onDeleteTrack={handleDeleteTrack}
         onAddTrack={handleAddTrack}

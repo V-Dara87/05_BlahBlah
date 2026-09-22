@@ -55,6 +55,10 @@
       "allow": [{ "path": "**" }]
     },
     {
+      "identifier": "fs:allow-write",
+      "allow": [{ "path": "**" }]
+    },
+    {
       "identifier": "fs:allow-read-dir",
       "allow": [{ "path": "**" }]
     },

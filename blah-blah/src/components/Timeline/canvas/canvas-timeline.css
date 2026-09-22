@@ -1,0 +1,50 @@
+/* Canvas timeline overlay (see TimelineCanvas.jsx).
+ *
+ * The overlay is a viewport-pinned layer inside `.timeline-scroll-area`
+ * (which is already `position: relative`), offset past the time ruler at the
+ * top and the sticky track-header column on the left, so it exactly covers the
+ * lanes viewport. It does NOT scroll with the content — TimelineCanvas reads
+ * the scroll offsets from `.lanes-wrapper` and redraws instead — which is what
+ * keeps native scrolling, the minimap scrollbar and zoom anchoring working
+ * unchanged.
+ *
+ * `pointer-events: none` for now: this step is view-only, so clicks fall
+ * through to the existing lane handlers (seek / pan / lasso). Later steps make
+ * it the interactive surface.
+ *
+ * z-index sits above the lane backgrounds (5) and below the playhead (40/41),
+ * which stays a DOM element driven by playbackStore, so the playhead keeps
+ * updating without a React render even with the canvas on.
+ */
+/* The two offsets the overlay needs are also used by the DOM timeline; kept
+ * here as CSS custom properties so a future change to HEADER_WIDTH or the
+ * ruler height only has to be made in one place (Timeline.jsx's HEADER_WIDTH
+ * constant is the same 180px). */
+.timeline-editor-panel {
+  --timeline-header-width: 180px;
+  --timeline-ruler-height: 30px;
+}
+
+.timeline-canvas-layer {
+  position: absolute;
+  left: var(--timeline-header-width, 180px);
+  top: var(--timeline-ruler-height, 30px);
+  right: 0;
+  bottom: 0;
+  /* Above the lane backgrounds (5), below the playhead (40/41) and the lasso
+   * overlay (50) so both stay visible over the canvas. */
+  z-index: 6;
+  pointer-events: none;
+  overflow: hidden;
+  /* layout + paint, deliberately NOT `strict`: `strict` adds size containment,
+   * which makes the box's intrinsic size zero — fine while all four insets are
+   * set, but one stray `auto` would collapse the layer and silently blank the
+   * whole timeline. */
+  contain: layout paint;
+}
+
+.timeline-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}

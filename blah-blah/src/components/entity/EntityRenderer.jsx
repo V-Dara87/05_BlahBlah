@@ -7,7 +7,7 @@ import { getCompiledReactComponent, detectScriptKind, extractScriptProps } from 
 import { resolveScriptProps } from '../../engine/referenceTypes';
 import { resolveTextRendererText, cssFontFamily, DEFAULT_TEXT_FONT_SIZE, DEFAULT_TEXT_FONT_COLOR, DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_WEIGHT } from '../../engine/textRenderer';
 import { isScriptComponent, isVideoEntity, isAudioEntity } from '../../engine/ecs';
-import { computeActiveEntitiesAtTime, resolveTransitionFramePlan, getTransitionAudioWindows } from '../../engine/renderPipeline';
+import { computeActiveEntitiesAtTime, buildActiveEntityIndex, resolveTransitionFramePlan, getTransitionAudioWindows } from '../../engine/renderPipeline';
 import { EntityErrorBoundary } from './EntityErrorBoundary';
 import { usePreviewViewport } from '../../hooks/usePreviewViewport';
 import { useGizmoDrag } from '../../hooks/useGizmoDrag';
@@ -118,8 +118,25 @@ export function EntityRenderer({
   // export took a real fps parameter). This useMemo stays local because
   // memoization is a React-specific concern; the logic inside is the
   // shared pure function.
+  // Step 2 of the playback-perf fix -- the visibility half is hoisted out of
+  // the per-frame path. `currentTime` changes every rendered frame while
+  // playing, so a single memo keyed on it recomputed the entityMap/trackMap
+  // rebuild, the parent-chain visibility filter AND the transform pass 60
+  // times a second for the whole project. Only the TRANSFORM pass actually
+  // depends on the current time; `buildActiveEntityIndex` (which owns the
+  // visibility rule, shared with computeActiveEntitiesAtTime below
+  // unchanged) depends on entities/tracks alone, so it is memoized WITHOUT
+  // currentTime and rebuilt only when the project changes. The second memo
+  // then re-runs transform resolution (keyframes + motion scripts) for just
+  // the handful of entities the index says are live at this instant.
+  const activeEntityIndex = useMemo(
+    () => buildActiveEntityIndex({ entities, tracks }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- entities/tracks drive the geometry; `scripts` and `scriptsRecompiledTick` are included so a script edit still invalidates the downstream transform memo (the index itself is script-independent), exactly like the single memo this replaced. mediaAssets keeps the same invalidation surface as before.
+    [entities, tracks, scripts, scriptsRecompiledTick, mediaAssets]
+  );
+
   const computedEntities = useMemo(() => {
-    return computeActiveEntitiesAtTime({ entities, tracks, scripts, time: currentTime, fps, allAssets: mediaAssets });
+    return computeActiveEntitiesAtTime({ entities, tracks, scripts, time: currentTime, fps, allAssets: mediaAssets, index: activeEntityIndex });
     // NOTE -- clip-duration vs. tween-duration boundary: a non-looping
     // tween correctly clamps to 1 and settles once localTime passes the
     // tween's own duration, but the active-entity check only knows about
@@ -127,8 +144,8 @@ export function EntityRenderer({
     // tween duration outlasts the clip, the entity vanishes mid-animation
     // instead of landing on its final frame — documented authoring trap,
     // intentionally not "fixed" here.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- scriptsRecompiledTick intentionally re-runs the memo when the module-level compile cache warms (the bundler fills it asynchronously, outside React state).
-  }, [entities, tracks, scripts, currentTime, fps, scriptsRecompiledTick, mediaAssets]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- activeEntityIndex carries the project-change invalidation (including scriptsRecompiledTick, so a freshly-bundled script still re-runs this pass); entities/tracks/scripts stay listed so the transform pass can never be served stale entity objects.
+  }, [activeEntityIndex, currentTime, fps, mediaAssets, entities, tracks, scripts]);
  
   // Track-order -> stacking order. Previously every overlay entity got the
   // same flat zIndex (15, or 30 if selected) regardless of which track it

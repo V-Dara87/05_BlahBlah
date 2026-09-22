@@ -1,6 +1,6 @@
  
 import { useState, useRef, useEffect } from 'react';
-import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
+import { Muxer, ArrayBufferTarget, StreamTarget } from 'mp4-muxer';
 import {
   Download,
   FolderOpen,
@@ -21,6 +21,7 @@ import { formatTimecode } from '../../utils/timeFormat';
 import { isVideoEntity, isTransitionClipEntity } from '../../engine/ecs';
 import { auditTransitionClips, buildMediaDurationsFromAssets } from '../../engine/renderPipeline';
 import { isTauri } from '../../services/tauriFsAdapter';
+import { openExportFileStream } from '../../services/exportFileStream';
 import {
   drawExportFrame,
   createCanvasContainerPool,
@@ -304,6 +305,9 @@ export function ExportModal({
  
     let videoEncoder = null;
     let muxer = null;
+    // Set when writing the muxed file straight to disk (Tauri); stays null in
+    // the browser, where the output is buffered and downloaded as a Blob.
+    let streamedFile = null;
     setAudioStatus('mixing');
  
     try {
@@ -324,6 +328,21 @@ export function ExportModal({
           return src ? videoFrameProvider.preload(c.id, src) : Promise.resolve();
         })
       );
+
+      // Bounded-memory check: the <video> elements and the offscreen script
+      // containers are held for the WHOLE run but must only scale with the
+      // number of sources and the scripts active at one instant — never with
+      // export length. Logged here so a one-hour, thousands-of-clips project
+      // can be verified rather than assumed (and flagged when unexpected).
+      console.info(
+        `Export: ${totalFrames} frames (${exportDuration.toFixed(1)}s) · ${videoFrameProvider.size()} video source(s) held open · ` +
+          `${canvasContainers.size()} script container(s) at start`
+      );
+      if (videoFrameProvider.size() > 400) {
+        console.warn(
+          `Export: holding ${videoFrameProvider.size()} <video> elements open for this export — that is one per video entity, not per source file. Consider consolidating repeated sources if memory is tight.`
+        );
+      }
  
       // 1b. Mix every AudioSource / audible VideoRenderer down into one
       // deterministic buffer before the frame loop starts. Doing this
@@ -354,6 +373,12 @@ export function ExportModal({
             sampleRate: AUDIO_SAMPLE_RATE,
             tracks,
             transitionAudioWindows,
+            // So each clip's audio decodes only the range it uses (Tauri, via
+            // the FFmpeg sidecar) instead of the whole source file — see
+            // decodeAudioWindow in exportRunner.js. Harmless when the library
+            // has no on-disk paths (browser): the fallback decodes whole and
+            // warns for long sources.
+            mediaAssets,
           });
         } catch (err) {
           console.warn('Export audio: mixdown failed, exporting video only:', err);
@@ -371,8 +396,29 @@ export function ExportModal({
       // track when there's actually a mixed buffer to encode — an empty
       // project or a browser without AudioEncoder support still produces a
       // valid (silent) MP4 rather than failing the whole export.
+      // Step 3 of the long-export memory work: in Tauri the muxer writes
+      // straight into an open file handle as each chunk is finalized, so the
+      // finished MP4 is never held in memory at all (and there is no second
+      // full copy for writeFile). Outside Tauri there is no writable handle,
+      // so the browser keeps the in-memory ArrayBufferTarget + Blob download.
+      //
+      // `fastStart` must NOT be 'in-memory' for the streamed path — that is
+      // exactly the option that makes the muxer buffer the whole file to move
+      // its moov atom to the front. `false` keeps moov at the end and lets
+      // samples stream out as they are produced; the FFmpeg-mastering engine
+      // rewrites the intermediate file anyway, and a local MP4 with a trailing
+      // moov plays and seeks fine in desktop players. (If web-optimized output
+      // is ever needed from the WebCodecs engine, mp4-muxer's object form
+      // `fastStart: { expectedVideoChunks, expectedAudioChunks }` reserves the
+      // space up front and seeks back, which stays streaming-friendly.)
+      streamedFile = isTauri() && savePath
+        ? await openExportFileStream(isFfmpegEngine && tempIntermediatePath ? tempIntermediatePath : savePath)
+        : null;
+
       muxer = new Muxer({
-        target: new ArrayBufferTarget(),
+        target: streamedFile
+          ? new StreamTarget({ onData: streamedFile.onData })
+          : new ArrayBufferTarget(),
         video: { codec: 'avc', width: encodeWidth, height: encodeHeight },
         ...(mixedAudioBuffer
           ? {
@@ -383,7 +429,7 @@ export function ExportModal({
               },
             }
           : {}),
-        fastStart: 'in-memory',
+        fastStart: streamedFile ? false : 'in-memory',
       });
  
       videoEncoder = new VideoEncoder({
@@ -569,15 +615,28 @@ export function ExportModal({
  
       muxer.finalize();
  
-      const { buffer } = muxer.target;
-      const blob = new Blob([buffer], { type: 'video/mp4' });
- 
-      if (isTauri() && savePath) {
-        const { writeFile, remove } = await import('@tauri-apps/plugin-fs');
+      // Streamed path: every chunk was already written at its absolute offset
+      // while the frame loop ran, so all that is left is flushing the last
+      // pending write and closing the handle. `close()` is awaited BEFORE
+      // FFmpeg is pointed at the intermediate file, so the mastering pass can
+      // never read a partially-written file. No Blob and no second copy of the
+      // output exist at any point here.
+      if (streamedFile) {
+        const outputFile = streamedFile;
+        const writtenBytes = await outputFile.close();
+        // Cleared only once the handle is closed: if close() itself throws, the
+        // finally block below still aborts and removes the partial file.
+        streamedFile = null;
+        console.info(
+          `Export: streamed ${(writtenBytes / (1024 * 1024)).toFixed(1)} MB to ${outputFile.filePath} while muxing (never held in memory).`
+        );
+        console.info(
+          `Export: ${videoFrameProvider.size()} video source(s) held open, ${canvasContainers.size()} script container(s) at finish.`
+        );
+
         if (isFfmpegEngine && tempIntermediatePath) {
           setExportPhase('ffmpeg');
-          await writeFile(tempIntermediatePath, new Uint8Array(buffer));
- 
+          const { remove } = await import('@tauri-apps/plugin-fs');
           await executeFfmpegExport({
             inputPath: tempIntermediatePath,
             outputPath: savePath,
@@ -601,13 +660,16 @@ export function ExportModal({
           }
           setSavedFilePath(savePath);
         } else {
-          // Native save: write the bytes straight to the path the user
-          // picked in the dialog, then surface it with a "Show in Explorer"
-          // action instead of the browser download anchor.
-          await writeFile(savePath, new Uint8Array(buffer));
+          // Native save: the file at savePath IS the output — it was written
+          // as the muxer produced it, so there is no byte copy left to do
+          // here. "Show in Explorer" replaces the browser download anchor.
           setSavedFilePath(savePath);
         }
       } else {
+        // Browser: no writable file handle exists, so the file is buffered
+        // and offered as a normal download (unchanged behaviour).
+        const { buffer } = muxer.target;
+        const blob = new Blob([buffer], { type: 'video/mp4' });
         const url = URL.createObjectURL(blob);
         setDownloadUrl(url);
       }
@@ -621,6 +683,14 @@ export function ExportModal({
         // already closed
       }
     } finally {
+      // A stream still open here means the export threw before it finished:
+      // flush what we can, close the handle and remove the partial file. A
+      // completed export has already nulled this out, so the finished output
+      // is never touched.
+      if (streamedFile) {
+        await streamedFile.abort();
+        streamedFile = null;
+      }
       if (tempIntermediatePath) {
         try {
           const { exists, remove } = await import('@tauri-apps/plugin-fs');

@@ -1,3 +1,37 @@
+/**
+ * Timeline — the clip/lane area of the editor.
+ *
+ * TWO RENDERERS, ONE MODEL
+ * ----------------------------------------------------------------------------
+ * With the `canvasTimeline` editor setting OFF (the default) this component
+ * renders the classic DOM timeline: one TrackLane per track, one ClipItem per
+ * clip, each with its own pointer handlers and waveform canvas. With it ON, the
+ * clip/lane area is drawn by components/Timeline/canvas/TimelineCanvas.jsx —
+ * one viewport-sized canvas over a spacer of the same size — while everything
+ * else here stays React: the toolbar, track headers, minimap scrollbar, zoom
+ * and scroll logic, context menus, the Inspector, and the playhead (a DOM
+ * element updated through playbackStore without a React render). Both paths
+ * read their geometry from the SAME model (utils/timelineScene.js), so a clip
+ * is in the same place either way.
+ *
+ * The canvas path in progress is view-only (selection/move/trim/menus/drops
+ * are being ported onto it); the DOM path is the supported default and stays
+ * until the canvas has parity.
+ *
+ * WHEN THE CANVAS BECOMES THE DEFAULT (rollout checklist, plan step 8): once
+ * the parity walk-through passes (selection, multi-select, Alt-duplicate,
+ * Ctrl-parent, trims, silence cuts, transitions, drops, menus, locked tracks,
+ * undo granularity) and the frame-time measurements on a ~1 hour / ~3000 clip
+ * test project look right while scrolling, wheel-zooming, dragging, trimming
+ * and playing, the DOM renderer can be deleted. Files that then go away:
+ *   components/Timeline/ClipItem.jsx        (cards → canvas draw)
+ *   components/Timeline/TrackLane.jsx       (lane + drop targets → canvas)
+ *   components/Timeline/TransitionClipItem.jsx
+ *   components/Timeline/TimeRuler.jsx       (ruler ticks → canvas draw)
+ *   components/shared/WaveformCanvas.jsx    (per-clip canvas → drawWaveform)
+ * Keeping them one release behind the setting is intentional, so anyone who
+ * hits a canvas bug has a working timeline to switch back to.
+ */
 import { useRef, useState, useMemo, useCallback, useEffect, memo } from 'react';
 import { Plus, ZoomIn, ZoomOut, ArrowLeftToLine, ArrowRightToLine, X } from 'lucide-react';
 import { TimeRuler } from './TimeRuler';
@@ -8,6 +42,7 @@ import { PlayheadHandle, PlayheadLine } from './Playhead';
 import { usePlaybackStore } from '../../hooks/PlaybackContext';
 import { registerTimelineCenterOnPlayhead } from '../../services/timelineViewControls';
 import { applyEdgeAutoScroll } from '../../utils/timelineAutoScroll';
+import { TimelineCanvas } from './canvas/TimelineCanvas';
 const HEADER_WIDTH = 180;
  
 // Vertical layout constants + pure lane geometry for the flat timeline
@@ -34,6 +69,13 @@ export const Timeline = memo(function Timeline({
   onUpdateClips,
   onDuplicateClips,
   onDeleteClip,
+  // Clipboard actions for the timeline's right-click menus. These have always
+  // been passed down from panels.jsx (and TrackLane/ClipItem have always
+  // declared them) but were never declared HERE, so they arrived as
+  // `undefined` and Copy / Cut / Paste silently never appeared in either menu.
+  onCopySelected,
+  onCutSelected,
+  onPasteClips,
   onUpdateTrack,
   onDeleteTrack,
   onAddTrack,
@@ -57,6 +99,9 @@ export const Timeline = memo(function Timeline({
   onOpenSilenceRemover,
   onOpenSilenceRemoverForTrack,
   silencePreviewData = null,
+  // Draw the clip/lane area on a canvas instead of one ClipItem per clip
+  // (services/editorSettings.js -> canvasTimeline). Off = today's DOM path.
+  canvasTimeline = false,
 }) {
   const [boxSelect, setBoxSelect] = useState(null); // { startX, startY, endX, endY } for lasso
   const playbackStore = usePlaybackStore();
@@ -788,6 +833,27 @@ export const Timeline = memo(function Timeline({
   };
  
   // Compute which clips are inside the box selection in real-time
+  // Silence-cut preview for the canvas renderer: TrackLane matches cuts to a
+  // clip per row (clip / its children / its parent / the whole track); the
+  // canvas needs the same matching keyed by clip id, so it can overlay them
+  // while drawing.
+  const canvasSilenceCuts = useMemo(() => {
+    const map = new Map();
+    if (!silencePreviewData?.cuts?.length) return map;
+    const rootId = silencePreviewData.targetId;
+    const rootParentId = clips.find((c) => c.id === rootId)?.parentId;
+    for (const clip of clips) {
+      if (silencePreviewData.targetType === 'clip') {
+        if (clip.id === rootId || clip.parentId === rootId || rootParentId === clip.id) {
+          map.set(clip.id, silencePreviewData.cuts);
+        }
+      } else if (silencePreviewData.targetType === 'track' && clip.trackId === rootId) {
+        map.set(clip.id, silencePreviewData.cuts);
+      }
+    }
+    return map;
+  }, [silencePreviewData, clips]);
+
   const boxSelectedIds = useMemo(() => {
     if (!boxSelect) return [];
     const x1 = Math.min(boxSelect.startX, boxSelect.endX);
@@ -921,6 +987,11 @@ export const Timeline = memo(function Timeline({
               if (
                 e.target === e.currentTarget ||
                 e.target.classList.contains('track-grid-pattern') ||
+                // Canvas renderer: the lanes are spacers, so the empty space
+                // a user clicks is `.track-lane-spacer` — without this, click
+                // -to-clear-selection silently stops working with the canvas
+                // on, since the old class checks never match.
+                e.target.classList.contains('track-lane-spacer') ||
                 e.target.classList.contains('track-lane-row')
               ) {
                 onSelectClip(null);
@@ -1017,6 +1088,16 @@ export const Timeline = memo(function Timeline({
                       onOpenSilenceRemoverForTrack={onOpenSilenceRemoverForTrack}
                     />
                   </div>
+                  {canvasTimeline ? (
+                    // Canvas renderer: the row keeps its exact size so native
+                    // scrolling, the minimap scrollbar and zoom anchoring are
+                    // untouched, but the clips are drawn by TimelineCanvas
+                    // instead of being DOM nodes.
+                    <div
+                      className="track-lane-spacer"
+                      style={{ width: `${totalWidth}px`, height: row.rowHeight, flexShrink: 0 }}
+                    />
+                  ) : (
                   <TrackLane
                     track={row.track}
                     tracks={tracks}
@@ -1037,6 +1118,9 @@ export const Timeline = memo(function Timeline({
                     onUpdateClips={onUpdateClips}
                     onDuplicateClips={onDuplicateClips}
                     onDeleteClip={onDeleteClip}
+                    onCopySelected={onCopySelected}
+                    onCutSelected={onCutSelected}
+                    onPasteClips={onPasteClips}
                     onAttachScriptToEntity={onAttachScriptToEntity}
                     onDropItemOnTrack={onDropItemOnTrack}
                     onAddMediaAsset={onAddMediaAsset}
@@ -1047,10 +1131,39 @@ export const Timeline = memo(function Timeline({
                     snappingEnabled={snappingEnabled}
                     totalWidth={totalWidth}
                   />
+                  )}
                 </div>
               ))}
             </div>
           </div>
+
+          {/* Canvas renderer: a viewport-pinned overlay over the lanes area.
+
+              It is a SIBLING of `.lanes-wrapper`, not a child: an absolutely
+              positioned element inside a scroll container is scrolled with
+              that container's content, so nesting it there moved the overlay
+              by scrollLeft/scrollTop and then the draw pass offset the canvas
+              content by the same amount — everything visibly drifted twice as
+              fast as the scroll while dragging. `.timeline-scroll-area` is the
+              positioned ancestor (`position: relative`), it does not scroll,
+              and canvas-timeline.css offsets the layer past the ruler and the
+              sticky track-header column, so the overlay stays exactly over
+              the lanes viewport and only what it DRAWS changes with scroll. */}
+          {canvasTimeline && (
+            <TimelineCanvas
+              tracks={tracks}
+              clips={clips}
+              mediaAssets={mediaAssets}
+              pixelsPerSecond={pixelsPerSecond}
+              selectedIds={mergedSelectedIds}
+              exportRange={exportRange}
+              recordingTrackId={recordingTrackId}
+              recordingStartTime={recordingStartTime}
+              recordingLevel={recordingLevel}
+              silenceCuts={canvasSilenceCuts}
+              scrollRef={lanesScrollRef}
+            />
+          )}
         </div>
  
         {/* Always-visible horizontal minimap scrollbar. Its thumb width

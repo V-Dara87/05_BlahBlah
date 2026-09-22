@@ -37,6 +37,11 @@ export const EDITOR_DEFAULTS = Object.freeze({
   pixelsPerSecond: DEFAULT_PIXELS_PER_SECOND,
   defaultClipDurationSec: 5,
   undoHistoryLimit: 100,
+  // Draw the clip/lane area on a single canvas instead of one React component
+  // per clip (components/Timeline/canvas). OFF by default so nothing changes
+  // for anyone who hasn't opted in — the DOM path stays the default until the
+  // canvas has parity (see the rollout note at the top of Timeline.jsx).
+  canvasTimeline: false,
 });
  
 export const EDITOR_MIN_PIXELS_PER_SECOND = 10;
@@ -85,6 +90,8 @@ export function sanitizeEditorSettings(candidate) {
       EDITOR_MAX_UNDO_LIMIT,
       EDITOR_DEFAULTS.undoHistoryLimit
     ),
+    canvasTimeline:
+      typeof c.canvasTimeline === 'boolean' ? c.canvasTimeline : EDITOR_DEFAULTS.canvasTimeline,
   };
 }
  
