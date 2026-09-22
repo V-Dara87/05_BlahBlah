@@ -14,9 +14,10 @@
  * read their geometry from the SAME model (utils/timelineScene.js), so a clip
  * is in the same place either way.
  *
- * The canvas path in progress is view-only (selection/move/trim/menus/drops
- * are being ported onto it); the DOM path is the supported default and stays
- * until the canvas has parity.
+ * The canvas path in progress is view-only for trim/pickwhip/menus/drops, and
+ * now has click select + multi-select, lasso/box-select, and move + Alt-
+ * duplicate + Ctrl-drag-to-parent (plan steps 2–4); the DOM path is the
+ * supported default and stays until the canvas has parity.
  *
  * WHEN THE CANVAS BECOMES THE DEFAULT (rollout checklist, plan step 8): once
  * the parity walk-through passes (selection, multi-select, Alt-duplicate,
@@ -204,7 +205,7 @@ export const Timeline = memo(function Timeline({
     }
     updateScrollMetrics();
   };
-
+ 
   // Re-apply the last user scroll position after the panel comes back from
   // being hidden. Waiting one frame lets layout settle so the clamp uses the
   // real clientWidth (a clamp against clientWidth === 0 either pins the view
@@ -244,10 +245,10 @@ export const Timeline = memo(function Timeline({
   useEffect(() => {
     const el = lanesScrollRef.current;
     if (!el) return undefined;
-
+ 
     let wasHidden = el.clientWidth === 0;
     let wasIntersecting = true;
-
+ 
     let resizeObserver = null;
     if (typeof ResizeObserver !== 'undefined') {
       resizeObserver = new ResizeObserver(() => {
@@ -258,7 +259,7 @@ export const Timeline = memo(function Timeline({
       });
       resizeObserver.observe(el);
     }
-
+ 
     let intersectionObserver = null;
     if (typeof IntersectionObserver !== 'undefined') {
       intersectionObserver = new IntersectionObserver((entries) => {
@@ -268,7 +269,7 @@ export const Timeline = memo(function Timeline({
       });
       intersectionObserver.observe(el);
     }
-
+ 
     return () => {
       resizeObserver?.disconnect();
       intersectionObserver?.disconnect();
@@ -372,7 +373,7 @@ export const Timeline = memo(function Timeline({
       }
     };
   }, []);
-
+ 
   // Toolbar +/- buttons: same fixed step the old handleZoomIn/handleZoomOut
   // used (15), just routed through applyZoomStep so they re-center on the
   // seekbar the same way the wheel gesture does.
@@ -385,7 +386,7 @@ export const Timeline = memo(function Timeline({
     stopSmoothScroll();
     applyZoomStep(-15);
   }, [applyZoomStep, stopSmoothScroll]);
-
+ 
   // Center the view on the playhead WITHOUT changing zoom. Same anchor math
   // as applyZoomStep, but solved so the playhead lands in the middle of the
   // visible lanes area instead of staying under a fixed screen x. The ruler's
@@ -406,7 +407,7 @@ export const Timeline = memo(function Timeline({
     lastUserScrollTimeRef.current = Date.now();
     updateScrollMetrics();
   }, [pixelsPerSecond, playbackStore, updateScrollMetrics, stopSmoothScroll]);
-
+ 
   // Publish the command so the global shortcut dispatcher can call it. The
   // Timeline owns the scroll element; EditorPlaybackShortcuts only resolves
   // the keybinding (see services/timelineViewControls.js).
@@ -853,7 +854,7 @@ export const Timeline = memo(function Timeline({
     }
     return map;
   }, [silencePreviewData, clips]);
-
+ 
   const boxSelectedIds = useMemo(() => {
     if (!boxSelect) return [];
     const x1 = Math.min(boxSelect.startX, boxSelect.endX);
@@ -876,7 +877,7 @@ export const Timeline = memo(function Timeline({
     });
     return selected;
   }, [boxSelect, clips, pixelsPerSecond, layout]);
-
+ 
   // PERF FIX: previously this merge was built inline as
   // `[...new Set([...selectedIds, ...boxSelectedIds])]` at the TrackLane
   // call site below, which allocates a brand-new array every single
@@ -892,7 +893,7 @@ export const Timeline = memo(function Timeline({
     () => [...new Set([...selectedIds, ...boxSelectedIds])],
     [selectedIds, boxSelectedIds]
   );
-
+ 
   return (
     <section className="timeline-editor-panel">
       {/* Top Header of Timeline */}
@@ -1136,9 +1137,9 @@ export const Timeline = memo(function Timeline({
               ))}
             </div>
           </div>
-
+ 
           {/* Canvas renderer: a viewport-pinned overlay over the lanes area.
-
+ 
               It is a SIBLING of `.lanes-wrapper`, not a child: an absolutely
               positioned element inside a scroll container is scrolled with
               that container's content, so nesting it there moved the overlay
@@ -1149,6 +1150,13 @@ export const Timeline = memo(function Timeline({
               and canvas-timeline.css offsets the layer past the ruler and the
               sticky track-header column, so the overlay stays exactly over
               the lanes viewport and only what it DRAWS changes with scroll. */}
+          {/* setSelectedIds / setSelectedEntityId / onSeek (plan step 3): the
+              canvas's own lasso/box-select writes selection the same way
+              Timeline.jsx's handleLassoStart does below — a box can select
+              many clips at once, which onSelectClip/onRangeSelect/
+              onToggleSelect (single-id callbacks) don't express — and falls
+              back to onSeek for a press-release with no drag, matching the
+              DOM lasso's own click-to-seek-on-empty-space behavior. */}
           {canvasTimeline && (
             <TimelineCanvas
               tracks={tracks}
@@ -1162,6 +1170,19 @@ export const Timeline = memo(function Timeline({
               recordingLevel={recordingLevel}
               silenceCuts={canvasSilenceCuts}
               scrollRef={lanesScrollRef}
+              onSelectClip={onSelectClip}
+              onToggleSelect={onToggleSelect}
+              onRangeSelect={onRangeSelect}
+              onClearSelection={onClearSelection}
+              setSelectedIds={setSelectedIds}
+              setSelectedEntityId={setSelectedEntityId}
+              onSeek={onSeek}
+              allClips={clips}
+              onUpdateClip={onUpdateClip}
+              onUpdateClips={onUpdateClips}
+              onDuplicateClips={onDuplicateClips}
+              snappingPoints={snappingPoints}
+              snappingEnabled={snappingEnabled}
             />
           )}
         </div>
