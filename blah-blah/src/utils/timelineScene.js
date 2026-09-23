@@ -349,7 +349,21 @@ export function buildTimelineScene({
       }
     }
 
-    const candidates = itemsInRange(xToTime(x), xToTime(x));
+    // itemsInRange indexes by TIME (startTime/endTime), but a card's drawn
+    // pixel box can be wider than its time span — short clips/transitions are
+    // floored to MIN_CLIP_WIDTH_PX/MIN_TRANSITION_WIDTH_PX so they stay
+    // clickable when zoomed out or trimmed very short (see the item-building
+    // loop above). A zero-width time query at exactly xToTime(x) misses those
+    // padded pixels entirely, so a press anywhere in the padding (which can be
+    // most or all of a short card at low zoom) finds no candidate and falls
+    // through to a 'lane' hit instead — clicking/dragging that clip silently
+    // does nothing. Padding the query window by the widest possible pad (in
+    // time, at the current zoom) pulls those items back in as candidates; the
+    // exact pixel-box check just below (`x < item.x || x > item.x + item.width`)
+    // still does the real filtering, so this only widens the candidate set,
+    // never the hit itself.
+    const widestPadTime = Math.max(MIN_CLIP_WIDTH_PX, MIN_TRANSITION_WIDTH_PX) / pps;
+    const candidates = itemsInRange(xToTime(x) - widestPadTime, xToTime(x) + widestPadTime);
     // Transition strips sit on top of the row, so they win ties.
     const ordered = [...candidates].sort((a, b) => {
       const rank = (item) => (item.kind === 'transition' ? 0 : 1);

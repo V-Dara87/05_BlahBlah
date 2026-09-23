@@ -19,6 +19,11 @@ import { DEFAULT_PIXELS_PER_SECOND } from '../types';
  *                            hard-coded `duration: 5` in useEntityActions.js.
  *  - undoHistoryLimit        How many undo steps are kept. Was HISTORY_LIMIT
  *                            in useUndoableState.js.
+ *  - zoomAnchorMode          What screen position Ctrl/Cmd+wheel zoom holds
+ *                            fixed while pixelsPerSecond changes: 'cursor'
+ *                            (mouse position) or 'playhead' (seekbar
+ *                            position). Was hard-coded to playhead-only
+ *                            anchoring in Timeline.jsx.
  *
  * Bounds (exported so the Settings tab and the sanitizer can never disagree):
  *  - Zoom is limited to 10..160, the range EVERY zoom control can reach. The
@@ -42,6 +47,10 @@ export const EDITOR_DEFAULTS = Object.freeze({
   // for anyone who hasn't opted in — the DOM path stays the default until the
   // canvas has parity (see the rollout note at the top of Timeline.jsx).
   canvasTimeline: false,
+  // What Ctrl/Cmd+wheel zoom holds fixed under the cursor while zooming.
+  // 'cursor' matches most editors (Premiere, Resolve, Figma); 'playhead'
+  // is the older behavior of always centering on the seekbar instead.
+  zoomAnchorMode: 'cursor',
 });
  
 export const EDITOR_MIN_PIXELS_PER_SECOND = 10;
@@ -92,6 +101,10 @@ export function sanitizeEditorSettings(candidate) {
     ),
     canvasTimeline:
       typeof c.canvasTimeline === 'boolean' ? c.canvasTimeline : EDITOR_DEFAULTS.canvasTimeline,
+    zoomAnchorMode:
+      c.zoomAnchorMode === 'cursor' || c.zoomAnchorMode === 'playhead'
+        ? c.zoomAnchorMode
+        : EDITOR_DEFAULTS.zoomAnchorMode,
   };
 }
  

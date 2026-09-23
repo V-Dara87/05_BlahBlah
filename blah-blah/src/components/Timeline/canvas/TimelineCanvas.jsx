@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Scissors, Copy, ClipboardPaste, ArrowLeftToLine, Unlink, Link2 } from 'lucide-react';
 import { buildTimelineScene, CLIP_ZONES } from '../../../utils/timelineScene';
 import { readTimelineTheme, drawTimelineScene, waveformRectFor, wantsWaveform, cursorForZone } from './drawTimeline';
 import { bucketsForCard } from './drawWaveform';
@@ -7,6 +8,10 @@ import { subscribePeaksUpdated } from '../../../services/peakCache';
 import { usePlaybackStore } from '../../../hooks/PlaybackContext';
 import { applyEdgeAutoScroll } from '../../../utils/timelineAutoScroll';
 import { computeTrimmedOffset } from '../../../utils/mediaOffset';
+import { isVideoEntity, isAudioEntity } from '../../../engine/ecs';
+import { ContextMenu } from '../../shared/ContextMenu';
+import { hasClipboardClips } from '../../../utils/clipClipboard';
+import { buildGapRemovalUpdates } from '../../../utils/removeGaps';
 import {
   findTransitionNeighbours,
   maxTransitionDuration,
@@ -14,6 +19,13 @@ import {
   buildMediaDurationsFromAssets,
 } from '../../../engine/renderPipeline';
 import './canvas-timeline.css';
+// .ctx-menu-item/.ctx-menu-row/.ctx-menu-label/.ctx-menu-hint/.ctx-menu-divider
+// (all scoped under .clip-context-menu) are defined in clip-item.css, which
+// ClipItem.jsx imports for the DOM path. ClipItem.jsx is never mounted in
+// canvas mode (see the file header), so without this import the ported
+// context menu below would render completely unstyled the first time
+// nothing else in the app happens to have pulled clip-item.css in already.
+import '../clip-item.css';
  
 /** Return true if candidateChild is a descendant of ancestorId (cycle guard).
  * Identical to ClipItem.jsx's own isDescendantOf — kept in step so a
@@ -261,6 +273,17 @@ export const TimelineCanvas = memo(function TimelineCanvas({
   onDuplicateClips,
   snappingPoints = [],
   snappingEnabled = true,
+  // ── Right-click context menu ──────────────────────────────────────────
+  // Same callbacks ClipItem.jsx's handleContextMenu/<ContextMenu> already
+  // use for the DOM path — Timeline.jsx already passes all of these to this
+  // component (they were previously unused here, since nothing on the
+  // canvas ever opened a menu).
+  onDeleteClip,
+  onCopySelected,
+  onCutSelected,
+  onPasteClips,
+  onSplitVideoAndAudio,
+  onOpenSilenceRemover,
 }) {
   const playbackStore = usePlaybackStore();
   const hostRef = useRef(null);
@@ -315,26 +338,39 @@ export const TimelineCanvas = memo(function TimelineCanvas({
   );
  
   // Latest inputs, read by the rAF draw without making it a dependency (so
-  // scroll/peaks redraws don't need React state churn). Updated in an effect
-  // rather than during render: a ref written while rendering is invisible to
-  // React's own bookkeeping, and it also has to be the freshest value by the
-  // time the drawing effect below schedules a frame.
+  // scroll/peaks redraws don't need React state churn).
+  //
+  // Written DIRECTLY during render (not inside a useEffect, despite every
+  // other ref-mirror in this file using that pattern deliberately — see
+  // hoverRef/lassoRef/pickwhipRef above) because this one specifically has
+  // to be the freshest value the instant ANY draw() call can fire,
+  // including ones triggered synchronously by a DOM 'scroll' event outside
+  // React's own commit cycle (see the scroll listener below). A
+  // useEffect — even a bare one with no deps array — still only runs
+  // AFTER paint, so there was a window on every zoom tick where
+  // applyZoomStep (Timeline.jsx) had already written the new scrollLeft
+  // (dispatching a synchronous native 'scroll' event -> schedule() ->
+  // draw()) before this effect had run to update pixelsPerSecond/scene
+  // here — draw() would then paint the NEW scroll position against the
+  // OLD zoom level for one frame, then snap to correct a frame later.
+  // That mismatch was the reported "canvas mode zoom glitch": writing
+  // this inline during render closes the window entirely, since it's
+  // guaranteed current by the time any effect (including the scroll
+  // listener's synchronous dispatch) can observe it.
   const latestRef = useRef({});
-  useEffect(() => {
-    latestRef.current = {
-      scene,
-      tracks,
-      clips,
-      mediaAssets,
-      pixelsPerSecond,
-      selectedIds,
-      exportRange,
-      recordingTrackId,
-      recordingStartTime,
-      recordingLevel,
-      silenceCuts,
-    };
-  });
+  latestRef.current = {
+    scene,
+    tracks,
+    clips,
+    mediaAssets,
+    pixelsPerSecond,
+    selectedIds,
+    exportRange,
+    recordingTrackId,
+    recordingStartTime,
+    recordingLevel,
+    silenceCuts,
+  };
   const themeRef = useRef(null);
  
   /**
@@ -1224,20 +1260,131 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     window.addEventListener('pointerup', onUp);
   }, [contentPointAtClientPoint, scrollRef, setSelectedIds, setSelectedEntityId, onClearSelection, onSeek]);
  
+  /**
+   * Right-click / middle-click / Alt-drag pan, reimplemented verbatim from
+   * Timeline.jsx's own handlePanStart.
+   *
+   * WHY THIS EXISTS. Panning used to be handled by `.lanes-wrapper`'s own
+   * onPointerDown (handleLanesPointerDown -> handlePanStart) further down in
+   * the DOM. That worked fine back when `.timeline-canvas-layer` had
+   * `pointer-events: none` (see canvas-timeline.css's history): every
+   * pointer event landing in the lanes area passed straight through the
+   * (inert) canvas overlay to `.lanes-wrapper` underneath, pan included.
+   *
+   * Once the canvas layer became the real interactive surface
+   * (`pointer-events: auto`, needed for click-select/move-drag/etc. to work
+   * at all), it started winning the browser's hit-test for every pointer in
+   * that region. `.lanes-wrapper` is a SIBLING of this overlay, not an
+   * ancestor (see the file header), so its onPointerDown can no longer fire
+   * for anything landing on the canvas — pan silently died the same way
+   * click-select did before `pointer-events: auto` was added, just for a
+   * different gesture. This re-implements the same scroll-drag mechanics
+   * here so the canvas, now that it owns the surface, is responsible for
+   * forwarding to it.
+   */
+  const startPanDrag = useCallback((event) => {
+    const scroller = scrollRef?.current;
+    if (!scroller) return;
+    event.preventDefault();
+    const isRightButton = event.button === 2;
+    const startClientX = event.clientX;
+    const startClientY = event.clientY;
+    const startScrollLeft = scroller.scrollLeft;
+    const startScrollTop = scroller.scrollTop;
+    let hasMoved = false;
+
+    const onMove = (me) => {
+      if (!hasMoved) {
+        const movedPx = Math.abs(me.clientX - startClientX) + Math.abs(me.clientY - startClientY);
+        if (movedPx > 2) hasMoved = true;
+      }
+      scroller.scrollLeft = startScrollLeft - (me.clientX - startClientX);
+      scroller.scrollTop = startScrollTop - (me.clientY - startClientY);
+    };
+    // Right-click-drag needs its context menu suppressed only for the
+    // gesture that actually panned — a right-click with no movement should
+    // still open the menu normally, same as Timeline.jsx's own
+    // handlePanStart.
+    const onContextMenu = (ce) => {
+      if (isRightButton && hasMoved) {
+        ce.preventDefault();
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      if (isRightButton) {
+        // 'contextmenu' fires right after 'pointerup' for the same
+        // right-click, so this listener must still be attached when it
+        // fires — remove it on the next tick instead of now.
+        setTimeout(() => {
+          window.removeEventListener('contextmenu', onContextMenu, true);
+        }, 0);
+      }
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    if (isRightButton) {
+      window.addEventListener('contextmenu', onContextMenu, true);
+    }
+  }, [scrollRef]);
+
+  /**
+   * Right-click clip menu, ported from ClipItem.jsx's own
+   * handleContextMenu/<ContextMenu> (cut/copy/paste/duplicate/split
+   * audio/cut silence/parent linking). ClipItem.jsx is never mounted in
+   * canvas mode (Timeline.jsx renders only a spacer div per row when
+   * canvasTimeline is on — see that file), so this feature simply didn't
+   * exist here yet; it isn't something the pan fix above broke. Reused
+   * verbatim: same menu items, same enable/disable conditions, same
+   * selection-then-act sequencing (right-clicking a clip outside the
+   * current selection selects it first, deferring the copy/cut/paste
+   * handler by one tick so it sees the updated selection — same as
+   * ClipItem.jsx's own selectionWillChange ref).
+   */
+  const [ctxMenu, setCtxMenu] = useState(null); // { x, y, clipId } | null
+  const closeCtxMenu = useCallback(() => setCtxMenu(null), []);
+  const ctxSelectionWillChangeRef = useRef(false);
+
+  const handleContextMenu = useCallback((event) => {
+    const hit = hitTestAtClientPoint(event.clientX, event.clientY);
+    if (hit?.type !== 'clip' || hit.item.kind === 'transition') return; // No menu for transitions/empty space, matching ClipItem.jsx (transitions have no context menu) and the DOM path's lack of one on bare lane space.
+    event.preventDefault();
+
+    const { selectedIds: currentSelectedIds } = latestRef.current;
+    const clipId = hit.clipId;
+    const alreadySelected = currentSelectedIds.includes(clipId);
+    if (!alreadySelected) {
+      ctxSelectionWillChangeRef.current = true;
+      onSelectClip?.(clipId);
+    } else {
+      ctxSelectionWillChangeRef.current = false;
+    }
+
+    setCtxMenu({ x: event.clientX, y: event.clientY, clipId });
+  }, [hitTestAtClientPoint, onSelectClip]);
+
+  const runOnCtxSelection = useCallback((fn) => {
+    closeCtxMenu();
+    if (!fn) return;
+    if (ctxSelectionWillChangeRef.current) setTimeout(fn, 0);
+    else fn();
+  }, [closeCtxMenu]);
+
   const handlePointerDown = useCallback((event) => {
-    // Only the left button starts a potential click/move/lasso; right/middle
-    // are reserved for pan and context menus, which are not this step's
-    // concern and are left to fall through untouched (there is nothing under
-    // the canvas for them to fall through TO yet — see the file header — but
-    // this step deliberately does not claim those buttons either, so a later
-    // pan step can add its own handling here without this step's logic
-    // getting in the way). Alt is no longer excluded up front: Alt+drag on a
-    // clip body is step 4's duplicate-drag gesture, so it must still reach
-    // the `hit?.type === 'clip'` branch below; Alt on empty space still has
-    // nothing to do and simply won't match a clip hit.
+    // Right mouse button or middle mouse button: pan, not select/move/lasso
+    // — matches Timeline.jsx's own handleLanesPointerDown ordering (pan
+    // claims these buttons unconditionally; only a plain left-button press
+    // falls through to click/move/lasso below). Alt is checked separately
+    // below (after the clip-hit test) since Alt+drag on a CLIP body is still
+    // step 4's duplicate-drag gesture, not pan.
+    if (event.button === 2 || event.button === 1) {
+      startPanDrag(event);
+      return;
+    }
     if (event.button !== 0) return;
     const hit = hitTestAtClientPoint(event.clientX, event.clientY);
- 
+
     // A press on a clip (any zone) is step 2's click/range/toggle-select
     // territory, and — for the BODY zone specifically — step 4's
     // move/Alt-duplicate/Ctrl-parent territory. Either way, never a lasso.
@@ -1246,8 +1393,13 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       pressRef.current = { clientX: event.clientX, clientY: event.clientY, hit };
       return;
     }
-    if (event.altKey) return; // Alt on empty space is not this step's concern.
- 
+    if (event.altKey) {
+      // Alt-drag on empty space is pan (matches handleLanesPointerDown's own
+      // e.altKey check), not this step's concern otherwise.
+      startPanDrag(event);
+      return;
+    }
+
     // Empty lane space or off any row: start a lasso. Whether this ends up
     // being a real box-select or just a click-to-seek is decided on release
     // inside startLasso (the `hasMoved` check there).
@@ -1255,7 +1407,7 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     if (!startPoint) return;
     pressRef.current = null;
     startLasso(event, startPoint);
-  }, [hitTestAtClientPoint, contentPointAtClientPoint, startLasso]);
+  }, [hitTestAtClientPoint, contentPointAtClientPoint, startLasso, startPanDrag]);
  
   const handlePointerUp = useCallback((event) => {
     const press = pressRef.current;
@@ -1318,7 +1470,53 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     onSelectClip?.(null);
     onClearSelection?.();
   }, [onSelectClip, onToggleSelect, onRangeSelect, onClearSelection]);
- 
+
+  // Context menu item content, derived once per open menu. Same conditions
+  // ClipItem.jsx's own menu uses, just read off the scene item (isLocked,
+  // hasAudio, hasVideo) instead of ClipItem's own props, since the canvas
+  // has no per-clip component to read them from directly.
+  const ctxClip = ctxMenu ? (scene?.byId?.get(ctxMenu.clipId)?.clip ?? null) : null;
+  const ctxItem = ctxMenu ? scene?.byId?.get(ctxMenu.clipId) : null;
+  const ctxIsLocked = !!ctxItem?.isLocked;
+  const ctxIsMulti = ctxMenu ? selectedIds.includes(ctxMenu.clipId) && selectedIds.length > 1 : false;
+  const ctxActiveTargetIds = ctxMenu ? (ctxIsMulti ? selectedIds : [ctxMenu.clipId]) : [];
+  const ctxHasAudioChild = ctxClip ? allClips.some((c) => c.parentId === ctxClip.id && isAudioEntity(c)) : false;
+  const ctxShowSplitAudio = ctxClip && !ctxIsLocked && isVideoEntity(ctxClip) && !ctxHasAudioChild && !!onSplitVideoAndAudio;
+  const ctxEligibleParents = ctxClip
+    ? allClips.filter((c) => c.id !== ctxClip.id && c.id !== ctxClip.parentId && !isDescendantOf(c.id, ctxClip.id, allClips))
+    : [];
+  const ctxShowQuickLinks = ctxClip && !ctxIsLocked && ctxEligibleParents.length > 0 && ctxEligibleParents.length <= 6;
+  const ctxGapUpdates = useMemo(
+    () => (ctxIsMulti && onUpdateClips ? buildGapRemovalUpdates(allClips, selectedIds) : []),
+    [ctxIsMulti, onUpdateClips, allClips, selectedIds]
+  );
+  const ctxShowRemoveGaps = ctxClip && !ctxIsLocked && ctxIsMulti && !!onUpdateClips && ctxGapUpdates.length > 0;
+
+  const handleCtxCut = () => runOnCtxSelection(onCutSelected);
+  const handleCtxCopy = () => runOnCtxSelection(onCopySelected);
+  const handleCtxPaste = () => runOnCtxSelection(onPasteClips);
+  const handleCtxRemoveGaps = () => {
+    closeCtxMenu();
+    if (ctxGapUpdates.length > 0) onUpdateClips(ctxGapUpdates);
+  };
+  const handleCtxDuplicate = () => {
+    const newIds = onDuplicateClips?.(ctxActiveTargetIds);
+    if (newIds && newIds.length > 0) onSelectClip?.(newIds[0]);
+    closeCtxMenu();
+  };
+  const handleCtxSplitAudio = () => {
+    onSplitVideoAndAudio?.(ctxClip.id);
+    closeCtxMenu();
+  };
+  const handleCtxUnlinkParent = () => {
+    onUpdateClip?.(ctxClip.id, { parentId: null });
+    closeCtxMenu();
+  };
+  const handleCtxSetParent = (parentId) => {
+    onUpdateClip?.(ctxClip.id, { parentId });
+    closeCtxMenu();
+  };
+
   return (
     <div
       ref={hostRef}
@@ -1327,8 +1525,70 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       onPointerLeave={handlePointerLeave}
       onPointerDown={handlePointerDown}
       onPointerUp={handlePointerUp}
+      onContextMenu={handleContextMenu}
     >
       <canvas ref={canvasRef} className="timeline-canvas" />
+      {ctxMenu && ctxClip && (
+        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onClose={closeCtxMenu} className="clip-context-menu" minWidth={170}>
+          {onCutSelected && !ctxIsLocked && (
+            <button className="ctx-menu-item ctx-menu-row" onClick={handleCtxCut}>
+              <span className="ctx-menu-label"><Scissors size={12} /> Cut</span>
+              <span className="ctx-menu-hint">Ctrl+X</span>
+            </button>
+          )}
+          {onCopySelected && (
+            <button className="ctx-menu-item ctx-menu-row" onClick={handleCtxCopy}>
+              <span className="ctx-menu-label"><Copy size={12} /> Copy</span>
+              <span className="ctx-menu-hint">Ctrl+C</span>
+            </button>
+          )}
+          {onPasteClips && !ctxIsLocked && (
+            <button
+              className="ctx-menu-item ctx-menu-row"
+              onClick={handleCtxPaste}
+              disabled={!hasClipboardClips()}
+            >
+              <span className="ctx-menu-label"><ClipboardPaste size={12} /> Paste</span>
+              <span className="ctx-menu-hint">Ctrl+V</span>
+            </button>
+          )}
+          {(onCutSelected || onCopySelected || onPasteClips) && <div className="ctx-menu-divider" />}
+          {ctxShowRemoveGaps && (
+            <button
+              className="ctx-menu-item ctx-menu-row"
+              onClick={handleCtxRemoveGaps}
+              title="Close the empty space between the selected clips"
+            >
+              <span className="ctx-menu-label"><ArrowLeftToLine size={12} /> Remove Gaps</span>
+            </button>
+          )}
+          {onDuplicateClips && !ctxIsLocked && (
+            <button className="ctx-menu-item" onClick={handleCtxDuplicate}>
+              <Copy size={12} /> Duplicate
+            </button>
+          )}
+          {ctxShowSplitAudio && (
+            <button className="ctx-menu-item" onClick={handleCtxSplitAudio}>
+              <Scissors size={12} /> Split Video &amp; Audio
+            </button>
+          )}
+          {onOpenSilenceRemover && !ctxIsLocked && (ctxItem?.hasAudio || ctxItem?.hasVideo) && (
+            <button className="ctx-menu-item" onClick={() => { closeCtxMenu(); onOpenSilenceRemover(ctxClip.id); }}>
+              <Scissors size={12} /> Cut Silence...
+            </button>
+          )}
+          {!ctxIsLocked && ctxClip.parentId && (
+            <button className="ctx-menu-item" onClick={handleCtxUnlinkParent}>
+              <Unlink size={12} /> Unlink Parent
+            </button>
+          )}
+          {ctxShowQuickLinks && ctxEligibleParents.map((p) => (
+            <button key={p.id} className="ctx-menu-item" onClick={() => handleCtxSetParent(p.id)}>
+              <Link2 size={12} /> Set Parent: {p.name}
+            </button>
+          ))}
+        </ContextMenu>
+      )}
     </div>
   );
 });

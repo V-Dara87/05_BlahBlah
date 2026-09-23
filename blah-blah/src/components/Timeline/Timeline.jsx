@@ -33,7 +33,7 @@
  * Keeping them one release behind the setting is intentional, so anyone who
  * hits a canvas bug has a working timeline to switch back to.
  */
-import { useRef, useState, useMemo, useCallback, useEffect, memo } from 'react';
+import { useRef, useState, useMemo, useCallback, useEffect, useLayoutEffect, memo } from 'react';
 import { Plus, ZoomIn, ZoomOut, ArrowLeftToLine, ArrowRightToLine, X } from 'lucide-react';
 import { TimeRuler } from './TimeRuler';
 import { formatTimecode } from '../../utils/timeFormat';
@@ -44,7 +44,33 @@ import { usePlaybackStore } from '../../hooks/PlaybackContext';
 import { registerTimelineCenterOnPlayhead } from '../../services/timelineViewControls';
 import { applyEdgeAutoScroll } from '../../utils/timelineAutoScroll';
 import { TimelineCanvas } from './canvas/TimelineCanvas';
+// The zoom bounds + step live with the view state itself
+// (dock/TimelineViewContext owns pixelsPerSecond), so the clamp here can never
+// drift away from the range those setters actually allow.
+import {
+  MIN_PIXELS_PER_SECOND,
+  MAX_PIXELS_PER_SECOND,
+  ZOOM_STEP,
+} from '../../dock/TimelineViewContext';
 const HEADER_WIDTH = 180;
+
+/**
+ * Eased zoom. A wheel notch (or a toolbar +/- click) adds its step to a TARGET
+ * zoom level, and the ease loop walks pixelsPerSecond toward it over the next
+ * few frames instead of applying the whole step in one repaint.
+ *
+ * ZOOM_EASE_TIME_CONSTANT_MS is the time constant of the exponential ease-out
+ * (how long it takes to cover ~63% of the remaining distance). It is a TIME,
+ * not a per-frame fraction, so a 60Hz and a 120Hz display settle in the same
+ * ~150ms instead of one of them taking twice as long.
+ */
+const ZOOM_EASE_TIME_CONSTANT_MS = 45;
+/** Below this many px/s of remaining travel the ease settles: invisible. */
+const ZOOM_EASE_MIN_STEP = 0.4;
+/** Zoom impulse per wheel event, applied after deltaMode normalisation. */
+const ZOOM_WHEEL_IMPULSE = 0.5;
+/** Cap on one wheel event's impulse, so a violent flick can't teleport zoom. */
+const ZOOM_WHEEL_MAX_DELTA = 60;
  
 // Vertical layout constants + pure lane geometry for the flat timeline
 // live in utils/timelineLayout.js (shared with TrackLane / TrackHeader and
@@ -103,6 +129,13 @@ export const Timeline = memo(function Timeline({
   // Draw the clip/lane area on a canvas instead of one ClipItem per clip
   // (services/editorSettings.js -> canvasTimeline). Off = today's DOM path.
   canvasTimeline = false,
+  // What screen position Ctrl/Cmd+wheel zoom holds fixed while pixelsPerSecond
+  // changes (services/editorSettings.js -> zoomAnchorMode). 'cursor' (default)
+  // anchors on the mouse position over the lanes; 'playhead' anchors on the
+  // seekbar/playhead position instead, which is the old (and only) behavior.
+  // The toolbar +/- buttons and keyboard shortcuts have no mouse position to
+  // anchor to, so they always use the playhead regardless of this setting.
+  zoomAnchorMode = 'cursor',
 }) {
   const [boxSelect, setBoxSelect] = useState(null); // { startX, startY, endX, endY } for lasso
   const playbackStore = usePlaybackStore();
@@ -121,21 +154,37 @@ export const Timeline = memo(function Timeline({
   const velocityRef = useRef(0);
   const smoothScrollAnimIdRef = useRef(null);
   const miniScrollbarTrackRef = useRef(null);
-  // ── Ctrl/Cmd+wheel zoom coalescing ─────────────────────────────
-  // A trackpad or a fast mouse wheel fires many 'wheel' events per
-  // visual frame. Previously each one synchronously called
-  // setPixelsPerSecond AND scheduled its own requestAnimationFrame to
-  // re-anchor scroll position — so a single zoom gesture could queue up
-  // several competing rAF callbacks per frame, each recalculating
-  // scrollLeft against a scrollWidth that hadn't caught up yet. That's
-  // what made zoom feel stepped/jittery instead of smooth. Now we just
-  // accumulate the raw wheel delta here and flush it once per animation
-  // frame (zoomFrameRef), so there is at most one pps update + one
-  // scroll re-anchor per rendered frame, matching the visual refresh
-  // rate the eye actually sees.
-  const zoomAccumRef = useRef(0);
-  const zoomFrameRef = useRef(null);
-  const zoomAnchorTimeRef = useRef(null);
+  // ── Eased zoom ─────────────────────────────────────────────────
+  // A wheel notch or a toolbar click asks for a zoom STEP; the step is added
+  // to a target and a rAF loop walks pixelsPerSecond toward that target a
+  // fraction at a time (see runZoomEase), re-anchoring the view every frame.
+  // Applying a whole step in one frame is what read as "glitchy": one wheel
+  // notch moved the zoom level by up to 30 px/s (a ~75% jump at 40 px/s) and
+  // the whole timeline snapped to it in a single repaint.
+  //
+  // pixelsPerSecond as last REQUESTED, which mid-ease is a frame or two ahead
+  // of the prop React has committed so far. The ease always steps from THIS,
+  // never from the prop, so consecutive frames of a fast gesture can't each
+  // start from the same stale base (which erased deltas and made the zoom run
+  // behind the wheel).
+  const livePpsRef = useRef(pixelsPerSecond);
+  // The px/s the running ease is heading for, or null when no ease is running.
+  const zoomTargetRef = useRef(null);
+  // Animation frame id of the running ease (0 when idle).
+  const zoomFrameRef = useRef(0);
+  // Wall-clock timestamp of the previous ease frame, for the time-based ease
+  // curve (see runZoomEase).
+  const zoomEaseTimeRef = useRef(0);
+  // The anchor captured for the CURRENT gesture: a fixed time (seconds) that
+  // must stay under a fixed screen x while pixelsPerSecond changes. Captured
+  // once on the first wheel tick of a gesture and reused for EVERY frame of it
+  // — including every frame of the ease — so the instant under the cursor
+  // cannot drift tick to tick.
+  const zoomAnchorRef = useRef(null); // { time, screenX, isCursor } | null
+  // A re-anchor this zoom wants but cannot write yet: `{ pps, left }`, applied
+  // by the post-commit pass (see the useLayoutEffect below runZoomEase) once
+  // React has committed `pps` and the scroll extent that goes with it.
+  const pendingZoomScrollRef = useRef(null);
  
   // ── Custom horizontal minimap scrollbar ────────────────────────
   // Mirrors lanesScrollRef's scrollLeft/scrollWidth/clientWidth as a
@@ -311,47 +360,277 @@ export const Timeline = memo(function Timeline({
   }, [onSetExportRange]);
  
   // Shared zoom-and-reanchor: used by both the ctrl+wheel gesture handler
-  // and the toolbar zoom in/out buttons, so both paths keep the same
-  // instant (the playhead/seekbar position) under the same screen x
-  // instead of drifting the view — previously the toolbar buttons just
-  // called setPixelsPerSecond with no scroll compensation at all, so
-  // clicking them shifted the whole view relative to the left edge
-  // rather than staying centered on the seekbar.
-  const applyZoomStep = useCallback((delta) => {
+  // and the toolbar zoom in/out buttons, so both paths keep some instant
+  // under the same screen x instead of drifting the view — previously the
+  // toolbar buttons just called setPixelsPerSecond with no scroll
+  // compensation at all, so clicking them shifted the whole view relative
+  // to the left edge rather than staying anchored.
+  //
+  // `anchor`, when passed, is `{ time, screenX }` — the exact instant and
+  // screen position to hold fixed, captured once by the caller (e.g. once
+  // per wheel gesture, at the cursor). When omitted (toolbar buttons,
+  // keyboard shortcuts — nothing to anchor to a cursor with) this falls
+  // back to the playhead/seekbar position, same as before.
+  //
+  // Cursor mode + not currently playing: instead of just visually holding
+  // the cursor's instant in place, this also MOVES THE PLAYHEAD to that
+  // instant (a seek), so "zoom under my mouse" doubles as "and take me
+  // there". This never happens during active playback — seeking mid-
+  // playback on every wheel tick would be jarring and nobody asked for
+  // that; playing back just keeps the existing visual-only anchor.
+  //
+  // The re-anchor is written in TWO passes, and the split is the whole point:
+  // pixelsPerSecond is React state, but `.lanes-surface`'s width (and so the
+  // element's scrollWidth) only changes when React COMMITS that state, which
+  // is a frame or more after this call. Writing scrollLeft here, against the
+  // still-old scrollWidth, meant the browser clamped it to the previous zoom
+  // level's extent (dropping the re-anchor entirely when zooming out past the
+  // old max) and then silently re-clamped it once the new width landed — two
+  // different scroll positions for one zoom step. Canvas mode drew both: the
+  // scroll event from the first write repainted the canvas while
+  // TimelineCanvas still held the PREVIOUS zoom level's scene (its React
+  // render hadn't happened yet), so for a frame the clips were painted at the
+  // old zoom at the new offset. Deferring the write to the post-commit pass
+  // below makes (pixelsPerSecond, scrollLeft) atomic: the canvas can never
+  // observe a scroll position belonging to a different zoom level, and the
+  // browser paints the final state once.
+  const requestZoom = useCallback((targetPps, anchor) => {
     const scroller = lanesScrollRef.current;
-    const anchorTime = playbackStore.getCurrentTime();
-    const anchorScreenX = scroller
-      ? HEADER_WIDTH + anchorTime * pixelsPerSecond - scroller.scrollLeft
-      : null;
- 
-    const nextPps = Math.max(4, Math.min(240, pixelsPerSecond + delta));
- 
-    const reanchor = () => {
-      if (!scroller || anchorScreenX === null) return;
-      // Wait one more frame so totalWidth/scrollWidth have repainted for
-      // the new pixelsPerSecond before we clamp against them.
-      requestAnimationFrame(() => {
-        const s = lanesScrollRef.current;
-        // Skip the re-anchor while the panel is hidden (clientWidth 0): the
-        // clamp would be computed against a meaningless maxScroll.
-        if (!s || s.clientWidth === 0) return;
-        const maxScroll = Math.max(0, s.scrollWidth - s.clientWidth);
-        const desiredScrollLeft = HEADER_WIDTH + anchorTime * nextPps - anchorScreenX;
-        s.scrollLeft = Math.max(0, Math.min(maxScroll, desiredScrollLeft));
-        if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = s.scrollLeft;
-        updateScrollMetrics();
-      });
-    };
- 
+    const isCursorAnchor = Boolean(anchor?.isCursor);
+    const anchorTime = anchor ? anchor.time : playbackStore.getCurrentTime();
+    // No anchor passed (the toolbar +/- buttons): fall back to the playhead,
+    // held at the CENTER of the visible lanes area — not its current screen
+    // position, which could be anywhere (including right at an edge) and
+    // would just stay pinned there through the zoom.
+    const anchorScreenX = anchor
+      ? anchor.screenX
+      : scroller
+        ? scroller.clientWidth / 2
+        : null;
+
+    // Current zoom as last REQUESTED, not as committed: mid-ease this is a
+    // frame or two ahead of the pixelsPerSecond prop, and stepping from the
+    // prop instead made consecutive frames of a fast gesture start from the
+    // same stale base — half the wheel deltas got erased and the zoom ran
+    // slower than the wheel was turned.
+    const previousPps = livePpsRef.current;
+    const nextPps = Math.max(MIN_PIXELS_PER_SECOND, Math.min(MAX_PIXELS_PER_SECOND, targetPps));
+    livePpsRef.current = nextPps;
+    // Whether React still has a commit to make for this zoom level. If it
+    // doesn't (the clamp above threw the request away, or the ease already
+    // applied this value) the DOM's scrollWidth already matches nextPps, so
+    // the re-anchor can be written straight away.
+    const zoomChanged = nextPps !== previousPps;
+
     if (onSetPixelsPerSecond) {
       onSetPixelsPerSecond(nextPps);
-    } else if (delta > 0) {
+    } else if (nextPps > previousPps) {
       onZoomIn?.();
-    } else {
+    } else if (nextPps < previousPps) {
       onZoomOut?.();
     }
-    reanchor();
-  }, [pixelsPerSecond, playbackStore, onSetPixelsPerSecond, onZoomIn, onZoomOut, updateScrollMetrics]);
+
+    if (!scroller || anchorScreenX === null) return;
+
+    /**
+     * Write the re-anchor, now or in the post-commit pass — never against a
+     * scrollWidth that still describes a different zoom level. See the note
+     * above requestZoom for why the deferred case exists.
+     */
+    const commitScrollLeft = (value) => {
+      if (zoomChanged) {
+        pendingZoomScrollRef.current = { pps: nextPps, left: value };
+        return;
+      }
+      scroller.scrollLeft = value;
+      if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = value;
+      updateScrollMetrics();
+    };
+
+    // Same formula as `totalWidth` above, evaluated at nextPps instead of
+    // the current pixelsPerSecond — computed here rather than read off the
+    // DOM so it's available in this same synchronous pass.
+    const nextTotalWidth = Math.max(totalDuration * nextPps + 400, 1600);
+    const maxScroll = Math.max(0, nextTotalWidth + HEADER_WIDTH - scroller.clientWidth);
+    // Skip while the panel is hidden (clientWidth 0): the clamp above would
+    // be computed against a meaningless maxScroll.
+    if (scroller.clientWidth === 0) return;
+
+    // Nothing to anchor when there's nowhere to scroll (maxScroll 0 — the
+    // whole project already fits in the visible width, e.g. fully zoomed
+    // out or a short project on a wide screen). In that case scrollLeft is
+    // always going to be clamped to 0 regardless of what the anchor math
+    // below computes, so just go there directly and skip the rest —
+    // running the full anchor/playhead-visibility math only to have its
+    // result thrown away by the clamp was producing a different
+    // (irrelevant, since it gets clamped anyway) desiredScrollLeft on
+    // almost every frame near this boundary, which is what showed up as
+    // rapid flicker/snapping right around the fit-to-view zoom level.
+    if (maxScroll === 0) {
+      commitScrollLeft(0);
+      return;
+    }
+
+    let desiredScrollLeft = HEADER_WIDTH + anchorTime * nextPps - anchorScreenX;
+
+    const wasPlaying = playbackStore.getIsPlaying();
+    if (isCursorAnchor && !wasPlaying && onSeek) {
+      // Move the playhead itself to the cursor's instant — this also makes
+      // the later "keep playhead visible" check below a no-op most of the
+      // time, since the playhead now IS the anchor.
+      onSeek(Math.max(0, anchorTime));
+    } else {
+      // Either playhead-anchor mode, or cursor-anchor mode while playing
+      // (where we deliberately don't seek): the playhead can still end up
+      // far from the cursor, so keep the existing visibility safety net —
+      // nudge just enough to bring it back into view if it would otherwise
+      // be scrolled off-screen, without fighting the cursor anchor the
+      // user is actively controlling by recentering it outright.
+      const playbackTime = playbackStore.getCurrentTime();
+      const playheadContentX = HEADER_WIDTH + playbackTime * nextPps;
+      const margin = 24; // px — keep the line clear of the very edge
+      const visibleLeft = desiredScrollLeft + HEADER_WIDTH + margin;
+      const visibleRight = desiredScrollLeft + scroller.clientWidth - margin;
+      if (playheadContentX < visibleLeft) {
+        desiredScrollLeft -= (visibleLeft - playheadContentX);
+      } else if (playheadContentX > visibleRight) {
+        desiredScrollLeft += (playheadContentX - visibleRight);
+      }
+    }
+
+    const clampedScrollLeft = Math.max(0, Math.min(maxScroll, desiredScrollLeft));
+
+    // Final safety check: the clamp above (forced by maxScroll, i.e. the
+    // project's actual scrollable range) can undo the playhead-visibility
+    // nudge from the block above it if that nudge asked for a scrollLeft
+    // outside [0, maxScroll] — e.g. nudging left to reveal a playhead near
+    // time 0 can ask for a negative scrollLeft, which then gets clamped
+    // back to 0 and could once again cut the playhead off depending on
+    // zoom level. Reported bug: "playhead teleports off-screen during
+    // zoom." Only re-check when we didn't just seek the playhead to the
+    // anchor (in that case the playhead IS the anchor and anchorScreenX
+    // already guarantees it's on-screen, modulo the same maxScroll clamp,
+    // which is unavoidable — there's nowhere further to scroll).
+    let finalScrollLeft = clampedScrollLeft;
+    if (!(isCursorAnchor && !wasPlaying && onSeek)) {
+      const playbackTime = playbackStore.getCurrentTime();
+      const playheadContentX = HEADER_WIDTH + playbackTime * nextPps;
+      const margin = 24;
+      if (playheadContentX < finalScrollLeft + HEADER_WIDTH + margin) {
+        finalScrollLeft = Math.max(0, Math.min(maxScroll, playheadContentX - HEADER_WIDTH - margin));
+      } else if (playheadContentX > finalScrollLeft + scroller.clientWidth - margin) {
+        finalScrollLeft = Math.max(0, Math.min(maxScroll, playheadContentX - scroller.clientWidth + margin));
+      }
+    }
+
+    commitScrollLeft(finalScrollLeft);
+  }, [playbackStore, onSetPixelsPerSecond, onZoomIn, onZoomOut, updateScrollMetrics, totalDuration, onSeek]);
+
+  /**
+   * Walk pixelsPerSecond toward zoomTargetRef, one frame at a time, until it
+   * settles — the eased half of zoomBy. Every frame goes back through
+   * requestZoom, so the view is re-anchored on EVERY frame of the glide: the
+   * instant that was under the cursor stays under it for the whole animation,
+   * not just once it lands.
+   *
+   * The curve is exponential ease-out, expressed per MILLISECOND rather than
+   * per frame so a 60Hz and a 120Hz display converge in the same ~150ms. dt is
+   * capped because a long stall (a busy frame, a background tab) must not turn
+   * into one huge step — small steps are the entire point of this loop — and
+   * the loop always re-reads livePpsRef, so it can never step backwards from a
+   * lagging prop.
+   */
+  const runZoomEase = useCallback(() => {
+    if (zoomFrameRef.current) return;
+    zoomEaseTimeRef.current = 0;
+    zoomFrameRef.current = requestAnimationFrame(function zoomEaseFrame(now) {
+      zoomFrameRef.current = 0;
+      const target = zoomTargetRef.current;
+      if (target === null) return;
+
+      const dt = zoomEaseTimeRef.current ? Math.min(48, now - zoomEaseTimeRef.current) : 16;
+      zoomEaseTimeRef.current = now;
+      const k = 1 - Math.exp(-dt / ZOOM_EASE_TIME_CONSTANT_MS);
+
+      const current = livePpsRef.current;
+      const stepped = current + (target - current) * k;
+      const settled = Math.abs(target - stepped) < ZOOM_EASE_MIN_STEP;
+      const pps = settled ? target : stepped;
+
+      requestZoom(pps, zoomAnchorRef.current);
+
+      if (settled) {
+        zoomTargetRef.current = null;
+        // The gesture is over, so the next one captures a fresh anchor (the
+        // cursor for a wheel tick, playhead-centered for a button).
+        zoomAnchorRef.current = null;
+        zoomEaseTimeRef.current = 0;
+        return;
+      }
+      zoomFrameRef.current = requestAnimationFrame(zoomEaseFrame);
+    });
+  }, [requestZoom]);
+
+  /**
+   * Ask for a zoom step of `delta` px/s, applied as an eased glide.
+   *
+   * Used by both the wheel gesture and the toolbar +/- buttons, so the two
+   * behave identically. The step is ADDED TO A TARGET rather than applied in
+   * one frame, and the target accumulates for as long as the gesture lasts, so
+   * a fast flick still reaches the far end of the range — it just gets there
+   * in ~150ms of easing instead of a single repaint.
+   */
+  const zoomBy = useCallback(
+    (delta) => {
+      if (!delta) return;
+      const base = zoomTargetRef.current ?? livePpsRef.current;
+      const target = Math.max(MIN_PIXELS_PER_SECOND, Math.min(MAX_PIXELS_PER_SECOND, base + delta));
+      // Already there and no ease running to re-anchor: nothing to do. Drop
+      // the anchor the caller just captured too — at a zoom bound no gesture
+      // is under way, and a lingering cursor anchor would be picked up by the
+      // next toolbar +/- click instead of its own playhead-centered one.
+      if (target === livePpsRef.current && zoomTargetRef.current === null) {
+        zoomAnchorRef.current = null;
+        return;
+      }
+      zoomTargetRef.current = target;
+      runZoomEase();
+    },
+    [runZoomEase]
+  );
+
+  /**
+   * The deferred half of requestZoom: apply a zoom's scroll re-anchor once
+   * React has committed the new pixelsPerSecond (and therefore the new
+   * scrollWidth), but BEFORE the browser paints — a layout effect runs after
+   * DOM mutation and before paint, which is exactly the window this needs.
+   *
+   * Reading scrollWidth here also forces the fresh layout, so the clamp below
+   * agrees with what the browser is about to do anyway; that is why a zoom to
+   * the far edge settles in place instead of being pulled back a frame later.
+   *
+   * `pending.pps` is compared against the committed pixelsPerSecond because a
+   * fast gesture can queue a newer re-anchor before this one lands — applying
+   * the older one would move the view by a zoom level that no longer exists
+   * (the next pass writes the right one a frame later).
+   */
+  useLayoutEffect(() => {
+    // While no ease is running the committed prop IS the current zoom level,
+    // so it is the authoritative base for the next gesture.
+    if (zoomTargetRef.current === null) livePpsRef.current = pixelsPerSecond;
+
+    const pending = pendingZoomScrollRef.current;
+    if (!pending || pending.pps !== pixelsPerSecond) return;
+    pendingZoomScrollRef.current = null;
+
+    const scroller = lanesScrollRef.current;
+    if (!scroller || scroller.clientWidth === 0) return;
+    const maxScroll = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+    const left = Math.max(0, Math.min(maxScroll, pending.left));
+    scroller.scrollLeft = left;
+    if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = left;
+    updateScrollMetrics();
+  }, [pixelsPerSecond, updateScrollMetrics]);
  
   // Defined BEFORE handleZoomInBtn/handleZoomOutBtn: a useCallback dependency
   // array is evaluated during render, so referencing a `const` declared further
@@ -373,22 +652,23 @@ export const Timeline = memo(function Timeline({
       }
     };
   }, []);
- 
+
   // Toolbar +/- buttons: same fixed step the old handleZoomIn/handleZoomOut
-  // used (15), just routed through applyZoomStep so they re-center on the
-  // seekbar the same way the wheel gesture does.
+  // used (15), just routed through zoomBy so they glide to the new level the
+  // same way the wheel gesture does and re-center on the seekbar while they
+  // do it.
   const handleZoomInBtn = useCallback(() => {
     stopSmoothScroll();
-    applyZoomStep(15);
-  }, [applyZoomStep, stopSmoothScroll]);
- 
+    zoomBy(ZOOM_STEP);
+  }, [zoomBy, stopSmoothScroll]);
+
   const handleZoomOutBtn = useCallback(() => {
     stopSmoothScroll();
-    applyZoomStep(-15);
-  }, [applyZoomStep, stopSmoothScroll]);
+    zoomBy(-ZOOM_STEP);
+  }, [zoomBy, stopSmoothScroll]);
  
   // Center the view on the playhead WITHOUT changing zoom. Same anchor math
-  // as applyZoomStep, but solved so the playhead lands in the middle of the
+  // as requestZoom, but solved so the playhead lands in the middle of the
   // visible lanes area instead of staying under a fixed screen x. The ruler's
   // scroll is kept in sync exactly like every other scroll-writing path here.
   const handleCenterOnPlayhead = useCallback(() => {
@@ -574,42 +854,75 @@ export const Timeline = memo(function Timeline({
     const handleWheel = (e) => {
       lastUserScrollTimeRef.current = Date.now();
  
-      // Ctrl + Wheel: Zoom timeline, anchored on the playhead/seekbar
-      // position (not the mouse, not the left edge) so the same instant
-      // in time stays under the same screen x while pixelsPerSecond
-      // changes — instead of the zoom appearing to happen at a "random"
-      // spot (previously it just changed pps with no scroll compensation
-      // at all, so the whole view shifted relative to the left edge).
+      // Ctrl + Wheel: Zoom timeline, anchored on the mouse cursor by default
+      // (zoomAnchorMode 'cursor') or the playhead/seekbar (zoomAnchorMode
+      // 'playhead') so the same instant in time stays under the same screen
+      // x while pixelsPerSecond changes — instead of the zoom appearing to
+      // happen at a "random" spot (previously it just changed pps with no
+      // scroll compensation at all, so the whole view shifted relative to
+      // the left edge).
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
         stopSmoothScroll();
- 
-        // Scale the step to how hard the user is scrolling instead of a
-        // fixed +/-15 per notch — a fast flick zooms faster, a gentle
-        // nudge zooms gently, which reads as smooth instead of steppy.
-        const rawDelta = Math.max(-60, Math.min(60, -e.deltaY));
-        zoomAccumRef.current += rawDelta * 0.5;
- 
-        // Capture the anchor instant once per gesture (first tick after
-        // the previous frame flushed), not on every wheel event -- the
-        // anchor must stay fixed for the whole gesture or the "same
-        // instant under the cursor" guarantee drifts tick to tick.
-        if (zoomAnchorTimeRef.current === null) {
-          zoomAnchorTimeRef.current = playbackStore.getCurrentTime();
+
+        // Wheel deltas come in one of three units — pixels, lines or pages —
+        // and only the pixel case used to be handled, so the same physical
+        // notch zoomed ~16x slower on a browser that reports lines. Normalise
+        // to pixels first, then cap the impulse so a violent flick cannot
+        // teleport the zoom level.
+        let rawDelta = -e.deltaY;
+        if (e.deltaMode === 1) rawDelta *= 16;
+        else if (e.deltaMode === 2) rawDelta *= 100;
+        const impulse =
+          Math.max(-ZOOM_WHEEL_MAX_DELTA, Math.min(ZOOM_WHEEL_MAX_DELTA, rawDelta)) * ZOOM_WHEEL_IMPULSE;
+        if (impulse === 0) return;
+
+        // Capture the anchor once per gesture — while no ease is running, so
+        // one gesture keeps ONE anchor — not on every wheel event: the anchor
+        // must stay fixed for the whole gesture or the "same instant under
+        // the same screen point" guarantee drifts tick to tick. In cursor
+        // mode the anchor point is where the mouse is RIGHT NOW (converted
+        // to a timeline instant); in playhead mode it's the seekbar's
+        // current instant, held at the CENTER of the visible lanes area.
+        if (zoomAnchorRef.current === null) {
+          const scroller = lanesScrollRef.current;
+          if (zoomAnchorMode === 'cursor' && scroller) {
+            // scroller.getBoundingClientRect().left is the scroll
+            // VIEWPORT's left edge (unaffected by scrollLeft), so
+            // screenX here is already in the same "0 = left edge of
+            // visible lanes" space that anchorScreenX means in
+            // requestZoom below — matching the playhead branch's
+            // HEADER_WIDTH + time*pps - scrollLeft formula. The current
+            // zoom level comes from livePpsRef (not the prop), because
+            // mid-ease the prop lags the zoom level actually on screen.
+            const scrollerRect = scroller.getBoundingClientRect();
+            const screenX = e.clientX - scrollerRect.left;
+            const contentX = screenX + scroller.scrollLeft;
+            const time = Math.max(0, (contentX - HEADER_WIDTH) / livePpsRef.current);
+            // isCursor: true only for this branch, so requestZoom can
+            // tell "anchored on the cursor" apart from "anchored on the
+            // playhead" (falls into the else branch below) — they need
+            // different follow-up behavior (seek-on-zoom vs not).
+            zoomAnchorRef.current = { time, screenX, isCursor: true };
+          } else {
+            // Playhead mode: anchor to the CENTER of the visible lanes
+            // area, not wherever the playhead currently happens to sit on
+            // screen. Anchoring to its current screen x (as this used to)
+            // means if the playhead started near an edge before the zoom
+            // gesture, it stays pinned to that same edge afterward instead
+            // of settling toward the middle — reported bug: "seekbar goes
+            // to edge instead of center."
+            const time = playbackStore.getCurrentTime();
+            const screenX = scroller ? scroller.clientWidth / 2 : null;
+            zoomAnchorRef.current = { time, screenX, isCursor: false };
+          }
         }
- 
-        if (zoomFrameRef.current) return; // already scheduled for this frame
- 
-        zoomFrameRef.current = requestAnimationFrame(() => {
-          zoomFrameRef.current = null;
-          const pending = zoomAccumRef.current;
-          zoomAccumRef.current = 0;
-          zoomAnchorTimeRef.current = null;
-          if (pending === 0) return;
-          // Delegate to the same re-anchor logic the toolbar buttons use,
-          // so wheel-zoom and button-zoom behave identically.
-          applyZoomStep(pending);
-        });
+
+        // Add the impulse to the ease's target (starting one if needed).
+        // Nothing is applied here: runZoomEase walks pixelsPerSecond toward
+        // it over the next frames, re-anchoring on every one of them, so one
+        // notch glides in instead of jumping.
+        zoomBy(impulse);
         return;
       }
  
@@ -663,12 +976,19 @@ export const Timeline = memo(function Timeline({
       stopSmoothScroll();
       if (zoomFrameRef.current) {
         cancelAnimationFrame(zoomFrameRef.current);
-        zoomFrameRef.current = null;
+        zoomFrameRef.current = 0;
       }
-      zoomAccumRef.current = 0;
-      zoomAnchorTimeRef.current = null;
+      zoomTargetRef.current = null;
+      zoomAnchorRef.current = null;
+      zoomEaseTimeRef.current = 0;
+      // No pendingZoomScrollRef reset here: it belongs to the committed pass
+      // above, which drops it as soon as it applies (or sees a newer zoom).
     };
-  }, [onSetPixelsPerSecond, onZoomIn, onZoomOut, applyZoomStep, startSmoothScroll, stopSmoothScroll, pixelsPerSecond, playbackStore, updateScrollMetrics]);
+    // Deliberately NOT keyed on pixelsPerSecond any more: the handler reads the
+    // live zoom from livePpsRef and delegates the actual zoom to zoomBy (which
+    // owns the eased loop), so a zoom gesture no longer tears down and
+    // re-attaches this listener once per frame.
+  }, [startSmoothScroll, stopSmoothScroll, zoomBy, playbackStore, zoomAnchorMode]);
  
   const handleLanesPointerDown = (e) => {
     stopSmoothScroll();
@@ -1183,6 +1503,13 @@ export const Timeline = memo(function Timeline({
               onDuplicateClips={onDuplicateClips}
               snappingPoints={snappingPoints}
               snappingEnabled={snappingEnabled}
+              // ── Context menu / locked-track behavior (plan step 7) ────
+              onDeleteClip={onDeleteClip}
+              onCopySelected={onCopySelected}
+              onCutSelected={onCutSelected}
+              onPasteClips={onPasteClips}
+              onSplitVideoAndAudio={onSplitVideoAndAudio}
+              onOpenSilenceRemover={onOpenSilenceRemover}
             />
           )}
         </div>

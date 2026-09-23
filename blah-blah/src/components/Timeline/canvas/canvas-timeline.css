@@ -8,9 +8,16 @@
  * keeps native scrolling, the minimap scrollbar and zoom anchoring working
  * unchanged.
  *
- * `pointer-events: none` for now: this step is view-only, so clicks fall
- * through to the existing lane handlers (seek / pan / lasso). Later steps make
- * it the interactive surface.
+ * `pointer-events: auto`: the canvas is now the interactive surface (plan
+ * steps 2-6 — click/range/toggle-select, lasso, move/Alt-duplicate/Ctrl-parent
+ * drag, trim handles, pickwhip) via TimelineCanvas.jsx's own pointer handlers.
+ * This layer used to be `pointer-events: none` from the original view-only
+ * step, which let clicks fall through to the DOM lane handlers underneath —
+ * that comment was never updated when the interactive steps landed, so every
+ * click/drag on the canvas silently passed through to whatever sits below it
+ * instead of ever reaching TimelineCanvas's handlers (select, move-drag, trim,
+ * etc. all appeared completely dead). `auto` here is what actually lets this
+ * layer receive pointerdown/move/up at all.
  *
  * z-index sits above the lane backgrounds (5) and below the playhead (40/41),
  * which stays a DOM element driven by playbackStore, so the playhead keeps
@@ -34,7 +41,7 @@
   /* Above the lane backgrounds (5), below the playhead (40/41) and the lasso
    * overlay (50) so both stay visible over the canvas. */
   z-index: 6;
-  pointer-events: none;
+  pointer-events: auto;
   overflow: hidden;
   /* layout + paint, deliberately NOT `strict`: `strict` adds size containment,
    * which makes the box's intrinsic size zero — fine while all four insets are

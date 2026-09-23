@@ -146,6 +146,39 @@ export function SystemTab({ onResetAll, editorSettings, onEditorSettingsChange }
           of one React component per clip, which is what keeps 30-60 minute
           projects smooth. Off by default while it reaches parity with the DOM
           timeline (see the rollout note at the top of Timeline.jsx). */}
+      {/* Zoom anchor — global editor preference (services/editorSettings.js).
+          Controls what screen position Ctrl/Cmd+wheel zoom holds fixed while
+          pixelsPerSecond changes: the mouse cursor (default, matches most
+          editors) or the playhead/seekbar. The toolbar +/- buttons and
+          keyboard shortcuts always anchor to the playhead since they have no
+          cursor position to use. */}
+      {onEditorSettingsChange && (
+        <div className="form-field-group settings-group-spaced">
+          <label className="form-label">Timeline zoom anchor</label>
+          <p className="hint-text-sm settings-hint-below">
+            What Ctrl/Cmd + scroll-wheel zoom keeps fixed under it while the timeline zooms in or out.
+          </p>
+          <label className="settings-check-row">
+            <input
+              type="radio"
+              name="zoomAnchorMode"
+              checked={(editorSettings?.zoomAnchorMode ?? 'cursor') === 'cursor'}
+              onChange={() => onEditorSettingsChange({ ...(editorSettings || {}), zoomAnchorMode: 'cursor' })}
+            />
+            <span>Mouse cursor</span>
+          </label>
+          <label className="settings-check-row">
+            <input
+              type="radio"
+              name="zoomAnchorMode"
+              checked={(editorSettings?.zoomAnchorMode ?? 'cursor') === 'playhead'}
+              onChange={() => onEditorSettingsChange({ ...(editorSettings || {}), zoomAnchorMode: 'playhead' })}
+            />
+            <span>Playhead / seekbar</span>
+          </label>
+        </div>
+      )}
+
       {onEditorSettingsChange && (
         <div className="form-field-group settings-group-spaced">
           <label className="form-label">Timeline rendering</label>

@@ -73,10 +73,27 @@ export const PlayheadHandle = memo(function PlayheadHandle({ pixelsPerSecond, on
   const store = usePlaybackStore();
   const handleRef = useRef(null);
   const isDraggingRef = useRef(false);
+  // Latest pixelsPerSecond, read fresh by the frame callback below instead
+  // of the callback being torn down and rebuilt on every pixelsPerSecond
+  // change (see the effect's old deps array). During a zoom gesture
+  // pixelsPerSecond changes on almost every animation frame, so
+  // resubscribing the frame callback that often meant there could be a
+  // frame where this component's position briefly used a stale
+  // pixelsPerSecond (from before unsubscribe) while the canvas/ruler,
+  // which redraw synchronously off React state, had already moved to the
+  // new zoom level — the playhead visibly stepping out of sync with
+  // everything else during zoom (reported: "seekbar itself glitching,
+  // clips/ruler don't"). Reading a ref means the SAME frame callback keeps
+  // running across the whole gesture and just uses whatever pps is
+  // current on each frame, no resubscribe, no gap.
+  const pixelsPerSecondRef = useRef(pixelsPerSecond);
+  useEffect(() => {
+    pixelsPerSecondRef.current = pixelsPerSecond;
+  }, [pixelsPerSecond]);
 
   const setPosition = (time) => {
     if (!handleRef.current) return;
-    handleRef.current.style.transform = `translateX(${HEADER_WIDTH + time * pixelsPerSecond}px)`;
+    handleRef.current.style.transform = `translateX(${HEADER_WIDTH + time * pixelsPerSecondRef.current}px)`;
   };
 
   const onPointerDown = usePlayheadDrag({
@@ -93,8 +110,24 @@ export const PlayheadHandle = memo(function PlayheadHandle({ pixelsPerSecond, on
     };
     updatePosition(store.getCurrentTime());
     return store.registerFrameCallback(updatePosition);
+    // Deliberately NOT keyed on pixelsPerSecond anymore — see
+    // pixelsPerSecondRef above. Re-subscribing on every zoom tick was the
+    // bug; the callback itself already reads the live ref, so it never
+    // needs to be rebuilt for a pps change, only if the store instance
+    // itself changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store, pixelsPerSecond]);
+  }, [store]);
+
+  // Also correct the position immediately (no need to wait for the next
+  // frame callback tick) whenever pixelsPerSecond changes while not
+  // dragging — this is what actually keeps it visually glued to the
+  // clips/ruler during a fast zoom burst instead of trailing them by up to
+  // one rAF.
+  useEffect(() => {
+    if (isDraggingRef.current) return;
+    setPosition(store.getCurrentTime());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pixelsPerSecond]);
 
   return (
     <div
@@ -120,10 +153,18 @@ export const PlayheadLine = memo(function PlayheadLine({ pixelsPerSecond, onSeek
   const store = usePlaybackStore();
   const lineRef = useRef(null);
   const isDraggingRef = useRef(false);
+  // See PlayheadHandle above for why this ref exists: avoids resubscribing
+  // the frame callback on every pixelsPerSecond change during a zoom
+  // gesture, which caused this line to visibly lag/glitch relative to the
+  // canvas/ruler for one frame per tick.
+  const pixelsPerSecondRef = useRef(pixelsPerSecond);
+  useEffect(() => {
+    pixelsPerSecondRef.current = pixelsPerSecond;
+  }, [pixelsPerSecond]);
 
   const setPosition = (time) => {
     if (!lineRef.current) return;
-    lineRef.current.style.transform = `translateX(${HEADER_WIDTH + time * pixelsPerSecond}px)`;
+    lineRef.current.style.transform = `translateX(${HEADER_WIDTH + time * pixelsPerSecondRef.current}px)`;
   };
 
   const onPointerDown = usePlayheadDrag({
@@ -140,8 +181,18 @@ export const PlayheadLine = memo(function PlayheadLine({ pixelsPerSecond, onSeek
     };
     updatePosition(store.getCurrentTime());
     return store.registerFrameCallback(updatePosition);
+    // Deliberately NOT keyed on pixelsPerSecond — see pixelsPerSecondRef
+    // above and the matching comment in PlayheadHandle.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store, pixelsPerSecond]);
+  }, [store]);
+
+  // Snap to the correct position immediately on zoom, same as
+  // PlayheadHandle, instead of waiting for the next frame-callback tick.
+  useEffect(() => {
+    if (isDraggingRef.current) return;
+    setPosition(store.getCurrentTime());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pixelsPerSecond]);
 
   return (
     <div
