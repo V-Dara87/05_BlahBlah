@@ -201,6 +201,12 @@
   background: var(--unity-darkest);
 }
  
+.dopesheet-labels-scroll {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
 .dopesheet-lanes-scroll {
   flex: 1;
   overflow: auto;
@@ -416,37 +422,81 @@
    hairline -- the lane itself stays empty/transparent otherwise (no filled
    block), matching the reference dopesheet look. */
  
+/* Lasso / marquee selection overlay */
+.dopesheet-lasso-box {
+  position: absolute;
+  border: 1px solid var(--dopesheet-teal-bright, #8fe3e0);
+  background: rgba(143, 227, 224, 0.18);
+  box-shadow: 0 0 6px rgba(143, 227, 224, 0.25);
+  pointer-events: none;
+  z-index: 50;
+  border-radius: 2px;
+}
+
 .dopesheet-keyframe-tick {
   position: absolute;
-  top: 3px;
-  bottom: 3px;
-  width: 2px;
-  transform: translateX(-50%);
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  transform: translate(-50%, -50%) rotate(45deg);
   background: var(--dopesheet-teal-bright);
+  border-radius: 1px;
   cursor: grab;
   z-index: 2;
+  transition: background 0.05s ease, transform 0.05s ease;
 }
- 
+
+.dopesheet-keyframe-tick::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: -6px;
+  right: -6px;
+  bottom: -6px;
+  border-radius: 50%;
+}
+
 .dopesheet-keyframe-tick:hover {
-  background: #fff;
+  background: #ffffff;
+  transform: translate(-50%, -50%) rotate(45deg) scale(1.25);
+  box-shadow: 0 0 6px rgba(143, 227, 224, 0.8);
 }
- 
+
 .dopesheet-keyframe-tick.selected {
-  background: var(--unity-accent-amber);
-  box-shadow: 0 0 3px rgba(245, 158, 11, 0.85);
+  background: var(--unity-accent-amber, #f59e0b);
+  border: 1px solid #ffffff;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.9);
+  transform: translate(-50%, -50%) rotate(45deg) scale(1.2);
+  z-index: 4;
 }
- 
+
+.dopesheet-keyframe-tick.selected:hover {
+  background: #fbbf24;
+  transform: translate(-50%, -50%) rotate(45deg) scale(1.35);
+}
+
 .dopesheet-keyframe-tick:active {
   cursor: grabbing;
 }
- 
-/* Summary tick on the component group lane (union of all child fields) */
+
 .dopesheet-keyframe-tick.group-summary {
-  top: 6px;
-  bottom: 6px;
-  opacity: 0.9;
+  width: 9px;
+  height: 9px;
+  background: #d5f0ee;
+  border: 1px solid var(--dopesheet-teal-header);
+  cursor: pointer;
 }
- 
+
+.dopesheet-keyframe-tick.group-summary:hover {
+  background: #ffffff;
+  box-shadow: 0 0 5px rgba(255, 255, 255, 0.8);
+}
+
+.dopesheet-keyframe-tick.group-summary.selected {
+  background: var(--unity-accent-amber, #f59e0b);
+  border-color: #ffffff;
+}
+
 /* Connecting line between consecutive keyframes on a field lane */
 .dopesheet-keyframe-segment {
   position: absolute;

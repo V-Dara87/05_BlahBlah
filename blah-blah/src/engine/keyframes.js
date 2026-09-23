@@ -228,6 +228,67 @@ export function moveKeyframe(entity, trackKey, fieldName, keyframeId, newTime) {
   return { ...keyframes, [trackKey]: byField };
 }
  
+/** Remove multiple keyframes by their IDs (Set or Array). */
+export function removeKeyframesByIds(entity, keyframeIds) {
+  const idSet = keyframeIds instanceof Set ? keyframeIds : new Set(keyframeIds);
+  if (idSet.size === 0 || !entity?.keyframes) return entity?.keyframes || {};
+
+  const keyframes = entity.keyframes;
+  const nextKeyframes = {};
+  for (const trackKey of Object.keys(keyframes)) {
+    const byField = keyframes[trackKey];
+    const nextByField = {};
+    for (const fieldName of Object.keys(byField)) {
+      const list = byField[fieldName] || [];
+      nextByField[fieldName] = list.filter((k) => !idSet.has(k.id));
+    }
+    nextKeyframes[trackKey] = nextByField;
+  }
+  return nextKeyframes;
+}
+
+/** Move multiple keyframes by time delta dt with optional snap and clamp (maintains relative spacing). */
+export function moveKeyframesDelta(entity, keyframeIds, deltaT, snapFn = (t) => t) {
+  const idSet = keyframeIds instanceof Set ? keyframeIds : new Set(keyframeIds);
+  if (idSet.size === 0 || !entity?.keyframes) return entity?.keyframes || {};
+
+  let minTime = Infinity;
+  for (const trackKey of Object.keys(entity.keyframes)) {
+    const byField = entity.keyframes[trackKey];
+    for (const fieldName of Object.keys(byField)) {
+      for (const k of byField[fieldName] || []) {
+        if (idSet.has(k.id)) {
+          if (k.time < minTime) minTime = k.time;
+        }
+      }
+    }
+  }
+  if (!Number.isFinite(minTime)) return entity.keyframes;
+
+  let effectiveDelta = deltaT;
+  if (minTime + effectiveDelta < 0) {
+    effectiveDelta = -minTime;
+  }
+
+  const keyframes = entity.keyframes;
+  const nextKeyframes = {};
+  for (const trackKey of Object.keys(keyframes)) {
+    const byField = keyframes[trackKey];
+    const nextByField = {};
+    for (const fieldName of Object.keys(byField)) {
+      const list = byField[fieldName] || [];
+      const updated = list.map((k) => {
+        if (!idSet.has(k.id)) return k;
+        const newTime = Math.max(0, snapFn(k.time + effectiveDelta));
+        return { ...k, time: newTime };
+      });
+      nextByField[fieldName] = updated.sort((a, b) => a.time - b.time);
+    }
+    nextKeyframes[trackKey] = nextByField;
+  }
+  return nextKeyframes;
+}
+
 /** Set custom bezier control points on a keyframe (or clear them back to default linear). */
 export function setKeyframeCurve(entity, trackKey, fieldName, keyframeId, cp1, cp2) {
   const keyframes = entity.keyframes || {};

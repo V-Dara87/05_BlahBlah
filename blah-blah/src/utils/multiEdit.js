@@ -122,11 +122,12 @@ export function buildSharedUpdates(entities, trackKey, patch, { currentTime = 0,
     Object.keys(patch).forEach((fieldName) => {
       const value = patch[fieldName];
       const tempEntity = { ...entity, keyframes };
-      const hasKfs = getFieldKeyframes(tempEntity, trackKey, fieldName).length > 0;
+      const kfs = getFieldKeyframes(tempEntity, trackKey, fieldName);
+      const existingAtTime = kfs.find((k) => Math.abs(k.time - local) < 1 / 60);
  
       // Animated field (or Auto Key on): write a keyframe at THIS clip's
       // local time — the static prop would be overridden by the evaluator.
-      if (hasKfs || autoKeyEnabled) {
+      if (autoKeyEnabled || existingAtTime) {
         keyframes = setKeyframe(tempEntity, trackKey, fieldName, local, value);
         kfChanged = true;
         return;

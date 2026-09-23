@@ -225,7 +225,11 @@ export const UnityInspector = memo(function UnityInspector({
    */
   const tryWriteKeyframe = (entitySnapshot, trackKey, fieldName, value) => {
     const kfs = getFieldKeyframes(entitySnapshot, trackKey, fieldName);
-    if (kfs.length > 0 || autoKeyEnabled) {
+    const existingAtTime = kfs.find((k) => Math.abs(k.time - snappedLocalTime) < 1 / 60);
+    // Blender/Spine behavior:
+    // If Auto-Key is ON: automatically insert or update keyframe at this time.
+    // If Auto-Key is OFF: only update if parked on an existing keyframe, never create new keyframes.
+    if (autoKeyEnabled || existingAtTime) {
       return setKeyframe(entitySnapshot, trackKey, fieldName, snappedLocalTime, value);
     }
     return null;

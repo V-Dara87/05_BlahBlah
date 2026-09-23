@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "oxlint",
-    "test": "node tests/canvas-runner.test.mjs && node tests/parent-child.test.mjs && node tests/active-index.test.mjs && node src/utils/timelineScene.test.js && node src/components/Timeline/canvas/drawTimeline.test.js && node tests/transitions.test.mjs && node tests/ffmpeg-runner.test.mjs && node tests/ffmpeg-export.test.mjs && node tests/text-renderer.test.mjs && node tests/prefab-hierarchy.test.mjs && node tests/prefab-portable-instance.test.mjs && node tests/silence-detector.test.mjs && node src/utils/peaksFormat.test.js && node src/dock/popoutGroup.test.js && node src/dock/tabMaximize.test.js && node src/engine/inspectorAttributes.test.js && node src/engine/scriptActions.test.js && node src/engine/scriptRunner.props.test.js",
+    "test": "node tests/canvas-runner.test.mjs && node tests/parent-child.test.mjs && node tests/active-index.test.mjs && node src/utils/timelineScene.test.js && node src/components/Timeline/canvas/drawTimeline.test.js && node tests/transitions.test.mjs && node tests/ffmpeg-runner.test.mjs && node tests/ffmpeg-export.test.mjs && node tests/text-renderer.test.mjs && node tests/prefab-hierarchy.test.mjs && node tests/prefab-portable-instance.test.mjs && node tests/silence-detector.test.mjs && node src/utils/peaksFormat.test.js && node src/dock/popoutGroup.test.js && node src/dock/tabMaximize.test.js && node src/engine/inspectorAttributes.test.js && node src/engine/scriptActions.test.js && node src/engine/scriptRunner.props.test.js && node tests/keyframes.test.mjs",
     "test:timeline": "node tests/run-timeline-layout-tests.mjs",
     "bench:index": "node tests/bench-active-index.mjs",
     "preview": "vite preview",

@@ -74,7 +74,9 @@ export function useGizmoDrag({
  
     Object.entries(updates).forEach(([fieldName, value]) => {
       const kfs = getFieldKeyframes({ ...entity, keyframes: keyframesSnapshot }, trackKey, fieldName);
-      if (kfs.length > 0 || autoKeyEnabled) {
+      const existingAtTime = kfs.find((k) => Math.abs(k.time - snappedTime) < 1 / 60);
+      // Blender/Spine behavior: only create keyframes if Auto-Key is ON, or editing an existing keyframe
+      if (autoKeyEnabled || existingAtTime) {
         keyframesSnapshot = setKeyframe({ ...entity, keyframes: keyframesSnapshot }, trackKey, fieldName, snappedTime, value);
         keyframesChanged = true;
       } else {
