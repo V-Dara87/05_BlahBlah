@@ -5,9 +5,9 @@
    App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
 
 .docs-modal-card {
-  width: 92%;
-  max-width: 860px;
-  max-height: 85vh;
+  width: 94%;
+  max-width: 980px;
+  max-height: 88vh;
   display: flex;
   flex-direction: column;
   background: var(--unity-panel);
@@ -17,13 +17,23 @@
   overflow: hidden;
 }
  
-.docs-modal-body {
+/* Scoped under the card so it beats `.modal-body` in styles/shared.css, which
+   sets `flex-direction: column` + its own padding and — because shared.css is
+   bundled AFTER this file — was winning the tie. That stacked the table of
+   contents ABOVE the document instead of beside it (the reported broken
+   "doc menu"): the nav ended up as a short list in the top-left with the
+   document starting underneath it, and the body's flex sizing was wrong too,
+   which is why the footer cut off the last lines.
+   The `display`/`flex-direction`/`padding`/`gap`/`min-height`/`flex`/`overflow`
+   declarations below all exist to override that rule (or to keep it overridden
+   if shared.css's values change) — do not drop them as "redundant". */
+.docs-modal-card .docs-modal-body {
   display: flex;
   flex-direction: row;
   gap: 0;
   padding: 0;
   min-height: 0;
-  flex: 1;
+  flex: 1 1 auto;
   overflow: hidden;
 }
  
@@ -37,23 +47,39 @@
   flex-direction: column;
   gap: 2px;
 }
- 
+
+/* A real <button> now, not an <a href="#...">: the old hrefs pointed at ids
+   that no heading ever received, so clicking the menu did nothing but change
+   the URL hash, and there is no page navigation to do inside a modal. */
 .docs-toc-link {
   display: block;
+  width: 100%;
+  box-sizing: border-box;
   padding: 6px 8px;
+  background: none;
+  border: none;
+  border-left: 2px solid transparent;
   border-radius: 4px;
+  font-family: inherit;
   font-size: 11px;
+  text-align: left;
   color: var(--unity-text-muted);
-  text-decoration: none;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: background 0.08s;
+  cursor: pointer;
+  transition: background 0.08s, color 0.08s;
 }
- 
+
 .docs-toc-link:hover {
   background: rgba(255, 255, 255, 0.06);
   color: #fff;
+}
+
+.docs-toc-link.active {
+  background: rgba(56, 189, 248, 0.1);
+  border-left-color: var(--unity-accent-blue);
+  color: var(--unity-accent-blue);
 }
  
 .docs-content {
@@ -61,6 +87,10 @@
   min-width: 0;
   padding: 18px 22px;
   overflow-y: auto;
+  /* `overflow-y: auto` alone computes overflow-x to auto as well, which gave
+     the whole document a horizontal scrollbar (code blocks scroll themselves,
+     and tables wrap). */
+  overflow-x: hidden;
   font-size: 12px;
   line-height: 1.6;
   color: var(--unity-text);
@@ -157,7 +187,9 @@
   color: var(--unity-text-muted);
 }
  
-.docs-modal-footer {
+/* Scoped for the same cascade reason as the body above: `.script-footer`
+   (shared.css) sets `justify-content: flex-end` and would otherwise win. */
+.docs-modal-card .docs-modal-footer {
   border-top: 1px solid var(--unity-border);
   padding: 10px 16px;
   align-items: center;

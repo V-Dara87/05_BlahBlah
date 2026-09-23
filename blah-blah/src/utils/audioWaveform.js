@@ -44,12 +44,17 @@ import { slicePeaks } from './peaksFormat';
 // from ever being decoded whole.
 export const LONG_MEDIA_THRESHOLD_SEC = 10 * 60;
 
+// The bucket-count policy (how many envelope buckets a box of a given pixel
+// size should ask for) lives in utils/waveformResolution.js, shared with both
+// renderers so they request the same envelope for the same box.
+
 // Bounded caches. Previously both grew forever for the life of the session:
 // every distinct URL kept its AudioBuffer (the 1 GB/hour problem), and every
 // (url, numPeaks, window) triple kept an envelope. These limits release the
 // oldest entries once a modest budget is reached.
 const MAX_BUFFER_CACHE_ENTRIES = 6; // decoded AudioBuffers — the expensive ones
 const MAX_PEAK_CACHE_ENTRIES = 240; // small envelope arrays
+
 
 // Cache: `${url}::${numPeaks}::${startSec}::${endSec}` → Promise<envelope>
 const peakCache = new Map();

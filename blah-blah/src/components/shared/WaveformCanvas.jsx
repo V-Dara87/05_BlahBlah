@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState, memo } from 'react';
 import { getWaveformPeaks } from '../../utils/audioWaveform';
+import { bucketsForCard } from '../../utils/waveformResolution';
 import { getAssetByUrl, getPeakStatus, subscribePeaksUpdated } from '../../services/peakCache';
  
 /**
@@ -18,7 +19,9 @@ import { getAssetByUrl, getPeakStatus, subscribePeaksUpdated } from '../../servi
  *   url        — audio source URL to decode
  *   width      — canvas width in px
  *   height     — canvas height in px (drives both draw scale AND how many
- *                peak buckets are requested — see `detailForHeight` below)
+ *                peak buckets are requested — see bucketsForCard in
+ *                utils/waveformResolution.js, shared with the canvas timeline
+ *                so both renderers share one envelope per clip)
  *   color      — envelope fill color (default: currentColor)
  *   rmsColor   — inner RMS fill color; defaults to a brighter version of `color`
  *   mirror     — if true, renders mirrored (top + bottom) like most DAWs
@@ -26,21 +29,6 @@ import { getAssetByUrl, getPeakStatus, subscribePeaksUpdated } from '../../servi
  *   endSec     — end of the window into the source file to draw (default: end of file)
  */
  
-// How many envelope buckets to request per pixel of canvas width, as a
-// function of the clip's rendered height. A short/collapsed track (the
-// default ~48px clip height) only needs ~1 bucket/px — any finer and the
-// shape looks identical but costs more CPU. A track the user has resized
-// tall gets progressively more buckets/px, so expanding a track keeps
-// revealing real sample-level detail instead of just scaling up the same
-// coarse shape (the "make it very detailed like DaVinci Resolve" ask).
-function detailForHeight(height) {
-  if (height <= 56) return 1; // compact/default clip height
-  if (height <= 90) return 1.5;
-  if (height <= 140) return 2.5;
-  if (height <= 220) return 4;
-  return 6; // fully expanded track — maximum envelope resolution
-}
-
 // Trimming/zooming changes startSec/endSec/numPeaks on every pointer tick.
 // Peaks-backed clips re-slice cheaply, but anything still on the in-memory
 // decode path would re-run extractEnvelope on every tick — so these inputs
@@ -69,12 +57,11 @@ export const WaveformCanvas = memo(function WaveformCanvas({
   useEffect(() => subscribePeaksUpdated(() => setPeaksVersion((v) => v + 1)), []);
  
   // Buckets requested scales with width AND the height-derived detail
-  // multiplier, then snapped to a coarse grid so small height/width
-  // jitter (e.g. a ResizeObserver firing during a drag) doesn't spam the
-  // decoder with a new cache key on every pixel.
-  const detail = detailForHeight(height);
-  const rawBuckets = Math.max(20, Math.round(width * detail));
-  const numPeaks = Math.ceil(rawBuckets / 20) * 20;
+  // multiplier, snapped onto the shared power-of-two ladder with a ceiling
+  // (see bucketsForCard). The ladder is what keeps a zoom step from asking for
+  // a new envelope for every clip on screen, and the ceiling is what keeps a
+  // long clip's envelope from growing with its on-screen width.
+  const numPeaks = bucketsForCard(width, height);
 
   // Debounced fetch inputs. `url` and `peaksVersion` are deliberately NOT
   // debounced: a URL change or a "peaks became ready" event must refetch

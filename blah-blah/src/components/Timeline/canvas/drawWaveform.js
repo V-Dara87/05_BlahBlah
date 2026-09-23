@@ -29,8 +29,10 @@
  * @param {string} params.color envelope fill
  * @param {string} [params.rmsColor]
  * @param {boolean} [params.mirror=true]
+ * @param {{scrollLeft:number, width:number}} [params.view] visible content-space
+ *        x range, used to skip off-screen buckets (see below)
  */
-export function drawWaveformEnvelope(ctx, { x, y, width, height, envelope, color, rmsColor, mirror = true }) {
+export function drawWaveformEnvelope(ctx, { x, y, width, height, envelope, color, rmsColor, mirror = true, view }) {
   if (!envelope || width <= 0 || height <= 0) return;
   const { mins, maxs, rms } = envelope;
   if (!mins || !maxs || mins.length === 0) return;
@@ -44,6 +46,26 @@ export function drawWaveformEnvelope(ctx, { x, y, width, height, envelope, color
   const maxAmpH = mirror ? height / 2 - 1 : height - 2;
   const stepX = width / n;
 
+  // ── Visible-bucket culling ───────────────────────────────────────────
+  // The envelope's `n` buckets are spread across the WHOLE card, and a long
+  // clip's card is far wider than the viewport (a 1-hour clip at 200 px/s is
+  // 720000px wide). Walking every bucket to build the fill path — twice, once
+  // for the envelope and once for the RMS shape — meant tens of thousands of
+  // path ops per clip per frame, which is what made dragging or zooming a
+  // timeline with long audio stutter. Only the buckets that can land inside
+  // the viewport are walked, so the cost tracks how much waveform is ON SCREEN
+  // rather than how long the clip is. The +-1 padding keeps the shape joined at
+  // the viewport edges.
+  let first = 0;
+  let last = n - 1;
+  if (view && Number.isFinite(view.scrollLeft) && Number.isFinite(view.width)) {
+    const viewLeft = view.scrollLeft - x;
+    const viewRight = view.scrollLeft + view.width - x;
+    first = Math.max(0, Math.floor(viewLeft / stepX) - 1);
+    last = Math.min(n - 1, Math.ceil(viewRight / stepX) + 1);
+    if (last < first) return; // entirely off screen
+  }
+
   ctx.save();
   ctx.beginPath();
   ctx.rect(x, y, width, height);
@@ -52,13 +74,13 @@ export function drawWaveformEnvelope(ctx, { x, y, width, height, envelope, color
   // Outer envelope: max samples left-to-right, min samples right-to-left, as
   // ONE closed path — a smooth continuous shape rather than per-bucket bars.
   ctx.beginPath();
-  for (let i = 0; i < n; i++) {
+  for (let i = first; i <= last; i++) {
     const px = x + i * stepX;
     const py = mirror ? midY - maxs[i] * maxAmpH : y + height - 1 - maxs[i] * maxAmpH;
-    if (i === 0) ctx.moveTo(px, py);
+    if (i === first) ctx.moveTo(px, py);
     else ctx.lineTo(px, py);
   }
-  for (let i = n - 1; i >= 0; i--) {
+  for (let i = last; i >= first; i--) {
     const px = x + i * stepX;
     const py = mirror ? midY - mins[i] * maxAmpH : y + height - 1;
     ctx.lineTo(px, py);
@@ -70,13 +92,13 @@ export function drawWaveformEnvelope(ctx, { x, y, width, height, envelope, color
   // Inner RMS fill: brighter, slimmer shape tracking perceived loudness.
   if (rms && rms.length >= n && maxAmpH > 6) {
     ctx.beginPath();
-    for (let i = 0; i < n; i++) {
+    for (let i = first; i <= last; i++) {
       const px = x + i * stepX;
       const py = mirror ? midY - rms[i] * maxAmpH : y + height - 1 - rms[i] * maxAmpH;
-      if (i === 0) ctx.moveTo(px, py);
+      if (i === first) ctx.moveTo(px, py);
       else ctx.lineTo(px, py);
     }
-    for (let i = n - 1; i >= 0; i--) {
+    for (let i = last; i >= first; i--) {
       const px = x + i * stepX;
       const py = mirror ? midY + rms[i] * maxAmpH : y + height - 1;
       ctx.lineTo(px, py);
@@ -98,9 +120,15 @@ export function drawWaveformEnvelope(ctx, { x, y, width, height, envelope, color
  * Neutral "peaks are still generating" fill — a faint centre bar with a
  * diagonal hatch, matching WaveformCanvas.jsx's placeholder exactly.
  */
-export function drawWaveformPlaceholder(ctx, { x, y, width, height, mirror = true }) {
+export function drawWaveformPlaceholder(ctx, { x, y, width, height, mirror = true, view }) {
   if (width <= 0 || height <= 0) return;
   const midY = y + (mirror ? height / 2 : height);
+
+  // Same visible-range culling as drawWaveformEnvelope: a very wide card would
+  // otherwise stroke thousands of hatch stripes that are clipped away anyway.
+  const from = view ? Math.max(x - height, view.scrollLeft - height) : x - height;
+  const to = view ? Math.min(x + width, view.scrollLeft + view.width) : x + width;
+  if (to <= from) return;
 
   ctx.save();
   ctx.beginPath();
@@ -112,7 +140,7 @@ export function drawWaveformPlaceholder(ctx, { x, y, width, height, mirror = tru
 
   ctx.beginPath();
   const stripeGap = 9;
-  for (let sx = x - height; sx < x + width; sx += stripeGap) {
+  for (let sx = from; sx < to; sx += stripeGap) {
     ctx.moveTo(sx, y + height);
     ctx.lineTo(sx + height, y);
   }
@@ -122,24 +150,18 @@ export function drawWaveformPlaceholder(ctx, { x, y, width, height, mirror = tru
   ctx.restore();
 }
 
-/** Buckets-per-pixel for a card height, mirroring WaveformCanvas's detailForHeight. */
-export function detailForHeight(height) {
-  if (height <= 56) return 1;
-  if (height <= 90) return 1.5;
-  if (height <= 140) return 2.5;
-  if (height <= 220) return 4;
-  return 6;
-}
-
 /**
- * Bucket count to request for a card of this width/height, snapped to a coarse
- * grid (multiples of 20) so sub-pixel jitter during a drag/zoom does not spam
- * the peak decoder with a new cache key every frame.
+ * The bucket-count policy is shared: it lives in utils/waveformResolution.js and
+ * is re-exported here so the canvas draw path keeps asking for the SAME
+ * envelope count as the DOM's WaveformCanvas (see the note on bucketsForCard
+ * for why the two must never disagree).
  */
-export function bucketsForCard(width, height) {
-  const raw = Math.max(20, Math.round(width * detailForHeight(height)));
-  return Math.ceil(raw / 20) * 20;
-}
+export {
+  detailForHeight,
+  bucketsForCard,
+  MIN_WAVEFORM_BUCKETS,
+  MAX_WAVEFORM_BUCKETS,
+} from '../../../utils/waveformResolution.js';
 
 /** Brightens an rgba()/rgb() colour for the inner RMS fill (see WaveformCanvas). */
 function brighten(colorStr) {

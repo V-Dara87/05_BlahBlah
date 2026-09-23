@@ -33,8 +33,18 @@ import { generatePeaksForAsset, isPeakGenerationSupported } from './peakGenerato
 import { parsePeakFile } from '../utils/peaksFormat.js';
 import { statFile } from './tauriFsAdapter.js';
 
-/** How many parsed peak files to keep resident at once. */
-export const MAX_MEMORY_PEAKS = 6;
+/**
+ * How many parsed peak files to keep resident at once.
+ *
+ * MAX_MEMORY_BYTES is what actually bounds memory (~10 MB per hour of audio);
+ * this count only exists to stop a huge library pinning tiny files. It has to
+ * comfortably cover the number of distinct media files a timeline can have on
+ * screen at once: with a smaller window, a project with a handful of
+ * multi-track long files kept evicting each other and re-reading + re-parsing
+ * multi-MB peak files on every zoom step, which is felt as the waveform
+ * stuttering while dragging/zooming.
+ */
+export const MAX_MEMORY_PEAKS = 24;
 /** Rough ceiling on resident peak-file bytes (~10 MB/hour each). */
 export const MAX_MEMORY_BYTES = 64 * 1024 * 1024;
 /**

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { X, Copy, Check, BookOpen } from 'lucide-react';
 
 /**
@@ -16,22 +16,64 @@ import { X, Copy, Check, BookOpen } from 'lucide-react';
  *
  * Follows the same modal shell as ScriptEditorModal.jsx (.modal-backdrop /
  * .modal-card, .modal-header / .modal-title-group / .close-btn), with its
- * own width + scrollable body rule (.docs-modal-card / .docs-modal-body
- * in App.css) since the reference content is longer than a settings form.
+ * own width + scrollable body rule (.docs-modal-card / .docs-modal-body in
+ * script-docs-modal.css) since the reference content is longer than a
+ * settings form — and because `.modal-body`/`.modal-content` in
+ * styles/shared.css are bundled AFTER the component stylesheets, the rules
+ * that have to beat them are scoped with two classes (see that file).
+ *
+ * THE SIDEBAR MENU is derived from the document itself: every entry below
+ * names a distinctive fragment of the heading it points at, the heading's DOM
+ * id is computed the same way the Markdown renderer computes it, and clicking
+ * an entry scrolls the content pane to that heading. Previously the entries
+ * hard-coded `#docs-<id>` anchors that no heading actually received, so the
+ * menu was inert (and the ids it guessed are not the ids DocsMarkdown
+ * generates) — matching against the markdown keeps the two in step through
+ * any edit to the document, and a fragment that no longer matches simply drops
+ * out of the menu instead of becoming a dead link.
  */
 
+/** Sidebar entries: a short label plus a fragment of the heading it targets. */
 const SECTIONS = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'props', label: 'static props' },
-  { id: 'motion', label: 'Motion scripts' },
-  { id: 'generic-tween', label: 'Generic tween' },
-  { id: 'canvas', label: 'Canvas scripts' },
-  { id: 'refs', label: 'entity / asset refs' },
-  { id: 'react', label: 'React scripts' },
-  { id: 'shader', label: 'Shader transitions' },
-  { id: 'imports', label: 'npm imports' },
-  { id: 'cheatsheet', label: 'Cheat sheet' },
+  { id: 'overview', label: 'Overview', match: 'User Script API Reference' },
+  { id: 'props', label: 'static props', match: 'Declaring props' },
+  { id: 'motion', label: 'Motion scripts', match: 'animating a clip' },
+  { id: 'generic-tween', label: 'Generic tween', match: 'Generic tween' },
+  { id: 'canvas', label: 'Canvas scripts', match: 'custom rendering' },
+  { id: 'refs', label: 'entity / asset refs', match: 'Reference props' },
+  { id: 'react', label: 'React scripts', match: 'custom React clip content' },
+  { id: 'shader', label: 'Shader transitions', match: 'custom transitions' },
+  { id: 'imports', label: 'npm imports', match: 'npm packages' },
+  { id: 'cheatsheet', label: 'Cheat sheet', match: 'cheat sheet' },
 ];
+
+/** The DOM id a heading's text gets — the ONE definition of that mapping. */
+function headingIdFor(text) {
+  return `docs-${text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')}`;
+}
+
+/**
+ * Every heading in the document, in order, as `{ text, id }`. Fenced code is
+ * skipped: a `#` at the start of a line inside a ``` block is a comment, not a
+ * heading, and treating it as one would put a bogus entry in the menu.
+ */
+function listHeadings(markdown) {
+  const headings = [];
+  let inFence = false;
+  for (const line of markdown.split('\n')) {
+    if (line.startsWith('```')) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence || !line.startsWith('#')) continue;
+    const text = line.replace(/^#+\s*/, '');
+    headings.push({ text, id: headingIdFor(text) });
+  }
+  return headings;
+}
 
 // Kept as one plain-text constant (not JSX) so "Copy for AI" can put the
 // exact same content on the clipboard that's rendered below — no risk of
@@ -461,8 +503,77 @@ import './script-docs-modal.css';
 
 export function ScriptDocsModal({ isOpen, onClose }) {
   const [copied, setCopied] = useState(false);
+  const contentRef = useRef(null);
+  const [activeId, setActiveId] = useState(SECTIONS[0].id);
+
+  /**
+   * The sidebar entries, each resolved to the id of the heading it names —
+   * against the document's OWN headings, so every entry is guaranteed to point
+   * at something (see SECTIONS for why the old hrefs did not).
+   */
+  const menu = useMemo(() => {
+    const headings = listHeadings(SCRIPT_API_DOCS_MARKDOWN);
+    return SECTIONS.map((section) => {
+      const needle = section.match.toLowerCase();
+      const heading = headings.find((h) => h.text.toLowerCase().includes(needle));
+      return heading ? { ...section, headingId: heading.id } : null;
+    }).filter(Boolean);
+  }, []);
+
+  // Keep the highlighted entry in step with the reading position — including
+  // right after a click-jump, which would otherwise leave the previous entry
+  // lit until the next scroll event. One rAF per scroll burst, the same
+  // coalescing the timeline uses for its own redraws.
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const container = contentRef.current;
+    if (!container || menu.length === 0) return undefined;
+
+    const targets = menu
+      .map((item) => ({ id: item.id, el: document.getElementById(item.headingId) }))
+      .filter((target) => target.el);
+    if (targets.length === 0) return undefined;
+
+    let frame = 0;
+    const sync = () => {
+      frame = 0;
+      const containerTop = container.getBoundingClientRect().top;
+      let current = targets[0].id;
+      for (const target of targets) {
+        // 24px of slack, so the heading a jump just landed on counts as the
+        // current one (it sits 8px below the top edge) rather than the one
+        // before it.
+        if (target.el.getBoundingClientRect().top - containerTop <= 24) current = target.id;
+        else break;
+      }
+      setActiveId(current);
+    };
+    const onScroll = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(sync);
+    };
+
+    sync();
+    container.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      container.removeEventListener('scroll', onScroll);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [isOpen, menu]);
 
   if (!isOpen) return null;
+
+  /** Scroll the content pane to a section. The menu navigates nothing else. */
+  const handleJump = (item) => {
+    const container = contentRef.current;
+    const heading = document.getElementById(item.headingId);
+    if (!container || !heading) return;
+    const top =
+      heading.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 8;
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+    container.scrollTo({ top: Math.max(0, top), behavior: reduceMotion ? 'auto' : 'smooth' });
+    setActiveId(item.id);
+  };
 
   const handleCopy = async () => {
     try {
@@ -491,15 +602,21 @@ export function ScriptDocsModal({ isOpen, onClose }) {
         </div>
 
         <div className="modal-body docs-modal-body">
-          <nav className="docs-toc">
-            {SECTIONS.map((s) => (
-              <a key={s.id} href={`#docs-${s.id}`} className="docs-toc-link">
-                {s.label}
-              </a>
+          <nav className="docs-toc" aria-label="Document sections">
+            {menu.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`docs-toc-link${activeId === item.id ? ' active' : ''}`}
+                onClick={() => handleJump(item)}
+                aria-current={activeId === item.id ? 'true' : undefined}
+              >
+                {item.label}
+              </button>
             ))}
           </nav>
 
-          <div className="docs-content">
+          <div className="docs-content" ref={contentRef}>
             <DocsMarkdown text={SCRIPT_API_DOCS_MARKDOWN} />
           </div>
         </div>
@@ -554,7 +671,7 @@ function DocsMarkdown({ text }) {
     if (line.startsWith('#')) {
       const level = line.match(/^#+/)[0].length;
       const content = line.replace(/^#+\s*/, '');
-      const id = `docs-${content.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')}`;
+      const id = headingIdFor(content);
       const Tag = `h${Math.min(level + 1, 6)}`;
       blocks.push(
         <Tag key={key++} id={id} className="docs-heading">

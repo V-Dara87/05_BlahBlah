@@ -3,11 +3,17 @@ import { test } from 'node:test';
 import { buildTimelineScene } from '../../../utils/timelineScene.js';
 import { TRACK_HEIGHT } from '../../../utils/timelineLayout.js';
 import { drawTimelineScene, readTimelineTheme, waveformRectFor, wantsWaveform } from './drawTimeline.js';
-import { bucketsForCard, drawWaveformEnvelope, drawWaveformPlaceholder } from './drawWaveform.js';
+import {
+  bucketsForCard,
+  drawWaveformEnvelope,
+  drawWaveformPlaceholder,
+  MIN_WAVEFORM_BUCKETS,
+  MAX_WAVEFORM_BUCKETS,
+} from './drawWaveform.js';
 
 /** Minimal 2D context double that records op counts and stroke/fill colours. */
 function mockContext() {
-  const calls = { fillRect: 0, fillText: 0, strokeRect: 0, fill: 0, stroke: 0, clip: 0 };
+  const calls = { fillRect: 0, fillText: 0, strokeRect: 0, fill: 0, stroke: 0, clip: 0, moveTo: 0, lineTo: 0 };
   // Colours seen at each stroke()/fill(), so tests can assert what was drawn
   // (e.g. that the selected card is highlighted) without a real canvas.
   const strokedWith = [];
@@ -281,12 +287,50 @@ test('waveform helpers agree on which clips get a waveform and how many buckets'
 
   const rect = waveformRectFor(audioItem);
   assert.ok(rect.width > 0 && rect.height > 0);
-  assert.equal(bucketsForCard(rect.width, rect.height) % 20, 0, 'bucket counts are snapped to 20s');
+
+  // Bucket counts sit on the power-of-two ladder inside the shared bounds, so
+  // neighbouring zoom levels share one envelope instead of each asking for a
+  // resolution of its own (the "waveform reloads while zooming" flicker).
+  const buckets = bucketsForCard(rect.width, rect.height);
+  assert.ok(
+    buckets >= MIN_WAVEFORM_BUCKETS && buckets <= MAX_WAVEFORM_BUCKETS,
+    'bucket count stays inside the ladder bounds'
+  );
+  assert.equal(buckets & (buckets - 1), 0, 'bucket count is a power of two');
+  assert.ok(
+    buckets >= rect.width,
+    'a card never asks for fewer buckets than it has pixels to draw across'
+  );
+  assert.equal(
+    bucketsForCard(rect.width + 1, rect.height),
+    buckets,
+    'a one-pixel width change stays on the same rung'
+  );
 
   // Drawing never throws, with or without an envelope.
   const ctx = mockContext();
-  drawWaveformEnvelope(ctx, { ...rect, envelope: envelopeOf(120), color: 'rgba(1,2,3,0.5)' });
+  const envelope = envelopeOf(Math.min(4096, buckets));
+  drawWaveformEnvelope(ctx, { ...rect, envelope, color: 'rgba(1,2,3,0.5)' });
   drawWaveformEnvelope(ctx, { ...rect, envelope: null, color: 'rgba(1,2,3,0.5)' });
   drawWaveformPlaceholder(ctx, rect);
   assert.ok(ctx.calls.fill > 0, 'a real envelope was filled');
+
+  // Visible-bucket culling: a card far wider than the viewport must cost what is
+  // ON SCREEN, not what the clip's whole width is. Same envelope, tiny window.
+  const wide = { x: 0, y: rect.y, width: 200000, height: rect.height };
+  const wideEnvelope = envelopeOf(16384);
+  const full = mockContext();
+  drawWaveformEnvelope(full, { ...wide, envelope: wideEnvelope, color: 'rgba(1,2,3,0.5)' });
+  const culled = mockContext();
+  drawWaveformEnvelope(culled, {
+    ...wide,
+    envelope: wideEnvelope,
+    color: 'rgba(1,2,3,0.5)',
+    view: { scrollLeft: 100000, width: 1600 },
+  });
+  assert.ok(full.calls.lineTo > 1000, 'unculled drawing walks the whole envelope');
+  assert.ok(
+    culled.calls.lineTo > 0 && culled.calls.lineTo < full.calls.lineTo / 20,
+    'culled drawing only walks the buckets inside the viewport'
+  );
 });

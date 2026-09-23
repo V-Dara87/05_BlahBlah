@@ -197,6 +197,10 @@ export function drawTimelineScene(ctx, {
       silenceCuts: state.silenceCuts,
       peaksFor: state.peaksFor,
       peaksPending: state.peaksPending,
+      // The waveform pass culls its buckets to this visible x range, so a long
+      // clip costs only what is actually on screen (see drawWaveform's
+      // visible-bucket culling).
+      view,
     });
   }
   for (const item of transitions) {
@@ -321,6 +325,7 @@ function drawClipCard(ctx, {
   silenceCuts,
   peaksFor,
   peaksPending,
+  view,
 }) {
   // Selection lives here, not in the scene: see the note in timelineScene.js.
   const isSelected = selected.has(item.id);
@@ -372,11 +377,12 @@ function drawClipCard(ctx, {
         // ClipItem passes purple whenever there IS audio — the blue branch is
         // unreachable there, and matching it exactly is the point.
         color: 'rgba(139, 92, 246, 0.55)',
+        view,
       });
     } else if (peaksPending ? peaksPending(item) : false) {
       // Per-clip, not global: a clip whose peaks came back empty must draw
       // nothing, not a hatch borrowed from some other clip's in-flight request.
-      drawWaveformPlaceholder(ctx, waveformBox);
+      drawWaveformPlaceholder(ctx, { ...waveformBox, view });
     }
   }
 

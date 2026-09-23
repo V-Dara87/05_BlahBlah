@@ -44,6 +44,33 @@ function isDescendantOf(candidateChildId, ancestorId, allClips) {
 }
  
 /**
+ * How many distinct (url, bucket-rung, window) envelopes to keep before the
+ * oldest are evicted. Envelopes are bounded now (MAX_WAVEFORM_BUCKETS x 3
+ * arrays x 4 bytes = 192KB at the ceiling), so even a worst case here is tens
+ * of MB rather than the unbounded hundreds the uncapped bucket counts allowed —
+ * see bucketsForCard for why the bucket count is capped at all.
+ */
+const MAX_ENVELOPE_ENTRIES = 160;
+/** Same idea for the per-clip "last drawn" fallbacks (a reference each: no copying). */
+const MAX_LAST_ENVELOPE_ENTRIES = 400;
+
+/**
+ * Source-time granularity the waveform window is snapped to before it becomes a
+ * cache key. Trimming a clip changes mediaOffset/duration on every pointer
+ * tick, and each distinct pair used to be its own request (a fresh slice and
+ * three fresh arrays) — a trim drag would re-slice every frame. A 20ms quantum
+ * is far finer than a waveform can show over a multi-second window, and it
+ * cuts that request rate several-fold (see waveformRequestFor).
+ */
+const WAVEFORM_WINDOW_QUANTUM_SEC = 1 / 50;
+
+/** Snap a source-time value onto the window quantum (non-finite passes through). */
+function quantiseWindowSec(value) {
+  if (!Number.isFinite(value)) return value;
+  return Math.round(value / WAVEFORM_WINDOW_QUANTUM_SEC) * WAVEFORM_WINDOW_QUANTUM_SEC;
+}
+
+/**
  * TimelineCanvas — the clip/lane area drawn on ONE canvas instead of one
  * React component per clip.
  *
@@ -297,6 +324,12 @@ export const TimelineCanvas = memo(function TimelineCanvas({
   // Tauri) also showed a hatch whenever any other clip was still decoding.
   const envelopeRef = useRef(new Map());
   const pendingRef = useRef(new Set()); // windowKeys in flight
+  // clipId -> the last envelope that actually drew for that clip. Used as a
+  // fallback while a NEWER request (a different bucket rung, or a new trim
+  // window) is in flight, so the card never drops back to the placeholder and
+  // back on a zoom step or a trim drag — see ensureEnvelope. Bounded like
+  // envelopeRef: only clips that have drawn something ever get an entry.
+  const lastEnvelopeRef = useRef(new Map());
   const [stateVersion, setStateVersion] = useState(0); // bumps when async peaks land
  
   // Current hover result from scene.hitTest, or null when the pointer is off
@@ -374,6 +407,24 @@ export const TimelineCanvas = memo(function TimelineCanvas({
   const themeRef = useRef(null);
  
   /**
+   * Remember the newest envelope that drew for a clip, for ensureEnvelope's
+   * fallback while the NEXT request for that clip is in flight. Only the
+   * reference is kept (the arrays live on in envelopeRef), and the map is
+   * bounded by evicting the oldest clip, so a project with hundreds of audio
+   * clips cannot grow it without limit.
+   */
+  const rememberEnvelope = useCallback((clipId, envelope) => {
+    if (!clipId) return;
+    const store = lastEnvelopeRef.current;
+    // Re-insert so Map order stays least-recently-used-first.
+    if (store.has(clipId)) store.delete(clipId);
+    store.set(clipId, envelope);
+    while (store.size > MAX_LAST_ENVELOPE_ENTRIES) {
+      store.delete(store.keys().next().value);
+    }
+  }, []);
+
+  /**
    * Everything needed to identify one clip's waveform request, or null.
    *
    * The url and the media window (the clip's in-point through the amount of
@@ -384,38 +435,68 @@ export const TimelineCanvas = memo(function TimelineCanvas({
    * Transform speed once per visible audio clip per frame (O(visible x clips) at
    * 60fps on a project with thousands of clips).
    *
-   * The bucket count has to match the box WaveformCanvas would have asked for —
-   * same width/height, same detailForHeight curve — or every clip would build a
-   * second, redundant set of peaks for a card it is already showing.
+   * The bucket count comes from the shared bucketsForCard policy
+   * (utils/waveformResolution.js) — the same one WaveformCanvas asks for — so
+   * the two renderers, and every zoom level inside one ladder rung, share ONE
+   * envelope instead of building a redundant set each.
    */
   const waveformRequestFor = useCallback((item) => {
     if (!wantsWaveform(item)) return null;
     const rect = waveformRectFor(item);
     if (!rect) return null;
     const numPeaks = bucketsForCard(rect.width, rect.height);
-    const startSec = item.audioStartSec;
-    const endSec = item.audioEndSec;
+    // Quantised so a trim drag (which changes the in/out points every frame)
+    // reuses one envelope for a whole run of frames instead of issuing a slice
+    // per frame. A clip shorter than the quantum keeps its exact window, so the
+    // guard can never collapse it to a zero-width (empty) request.
+    let startSec = quantiseWindowSec(item.audioStartSec);
+    let endSec = quantiseWindowSec(item.audioEndSec);
+    if (!(endSec > startSec)) {
+      startSec = item.audioStartSec;
+      endSec = item.audioEndSec;
+    }
     const url = item.audioUrl;
     return { url, numPeaks, startSec, endSec, key: `${url}::${numPeaks}::${startSec}::${endSec}` };
   }, []);
- 
-  /** The envelope for this clip if it is ready, else null (and start loading). */
+
+  /**
+   * The envelope for this clip if it is ready, else the last one this clip DID
+   * draw (else null, and start loading).
+   *
+   * Returning a stale envelope rather than null is what removes the "waveform
+   * looks like it reloads while I zoom" flicker: a new bucket rung (or a new
+   * trim window) is requested asynchronously, and hatching the card until it
+   * lands meant every zoom step swapped a real waveform for the placeholder and
+   * back. Stretching the previous shape for the frame or two a slice takes is
+   * far less jarring — and the previous shape is usually the SAME window at a
+   * neighbouring resolution, so it is barely even wrong. (The DOM renderer has
+   * done the equivalent for a while: WaveformCanvas debounces its inputs and
+   * keeps its last envelope on screen while they settle.)
+   */
   const ensureEnvelope = useCallback((item) => {
     const request = waveformRequestFor(item);
     if (!request) return null;
     const { url, numPeaks, startSec, endSec, key } = request;
- 
+
     const entry = envelopeRef.current.get(key);
     if (entry) {
       if (entry.status === 'ready') return entry.envelope;
       if (entry.status === 'empty') return null; // genuinely no peaks: draw nothing
-      // 'pending' falls through so the caller can hatch the card.
+      // 'pending' falls through to the last-ready fallback below.
     }
- 
+
     if (!pendingRef.current.has(key)) {
-      // Bound the mirror cache: envelopes are small (a few KB) but a long
-      // project of hundreds of clips would otherwise accumulate forever.
-      if (envelopeRef.current.size > 600) envelopeRef.current.clear();
+      // Bound the mirror cache by EVICTING the oldest entries. It used to clear
+      // the whole map past the cap, which made every clip on screen fall back to
+      // the hatch at once (and re-issue its slice) after a long session — the
+      // same "waveform reloads" symptom from the other direction.
+      if (envelopeRef.current.size > MAX_ENVELOPE_ENTRIES) {
+        let toDrop = Math.ceil(MAX_ENVELOPE_ENTRIES / 4);
+        for (const stale of envelopeRef.current.keys()) {
+          envelopeRef.current.delete(stale);
+          if (--toDrop <= 0) break;
+        }
+      }
       pendingRef.current.add(key);
       envelopeRef.current.set(key, { status: 'pending', envelope: null });
       getWaveformPeaks(url, numPeaks, startSec, endSec)
@@ -425,6 +506,7 @@ export const TimelineCanvas = memo(function TimelineCanvas({
             status: ready ? 'ready' : 'empty',
             envelope: ready ? envelope : null,
           });
+          if (ready) rememberEnvelope(item.id, envelope);
         })
         .catch(() => {
           envelopeRef.current.set(key, { status: 'empty', envelope: null });
@@ -434,8 +516,9 @@ export const TimelineCanvas = memo(function TimelineCanvas({
           setStateVersion((v) => v + 1); // schedule a redraw with the real shape
         });
     }
-    return null; // hatched placeholder until it arrives
-  }, [waveformRequestFor]);
+    // Still building: draw this clip's previous shape rather than hatching.
+    return lastEnvelopeRef.current.get(item.id) || null;
+  }, [waveformRequestFor, rememberEnvelope]);
  
   /** True while THIS clip's waveform is still being fetched/built. */
   const isEnvelopePending = useCallback(
