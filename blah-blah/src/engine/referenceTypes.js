@@ -228,6 +228,16 @@ function resolveStructValue(rawItem, subfields, allEntities, allAssets) {
     } else if (subDef.type === 'asset') {
       const asset = val ? allAssets.find((a) => a.id === val) : null;
       result[key] = makeAssetRef(asset);
+    } else if (subDef.type === 'entity[]' || (subDef.type === 'array' && subDef.itemType === 'entity')) {
+      result[key] = (Array.isArray(val) ? val : []).map((id) => {
+        const entity = id ? allEntities.find((e) => e.id === id) : null;
+        return makeEntityRef(entity, allEntities);
+      });
+    } else if (subDef.type === 'asset[]' || (subDef.type === 'array' && subDef.itemType === 'asset')) {
+      result[key] = (Array.isArray(val) ? val : []).map((id) => {
+        const asset = id ? allAssets.find((a) => a.id === id) : null;
+        return makeAssetRef(asset);
+      });
     }
     // All other subfield types pass through unchanged
   }
@@ -265,6 +275,16 @@ export function resolveScriptProps(rawProps, schema, allEntities = [], allAssets
       resolved[key] = (Array.isArray(value) ? value : []).map((item) =>
         resolveStructValue(item, fieldDef.fields, allEntities, allAssets)
       );
+    } else if (fieldDef.type === 'asset[]' || (fieldDef.type === 'array' && fieldDef.itemType === 'asset')) {
+      resolved[key] = (Array.isArray(value) ? value : []).map((id) => {
+        const asset = id ? allAssets.find((a) => a.id === id) : null;
+        return makeAssetRef(asset);
+      });
+    } else if (fieldDef.type === 'entity[]' || (fieldDef.type === 'array' && fieldDef.itemType === 'entity')) {
+      resolved[key] = (Array.isArray(value) ? value : []).map((id) => {
+        const entity = id ? allEntities.find((e) => e.id === id) : null;
+        return makeEntityRef(entity, allEntities);
+      });
     }
     // Other types pass through unchanged
   }

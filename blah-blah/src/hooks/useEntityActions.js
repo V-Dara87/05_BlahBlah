@@ -718,7 +718,9 @@ export function useEntityActions({
     if (!scriptDef || !target) return;
     const fields = extractScriptProps(scriptDef.code);
     const initialProps = {};
-    fields.forEach(f => { initialProps[f.name] = f.defaultVal; });
+    // Action buttons (`{ type: 'button' }`) hold no value — they are methods to
+    // call, not props to store (see engine/scriptActions.js).
+    fields.forEach(f => { if (f.type !== 'button') initialProps[f.name] = f.defaultVal; });
     const newComp = {
       type: 'ScriptComponent',
       scriptId: scriptDef.id,

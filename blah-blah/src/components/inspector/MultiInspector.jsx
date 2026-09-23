@@ -265,10 +265,14 @@ export const MultiInspector = memo(function MultiInspector({
         </div>
         {fields.length === 0 && <p className="hint-text-sm">This script exposes no props.</p>}
         {fields.map((field) => {
-          const isStruct = field.type === 'struct' || field.type === 'struct[]';
-          // Struct / struct[] values are whole objects — editing one struct
-          // for many clips at once is ambiguous, so they stay per-clip.
-          if (isStruct) return null;
+          const isComplex = field.type === 'struct' || field.type === 'struct[]' || field.type === 'array' || (typeof field.type === 'string' && field.type.endsWith('[]'));
+          // Struct / struct[] / array values are whole collections — editing one
+          // collection for many clips at once is ambiguous, so they stay per-clip.
+          if (isComplex) return null;
+          // An action button calls a method on ONE script component (and can
+          // write props); which clip it should act on is ambiguous for a
+          // multi-selection, so buttons are single-selection only.
+          if (field.type === 'button') return null;
           if (field.type === 'entity' || field.type === 'asset') {
             const { value, mixed } = summarizeField(selectedEntities, trackKey, field.name, currentTime, field.defaultVal);
             return (

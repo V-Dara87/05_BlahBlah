@@ -108,7 +108,9 @@ export function useComponentCardActions({ selectedEntity, onUpdateEntity, script
       if (scriptDef) {
         const fields = extractScriptProps(scriptDef.code);
         const initialProps = {};
-        fields.forEach((f) => { initialProps[f.name] = f.defaultVal; });
+        // Action buttons (`{ type: 'button' }`) hold no value — they are methods
+        // to call, not props to store (see engine/scriptActions.js).
+        fields.forEach((f) => { if (f.type !== 'button') initialProps[f.name] = f.defaultVal; });
         newComp = { type: 'ScriptComponent', scriptId: scriptDef.id, scriptName: scriptDef.name, enabled: true, props: initialProps };
       }
     }

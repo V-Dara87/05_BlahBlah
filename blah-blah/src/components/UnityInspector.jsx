@@ -340,6 +340,25 @@ export const UnityInspector = memo(function UnityInspector({
     );
     onUpdateEntity(selectedEntity.id, { components: updatedComponents });
   };
+
+  /**
+   * Static prop writes for script *actions* (an inspector button, see
+   * engine/scriptActions.js).
+   *
+   * Deliberately NOT updateScriptProps above: that one writes a keyframe when
+   * the field is animated. A button is a click, not an edit at the playhead,
+   * so an action's `set`/`setAll` must not create or depend on animation
+   * state — clicking "Randomise" on a keyframed seed should not add a keyframe.
+   */
+  const setScriptProps = (scriptId, patch) => {
+    const updatedComponents = selectedEntity.components.map((c) => {
+      if (isScriptComponent(c) && c.scriptId === scriptId) {
+        return { ...c, props: { ...(c.props || {}), ...patch } };
+      }
+      return c;
+    });
+    onUpdateEntity(selectedEntity.id, { components: updatedComponents });
+  };
  
   const handleSavePrefabClick = () => {
     onSaveAsPrefab(selectedEntity);
@@ -671,6 +690,7 @@ export const UnityInspector = memo(function UnityInspector({
               onOpenScriptEditor={onOpenScriptEditor}
               resolveComponentValues={resolveComponentValues}
               updateScriptProps={updateScriptProps}
+              setScriptProps={setScriptProps}
               updateScriptComp={updateScriptComp}
               selectedEntity={selectedEntity}
               currentTime={currentTime}

@@ -34,6 +34,29 @@
   gap: 4px;
 }
  
+/* Result line for a script action (an inspector [Button] calling a script
+   method): success, failure, or still running. */
+.script-action-feedback {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  padding: 3px 6px;
+  border-radius: 4px;
+}
+
+.script-action-feedback.is-ok {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.32);
+  color: #34d399;
+}
+
+.script-action-feedback.is-error {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.32);
+  color: #f87171;
+}
+
 .edit-cs-btn {
   font-size: 9px;
   font-weight: 700;

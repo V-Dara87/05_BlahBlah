@@ -1,0 +1,311 @@
+/**
+ * Styles for the attribute-driven inspector layout: tabs, boxes / foldouts,
+ * inline rows, action buttons, toggle strips and toggle-left rows.
+ *
+ * Colours come from the same custom properties the rest of the inspector uses
+ * (see shared.css) so a boxed field looks like a field, not like a separate
+ * widget.
+ */
+
+.inspector-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* ── Tabs (attribute: tab) ───────────────────────────────────────────────── */
+
+.inspector-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--unity-border);
+}
+
+.inspector-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 3px 3px 0 0;
+  color: var(--unity-text-muted);
+  font-size: 10px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.inspector-tab:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.inspector-tab.is-active {
+  color: #fff;
+  background: var(--unity-dark);
+  border-color: var(--unity-border);
+}
+
+/* ── Boxes and foldouts (attribute: box / foldout) ───────────────────────── */
+
+.inspector-group {
+  border: 1px solid var(--unity-border);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.12);
+  min-width: 0;
+}
+
+.inspector-group.is-foldout {
+  background: transparent;
+}
+
+.inspector-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--unity-border);
+  min-height: 20px;
+}
+
+.inspector-group.is-foldout .inspector-group-header {
+  border-bottom: none;
+}
+
+.inspector-group-name,
+.inspector-group-toggle {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--unity-text-muted);
+  text-transform: none;
+}
+
+.inspector-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+}
+
+.inspector-group-toggle:hover {
+  color: #fff;
+}
+
+.inspector-group-chevron {
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+
+.inspector-group-chevron.is-open {
+  transform: rotate(90deg);
+}
+
+.inspector-group-switch {
+  flex-shrink: 0;
+}
+
+.inspector-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+}
+
+.inspector-group.is-foldout .inspector-group-body {
+  padding: 2px 0 0 12px;
+  border-left: 2px solid var(--unity-border);
+  margin-left: 4px;
+}
+
+.inspector-group-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--unity-text-muted);
+  padding-top: 2px;
+  border-top: 1px solid var(--unity-border);
+}
+
+.inspector-space {
+  flex-shrink: 0;
+}
+
+/* ── Rows ────────────────────────────────────────────────────────────────── */
+
+/* Struct fields, struct lists and action buttons span the whole row. */
+.inspector-row.is-full-width {
+  display: block;
+  padding: 4px 0;
+}
+
+/* [ToggleLeft]: the checkbox comes before its label. */
+.inspector-row.is-toggle-left {
+  grid-template-columns: auto 1fr;
+}
+
+.inspector-inline-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.inspector-inline-group > * {
+  min-width: 0;
+  flex: 1;
+}
+
+.inspector-field-keyframed,
+.inspector-field-with-action {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Dims and freezes controls that have no native `disabled` (drag numbers,
+   ref slots, font pickers) the same way a disabled input reads. */
+.inspector-field-disabled {
+  flex: 1;
+  min-width: 0;
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* ── Action buttons ([Button]) ───────────────────────────────────────────── */
+
+.inspector-action-btn {
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border);
+  border-radius: 3px;
+  color: #fff;
+  font-size: 10px;
+  padding: 4px 8px;
+  cursor: pointer;
+  width: 100%;
+}
+
+.inspector-action-btn:hover:not(:disabled) {
+  border-color: var(--unity-text-muted);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.inspector-action-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.inspector-action-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.inspector-action-btn.is-inline {
+  width: auto;
+  flex-shrink: 0;
+  padding: 3px 6px;
+}
+
+.inspector-action-btn.is-primary {
+  border-color: #22d3ee;
+  color: #67e8f9;
+}
+
+.inspector-action-btn.is-danger {
+  border-color: #ef4444;
+  color: #f87171;
+}
+
+/* ── Enum button strip (attribute: selectButton) ─────────────────────────── */
+
+.inspector-button-strip {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.inspector-strip-btn {
+  flex: 1;
+  min-width: 0;
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border);
+  border-radius: 3px;
+  color: var(--unity-text-muted);
+  font-size: 10px;
+  padding: 3px 6px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-strip-btn:hover:not(:disabled) {
+  color: #fff;
+}
+
+.inspector-strip-btn.is-active {
+  background: rgba(34, 211, 238, 0.16);
+  border-color: #22d3ee;
+  color: #fff;
+}
+
+/* ── Struct groups ───────────────────────────────────────────────────────── */
+
+.struct-group,
+.struct-array-editor {
+  width: 100%;
+  min-width: 0;
+}
+
+.struct-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary, #aaa);
+  font-size: 11px;
+  padding: 2px 0;
+  width: 100%;
+  text-align: left;
+}
+
+.struct-group-chevron {
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+
+.struct-group-chevron.is-open {
+  transform: rotate(90deg);
+}
+
+.struct-group-body {
+  padding-left: 12px;
+  border-left: 2px solid var(--border-subtle, #333);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.struct-array-item-title {
+  font-size: 11px;
+  color: var(--text-secondary, #aaa);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.struct-array-item-body {
+  padding-left: 20px;
+  padding-bottom: 4px;
+}

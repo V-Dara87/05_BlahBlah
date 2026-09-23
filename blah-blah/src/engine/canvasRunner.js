@@ -62,6 +62,19 @@ import { Tween } from './motionTween.js';
 const mountedInstances = new Map();
  
 const mountKeyFor = (entityId, scriptId = '') => `${entityId}::${scriptId || ''}`;
+
+/**
+ * The live instance of a mounted canvas script, or null when it is not
+ * mounted (entity off screen, script not attached, wrong script id).
+ *
+ * Exists for script *actions* — an inspector button declared with
+ * `{ type: 'button', action: 'bake' }` should call the running instance when
+ * there is one, since that is the object that owns the state the button is
+ * meant to act on (see engine/scriptActions.js).
+ */
+export function getMountedCanvasInstance(entityId, scriptId = '') {
+  return mountedInstances.get(mountKeyFor(entityId, scriptId))?.instance ?? null;
+}
  
 /**
  * Resolves the effective canvas size for a script call: a script's own

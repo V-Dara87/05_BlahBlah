@@ -160,6 +160,12 @@ static props = {
   subtitle: { type: 'entity', label: 'Subtitle Source' },
   bgMusic:  { type: 'asset',  label: 'Background Audio' },
 
+  // Primitive / Reference Arrays — reorderable lists of simple values or references
+  tags:     { type: 'string[]', default: ['intro', 'vfx'], label: 'Tags' },
+  steps:    { type: 'number[]', default: [1, 5, 10] },
+  gallery:  { type: 'asset[]',  label: 'Gallery Assets' },
+  targets:  { type: 'entity[]', label: 'Follow Targets' },
+
   // Struct — single collapsible group of sub-fields
   style: {
     type: 'struct',
@@ -187,16 +193,22 @@ static props = {
 };
 ```
 
-**struct** renders as a collapsible group. **struct[]** renders as a drag-to-reorder list with per-item expand. Both pass plain JS values to the script — no unwrapping needed:
+- **Primitive arrays** (`string[]`, `number[]`, `color[]`, `boolean[]`, `asset[]`, `entity[]`) render as compact single-line items with drag handles, reordering, deletion, and addition. In scripts, they arrive as clean arrays: `props.tags` is `['intro', 'vfx']`, and `props.gallery` is an array of `AssetRef` objects.
+- **struct** renders as a collapsible group.
+- **struct[]** renders as a drag-to-reorder list with per-item expand.
+
+All array and struct props pass plain JS values to the script — no unwrapping needed:
 
 ```js
 onUpdate({ props }) {
   const { bgColor, textColor } = props.style;  // struct → plain object
   const nodes = props.nodes;                    // struct[] → plain array of objects
+  const tags = props.tags;                      // string[] → plain array of strings
+  const firstAsset = props.gallery[0];          // asset[] → AssetRef object
 }
 ```
 
-`entity` / `asset` subfields inside a struct are also resolved to `EntityRef` / `AssetRef` at runtime.
+`entity` / `asset` references (both top-level and inside `asset[]`, `entity[]`, or struct subfields) are automatically resolved to `EntityRef` / `AssetRef` instances at runtime.
 
 Canvas-kind scripts automatically receive **CANVAS SIZE** controls in the Inspector (`canvasWidth` / `canvasHeight`) — no need to declare them in `static props`.
 

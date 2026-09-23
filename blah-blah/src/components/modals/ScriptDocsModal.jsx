@@ -37,6 +37,7 @@ import { X, Copy, Check, BookOpen } from 'lucide-react';
 const SECTIONS = [
   { id: 'overview', label: 'Overview', match: 'User Script API Reference' },
   { id: 'props', label: 'static props', match: 'Declaring props' },
+  { id: 'attributes', label: 'Field attributes', match: 'Field attributes' },
   { id: 'motion', label: 'Motion scripts', match: 'animating a clip' },
   { id: 'generic-tween', label: 'Generic tween', match: 'Generic tween' },
   { id: 'canvas', label: 'Canvas scripts', match: 'custom rendering' },
@@ -132,7 +133,12 @@ static props = { speed: 2.5, color: '#ff0000', label: 'hello' };
 \`\`\`
 
 Field \`type\` values: \`number\`, \`color\`, \`boolean\`, \`select\`, \`string\`,
-\`textarea\`, \`font\`, \`entity\`, \`asset\`, \`struct\`, \`struct[]\`.
+\`textarea\`, \`font\`, \`entity\`, \`asset\`, \`struct\`, \`struct[]\`, \`button\`,
+as well as primitive and reference arrays: \`string[]\`, \`number[]\`, \`color[]\`,
+\`boolean[]\`, \`select[]\`, \`asset[]\`, \`entity[]\` (or \`type: 'array', itemType: '...'\`).
+
+Every field can also carry **attributes** — see §2 — which describe how it is
+laid out (boxes, tabs, inline rows) and when it applies.
 
 \`font\` renders the same searchable Font Family picker the Text Component uses
 (a curated list plus the fonts installed on the user's PC). The script receives a
@@ -140,6 +146,26 @@ plain family-name string such as \`'Inter'\` or \`'Noto Sans Khmer'\`. It is **n
 keyframeable. Apply it in CSS with quotes and a fallback, e.g.
 \`el.style.fontFamily = '"' + props.fontFamily + '", system-ui, sans-serif'\`.
 
+### Primitive and Reference Arrays (\`string[]\`, \`number[]\`, \`asset[]\`, \`entity[]\`)
+Declare primitive or reference arrays to expose a reorderable list of simple values or
+media/entity references. Each item renders as a compact, single-row editor with drag handles,
+delete buttons, and an Add button. The script receives a clean standard JavaScript array:
+
+\`\`\`js
+static props = {
+  tags:    { type: 'string[]', default: ['intro', 'outro'], label: 'Tags' },
+  speeds:  { type: 'number[]', default: [1, 2, 3] },
+  images:  { type: 'asset[]',  label: 'Gallery Images' },
+  targets: { type: 'entity[]', label: 'Follow Targets' },
+};
+// In script:
+// props.tags -> ['intro', 'outro']
+// props.speeds -> [1, 2, 3]
+// props.images -> [AssetRef, AssetRef] (each element is an AssetRef)
+// props.targets -> [EntityRef, EntityRef] (each element is an EntityRef)
+\`\`\`
+
+### Structs and Struct Arrays (\`struct\`, \`struct[]\`)
 \`struct\` groups several fields into one object; \`struct[]\` is an editable
 list of such objects. Both take a \`fields\` sub-schema, and \`entity\` /
 \`asset\` fields inside them are resolved into \`EntityRef\` / \`AssetRef\` too:
@@ -159,16 +185,113 @@ static props = {
 \`\`\`
 
 
-- \`entity\`/\`asset\` fields render as drag-drop slots in the Inspector and are
-  **never keyframeable** — the slot itself is the whole control. At runtime
-  their stored ID is automatically resolved into an \`EntityRef\` / \`AssetRef\`
-  object (see §4) before your script sees it — you never see a raw ID string.
-- \`font\` fields are also not keyframeable (a family name can't be interpolated).
-- All other typed fields are keyframeable from the Dopesheet.
+- \`entity\`/\`asset\` fields (and \`entity[]\`/\`asset[]\` array items) render as drag-drop
+  slots in the Inspector and are **never keyframeable** — the slot itself is the whole control.
+  At runtime their stored ID is automatically resolved into an \`EntityRef\` / \`AssetRef\`
+  object (see §5) before your script sees it — you never see a raw ID string.
+- \`font\` fields and all array types (\`*[]\`, \`struct[]\`) are not keyframeable.
+- All primitive single-value fields (\`number\`, \`color\`, \`boolean\`, \`string\`) are keyframeable from the Dopesheet.
 
 ---
 
-## 2. \`motion\` scripts — animating a clip's transform
+## 2. Field attributes — boxes, tabs, conditions, buttons
+
+Attributes are extra keys on a prop definition (same object as \`type\`/\`default\`).
+They change how a field is laid out and when it applies, so a long props list can
+read like an Odin/Unity inspector instead of a flat column of rows. Fields with
+no attributes render exactly as before.
+
+\`\`\`js
+static props = {
+  // A group switch: this checkbox turns the whole 'Motion' box on and off.
+  animated:  { type: 'boolean', default: true, label: 'Motion', box: 'Motion', controls: 'Motion' },
+  speed:     { type: 'number',  default: 1, box: 'Motion', showIf: 'animated' },
+  amplitude: { type: 'number',  default: 20, box: 'Motion', inline: true },
+  frequency: { type: 'number',  default: 2, box: 'Motion', inline: true },
+
+  mode:      { type: 'select',  default: 'sine', options: ['sine', 'noise'], selectButton: true, tab: 'Wave' },
+  seed:      { type: 'number',  default: 0, tab: 'Wave', button: { label: 'Randomise', action: 'randomise' } },
+  bake:      { type: 'button',  label: 'Bake Wave', action: 'bake', tab: 'Wave' },
+};
+
+randomise({ set }) { set('seed', Math.round(Math.random() * 1000)); }
+bake() { /* … */ }
+\`\`\`
+
+### Grouping and layout
+
+Fields with the same name share a group. Groups render where their first member
+was declared, so members do not have to be adjacent.
+
+| Attribute | Effect |
+| --- | --- |
+| \`box: 'Name'\` | a titled box around its members |
+| \`foldout: 'Name'\` | the same, but collapsible |
+| \`tab: 'Name'\` | a tab; tabs are the outermost grouping (a tab only appears if it has visible fields) |
+| \`inline: true\` | shares one row with the inline fields next to it |
+| \`title: 'Heading'\` | a heading row above this field |
+| \`space: true\` or \`space: 12\` | vertical space above this field |
+
+### Conditions
+
+Conditions are expressions over the other props in the same schema, so they read
+like ordinary script code. A condition that cannot be evaluated (a typo, a prop
+that no longer exists) leaves the field visible and editable — it never hides a
+field by accident.
+
+| Attribute | Effect |
+| --- | --- |
+| \`showIf: 'enabled'\` | draw the field only while the expression is truthy |
+| \`hideIf: 'locked'\` | draw the field only while the expression is falsy |
+| \`enableIf: 'enabled && speed > 2'\` | draw it, but greyed out and uneditable unless true |
+| \`disableIf: 'locked'\` | the inverse of \`enableIf\` |
+
+### Controls
+
+| Attribute | Effect |
+| --- | --- |
+| \`toggleLeft: true\` | checkbox first, label after it (a boolean row that reads as one line) |
+| \`selectButton: true\` | render a \`select\` as a strip of buttons instead of a dropdown |
+| \`controls: 'Name'\` | on a boolean: this checkbox switches the group named \`Name\`, dimming its members when off |
+| \`button: 'method'\` | a small action button next to the field |
+| \`button: { label: 'Bake', action: 'bake', variant: 'primary' }\` | the same, with a label and styling (\`primary\` / \`danger\`) |
+
+The aliases \`boxGroup\`, \`foldoutGroup\`, \`tabGroup\`, \`horizontal\`, \`enumButtons\`
+and \`toggleGroup\` are accepted as well. Struct and \`struct[]\` subfields take the
+same attributes as top-level fields, so a nested struct can carry its own
+conditions and inline rows.
+
+### Action buttons
+
+A field of \`{ type: 'button' }\` renders a full-width button; its \`action\` names a
+method on your script (defaulting to the field name), and clicking it calls that
+method. Buttons work on every script kind:
+
+- a **motion** script method is called on an instance kept for the component;
+- a **canvas** script's live mounted instance is used when there is one, so the
+  button sees the same Three.js/WebGL state \`onUpdate\` sees;
+- a **React** clip can attach a helper to the component (\`MyClip.reset = () => …\`)
+  or expose a \`static\` method.
+
+The method receives one object:
+
+\`\`\`js
+bake({ props, set, setAll, refresh, entity, entityId, scriptId, time, frame, fps, duration }) {
+  // props   — the same resolved props your onUpdate receives
+  // set     — (name, value) write one prop
+  // setAll  — (patch) write several
+  // ...and the usual local timing args
+}
+\`\`\`
+
+\`set\`/\`setAll\` write plain values: a click is not an edit at the playhead, so an
+action never creates a keyframe. Both are undoable like any other inspector edit,
+and the result of the method (including a rejected promise) is reported under the
+field list — a broken button shows its error instead of failing silently.
+
+---
+
+## 3. \`motion\` scripts — animating a clip's transform
 
 Contract (from \`engine/scriptRunner.js\`, \`executeScriptComponent\`):
 
@@ -273,7 +396,7 @@ intentionally different from the generic helper supplied to \`onUpdate\`.
 
 ---
 
-## 3. \`canvas\` scripts — custom rendering (DOM/Canvas/WebGL)
+## 4. \`canvas\` scripts — custom rendering (DOM/Canvas/WebGL)
 
 Contract (from \`engine/canvasRunner.js\`):
 
@@ -308,7 +431,7 @@ export default class MyCanvasThing {
   \`static props\` — the resolved prop value then wins.
 - External packages (three, gsap, etc.) come from plain \`import\` statements
   at the top of the file — no separate \`libs\` object, no CDN \`<script>\` tags.
-  See §7.
+  See §8.
 - \`onMount\` is called once per (script code, container) pair — not once per
   frame.
 - \`signal\` (an \`AbortSignal\`) is passed to \`onMount\` only. It aborts when the
@@ -324,7 +447,7 @@ export default class MyCanvasThing {
 
 ---
 
-## 4. Reference props — \`entity\` and \`asset\` types
+## 5. Reference props — \`entity\` and \`asset\` types
 
 Declare a prop as \`{ type: 'entity' }\` or \`{ type: 'asset' }\` and the stored
 ID is resolved for you into one of these before your script runs:
@@ -399,7 +522,7 @@ write back to them.
 
 ---
 
-## 5. \`react\` scripts — custom React clip content
+## 6. \`react\` scripts — custom React clip content
 
 Any script that returns JSX and isn't a class is auto-detected as a React
 component:
@@ -423,7 +546,7 @@ export default function MyClip() {
 
 ---
 
-## 6. \`shader\` scripts — custom transitions
+## 7. \`shader\` scripts — custom transitions
 
 Detected via \`vec4 transition(...)\` / \`gl_FragColor\` in the code. Compatible
 with the \`gl-transitions\` GLSL format:
@@ -451,7 +574,7 @@ The \`// = <value>\` comment after a uniform sets its default.
 
 ---
 
-## 7. Real \`import\` statements (npm packages)
+## 8. Real \`import\` statements (npm packages)
 
 All script kinds support genuine ES \`import\` statements — no bundler config
 needed on your end:
@@ -483,7 +606,7 @@ CANVAS   → class, onMount/onUpdate/onUnmount({ container, props, canvasWidth, 
 REACT    → function returning JSX (or h(tag, props, children))
 SHADER   → GLSL: uniform ...; vec4 transition(vec2 uv) { ... getFromColor/getToColor/progress ... }
 
-static props = { name: { type: 'number'|'color'|'boolean'|'select'|'string'|'textarea'|'font'|'entity'|'asset', default, min, max, step, options, label } };
+static props = { name: { type: 'number'|'color'|'boolean'|'select'|'string'|'textarea'|'font'|'entity'|'asset'|'string[]'|'number[]'|'asset[]'|'entity[]'|'struct'|'struct[]', default, min, max, step, options, label } };
 
 tween.to/from/spring/punch/shake/sine(target, props, options)  // motion onStart only
 Tween.progress/between/loop/pingPong/stagger/ease/lerp/remap    // generic, all script kinds

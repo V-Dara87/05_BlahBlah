@@ -15,6 +15,7 @@ import {
   Tween,
 } from './motionTween.js';
 import { resolveScriptProps } from './referenceTypes.js';
+import { parseFieldAttributes } from './inspectorAttributes.js';
  
 /**
  * Cache for compiled JavaScript/JSX modules to ensure 60fps performance without recompiling.
@@ -581,7 +582,15 @@ export function buildStructDefault(subfields) {
  * Extracts public props schema for the Unity-style Inspector.
  *
  * Supported types: number | boolean | string | color | select | textarea |
- *                  font | entity | asset | struct | struct[]
+ *                  font | entity | asset | struct | struct[] | button |
+ *                  string[] | number[] | color[] | boolean[] | select[] |
+ *                  asset[] | entity[] | array
+ *
+ * A definition may also carry Odin-style *attributes* (`box`, `tab`,
+ * `showIf`, `toggleLeft`, `selectButton`, `controls`, `button`, …) describing
+ * layout and conditions. They are copied onto the field verbatim; the engine
+ * is in engine/inspectorAttributes.js and the rendering in
+ * inspector/InspectorField.jsx. An attribute-free field is unchanged.
  *
  * `font` renders the searchable Font Family picker in the Inspector and
  * gives the script a plain family-name string (not keyframeable).
@@ -704,7 +713,31 @@ export function extractScriptProps(code) {
         const schemaObj = schemaFunc();
         if (schemaObj && typeof schemaObj === 'object') {
           Object.entries(schemaObj).forEach(([name, def]) => {
+            if (Array.isArray(def)) {
+              const itemType = def.length > 0 && typeof def[0] === 'number' ? 'number' : 'string';
+              fields.push({
+                name,
+                type: `${itemType}[]`,
+                itemType,
+                defaultVal: def,
+                label: name,
+              });
+              return;
+            }
             if (typeof def === 'object' && def !== null) {
+              const attributes = parseFieldAttributes(def);
+              // Action buttons hold no value: they carry the method to call.
+              if (def.type === 'button') {
+                fields.push({
+                  name,
+                  type: 'button',
+                  label: def.label || name,
+                  action: def.action || name,
+                  variant: def.variant,
+                  ...attributes,
+                });
+                return;
+              }
               // Struct types: single object group or array of objects
               if (def.type === 'struct' || def.type === 'struct[]') {
                 fields.push({
@@ -712,7 +745,27 @@ export function extractScriptProps(code) {
                   type: def.type,
                   label: def.label || name,
                   fields: def.fields || {},
-                  defaultVal: def.type === 'struct[]' ? [] : buildStructDefault(def.fields || {}),
+                  defaultVal: def.type === 'struct[]' ? (Array.isArray(def.default) ? def.default : []) : buildStructDefault(def.fields || {}),
+                  ...attributes,
+                });
+                return;
+              }
+              // Array types: primitive or reference array (e.g. string[], number[], color[], boolean[], select[], asset[], entity[], or type: 'array')
+              if (def.type === 'array' || (typeof def.type === 'string' && def.type.endsWith('[]'))) {
+                const itemType = def.type === 'array'
+                  ? (def.itemType || 'string')
+                  : def.type.slice(0, -2);
+                fields.push({
+                  name,
+                  type: def.type,
+                  itemType,
+                  label: def.label || name,
+                  defaultVal: Array.isArray(def.default) ? def.default : [],
+                  min: def.min,
+                  max: def.max,
+                  step: def.step,
+                  options: def.options,
+                  ...attributes,
                 });
                 return;
               }
@@ -727,6 +780,7 @@ export function extractScriptProps(code) {
                 step: def.step,
                 options: def.options,
                 label: def.label || name,
+                ...attributes,
               });
             } else {
               // Direct value mapping: { speed: 2.5, color: '#ff0000' }
