@@ -13,6 +13,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "blahblah",
         "width": 1400,
         "height": 900,

@@ -13,6 +13,8 @@ import {
   MixerDockPanel,
 } from './panels';
 import { useEditorContext } from './EditorContext';
+import { popoutGroup, closeEmptyPopoutGroups } from './popoutGroup';
+import { attachTabDoubleClickMaximize } from './tabMaximize';
 import 'dockview-react/dist/styles/dockview.css';
 import './dockview-unity-theme.css';
  
@@ -120,7 +122,7 @@ const DockHeaderActions = memo(function DockHeaderActions({
   const isFloating = location?.type === 'floating';
 
   const handlePopout = useCallback(() => {
-    containerApi.addPopoutGroup(group);
+    popoutGroup(containerApi, group);
   }, [containerApi, group]);
 
   const handleFloat = useCallback(() => {
@@ -185,6 +187,8 @@ const DockHeaderActions = memo(function DockHeaderActions({
 
 export const DockLayout = memo(function DockLayout() {
   const apiRef = useRef(null);
+  const rootRef = useRef(null);
+  const detachTabMaximizeRef = useRef(null);
   const { setDockApi, setResetLayout } = useEditorContext();
 
   const persistLayout = useCallback(() => {
@@ -235,6 +239,24 @@ export const DockLayout = memo(function DockLayout() {
     }
  
     api.onDidLayoutChange(() => persistLayout());
+
+    // Double-click a tab to maximize / restore its group (see tabMaximize.js).
+    // Panels in a pop-out live in another window, so each of those windows needs
+    // its own listener — it is attached as the window appears and dies with it.
+    detachTabMaximizeRef.current = attachTabDoubleClickMaximize(rootRef.current, api);
+    api.onDidAddPopoutGroup(({ window: popoutWindow }) => {
+      if (popoutWindow) attachTabDoubleClickMaximize(popoutWindow, api);
+    });
+
+    // dockview closes a pop-out window when its panels are closed, but not when
+    // they are merely dragged back into the main window — that used to leave an
+    // empty window behind. Check after the mutation settles, since during one
+    // dockview may be tearing the same group down itself.
+    const closeEmptiedPopouts = () => {
+      queueMicrotask(() => closeEmptyPopoutGroups(apiRef.current));
+    };
+    api.onDidLayoutChange(closeEmptiedPopouts);
+    api.onDidMovePanel(closeEmptiedPopouts);
   }, [persistLayout, setDockApi]);
  
   const handleResetLayout = useCallback(() => {
@@ -248,6 +270,8 @@ export const DockLayout = memo(function DockLayout() {
     setResetLayout?.(handleResetLayout);
   }, [handleResetLayout, setResetLayout]);
 
+  useEffect(() => () => detachTabMaximizeRef.current?.(), []);
+
   const getTabContextMenuItems = useCallback(() => [
     'popout',
     'float',
@@ -259,7 +283,7 @@ export const DockLayout = memo(function DockLayout() {
   ], []);
  
   return (
-    <div className="dock-root">
+    <div className="dock-root" ref={rootRef}>
       <DockviewReact
         className="dockview-theme-dark dockview-theme-unity"
         components={DOCK_COMPONENTS}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
+import { popoutGroup } from '../dock/popoutGroup';
  
 /**
  * useDockPanels — dockview panel API + layout/open/focus/float/popout.
@@ -61,7 +62,7 @@ export function useDockPanels() {
     if (!api) return;
     const panel = api.activePanel || api.panels[0];
     if (panel) {
-      api.addPopoutGroup(panel.group);
+      popoutGroup(api, panel.group);
     }
   }, []);
  
