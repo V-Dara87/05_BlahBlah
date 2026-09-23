@@ -120,8 +120,8 @@ static props = {
   mode:    { type: 'select', default: 'a', options: ['a', 'b', 'c'] },
   note:    { type: 'string', default: 'hello' },
   font:    { type: 'font', default: 'Inter', label: 'Font' },   // searchable font picker
-  target:  { type: 'entity', label: 'Target Clip' },   // reference to another clip
-  clip:    { type: 'asset', label: 'Media Asset' },    // reference to a media asset
+  target:  { type: 'entity', targetComponent: 'AudioSource', label: 'Audio Track' }, // filter by component
+  clip:    { type: 'asset', assetType: 'image', label: 'Background Image' },         // filter by asset type ('image'|'video'|'audio')
 };
 \`\`\`
 
@@ -339,7 +339,7 @@ Tween options: \`duration\`, \`delay\`, \`ease\` (name string or function — se
 Easing table below), \`loop: 'yoyo'\` / \`loops: N\`, \`relative: true\`.
 
 **Timing args available in both hooks:** \`time\` (local seconds since clip
-start), \`frame\`, \`fps\`, \`duration\` (clip duration in seconds).
+start), \`timelineTime\` (global timeline time in seconds), \`frame\`, \`fps\`, \`duration\` (clip duration in seconds).
 
 ### Easing / math helpers
 
@@ -449,8 +449,14 @@ export default class MyCanvasThing {
 
 ## 5. Reference props — \`entity\` and \`asset\` types
 
-Declare a prop as \`{ type: 'entity' }\` or \`{ type: 'asset' }\` and the stored
-ID is resolved for you into one of these before your script runs:
+Declare a prop as \`{ type: 'entity' }\` or \`{ type: 'asset' }\` (or array equivalents \`entity[]\`, \`asset[]\`).
+The stored ID is automatically resolved into an \`EntityRef\` or \`AssetRef\` instance before your script runs:
+
+### Filtering & Auto-Identification
+- **\`targetComponent\`**: Filters clips in the dropdown and drag-and-drop slots by component (e.g. \`targetComponent: 'AudioSource'\`, \`'VideoRenderer'\`, \`'SubtitleTrack'\`).
+- **\`assetType\`**: Filters media assets by kind (\`'audio'\` | \`'video'\` | \`'image'\`).
+- **Auto-Identification**: Dropdowns automatically display track context, timeline time ranges, and a short auto-generated ID hash:  
+  \`[Track 1] BGM.mp3 (00:00.0 - 01:30.0) #8a2f\`.
 
 ### \`EntityRef\` (reference to another clip)
 
@@ -460,12 +466,43 @@ declare class EntityRef {
   readonly name: string | null;
   readonly startTime: number;   // seconds, clip's position on the timeline
   readonly duration: number;    // seconds
+  readonly endTime: number;     // seconds, clip's end on the timeline (startTime + duration)
   readonly parentId: string | null;
+  readonly trackId: string | null;
+  readonly audioSrc: string | null;      // audio media URL if entity has AudioSource
+  readonly audioDuration: number | null; // audio media duration in seconds
   exists(): boolean;
   getTransform(): { x, y, rotation, scaleX, scaleY, opacity, speed } | null;
   getComponent(type: string): object | null;  // 'VideoRenderer' | 'AudioSource' | 'TextRenderer' | 'ShapeRenderer' | 'SubtitleTrack' | ...
   getPhraseAt(time: number): SubtitlePhraseContext | null; // time = entity-LOCAL seconds; null if no SubtitleTrack / no phrases
   getCurrentText(time: number): string; // '' when no subtitle or in a gap
+
+  // Audio Sync API (when referencing an AudioSource clip):
+  isPlayingAt(timelineTime: number): boolean; // returns true if playing at timeline time
+  getAudioTime(time: number, isLocalTime?: boolean): number | null; // audio media playback position (seconds)
+  getAudioProgress(time: number, isLocalTime?: boolean): number; // normalized progress [0.0, 1.0]
+  getAudioSettings(): { volume, speed, effectiveSpeed, mediaOffset, muted, loop, src } | null;
+}
+\`\`\`
+
+### Audio Synchronization Example
+
+Synchronize script animations to a referenced audio clip with exact timing (compensating for clip start time, media offset, and clip playback speed):
+
+\`\`\`js
+export default class AudioSyncedVisualizer {
+  static props = {
+    audioTrack: { type: 'entity', targetComponent: 'AudioSource', label: 'Audio Clip' },
+  };
+
+  onUpdate({ timelineTime, props }) {
+    const audio = props.audioTrack;
+    if (audio?.isPlayingAt(timelineTime)) {
+      const audioTime = audio.getAudioTime(timelineTime); // playback position within audio
+      const progress = audio.getAudioProgress(timelineTime); // 0.0 -> 1.0 progress through clip
+      // Drive animation based on audio progress or timing
+    }
+  }
 }
 \`\`\`
 
@@ -500,11 +537,37 @@ declare class AssetRef {
   readonly src: string | null;   // pass directly to <video>/<audio> src
   readonly type: 'video' | 'audio' | 'image' | null;
   readonly duration: number | null;
+  readonly isPlaying: boolean;
   exists(): boolean;
+
+  // Audio Firing API:
+  play(options?: { volume?: number, speed?: number, playbackRate?: number, loop?: boolean, offset?: number }): HTMLAudioElement | null;
+  playOneShot(options?: { volume?: number, speed?: number, playbackRate?: number, offset?: number }): HTMLAudioElement | null;
+  pause(): void;
+  stop(): void;
 }
 \`\`\`
 
-Usage in a script:
+### Audio Firing / Sound Effects Example
+
+Trigger attached audio assets or clips directly from your script (e.g. on a specific frame, collision event, or button click):
+
+\`\`\`js
+export default class SoundEffectTrigger {
+  static props = {
+    hitSfx: { type: 'asset', assetType: 'audio', label: 'Hit SFX' },
+  };
+
+  onUpdate({ frame, props }) {
+    if (frame === 15) {
+      // playOneShot fires a standalone audio instance that cleans itself up
+      props.hitSfx?.playOneShot({ volume: 0.8, speed: 1.2 });
+    }
+  }
+}
+\`\`\`
+
+Usage in a motion script:
 
 \`\`\`js
 static props = { target: { type: 'entity', label: 'Follow Target' } };

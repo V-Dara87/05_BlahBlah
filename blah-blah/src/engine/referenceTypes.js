@@ -18,6 +18,91 @@
  */
 import { getPhraseContextAt } from './subtitleTrack.js';
 
+// ─── Audio Player Helper ──────────────────────────────────────────────────────
+
+/**
+ * Creates audio playback controller methods (play, playOneShot, pause, stop, isPlaying)
+ * for an audio source URL getter.
+ *
+ * @param {() => string|null} getSrc
+ * @returns {{ play: (options?: object) => any, playOneShot: (options?: object) => any, pause: () => void, stop: () => void, isPlaying: boolean }}
+ */
+function createAudioPlayer(getSrc) {
+  let activeAudio = null;
+
+  return {
+    get isPlaying() {
+      return activeAudio ? !activeAudio.paused && !activeAudio.ended : false;
+    },
+
+    play(options = {}) {
+      const src = getSrc();
+      if (!src || typeof Audio === 'undefined') return null;
+
+      if (!activeAudio) {
+        activeAudio = new Audio();
+        activeAudio.crossOrigin = 'anonymous';
+      }
+      if (activeAudio.src !== src) {
+        activeAudio.src = src;
+      }
+
+      const vol = options.volume !== undefined ? Math.max(0, Math.min(1, options.volume)) : 1;
+      activeAudio.volume = vol;
+      const speed = options.playbackRate ?? options.speed ?? 1;
+      activeAudio.playbackRate = Math.max(0.0625, Math.min(16, speed));
+      activeAudio.loop = options.loop ?? false;
+
+      if (options.offset !== undefined) {
+        activeAudio.currentTime = Math.max(0, options.offset);
+      } else {
+        activeAudio.currentTime = 0;
+      }
+
+      activeAudio.play().catch(() => {});
+      return activeAudio;
+    },
+
+    playOneShot(options = {}) {
+      const src = getSrc();
+      if (!src || typeof Audio === 'undefined') return null;
+
+      const audio = new Audio();
+      audio.crossOrigin = 'anonymous';
+      audio.src = src;
+
+      const vol = options.volume !== undefined ? Math.max(0, Math.min(1, options.volume)) : 1;
+      audio.volume = vol;
+      const speed = options.playbackRate ?? options.speed ?? 1;
+      audio.playbackRate = Math.max(0.0625, Math.min(16, speed));
+
+      if (options.offset) {
+        audio.currentTime = Math.max(0, options.offset);
+      }
+
+      audio.onended = () => {
+        audio.src = '';
+      };
+
+      audio.play().catch(() => {});
+      return audio;
+    },
+
+    pause() {
+      if (activeAudio && !activeAudio.paused) {
+        activeAudio.pause();
+      }
+    },
+
+    stop() {
+      if (activeAudio) {
+        activeAudio.pause();
+        activeAudio.currentTime = 0;
+      }
+    },
+  };
+}
+
 // ─── EntityRef ────────────────────────────────────────────────────────────────
 
 /**
@@ -26,9 +111,10 @@ import { getPhraseContextAt } from './subtitleTrack.js';
  *
  * @param {object|null} entity  - The raw entity object from the project store.
  * @param {Array}       allEntities - All entities (used to compute world transform).
+ * @param {Array}       allAssets - All media assets (used to resolve AudioSource assetId).
  * @returns {EntityRef}
  */
-export function makeEntityRef(entity, allEntities = []) {
+export function makeEntityRef(entity, allEntities = [], allAssets = []) {
   if (!entity) {
     return {
       id: null,
@@ -38,10 +124,29 @@ export function makeEntityRef(entity, allEntities = []) {
       getComponent: () => null,
       getPhraseAt: () => null,
       getCurrentText: () => '',
+      startTime: 0,
+      duration: 0,
+      endTime: 0,
+      parentId: null,
+      trackId: null,
+      audioDuration: null,
+      audioSrc: null,
+      isPlayingAt: () => false,
+      getAudioTime: () => null,
+      getAudioProgress: () => 0,
+      getAudioSettings: () => null,
+      play: () => null,
+      playOneShot: () => null,
+      pause: () => {},
+      stop: () => {},
+      isPlaying: false,
     };
   }
 
-  return {
+  let ref;
+  const audioPlayer = createAudioPlayer(() => ref?.audioSrc);
+
+  ref = {
     /** The entity's unique ID. */
     id: entity.id,
 
@@ -135,9 +240,146 @@ export function makeEntityRef(entity, allEntities = []) {
     /** Duration of the clip on the timeline (seconds). */
     get duration() { return entity.duration ?? 0; },
 
+    /** endTime of the clip on the timeline (seconds). */
+    get endTime() { return (entity.startTime ?? 0) + (entity.duration ?? 0); },
+
+    /** trackId of the clip on the timeline. */
+    get trackId() { return entity.trackId ?? null; },
+
     /** The entity's parentId, or null if it has no parent. */
     get parentId() { return entity.parentId ?? null; },
+
+    /** Audio duration in seconds, or null if entity has no AudioSource component. */
+    get audioDuration() {
+      const a = entity.components?.find((c) => c.type === 'AudioSource');
+      if (!a) return null;
+      if (a.mediaDuration !== undefined) return a.mediaDuration;
+      if (a.assetId) {
+        const asset = allAssets.find((ast) => ast.id === a.assetId);
+        if (asset?.duration !== undefined) return asset.duration;
+      }
+      return entity.duration ?? null;
+    },
+
+    /** Audio source URL/path, or null if entity has no AudioSource component. */
+    get audioSrc() {
+      const a = entity.components?.find((c) => c.type === 'AudioSource');
+      if (!a) return null;
+      if (a.src) return a.src;
+      if (a.assetId) {
+        const asset = allAssets.find((ast) => ast.id === a.assetId);
+        return asset?.src ?? null;
+      }
+      return null;
+    },
+
+    /**
+     * Checks if this audio clip is active (playing) at the given timeline time.
+     * @param {number} timelineTime - Timeline time in seconds.
+     * @returns {boolean}
+     */
+    isPlayingAt(timelineTime) {
+      if (!entity.components?.some((c) => c.type === 'AudioSource')) return false;
+      const start = entity.startTime ?? 0;
+      const end = start + (entity.duration ?? 0);
+      return Number.isFinite(timelineTime) && timelineTime >= start && timelineTime < end;
+    },
+
+    /**
+     * Returns audio playback time (seconds inside the audio media file) at the given time,
+     * accounting for clip start time, mediaOffset, and effective playback speed (AudioSource.speed * Transform.speed).
+     *
+     * @param {number} time - Timeline time in seconds (or local time if isLocalTime is true).
+     * @param {boolean} [isLocalTime=false] - When true, `time` is treated as time relative to this audio clip's start.
+     * @returns {number|null} - Audio file timestamp in seconds, or null if outside the clip.
+     */
+    getAudioTime(time, isLocalTime = false) {
+      const audioComp = entity.components?.find((c) => c.type === 'AudioSource');
+      if (!audioComp) return null;
+      const start = entity.startTime ?? 0;
+      const duration = entity.duration ?? 0;
+      const timelineTime = isLocalTime ? (start + time) : time;
+      if (!Number.isFinite(timelineTime) || timelineTime < start || timelineTime >= start + duration) {
+        return null;
+      }
+      const transformComp = entity.components?.find((c) => c.type === 'Transform');
+      const contentSpeed = audioComp.speed ?? 1;
+      const clipSpeed = transformComp?.speed ?? 1;
+      const effectiveSpeed = (contentSpeed || 1) * (clipSpeed || 1);
+      const mediaOffset = audioComp.mediaOffset ?? 0;
+      return (timelineTime - start) * effectiveSpeed + mediaOffset;
+    },
+
+    /**
+     * Returns normalized progress [0.0, 1.0] of this clip at the given time.
+     *
+     * @param {number} time - Timeline time in seconds (or local time if isLocalTime is true).
+     * @param {boolean} [isLocalTime=false] - When true, `time` is treated as time relative to this clip's start.
+     * @returns {number}
+     */
+    getAudioProgress(time, isLocalTime = false) {
+      const start = entity.startTime ?? 0;
+      const duration = entity.duration ?? 0;
+      if (duration <= 0) return 0;
+      const timelineTime = isLocalTime ? (start + time) : time;
+      if (!Number.isFinite(timelineTime)) return 0;
+      return Math.min(1, Math.max(0, (timelineTime - start) / duration));
+    },
+
+    /**
+     * Returns audio configuration settings or null if not an AudioSource clip.
+     * @returns {{ volume: number, speed: number, effectiveSpeed: number, mediaOffset: number, muted: boolean, loop: boolean, src: string|null }|null}
+     */
+    getAudioSettings() {
+      const audioComp = entity.components?.find((c) => c.type === 'AudioSource');
+      if (!audioComp) return null;
+      const transformComp = entity.components?.find((c) => c.type === 'Transform');
+      const effSpeed = (audioComp.speed ?? 1) * (transformComp?.speed ?? 1);
+      return {
+        volume: audioComp.volume ?? 1,
+        speed: audioComp.speed ?? 1,
+        effectiveSpeed: effSpeed,
+        mediaOffset: audioComp.mediaOffset ?? 0,
+        muted: audioComp.muted ?? false,
+        loop: audioComp.loop ?? false,
+        src: this.audioSrc,
+      };
+    },
+
+    /**
+     * Plays the audio for this entity. Reuses or restarts the dedicated audio instance.
+     * @param {{ volume?: number, speed?: number, playbackRate?: number, loop?: boolean, offset?: number }} [options]
+     * @returns {HTMLAudioElement|null}
+     */
+    play(options) {
+      return audioPlayer.play(options);
+    },
+
+    /**
+     * Fires a standalone one-shot audio playback. Best for sound effects and overlapping plays.
+     * @param {{ volume?: number, speed?: number, playbackRate?: number, offset?: number }} [options]
+     * @returns {HTMLAudioElement|null}
+     */
+    playOneShot(options) {
+      return audioPlayer.playOneShot(options);
+    },
+
+    /** Pauses the dedicated audio instance. */
+    pause() {
+      audioPlayer.pause();
+    },
+
+    /** Stops and rewinds the dedicated audio instance to 0. */
+    stop() {
+      audioPlayer.stop();
+    },
+
+    /** True when this entity's dedicated audio instance is actively playing. */
+    get isPlaying() {
+      return audioPlayer.isPlaying;
+    },
   };
+  return ref;
 }
 
 // ─── AssetRef ─────────────────────────────────────────────────────────────────
@@ -157,8 +399,15 @@ export function makeAssetRef(asset) {
       type: null,
       duration: null,
       exists: () => false,
+      play: () => null,
+      playOneShot: () => null,
+      pause: () => {},
+      stop: () => {},
+      isPlaying: false,
     };
   }
+
+  const audioPlayer = createAudioPlayer(() => asset.src ?? asset.url ?? null);
 
   return {
     /** The asset's unique ID. */
@@ -182,6 +431,40 @@ export function makeAssetRef(asset) {
     /** Returns true when the asset still exists in the project. */
     exists() {
       return !!asset.id;
+    },
+
+    /**
+     * Plays the audio asset. Reuses or restarts the dedicated audio instance.
+     * @param {{ volume?: number, speed?: number, playbackRate?: number, loop?: boolean, offset?: number }} [options]
+     * @returns {HTMLAudioElement|null}
+     */
+    play(options) {
+      return audioPlayer.play(options);
+    },
+
+    /**
+     * Fires a standalone one-shot audio playback. Automatically cleans itself up upon completion.
+     * Best for sound effects, collisions, and rapid clicks.
+     * @param {{ volume?: number, speed?: number, playbackRate?: number, offset?: number }} [options]
+     * @returns {HTMLAudioElement|null}
+     */
+    playOneShot(options) {
+      return audioPlayer.playOneShot(options);
+    },
+
+    /** Pauses the dedicated audio instance. */
+    pause() {
+      audioPlayer.pause();
+    },
+
+    /** Stops and rewinds the dedicated audio instance to 0. */
+    stop() {
+      audioPlayer.stop();
+    },
+
+    /** True when this asset's dedicated audio instance is actively playing. */
+    get isPlaying() {
+      return audioPlayer.isPlaying;
     },
   };
 }
@@ -224,14 +507,14 @@ function resolveStructValue(rawItem, subfields, allEntities, allAssets) {
     const val = result[key];
     if (subDef.type === 'entity') {
       const entity = val ? allEntities.find((e) => e.id === val) : null;
-      result[key] = makeEntityRef(entity, allEntities);
+      result[key] = makeEntityRef(entity, allEntities, allAssets);
     } else if (subDef.type === 'asset') {
       const asset = val ? allAssets.find((a) => a.id === val) : null;
       result[key] = makeAssetRef(asset);
     } else if (subDef.type === 'entity[]' || (subDef.type === 'array' && subDef.itemType === 'entity')) {
       result[key] = (Array.isArray(val) ? val : []).map((id) => {
         const entity = id ? allEntities.find((e) => e.id === id) : null;
-        return makeEntityRef(entity, allEntities);
+        return makeEntityRef(entity, allEntities, allAssets);
       });
     } else if (subDef.type === 'asset[]' || (subDef.type === 'array' && subDef.itemType === 'asset')) {
       result[key] = (Array.isArray(val) ? val : []).map((id) => {
@@ -262,7 +545,7 @@ export function resolveScriptProps(rawProps, schema, allEntities = [], allAssets
     if (fieldDef.type === 'entity') {
       // value is an entity ID string (or null)
       const entity = value ? allEntities.find((e) => e.id === value) : null;
-      resolved[key] = makeEntityRef(entity, allEntities);
+      resolved[key] = makeEntityRef(entity, allEntities, allAssets);
     } else if (fieldDef.type === 'asset') {
       // value is an asset ID string (or null)
       const asset = value ? allAssets.find((a) => a.id === value) : null;
@@ -283,7 +566,7 @@ export function resolveScriptProps(rawProps, schema, allEntities = [], allAssets
     } else if (fieldDef.type === 'entity[]' || (fieldDef.type === 'array' && fieldDef.itemType === 'entity')) {
       resolved[key] = (Array.isArray(value) ? value : []).map((id) => {
         const entity = id ? allEntities.find((e) => e.id === id) : null;
-        return makeEntityRef(entity, allEntities);
+        return makeEntityRef(entity, allEntities, allAssets);
       });
     }
     // Other types pass through unchanged

@@ -132,6 +132,7 @@ All args are also assigned as instance properties by `canvasRunner.js` — so `t
 | `aspect` | `onMount`, `onUpdate`, `onSeek` | `canvasWidth / canvasHeight` |
 | `props` | `onMount`, `onUpdate`, `onSeek` | Resolved Inspector prop values |
 | `time` | `onUpdate`, `onSeek` | Local clip time in seconds |
+| `timelineTime` | `onMount`, `onUpdate`, `onSeek` | Global timeline time in seconds |
 | `frame` | `onUpdate`, `onSeek` | Current frame number |
 | `fps` | `onUpdate`, `onSeek` | Project frames-per-second |
 | `duration` | all | Clip duration in seconds |
@@ -156,14 +157,15 @@ static props = {
   // Dropdown
   align:    { type: 'select', options: ['left', 'center', 'right'], default: 'center' },
 
-  // Entity / Asset references
-  subtitle: { type: 'entity', label: 'Subtitle Source' },
-  bgMusic:  { type: 'asset',  label: 'Background Audio' },
+  // Entity / Asset references (with optional targetComponent / assetType filtering)
+  subtitle: { type: 'entity', targetComponent: 'SubtitleTrack', label: 'Subtitle Source' },
+  bgMusic:  { type: 'entity', targetComponent: 'AudioSource',   label: 'BGM Track' },
+  sfx:      { type: 'asset',  assetType: 'audio',               label: 'Sound Effect' },
 
   // Primitive / Reference Arrays — reorderable lists of simple values or references
   tags:     { type: 'string[]', default: ['intro', 'vfx'], label: 'Tags' },
   steps:    { type: 'number[]', default: [1, 5, 10] },
-  gallery:  { type: 'asset[]',  label: 'Gallery Assets' },
+  gallery:  { type: 'asset[]',  assetType: 'image',        label: 'Gallery Assets' },
   targets:  { type: 'entity[]', label: 'Follow Targets' },
 
   // Struct — single collapsible group of sub-fields
@@ -295,6 +297,43 @@ Toggle the badge on any phrase row to switch its mode individually:
 | `+ADD` | Cyan | Appends to the previous sentence group (`sentenceText`) |
 
 The track-level **Mode** dropdown sets the fallback default for new phrases.
+
+---
+
+### Audio Sync & Audio Firing API (`EntityRef` & `AssetRef`)
+
+Reference audio clips from the timeline (`targetComponent: 'AudioSource'`) or audio assets (`assetType: 'audio'`) to synchronize animations or trigger sound effects:
+
+#### 1. Audio Sync API (Synchronize to Timeline Audio)
+Read exact playback timing of a referenced audio clip:
+- `audio.isPlayingAt(timelineTime)`: Checks if the audio clip is actively playing at the given timeline time.
+- `audio.getAudioTime(time, isLocalTime)`: Media playback timestamp (seconds), factoring in clip start time, `mediaOffset`, and effective speed (`AudioSource.speed * Transform.speed`).
+- `audio.getAudioProgress(time, isLocalTime)`: Normalized progress `[0.0, 1.0]` through the clip.
+- `audio.getAudioSettings()`: Returns `{ volume, speed, effectiveSpeed, mediaOffset, muted, loop, src }`.
+- `audio.audioSrc`, `audio.audioDuration`, `audio.endTime`, `audio.trackId`.
+
+#### 2. Audio Firing API (Play & Sound Effects)
+Trigger sound playback directly from scripts on both `AssetRef` and `EntityRef`:
+- `ref.playOneShot(options)`: Plays a one-shot audio instance without interrupting previous plays (ideal for SFX, collisions, clicks). Auto-cleans up on end.
+- `ref.play(options)`: Plays dedicated audio instance (resumes or restarts).
+- `ref.pause()`: Pauses playback.
+- `ref.stop()`: Stops playback and resets to beginning.
+- `ref.isPlaying`: True when playing.
+- `options`: `{ volume?: number, speed?: number, playbackRate?: number, loop?: boolean, offset?: number }`.
+
+```js
+export default class SoundEffectDemo {
+  static props = {
+    laser: { type: 'asset', assetType: 'audio', label: 'Laser SFX' },
+  };
+
+  onUpdate({ frame, props }) {
+    if (frame === 10) {
+      props.laser?.playOneShot({ volume: 0.8, speed: 1.2 });
+    }
+  }
+}
+```
 
 ---
 

@@ -55,6 +55,7 @@ export function ScriptCard({
   onUpdateEntity,
   entities,
   mediaAssets,
+  tracks = [],
 }) {
   const scriptDef = scripts.find((s) => s.id === scriptComp.scriptId);
   const kind = scriptDef ? detectScriptKind(scriptDef.code) : 'unknown';
@@ -201,6 +202,7 @@ export function ScriptCard({
             onUpdateEntity={onUpdateEntity}
             entities={entities}
             mediaAssets={mediaAssets}
+            tracks={tracks}
             onAction={handleAction}
           />
 

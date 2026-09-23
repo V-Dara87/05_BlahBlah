@@ -27,7 +27,7 @@ import './inspector-attributes.css';
  * carry attributes too (a nested `showIf`, an inline X/Y row, a nested struct
  * or list, a button).
  */
-function StructFieldGroup({ field, value, onChange, entities, mediaAssets, onAction }) {
+function StructFieldGroup({ field, value, onChange, entities, mediaAssets, tracks = [], onAction }) {
   const [open, setOpen] = useState(true);
   const subVal = value && typeof value === 'object' ? value : buildStructDefault(field.fields);
   const subfields = useMemo(() => subfieldSchema(field.fields), [field.fields]);
@@ -49,6 +49,7 @@ function StructFieldGroup({ field, value, onChange, entities, mediaAssets, onAct
             onFieldChange={(name, v) => onChange({ ...subVal, [name]: v })}
             entities={entities}
             mediaAssets={mediaAssets}
+            tracks={tracks}
             onAction={onAction}
           />
         </div>
@@ -62,7 +63,7 @@ function StructFieldGroup({ field, value, onChange, entities, mediaAssets, onAct
  * Each row expands to show all subfields as standard Inspector rows, from the
  * same `subfieldSchema` pipeline as everything else.
  */
-function StructArrayEditor({ field, value, onChange, entities, mediaAssets, onAction }) {
+function StructArrayEditor({ field, value, onChange, entities, mediaAssets, tracks = [], onAction }) {
   const items = Array.isArray(value) ? value : [];
   const subfields = useMemo(() => subfieldSchema(field.fields), [field.fields]);
 
@@ -102,6 +103,7 @@ function StructArrayEditor({ field, value, onChange, entities, mediaAssets, onAc
               onFieldChange={(name, v) => onUpdate({ [name]: v })}
               entities={entities}
               mediaAssets={mediaAssets}
+              tracks={tracks}
               onAction={onAction}
             />
           </div>
@@ -116,7 +118,7 @@ function StructArrayEditor({ field, value, onChange, entities, mediaAssets, onAc
  * (e.g. `string[]`, `number[]`, `color[]`, `boolean[]`, `select[]`, `asset[]`, `entity[]`, `font[]`)
  * using ArrayFieldEditor in a compact single-line per item format.
  */
-function PrimitiveArrayEditor({ field, value, onChange, entities, mediaAssets, disabled }) {
+function PrimitiveArrayEditor({ field, value, onChange, entities, mediaAssets, tracks = [], disabled }) {
   const itemType = field.itemType || (typeof field.type === 'string' && field.type.endsWith('[]') ? field.type.slice(0, -2) : 'string');
   const rawList = Array.isArray(value) ? value : [];
 
@@ -207,11 +209,11 @@ function PrimitiveArrayEditor({ field, value, onChange, entities, mediaAssets, d
         return (
           <div style={{ flex: 1, minWidth: 0 }}>
             <AssetRefSlot
-              assetId={val}
-              assets={mediaAssets}
-              disabled={disabled}
-              onSelect={(id) => onValChange(id)}
-              onClear={() => onValChange(null)}
+              value={val}
+              mediaAssets={mediaAssets}
+              assetType={field.assetType}
+              emptyLabel={field.assetType ? `None (${field.assetType})` : 'None (Asset)'}
+              onChange={(id) => onValChange(id)}
             />
           </div>
         );
@@ -219,11 +221,12 @@ function PrimitiveArrayEditor({ field, value, onChange, entities, mediaAssets, d
         return (
           <div style={{ flex: 1, minWidth: 0 }}>
             <EntityRefSlot
-              entityId={val}
+              value={val}
               entities={entities}
-              disabled={disabled}
-              onSelect={(id) => onValChange(id)}
-              onClear={() => onValChange(null)}
+              tracks={tracks}
+              targetComponent={field.targetComponent}
+              emptyLabel={field.targetComponent ? `None (${field.targetComponent})` : 'None (Entity)'}
+              onChange={(id) => onValChange(id)}
             />
           </div>
         );
@@ -361,6 +364,7 @@ export function InspectorField({
   onUpdateEntity,
   entities = [],
   mediaAssets = [],
+  tracks = [],
   disabled = false,
   onAction,
 }) {
@@ -405,6 +409,9 @@ export function InspectorField({
             value={currentVal || null}
             onChange={onChange}
             entities={entities}
+            tracks={tracks}
+            targetComponent={field.targetComponent}
+            emptyLabel={field.emptyLabel}
           />
         );
       case 'asset':
@@ -413,6 +420,8 @@ export function InspectorField({
             value={currentVal || null}
             onChange={onChange}
             mediaAssets={mediaAssets}
+            assetType={field.assetType}
+            emptyLabel={field.emptyLabel}
           />
         );
       case 'number':
@@ -509,6 +518,7 @@ export function InspectorField({
             onChange={onChange}
             entities={entities}
             mediaAssets={mediaAssets}
+            tracks={tracks}
             onAction={onAction}
           />
         );
@@ -521,6 +531,7 @@ export function InspectorField({
             onChange={onChange}
             entities={entities}
             mediaAssets={mediaAssets}
+            tracks={tracks}
             onAction={onAction}
           />
         );
@@ -540,6 +551,7 @@ export function InspectorField({
             onChange={onChange}
             entities={entities}
             mediaAssets={mediaAssets}
+            tracks={tracks}
             disabled={disabled}
           />
         );
@@ -566,6 +578,7 @@ export function InspectorField({
               onChange={onChange}
               entities={entities}
               mediaAssets={mediaAssets}
+              tracks={tracks}
               disabled={disabled}
             />
           );
@@ -639,6 +652,7 @@ function InspectorSection({
   onUpdateEntity,
   entities,
   mediaAssets,
+  tracks = [],
   onAction,
 }) {
   const [open, setOpen] = useState(true);
@@ -673,6 +687,7 @@ function InspectorSection({
       onUpdateEntity={onUpdateEntity}
       entities={entities}
       mediaAssets={mediaAssets}
+      tracks={tracks}
       disabled={!groupEnabled || !isFieldEnabled(field, values)}
       onAction={onAction}
     />
@@ -810,6 +825,7 @@ export function InspectorFieldList({
   onUpdateEntity,
   entities = [],
   mediaAssets = [],
+  tracks = [],
   onAction,
 }) {
   const layout = useMemo(() => buildInspectorLayout(fields, values), [fields, values]);
@@ -831,6 +847,7 @@ export function InspectorFieldList({
         onUpdateEntity={onUpdateEntity}
         entities={entities}
         mediaAssets={mediaAssets}
+        tracks={tracks}
         disabled={!isFieldEnabled(field, values)}
         onAction={onAction}
       />
@@ -874,6 +891,7 @@ export function InspectorFieldList({
           onUpdateEntity={onUpdateEntity}
           entities={entities}
           mediaAssets={mediaAssets}
+          tracks={tracks}
           onAction={onAction}
         />
       ))}

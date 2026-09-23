@@ -195,3 +195,176 @@ test('resolveScriptProps - resolves asset[] and entity[] while passing primitive
   assert.equal(resolved.targets[1].exists(), false);
 });
 
+test('extractScriptProps - preserves targetComponent and assetType on fields and array fields', () => {
+  const fields = extractScriptProps(`
+    static props = {
+      audioTrack: { type: 'entity', targetComponent: 'AudioSource', label: 'Audio Track' },
+      bgImage: { type: 'asset', assetType: 'image', label: 'Background' },
+      soundList: { type: 'entity[]', targetComponent: 'AudioSource', default: [] },
+      photoList: { type: 'asset[]', assetType: 'image', default: [] },
+    };
+  `);
+  const byName = Object.fromEntries(fields.map((f) => [f.name, f]));
+  assert.equal(byName.audioTrack.targetComponent, 'AudioSource');
+  assert.equal(byName.bgImage.assetType, 'image');
+  assert.equal(byName.soundList.targetComponent, 'AudioSource');
+  assert.equal(byName.photoList.assetType, 'image');
+});
+
+test('makeEntityRef - provides Audio Sync API methods', async () => {
+  const { makeEntityRef } = await import('./referenceTypes.js');
+  const audioEntity = {
+    id: 'audio-1',
+    name: 'BGM Clip',
+    startTime: 2.0,
+    duration: 5.0,
+    trackId: 'track-audio-1',
+    components: [
+      {
+        type: 'Transform',
+        speed: 1.0,
+      },
+      {
+        type: 'AudioSource',
+        assetId: 'asset-music',
+        volume: 0.8,
+        speed: 1.5,
+        mediaOffset: 1.0,
+        mediaDuration: 10.0,
+        muted: false,
+        loop: false,
+      },
+    ],
+  };
+
+  const assets = [
+    { id: 'asset-music', src: 'blob:music.mp3', duration: 10.0 },
+  ];
+
+  const ref = makeEntityRef(audioEntity, [audioEntity], assets);
+  assert.equal(ref.exists(), true);
+  assert.equal(ref.endTime, 7.0);
+  assert.equal(ref.trackId, 'track-audio-1');
+  assert.equal(ref.audioSrc, 'blob:music.mp3');
+  assert.equal(ref.audioDuration, 10.0);
+
+  // isPlayingAt
+  assert.equal(ref.isPlayingAt(1.0), false); // before startTime (2.0)
+  assert.equal(ref.isPlayingAt(2.0), true);  // at start
+  assert.equal(ref.isPlayingAt(5.0), true);  // during clip
+  assert.equal(ref.isPlayingAt(7.0), false); // at endTime
+  assert.equal(ref.isPlayingAt(8.0), false); // after clip
+
+  // getAudioTime: effectiveSpeed = 1.0 * 1.5 = 1.5
+  // at timelineTime = 4.0: localTime = 2.0. mediaTime = 1.0 (mediaOffset) + 2.0 * 1.5 = 4.0
+  assert.equal(ref.getAudioTime(4.0), 4.0);
+  // localTime mode: at localTime = 2.0, should match
+  assert.equal(ref.getAudioTime(2.0, true), 4.0);
+
+  // getAudioProgress
+  // at timelineTime = 4.5: localTime = 2.5. duration = 5.0 -> progress = 0.5
+  assert.equal(ref.getAudioProgress(4.5), 0.5);
+  assert.equal(ref.getAudioProgress(2.5, true), 0.5);
+
+  // getAudioSettings
+  const settings = ref.getAudioSettings();
+  assert.equal(settings.volume, 0.8);
+  assert.equal(settings.effectiveSpeed, 1.5);
+  assert.equal(settings.muted, false);
+});
+
+test('AssetRef and EntityRef - provides Audio Firing API (play, playOneShot, pause, stop, isPlaying)', async () => {
+  const { makeAssetRef, makeEntityRef } = await import('./referenceTypes.js');
+
+  const asset = {
+    id: 'asset-sfx',
+    name: 'laser.mp3',
+    src: 'blob:laser.mp3',
+    type: 'audio',
+    duration: 1.2,
+  };
+
+  const assetRef = makeAssetRef(asset);
+  assert.equal(typeof assetRef.play, 'function');
+  assert.equal(typeof assetRef.playOneShot, 'function');
+  assert.equal(typeof assetRef.pause, 'function');
+  assert.equal(typeof assetRef.stop, 'function');
+  assert.equal(assetRef.isPlaying, false);
+
+  // Mock global Audio to verify controls
+  class MockAudio {
+    constructor() {
+      this.src = '';
+      this.volume = 1;
+      this.playbackRate = 1;
+      this.loop = false;
+      this.currentTime = 0;
+      this.paused = true;
+      this.ended = false;
+    }
+    async play() {
+      this.paused = false;
+      this.ended = false;
+    }
+    pause() {
+      this.paused = true;
+    }
+  }
+
+  const prevAudio = globalThis.Audio;
+  globalThis.Audio = MockAudio;
+
+  try {
+    // Test playOneShot
+    const shot = assetRef.playOneShot({ volume: 0.6, speed: 1.2, offset: 0.1 });
+    assert.ok(shot instanceof MockAudio);
+    assert.equal(shot.src, 'blob:laser.mp3');
+    assert.equal(shot.volume, 0.6);
+    assert.equal(shot.playbackRate, 1.2);
+    assert.equal(shot.currentTime, 0.1);
+    assert.equal(shot.paused, false);
+
+    // Test play
+    const dedicated = assetRef.play({ volume: 0.9, loop: true });
+    assert.ok(dedicated instanceof MockAudio);
+    assert.equal(dedicated.src, 'blob:laser.mp3');
+    assert.equal(dedicated.volume, 0.9);
+    assert.equal(dedicated.loop, true);
+    assert.equal(assetRef.isPlaying, true);
+
+    // Test pause
+    assetRef.pause();
+    assert.equal(dedicated.paused, true);
+    assert.equal(assetRef.isPlaying, false);
+
+    // Test stop
+    assetRef.play();
+    assert.equal(assetRef.isPlaying, true);
+    assetRef.stop();
+    assert.equal(dedicated.paused, true);
+    assert.equal(dedicated.currentTime, 0);
+    assert.equal(assetRef.isPlaying, false);
+
+    // Test EntityRef with AudioSource
+    const entity = {
+      id: 'audio-ent',
+      name: 'BGM',
+      startTime: 0,
+      duration: 10,
+      components: [
+        { type: 'AudioSource', src: 'blob:bgm.mp3' },
+      ],
+    };
+    const entityRef = makeEntityRef(entity, [entity], []);
+    assert.equal(typeof entityRef.play, 'function');
+    assert.equal(typeof entityRef.playOneShot, 'function');
+    const entShot = entityRef.playOneShot({ volume: 0.7 });
+    assert.equal(entShot.src, 'blob:bgm.mp3');
+    assert.equal(entShot.volume, 0.7);
+  } finally {
+    globalThis.Audio = prevAudio;
+  }
+});
+
+
+

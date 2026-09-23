@@ -24,6 +24,10 @@ export interface ScriptLibs {
 // ─── Canvas / Visual Script Lifecycle Args ───────────────────────────────────
 
 export interface ClipTimingArgs {
+  /** Local clip time in seconds (0 at clip start). */
+  time?: number;
+  /** Timeline absolute current time in seconds (`startTime + time`). */
+  timelineTime?: number;
   /** Total clip duration in seconds. */
   duration?: number;
   /** Total frames in this clip (duration * fps). */
@@ -380,6 +384,29 @@ export interface EntityRefTransform {
   speed: number;
 }
 
+export interface AudioPlayOptions {
+  /** Volume level from 0.0 to 1.0 (default 1.0). */
+  volume?: number;
+  /** Playback speed / pitch multiplier (default 1.0). */
+  speed?: number;
+  /** Alias for speed. */
+  playbackRate?: number;
+  /** Loop playback (applicable to play(), default false). */
+  loop?: boolean;
+  /** Playback start position in seconds (default 0). */
+  offset?: number;
+}
+
+export interface AudioSettings {
+  volume: number;
+  speed: number;
+  muted: boolean;
+  loop: boolean;
+  mediaOffset: number;
+  mediaDuration: number;
+  effectiveSpeed: number;
+}
+
 /**
  * A reference to another clip/entity on the BlahBlah timeline.
  * Obtained when a script prop is declared with `type: 'entity'`.
@@ -393,8 +420,16 @@ export interface EntityRef {
   readonly startTime: number;
   /** Duration of the clip in seconds. */
   readonly duration: number;
+  /** Seconds at which the clip ends on the timeline (`startTime + duration`). */
+  readonly endTime: number;
   /** Parent entity ID, or null. */
   readonly parentId: string | null;
+  /** Track ID containing this entity, or null. */
+  readonly trackId: string | null;
+  /** Audio media source URL if entity has an AudioSource. */
+  readonly audioSrc: string | null;
+  /** Audio media duration in seconds if entity has an AudioSource. */
+  readonly audioDuration: number | null;
   /** Returns true when the referenced entity exists in the current project. */
   exists(): boolean;
   /**
@@ -407,6 +442,37 @@ export interface EntityRef {
    * Common types: 'VideoRenderer', 'AudioSource', 'TextRenderer', 'ShapeRenderer'
    */
   getComponent(type: string): Record<string, any> | null;
+  /**
+   * Checks whether the audio clip is actively playing at the given timeline time.
+   * Returns false if muted, before startTime, or after endTime.
+   */
+  isPlayingAt(timelineTime: number): boolean;
+  /**
+   * Returns the media playback time in seconds within the audio asset.
+   * @param time The time value (timeline time by default, or local clip time if isLocalTime is true).
+   * @param isLocalTime Set to true if `time` is relative to this entity's startTime. Default is false (timelineTime).
+   */
+  getAudioTime(time: number, isLocalTime?: boolean): number;
+  /**
+   * Returns normalized playback progress (0.0 to 1.0) within the audio clip.
+   * @param time The time value (timeline time by default, or local clip time if isLocalTime is true).
+   * @param isLocalTime Set to true if `time` is relative to this entity's startTime. Default is false (timelineTime).
+   */
+  getAudioProgress(time: number, isLocalTime?: boolean): number;
+  /**
+   * Returns audio source and transform playback settings (volume, speed, loop, etc.).
+   */
+  getAudioSettings(): AudioSettings;
+  /** Dedicated audio element is actively playing. */
+  readonly isPlaying: boolean;
+  /** Plays the audio. Reuses or restarts the dedicated audio instance. */
+  play(options?: AudioPlayOptions): HTMLAudioElement | null;
+  /** Fires a one-shot audio playback. Best for sound effects and overlapping plays. */
+  playOneShot(options?: AudioPlayOptions): HTMLAudioElement | null;
+  /** Pauses the dedicated audio instance. */
+  pause(): void;
+  /** Stops and rewinds the dedicated audio instance. */
+  stop(): void;
 }
 
 /**
@@ -426,6 +492,16 @@ export interface AssetRef {
   readonly duration: number | null;
   /** Returns true when the asset exists in the current project. */
   exists(): boolean;
+  /** Dedicated audio element is actively playing. */
+  readonly isPlaying: boolean;
+  /** Plays the audio asset. Reuses or restarts the dedicated audio instance. */
+  play(options?: AudioPlayOptions): HTMLAudioElement | null;
+  /** Fires a standalone one-shot audio playback. Automatically cleans itself up upon completion. */
+  playOneShot(options?: AudioPlayOptions): HTMLAudioElement | null;
+  /** Pauses the dedicated audio instance. */
+  pause(): void;
+  /** Stops and rewinds the dedicated audio instance. */
+  stop(): void;
 }
 
 // ─── SubtitleTrack ────────────────────────────────────────────────────────────

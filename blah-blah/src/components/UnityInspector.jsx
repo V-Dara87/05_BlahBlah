@@ -697,6 +697,7 @@ export const UnityInspector = memo(function UnityInspector({
               onUpdateEntity={onUpdateEntity}
               entities={entities}
               mediaAssets={mediaAssets}
+              tracks={tracks}
             />
           );
         })}

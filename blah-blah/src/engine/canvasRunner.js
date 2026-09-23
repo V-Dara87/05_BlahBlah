@@ -173,6 +173,7 @@ export function updateCanvasComponent({
     startTime: effStartTime,
     endTime: effEndTime,
     timeLeft,
+    timelineTime: effStartTime + localTime,
   };
  
   if (needsRemount) {
