@@ -254,7 +254,7 @@ export const TrackHeader = memo(function TrackHeader({
             onClick={() => onAddEmptyClip && onAddEmptyClip(track.id)}
             disabled={track.locked}
           >
-            <span style={{ fontSize: '8px', fontWeight: 700, color: '#38bdf8' }}>+C</span>
+            <span style={{ fontSize: '8px', fontWeight: 700, color: 'var(--unity-accent-blue)' }}>+C</span>
           </button>
  
           {onOpenSilenceRemoverForTrack && (

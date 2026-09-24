@@ -78,7 +78,7 @@
  
 .font-family-picker-item:hover,
 .font-family-picker-item.active {
-  background: rgba(56, 189, 248, 0.12);
+  background: rgba(var(--unity-accent-rgb), 0.12);
 }
  
 .font-family-picker-empty {

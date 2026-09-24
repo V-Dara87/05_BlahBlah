@@ -11,6 +11,7 @@ import { useProjectAutosave } from './hooks/useProjectAutosave';
 import { useAutosaveSettings } from './hooks/useAutosaveSettings';
 import { useEditorSettings } from './hooks/useEditorSettings';
 import { useExportSettings } from './hooks/useExportSettings';
+import { useThemeSettings } from './hooks/useThemeSettings';
 import { useAudioRecording } from './hooks/useAudioRecording';
 import { usePrefabEditing } from './hooks/usePrefabEditing';
 import { useOsFileDrop } from './hooks/useOsFileDrop';
@@ -69,6 +70,10 @@ import './styles/shared.css';
  *                         Settings > Timeline / Export defaults, owned here
  *                         so the modal and their consumers share one state
  *                         (hooks/useEditorSettings.js, useExportSettings.js)
+ *   - useThemeSettings → live copy of the global Settings > Appearance accent
+ *                         theme; writes the derived palette onto <html> so one
+ *                         state change re-colours every stylesheet
+ *                         (hooks/useThemeSettings.js)
  *   - useAudioRecording → mic capture for per-track voice recording,
  *                         arm/stop/finalize, stop-on-pause sync
  *                         (hooks/useAudioRecording.js)
@@ -166,6 +171,10 @@ export function App() {
   // the undo depth.
   const { editorSettings, updateEditorSettings } = useEditorSettings();
   const { exportSettings, updateExportSettings } = useExportSettings();
+  // Global accent theme (Settings > Appearance). The hook writes the palette to
+  // <html> as CSS custom properties; main.jsx applies the stored one before the
+  // first render so there is no flash of the default blue.
+  const { themeSettings, updateThemeSettings } = useThemeSettings();
   const [silenceTarget, setSilenceTarget] = useState({ type: 'clip', id: null });
   const [silencePreviewData, setSilencePreviewData] = useState(null);
  
@@ -744,6 +753,8 @@ export function App() {
         onEditorSettingsChange={updateEditorSettings}
         exportSettings={exportSettings}
         onExportSettingsChange={updateExportSettings}
+        themeSettings={themeSettings}
+        onThemeSettingsChange={updateThemeSettings}
       />
     </div>
       </TimelineViewProvider>

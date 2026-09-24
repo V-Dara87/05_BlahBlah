@@ -44,16 +44,30 @@ const FALLBACK = Object.freeze({
   text: '#d2d2d2',
   textDim: '#6e6e6e',
   accent: '#2c5d88',
+  // The theme's bright accent (Settings -> Appearance). Both the hex and its
+  // bare RGB channels are read, because canvas needs a resolved colour: it
+  // cannot paint `rgba(var(--unity-accent-rgb), 0.55)` the way CSS can.
+  accentBright: '#38bdf8',
+  accentRgb: '56, 189, 248',
   gridLine: 'rgba(255, 255, 255, 0.14)',
   divider: 'rgba(255, 255, 255, 0.14)',
   laneBackground: '#1a1a1c',
   laneLockedA: 'rgba(22, 22, 26, 0.6)',
   laneLockedB: 'rgba(28, 28, 34, 0.6)',
+  // The audio waveform's channels; the shipped violet is
+  // `rgba(139, 92, 246, 0.55)` (see services/themeSettings.js).
+  waveformRgb: '139, 92, 246',
 });
 
 /**
  * Per-category card colours, copied from clip-item.css
  * (`.timeline-clip-card.video/.audio/.text/.shape/.prefab`).
+ *
+ * These are the DEFAULTS: with a DOM present, readTimelineTheme() reads the
+ * live `--clip-<category>-bg` / `--clip-<category>-accent` instead, so the
+ * canvas timeline follows whatever clip palette Settings -> Appearance has
+ * applied. Kept exported because they are also the no-DOM fallback the tests
+ * assert against.
  */
 export const CARD_STYLE = Object.freeze({
   video: { background: '#1a2744', accent: '#3b82f6' },
@@ -63,6 +77,15 @@ export const CARD_STYLE = Object.freeze({
   prefab: { background: '#2a1a2a', accent: '#ec4899' },
 });
 
+/** `--clip-<category>-bg` / `--clip-<category>-accent` for one category. */
+function clipCssVars(category) {
+  return { background: `--clip-${category}-bg`, accent: `--clip-${category}-accent` };
+}
+
+// The selection/hover/linked-child colours are the THEME's accent, read per
+// build into `theme.accentBright` / `theme.accentRgb` (see readTimelineTheme).
+// The constants below are only the values they fall back to with no DOM and
+// the values `:root` ships, kept exported for callers that want the default.
 export const SELECTED_COLOR = '#38bdf8';
 export const MISSING_MEDIA_COLOR = '#f59e0b';
 export const TRANSITION_COLOR = '#f59e0b';
@@ -73,6 +96,15 @@ export const LINKED_CHILD_COLOR = '#38bdf8';
 export const LINKED_PARENT_COLOR = '#f59e0b';
 export const HOVER_COLOR = 'rgba(56, 189, 248, 0.55)';
 export const DEFAULT_CARD_BORDER = 'rgba(0, 0, 0, 0.55)';
+
+/**
+ * The theme's bright accent at a given alpha, as a canvas-ready rgba() string.
+ * Canvas has no `var()`, so translucent accents have to be assembled here from
+ * the RGB channels read off `:root`.
+ */
+function accentWithAlpha(theme, alpha) {
+  return `rgba(${theme?.accentRgb || FALLBACK.accentRgb}, ${alpha})`;
+}
 /** `.clip-title-text` colour — the card name, not the tooltip. */
 export const CARD_TITLE_COLOR = '#ffffff';
 /** The DOM's `🔒` badge / the lock glyph colour. */
@@ -93,6 +125,22 @@ export function readTimelineTheme(el) {
     const value = cs.getPropertyValue(name);
     return value && value.trim() ? value.trim() : fallback;
   };
+  // Clip colours are themed per category, so they are read the same way the
+  // chrome is: the DOM's values when there is a DOM, the shipped literals when
+  // there is not (tests, SSR).
+  const cards = Object.fromEntries(
+    Object.keys(CARD_STYLE).map((category) => {
+      const vars = clipCssVars(category);
+      return [
+        category,
+        {
+          background: read(vars.background, CARD_STYLE[category].background),
+          accent: read(vars.accent, CARD_STYLE[category].accent),
+        },
+      ];
+    })
+  );
+
   return {
     panel: read('--unity-panel', FALLBACK.panel),
     dark: read('--unity-dark', FALLBACK.dark),
@@ -102,12 +150,15 @@ export function readTimelineTheme(el) {
     text: read('--unity-text', FALLBACK.text),
     textDim: read('--unity-text-dim', FALLBACK.textDim),
     accent: read('--unity-accent', FALLBACK.accent),
+    accentBright: read('--unity-accent-blue', FALLBACK.accentBright),
+    accentRgb: read('--unity-accent-rgb', FALLBACK.accentRgb),
+    waveformRgb: read('--unity-waveform-rgb', FALLBACK.waveformRgb),
     gridLine: FALLBACK.gridLine,
     divider: FALLBACK.divider,
     laneBackground: FALLBACK.laneBackground,
     laneLockedA: FALLBACK.laneLockedA,
     laneLockedB: FALLBACK.laneLockedB,
-    cards: CARD_STYLE,
+    cards,
   };
 }
 
@@ -208,7 +259,7 @@ export function drawTimelineScene(ctx, {
   }
 
   if (state.recording?.trackId) drawRecordingPreview(ctx, { recording: state.recording, scene, theme, pps });
-  if (state.lasso) drawLasso(ctx, { lasso: state.lasso });
+  if (state.lasso) drawLasso(ctx, { lasso: state.lasso, theme });
 
   ctx.restore();
   return { drawnClips: cards.length + transitions.length };
@@ -374,9 +425,10 @@ function drawClipCard(ctx, {
       drawWaveformEnvelope(ctx, {
         ...waveformBox,
         envelope,
-        // ClipItem passes purple whenever there IS audio — the blue branch is
-        // unreachable there, and matching it exactly is the point.
-        color: 'rgba(139, 92, 246, 0.55)',
+        // The waveform colour is a theme setting (Settings -> Appearance);
+        // with no DOM it falls back to the shipped violet ClipItem has always
+        // passed for a clip that carries audio.
+        color: `rgba(${theme.waveformRgb}, 0.55)`,
         view,
       });
     } else if (peaksPending ? peaksPending(item) : false) {
@@ -410,7 +462,7 @@ function drawClipCard(ctx, {
   // ── State borders, in the DOM's own precedence ──────────────────────────
   // `.selected` (2px, !important, declared last) wins; then the linked-child /
   // linked-parent dashes; then `.missing-media`; then hover; then the plain edge.
-  const border = cardBorderFor({ item, isSelected, isHovered, parentIdsOfSelected });
+  const border = cardBorderFor({ item, isSelected, isHovered, parentIdsOfSelected, theme });
   ctx.save();
   ctx.globalAlpha = item.isLocked ? 0.7 : 1;
   ctx.lineWidth = border.width;
@@ -428,7 +480,7 @@ function drawClipCard(ctx, {
   // parent, drawn on top of whatever border the state above chose (the DOM's
   // border-top is a separate longhand, so the two coexist).
   if (item.clip.parentId) {
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+    ctx.strokeStyle = accentWithAlpha(theme, 0.35);
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 3]);
     ctx.beginPath();
@@ -456,13 +508,13 @@ function drawClipCard(ctx, {
 }
 
 /** The card's border colour/width/dash, in the DOM stylesheet's precedence. */
-function cardBorderFor({ item, isSelected, isHovered, parentIdsOfSelected }) {
-  if (isSelected) return { color: SELECTED_COLOR, width: 2 };
+function cardBorderFor({ item, isSelected, isHovered, parentIdsOfSelected, theme }) {
+  if (isSelected) return { color: theme.accentBright, width: 2 };
   const isChildOfSelected = Boolean(item.clip.parentId && parentIdsOfSelected.has(item.clip.parentId));
-  if (isChildOfSelected) return { color: LINKED_CHILD_COLOR, width: 1 };
+  if (isChildOfSelected) return { color: theme.accentBright, width: 1 };
   if (parentIdsOfSelected.has(item.id)) return { color: LINKED_PARENT_COLOR, width: 1 };
   if (item.isMissingMedia) return { color: MISSING_MEDIA_COLOR, width: 1 };
-  if (isHovered) return { color: HOVER_COLOR, width: 1 };
+  if (isHovered) return { color: accentWithAlpha(theme, 0.55), width: 1 };
   return { color: DEFAULT_CARD_BORDER, width: 1 };
 }
 
@@ -719,15 +771,15 @@ function drawExportRange(ctx, { exportRange, view, pps }) {
 }
 
 /** Lasso rectangle (the DOM `.timeline-box-select` overlay). */
-function drawLasso(ctx, { lasso }) {
+function drawLasso(ctx, { lasso, theme }) {
   const x = Math.min(lasso.x0, lasso.x1);
   const y = Math.min(lasso.y0, lasso.y1);
   const w = Math.abs(lasso.x1 - lasso.x0);
   const h = Math.abs(lasso.y1 - lasso.y0);
   ctx.save();
-  ctx.fillStyle = 'rgba(56, 189, 248, 0.12)';
+  ctx.fillStyle = accentWithAlpha(theme, 0.12);
   ctx.fillRect(x, y, w, h);
-  ctx.strokeStyle = SELECTED_COLOR;
+  ctx.strokeStyle = theme.accentBright;
   ctx.lineWidth = 1;
   ctx.strokeRect(x + 0.5, y + 0.5, Math.max(0, w - 1), Math.max(0, h - 1));
   ctx.restore();

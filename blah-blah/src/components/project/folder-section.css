@@ -72,8 +72,8 @@
 }
  
 .tree-folder-header.drag-over {
-  outline: 1px solid #38bdf8;
+  outline: 1px solid var(--unity-accent-blue);
   outline-offset: -1px;
-  background: rgba(56, 189, 248, 0.12);
+  background: rgba(var(--unity-accent-rgb), 0.12);
   border-radius: 3px;
 }

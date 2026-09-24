@@ -34,7 +34,7 @@
   height: 380px;
   background: var(--unity-darkest);
   border: 1px solid var(--unity-border-light);
-  color: #38bdf8;
+  color: var(--unity-accent-blue);
   font-family: var(--font-mono);
   font-size: 12px;
   padding: 10px;

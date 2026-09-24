@@ -24,13 +24,13 @@
 }
  
 .ref-slot.ref-slot-dragover {
-  border-color: #38bdf8;
-  background: rgba(56, 189, 248, 0.12);
-  box-shadow: 0 0 0 1px #38bdf8;
+  border-color: var(--unity-accent-blue);
+  background: rgba(var(--unity-accent-rgb), 0.12);
+  box-shadow: 0 0 0 1px var(--unity-accent-blue);
 }
  
 .ref-slot.ref-slot-assigned {
-  border-color: rgba(56, 189, 248, 0.35);
+  border-color: rgba(var(--unity-accent-rgb), 0.35);
 }
  
 .ref-slot-icon {

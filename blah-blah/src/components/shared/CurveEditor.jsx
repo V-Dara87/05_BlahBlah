@@ -1,6 +1,7 @@
 import { useRef, useEffect, useCallback, useState, memo } from 'react';
 import { RotateCcw, MousePointer2, Maximize2 } from 'lucide-react';
 import { CURVE_PRESETS } from '../../engine/keyframes';
+import { readThemeAccent } from '../../services/themeSettings';
 import { CurvePickerModal } from '../modals/CurvePickerModal';
  
 const PADDING = 24;
@@ -144,8 +145,9 @@ export const CurveEditor = memo(function CurveEditor({
     ctx.stroke();
     ctx.setLineDash([]);
  
-    // The bezier curve
-    ctx.strokeStyle = '#38bdf8';
+    // The bezier curve — the theme accent, read fresh because a canvas
+    // strokeStyle cannot use var() (Settings -> Appearance).
+    ctx.strokeStyle = readThemeAccent();
     ctx.lineWidth = 2;
     ctx.lineCap = 'round';
     ctx.beginPath();

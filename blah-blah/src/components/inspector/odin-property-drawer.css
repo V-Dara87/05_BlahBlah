@@ -28,7 +28,7 @@
 }
  
 .odin-header-icon {
-  color: var(--unity-accent-blue, #38bdf8);
+  color: var(--unity-accent-blue, var(--unity-accent-blue));
 }
  
 .odin-header-title {
@@ -44,8 +44,8 @@
   font-weight: 700;
   padding: 1px 4px;
   border-radius: 3px;
-  background: rgba(56, 189, 248, 0.15);
-  color: #38bdf8;
+  background: rgba(var(--unity-accent-rgb), 0.15);
+  color: var(--unity-accent-blue);
 }
  
 .odin-reset-all-btn {
@@ -90,7 +90,7 @@
 }
  
 .odin-property-row.modified {
-  background: rgba(56, 189, 248, 0.03);
+  background: rgba(var(--unity-accent-rgb), 0.03);
 }
  
 .odin-prop-label-wrap {
@@ -146,8 +146,8 @@
 }
  
 .odin-prop-reset-btn:hover {
-  color: #38bdf8;
-  background: rgba(56, 189, 248, 0.15);
+  color: var(--unity-accent-blue);
+  background: rgba(var(--unity-accent-rgb), 0.15);
 }
  
 .odin-prop-reset-placeholder {
@@ -177,9 +177,9 @@
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #38bdf8;
+  background: var(--unity-accent-blue);
   cursor: pointer;
-  box-shadow: 0 0 4px rgba(56, 189, 248, 0.5);
+  box-shadow: 0 0 4px rgba(var(--unity-accent-rgb), 0.5);
   transition: transform 0.1s;
 }
  

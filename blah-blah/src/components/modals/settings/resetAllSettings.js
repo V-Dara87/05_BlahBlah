@@ -1,6 +1,7 @@
 import { AUTOSAVE_DEFAULTS } from '../../../services/autosaveSettings';
 import { saveAudioSettings } from '../../../services/audioSettings';
 import { resetKeybindSettings } from '../../../services/keybindSettings';
+import { THEME_DEFAULTS } from '../../../services/themeSettings';
 
 /**
  * ============================================================================
@@ -55,6 +56,13 @@ export const RESETTABLE_SETTINGS = [
       saveAudioSettings(defaults);
       ctx.onSettingsChanged?.(defaults);
     },
+  },
+  {
+    id: 'theme',
+    label: 'Accent theme',
+    // Goes through the same updater the Appearance tab uses, so the palette is
+    // re-applied to <html> immediately rather than on the next reload.
+    reset: (ctx) => ctx.onThemeSettingsChange?.({ ...THEME_DEFAULTS }),
   },
 ];
 

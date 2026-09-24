@@ -98,7 +98,7 @@
  
 .browse-folder-btn:hover {
   background: var(--unity-hover);
-  border-color: #38bdf8;
+  border-color: var(--unity-accent-blue);
 }
  
 .scaffold-preview-box {
@@ -121,7 +121,7 @@
 .scaffold-tree {
   font-family: var(--font-mono);
   font-size: 11px;
-  color: #38bdf8;
+  color: var(--unity-accent-blue);
   line-height: 1.6;
 }
  
@@ -133,4 +133,116 @@
 .tree-dim {
   color: var(--unity-text-dim);
   font-size: 10px;
+}
+
+/* ==========================================================================
+   Template gallery
+   (NewProjectModal.jsx -> services/projectTemplates.js)
+   ========================================================================== */
+
+.template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(146px, 1fr));
+  gap: 8px;
+}
+
+.template-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 9px 10px;
+  background: var(--unity-darkest);
+  border: 1px solid var(--unity-border);
+  border-radius: 6px;
+  color: var(--unity-text-muted);
+  text-align: left;
+  transition: border-color 0.12s, background 0.12s, color 0.12s;
+}
+
+.template-card:hover {
+  background: var(--unity-hover);
+  border-color: var(--unity-border-light);
+  color: var(--unity-text);
+}
+
+.template-card.active {
+  border-color: var(--unity-accent-blue);
+  background: var(--unity-subtle);
+  color: #fff;
+  box-shadow: 0 0 0 2px rgba(var(--unity-accent-rgb), 0.22);
+}
+
+.template-card:focus-visible {
+  outline: 1px solid var(--unity-accent-blue);
+  outline-offset: 1px;
+}
+
+.template-card-icon {
+  color: var(--unity-text-dim);
+  flex-shrink: 0;
+}
+
+.template-card.active .template-card-icon {
+  color: var(--unity-accent-blue);
+}
+
+.template-card-name {
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.template-card-tagline {
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--unity-text-dim);
+}
+
+.template-card.active .template-card-tagline {
+  color: var(--unity-text-muted);
+}
+
+/* What the selected template actually produces, spelled out: the description
+   plus the tracks it will create. */
+.template-summary {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--unity-darkest);
+  border: 1px solid var(--unity-border);
+  border-left: 2px solid var(--unity-accent-blue);
+  border-radius: 6px;
+}
+
+.template-summary-text {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--unity-text-muted);
+}
+
+.template-track-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.template-track-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--unity-text-dim);
+  margin-right: 2px;
+}
+
+.template-track-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border-light);
+  color: var(--unity-text);
+  font-size: 10px;
+  font-weight: 600;
 }

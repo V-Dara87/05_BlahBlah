@@ -23,8 +23,8 @@
 }
  
 .drag-number-field:focus-within {
-  border-color: #38bdf8;
-  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.3);
+  border-color: var(--unity-accent-blue);
+  box-shadow: 0 0 0 1px rgba(var(--unity-accent-rgb), 0.3);
 }
  
 .drag-number-label {
@@ -44,13 +44,13 @@
 }
  
 .drag-number-label:hover {
-  background: rgba(56, 189, 248, 0.1);
-  color: #38bdf8;
+  background: rgba(var(--unity-accent-rgb), 0.1);
+  color: var(--unity-accent-blue);
 }
  
 .drag-number-label:active {
-  background: rgba(56, 189, 248, 0.2);
-  color: #38bdf8;
+  background: rgba(var(--unity-accent-rgb), 0.2);
+  color: var(--unity-accent-blue);
   cursor: ew-resize;
 }
  
@@ -73,7 +73,7 @@
   flex: 1;
   background: transparent;
   border: none;
-  color: #38bdf8;
+  color: var(--unity-accent-blue);
   font-size: 10px;
   font-family: var(--font-mono);
   padding: 0 5px;
@@ -82,5 +82,5 @@
 }
  
 .drag-number-input.editing {
-  color: #38bdf8;
+  color: var(--unity-accent-blue);
 }

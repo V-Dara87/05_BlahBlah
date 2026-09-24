@@ -15,7 +15,7 @@
 }
  
 .inspector-card-header.drag-over {
-  box-shadow: inset 0 0 0 1px #38bdf8;
+  box-shadow: inset 0 0 0 1px var(--unity-accent-blue);
   background: #40474f;
 }
  

@@ -77,7 +77,7 @@
 }
 
 .docs-toc-link.active {
-  background: rgba(56, 189, 248, 0.1);
+  background: rgba(var(--unity-accent-rgb), 0.1);
   border-left-color: var(--unity-accent-blue);
   color: var(--unity-accent-blue);
 }
@@ -125,7 +125,7 @@
   border-radius: 3px;
   padding: 1px 5px;
   font-size: 11px;
-  color: #7dd3fc;
+  color: var(--unity-accent-soft);
   font-family: 'JetBrains Mono', ui-monospace, monospace;
 }
  

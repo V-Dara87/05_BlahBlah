@@ -129,8 +129,8 @@
   gap: 3px;
   font-size: 9px;
   font-family: var(--font-mono);
-  color: #38bdf8;
-  background: rgba(56, 189, 248, 0.12);
+  color: var(--unity-accent-blue);
+  background: rgba(var(--unity-accent-rgb), 0.12);
   padding: 1px 5px;
   border-radius: 4px;
 }
@@ -237,8 +237,8 @@
 }
  
 .prefab-role-pill.parent {
-  background: rgba(56, 189, 248, 0.2);
-  color: #38bdf8;
+  background: rgba(var(--unity-accent-rgb), 0.2);
+  color: var(--unity-accent-blue);
 }
  
 .prefab-role-pill.child {
@@ -273,8 +273,8 @@
 }
  
 .prefab-clip-bar.root-bar {
-  background: linear-gradient(90deg, #0284c7, #0ea5e9);
-  border: 1px solid #38bdf8;
+  background: linear-gradient(90deg, #0284c7, var(--unity-accent-blue-strong));
+  border: 1px solid var(--unity-accent-blue);
 }
  
 .prefab-clip-bar.child-bar {

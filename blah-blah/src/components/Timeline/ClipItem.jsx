@@ -8,6 +8,7 @@ import { applyEdgeAutoScroll, getTimelineElements } from '../../utils/timelineAu
 import { ContextMenu } from '../shared/ContextMenu';
 import { hasClipboardClips } from '../../utils/clipClipboard';
 import { buildGapRemovalUpdates } from '../../utils/removeGaps';
+import { useWaveformColor } from '../../hooks/useWaveformColor';
 import './clip-item.css';
  
 /** Return true if candidateChild is a descendant of ancestorId (cycle guard). */
@@ -97,6 +98,11 @@ export const ClipItem = memo(function ClipItem({
   const hasAudio = isAudioEntity(clip);
  
   const clipCategory = hasVideo ? 'video' : hasAudio ? 'audio' : hasText ? 'text' : hasShape ? 'shape' : 'prefab';
+
+  // Themed audio-waveform colour (Settings -> Appearance). It replaces the
+  // hard-coded violet here so the waveform follows the theme; in the 'clip'
+  // waveform mode it resolves from THIS card's category accent.
+  const waveformColor = useWaveformColor(clipCategory);
  
   const getSnappedTime = (rawTime) => {
     if (!snappingEnabled || snappingPoints.length === 0) return rawTime;
@@ -906,7 +912,7 @@ export const ClipItem = memo(function ClipItem({
               url={audioUrl}
               width={widthPx - 8}
               height={cardHeight - 6}
-              color={hasAudio ? 'rgba(139, 92, 246, 0.55)' : 'rgba(56, 189, 248, 0.4)'}
+              color={waveformColor}
               mirror
               startSec={mediaOffset}
               endSec={mediaOffset + clip.duration * speed}

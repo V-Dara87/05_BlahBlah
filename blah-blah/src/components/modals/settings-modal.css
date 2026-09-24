@@ -33,7 +33,7 @@
  
 .level-meter-fill {
   height: 100%;
-  background: linear-gradient(90deg, #10b981, #38bdf8);
+  background: linear-gradient(90deg, #10b981, var(--unity-accent-blue));
   transition: width 0.05s linear;
 }
  
@@ -109,13 +109,13 @@
 }
  
 .shortcut-key-chip:hover {
-  border-color: var(--unity-accent, #38bdf8);
+  border-color: var(--unity-accent, var(--unity-accent-blue));
 }
  
 .shortcut-key-chip.listening {
-  border-color: var(--unity-accent, #38bdf8);
-  color: var(--unity-accent, #38bdf8);
-  background: rgba(56, 189, 248, 0.1);
+  border-color: var(--unity-accent, var(--unity-accent-blue));
+  color: var(--unity-accent, var(--unity-accent-blue));
+  background: rgba(var(--unity-accent-rgb), 0.1);
 }
  
 .shortcut-key-chip svg {
@@ -353,8 +353,8 @@
 
 .settings-scope-badge.global {
   color: var(--unity-accent-blue);
-  border-color: rgba(56, 189, 248, 0.4);
-  background: rgba(56, 189, 248, 0.08);
+  border-color: rgba(var(--unity-accent-rgb), 0.4);
+  background: rgba(var(--unity-accent-rgb), 0.08);
 }
 
 /* ==========================================================================
@@ -414,8 +414,8 @@
   gap: 8px;
   padding: 8px 12px;
   border-radius: 6px;
-  background: rgba(56, 189, 248, 0.1);
-  border: 1px solid rgba(56, 189, 248, 0.3);
+  background: rgba(var(--unity-accent-rgb), 0.1);
+  border: 1px solid rgba(var(--unity-accent-rgb), 0.3);
   color: var(--unity-accent-blue);
   font-size: 12px;
 }
@@ -612,4 +612,489 @@
   left: 9px;
   top: 50%;
   transform: translateY(-50%);
+}
+/* ==========================================================================
+   Appearance tab: accent-theme preset gallery + custom colour
+   (SettingsModal -> settings/AppearanceTab.jsx, services/themeSettings.js)
+   ========================================================================== */
+
+.theme-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 8px;
+}
+
+.theme-preset-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 8px;
+  background: var(--unity-darkest);
+  border: 1px solid var(--unity-border);
+  border-radius: 6px;
+  color: var(--unity-text-muted);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, color 0.12s;
+}
+
+.theme-preset-card:hover {
+  background: var(--unity-hover);
+  border-color: var(--unity-border-light);
+  color: var(--unity-text);
+}
+
+.theme-preset-card.active {
+  border-color: var(--unity-accent-blue);
+  background: var(--unity-subtle);
+  color: #fff;
+  box-shadow: 0 0 0 2px rgba(var(--unity-accent-rgb), 0.25);
+}
+
+.theme-preset-card:focus-visible {
+  outline: 1px solid var(--unity-accent-blue);
+  outline-offset: 1px;
+}
+
+/* The swatch IS the preset's resolved palette (panel background, the exact
+   accent, a text-coloured rule and the harmony partner), so a card previews
+   the real theme rather than a decorative colour. */
+.theme-preset-swatch {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+  height: 30px;
+  padding: 3px;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.45);
+}
+
+/* The accent square, and the tick that marks the active theme. */
+.theme-swatch-accent {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 100%;
+  border-radius: 3px;
+  color: #0b1220;
+}
+
+/* A text-coloured rule, so the card also shows how readable the pair is. */
+.theme-swatch-text {
+  display: flex;
+  align-items: center;
+  width: 20px;
+  height: 4px;
+  border-radius: 2px;
+}
+
+/* The harmony partner, filling whatever is left. */
+.theme-swatch-secondary {
+  flex: 1 1 auto;
+  height: 100%;
+  border-radius: 3px;
+}
+
+.theme-preset-name {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.theme-preset-theory {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--unity-text-dim);
+}
+
+.theme-preset-card.active .theme-preset-theory {
+  color: var(--unity-accent-soft);
+}
+
+.theme-custom-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.theme-color-input {
+  flex-shrink: 0;
+  width: 34px;
+  height: 30px;
+  padding: 2px;
+  background: var(--unity-darkest);
+  border: 1px solid var(--unity-border);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.theme-hex-input {
+  flex: 0 0 108px;
+  font-family: var(--font-mono);
+  text-transform: lowercase;
+}
+
+.theme-harmony-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* --- Details panel ------------------------------------------------------- */
+
+/* A collapsed disclosure, because the individual values are the long tail:
+   most people pick a card above and never open this. */
+.theme-details-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--unity-darkest);
+  border: 1px solid var(--unity-border);
+  border-radius: 6px;
+  color: var(--unity-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.theme-details-toggle:hover,
+.theme-details-toggle.open {
+  background: var(--unity-hover);
+  border-color: var(--unity-border-light);
+  color: var(--unity-text);
+}
+
+.theme-details-toggle:focus-visible {
+  outline: 1px solid var(--unity-accent-blue);
+  outline-offset: 1px;
+}
+
+/* The "accent · background · text · fonts · clips · waveform" map of what is
+   inside, so the panel is not opened blind. Pushes the chevron right. */
+.theme-details-summary {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--unity-text-dim);
+}
+
+.theme-details-chevron {
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+
+.theme-details-toggle.open .theme-details-chevron {
+  transform: rotate(180deg);
+}
+
+.theme-details-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 8px;
+  padding: 12px;
+  background: var(--unity-darkest);
+  border: 1px solid var(--unity-border);
+  border-radius: 6px;
+}
+
+.theme-detail-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.theme-detail-group + .theme-detail-group {
+  padding-top: 12px;
+  border-top: 1px solid var(--unity-border);
+}
+
+.theme-detail-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--unity-text-muted);
+}
+
+/* Marks the values that make the theme "custom" rather than a preset. */
+.theme-detail-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--unity-accent-soft);
+  background: rgba(var(--unity-accent-rgb), 0.14);
+  border: 1px solid rgba(var(--unity-accent-rgb), 0.35);
+}
+
+.theme-hex-readout {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--unity-text);
+}
+
+/* Two labelled selects side by side (interface + monospace). */
+.theme-font-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.theme-font-field {
+  display: flex;
+  flex: 1 1 200px;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--unity-text-muted);
+}
+
+/* Renders in the chosen stacks, so the font is previewed rather than named. */
+.theme-font-sample {
+  padding: 8px 10px;
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border);
+  border-radius: 5px;
+  font-size: 12px;
+  color: var(--unity-text);
+}
+
+.theme-font-sample code {
+  color: var(--unity-text-muted);
+}
+
+/* Advisory, not an error: a low-contrast text colour is still applied. */
+.theme-contrast-warning {
+  margin: 0;
+  padding: 7px 9px;
+  border-radius: 5px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--unity-accent-amber);
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+/* --- Derived ramp -------------------------------------------------------- */
+
+.theme-role-list {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--unity-border);
+  border-radius: 6px;
+  background: var(--unity-darkest);
+}
+
+.theme-role-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+}
+
+.theme-role-row + .theme-role-row {
+  border-top: 1px solid var(--unity-border);
+}
+
+.theme-role-dot {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.4);
+}
+
+.theme-role-row dt {
+  font-size: 11px;
+  color: var(--unity-text-muted);
+  min-width: 150px;
+}
+
+.theme-role-row dd {
+  margin: 0;
+  margin-left: auto;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  text-align: right;
+}
+
+.theme-role-row dd code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--unity-text);
+}
+
+.theme-role-note {
+  font-size: 10px;
+  color: var(--unity-text-dim);
+}
+
+/* --- Custom background sliders ------------------------------------------ */
+
+.theme-slider-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.theme-slider-row {
+  display: grid;
+  grid-template-columns: 84px 1fr 56px;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--unity-text-muted);
+  cursor: pointer;
+}
+
+.theme-slider-row input[type='range'] {
+  width: 100%;
+  cursor: pointer;
+  /* The native track/thumb follow the theme accent. */
+  accent-color: var(--unity-accent-blue);
+}
+
+.theme-slider-row code {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--unity-text-dim);
+  text-align: right;
+}
+
+/* --- Segmented mode picker (clip palette, waveform) ---------------------- */
+
+.theme-mode-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.theme-mode-btn {
+  padding: 6px 12px;
+  background: var(--unity-darkest);
+  border: 1px solid var(--unity-border);
+  border-radius: 5px;
+  color: var(--unity-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.theme-mode-btn:hover {
+  background: var(--unity-hover);
+  color: var(--unity-text);
+}
+
+.theme-mode-btn.active {
+  background: var(--unity-subtle);
+  border-color: var(--unity-accent-blue);
+  color: var(--unity-accent-blue);
+}
+
+.theme-mode-btn:focus-visible {
+  outline: 1px solid var(--unity-accent-blue);
+  outline-offset: 1px;
+}
+
+/* --- Clip palette preview + per-category pickers ------------------------- */
+
+.theme-clip-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.theme-clip-chip {
+  padding: 5px 12px 5px 9px;
+  border-radius: 4px;
+  border-left: 3px solid currentColor;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--unity-text);
+}
+
+.theme-clip-custom {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.theme-clip-custom-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--unity-text-muted);
+  cursor: pointer;
+}
+
+.theme-clip-custom-row span {
+  min-width: 52px;
+}
+
+.theme-clip-custom-row code {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--unity-text-dim);
+}
+
+.theme-color-input-sm {
+  width: 26px;
+  height: 22px;
+}
+
+.theme-clip-reset {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  color: var(--unity-text-dim);
+}
+
+.theme-clip-reset:hover {
+  background: var(--unity-hover);
+  color: var(--unity-text);
+}
+
+/* --- Waveform preview --------------------------------------------------- */
+
+.theme-waveform-preview {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: 96px;
+  height: 26px;
+  padding: 2px 6px;
+  background: var(--unity-darkest);
+  border: 1px solid var(--unity-border);
+  border-radius: 4px;
+}
+
+.theme-waveform-preview > span {
+  flex: 1 1 0;
+  border-radius: 1px;
+}
+
+.theme-waveform-hex {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--unity-text-dim);
 }

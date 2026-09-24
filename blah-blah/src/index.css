@@ -1,4 +1,14 @@
 :root {
+  /* ---------------------------------------------------------------------
+     THEME SURFACE (Settings -> Appearance, services/themeSettings.js)
+
+     The background chassis: every panel, lane, menu, border and text colour in
+     the editor resolves to one of these ten variables, so changing them
+     re-themes the whole surface. The values below are the shipped neutral grey
+     ramp; the Appearance tab overwrites them as inline custom properties on
+     <html>. They are generated from a tint + a depth multiplier, so the
+     contrast structure between a panel and its text is preserved whatever you
+     pick (see SURFACE_ROLE_LIGHTNESS). */
   --unity-darkest: #191919;
   --unity-dark: #1f1f1f;
   --unity-panel: #282828;
@@ -10,9 +20,53 @@
   --unity-text: #d2d2d2;
   --unity-text-muted: #999999;
   --unity-text-dim: #6e6e6e;
+
+  /* Timeline clip cards, one pair per category (clip-item.css). Namespaced
+     away from the chrome so a background theme cannot recolour content. */
+  --clip-video-bg: #1a2744;
+  --clip-video-accent: #3b82f6;
+  --clip-audio-bg: #1a2233;
+  --clip-audio-accent: #8b5cf6;
+  --clip-text-bg: #2a2218;
+  --clip-text-accent: #f59e0b;
+  --clip-shape-bg: #1a2a22;
+  --clip-shape-accent: #10b981;
+  --clip-prefab-bg: #2a1a2a;
+  --clip-prefab-accent: #ec4899;
+
+  /* Audio waveform on a clip card. Canvas painters need a concrete colour, so
+     they read these channels and build rgba() themselves
+     (services/themeSettings.js -> resolveWaveformColor). */
+  --unity-waveform-rgb: 139, 92, 246;
  
-  --unity-accent: #2c5d88;
+  /* ---------------------------------------------------------------------
+     THEME ACCENTS (Settings -> Appearance, services/themeSettings.js)
+
+     These five variables are the app's interactive colour, and they are the
+     only colours a theme changes. The values below are the shipped "Unity
+     Blue" palette; picking a theme overwrites them as inline custom
+     properties on <html>, which is why every stylesheet must read the
+     variable rather than the literal.
+
+     These values are the resolved "Unity Blue" preset, not hand-written
+     copies: tests/theme-settings.test.mjs parses this block and fails if it
+     ever disagrees with what resolveTheme() returns, so the pre-JS fallback
+     and the JS default cannot drift apart.
+
+     --unity-accent-rgb / --unity-accent-secondary-rgb hold the bare "R, G, B"
+     channels of their hex partner, so a translucent tint can be written as
+     rgba(var(--unity-accent-rgb), 0.2) and follow the theme. A hex literal in
+     an rgba() is the one form that silently freezes a colour. */
+  --unity-accent: #2c5c87;
   --unity-accent-blue: #38bdf8;
+  --unity-accent-blue-strong: #09a8ec;
+  --unity-accent-soft: #75d2fa;
+  --unity-accent-rgb: 56, 189, 248;
+  --unity-accent-secondary: #3a60f8;
+  --unity-accent-secondary-rgb: 58, 96, 248;
+
+  /* NOT themed, on purpose: these carry meaning, not identity. A theme must
+     never turn a warning amber or an error red into a decoration. */
   --unity-accent-indigo: #6366f1;
   --unity-accent-emerald: #10b981;
   --unity-accent-amber: #f59e0b;
@@ -122,17 +176,17 @@ input, select, textarea {
  
 .keyframe-btn.has-keys::before {
   background: var(--unity-accent-blue);
-  box-shadow: 0 0 4px rgba(56, 189, 248, 0.5);
+  box-shadow: 0 0 4px rgba(var(--unity-accent-rgb), 0.5);
 }
  
 .keyframe-btn.at-current-time::before {
   background: var(--unity-accent-blue);
-  box-shadow: 0 0 6px rgba(56, 189, 248, 0.8);
+  box-shadow: 0 0 6px rgba(var(--unity-accent-rgb), 0.8);
 }
  
 .keyframe-btn.at-current-time:hover {
-  background: #0ea5e9;
-  box-shadow: 0 0 8px rgba(56, 189, 248, 1);
+  background: var(--unity-accent-blue-strong);
+  box-shadow: 0 0 8px rgba(var(--unity-accent-rgb), 1);
 }
  
 /* Auto Key toggle button in inspector */
@@ -171,7 +225,7 @@ input, select, textarea {
   background: var(--unity-accent-blue);
   color: white;
   border-color: var(--unity-accent-blue);
-  box-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+  box-shadow: 0 0 10px rgba(var(--unity-accent-rgb), 0.5);
 }
  
 /* ========================================================

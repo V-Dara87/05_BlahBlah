@@ -54,8 +54,8 @@
  
 .silence-enable-status.on {
   color: var(--unity-accent-blue);
-  background-color: rgba(56, 189, 248, 0.12);
-  border: 1px solid rgba(56, 189, 248, 0.3);
+  background-color: rgba(var(--unity-accent-rgb), 0.12);
+  border: 1px solid rgba(var(--unity-accent-rgb), 0.3);
 }
  
 .silence-enable-status.off {
@@ -118,7 +118,7 @@
 }
  
 .silence-enable-toggle .toggle-switch input:focus-visible ~ .toggle-switch-track {
-  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.4);
+  box-shadow: 0 0 0 2px rgba(var(--unity-accent-rgb), 0.4);
 }
  
 /* Disabled body state — dims and inerts everything below the enable
@@ -357,8 +357,8 @@
   gap: 5px;
   font-size: 10px;
   color: var(--unity-accent-blue);
-  background-color: rgba(56, 189, 248, 0.12);
-  border: 1px solid rgba(56, 189, 248, 0.3);
+  background-color: rgba(var(--unity-accent-rgb), 0.12);
+  border: 1px solid rgba(var(--unity-accent-rgb), 0.3);
   padding: 3px 8px;
   border-radius: 12px;
 }
@@ -435,7 +435,7 @@
 }
  
 .preset-btn.active {
-  background-color: rgba(56, 189, 248, 0.15);
+  background-color: rgba(var(--unity-accent-rgb), 0.15);
   border-color: var(--unity-accent-blue);
   color: var(--unity-accent-blue);
   font-weight: 600;

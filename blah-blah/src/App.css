@@ -44,7 +44,7 @@ input[type="checkbox"] {
 }
 
 input[type="checkbox"]:hover {
-  border-color: #38bdf8;
+  border-color: var(--unity-accent-blue);
   background: var(--unity-subtle, #323232);
 }
 

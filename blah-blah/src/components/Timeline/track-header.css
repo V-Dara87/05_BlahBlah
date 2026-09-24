@@ -63,7 +63,7 @@
   font-weight: 600;
   color: #fff;
   background: #1e1e1e;
-  border: 1px solid #38bdf8;
+  border: 1px solid var(--unity-accent-blue);
   border-radius: 2px;
   padding: 1px 4px;
   outline: none;
@@ -175,12 +175,12 @@
 
 .track-resize-handle:hover::after,
 .track-resize-handle.is-dragging::after {
-  background: rgba(56, 189, 248, 0.9);
+  background: rgba(var(--unity-accent-rgb), 0.9);
 }
 
 .track-resize-handle:hover,
 .track-resize-handle:active {
-  background: rgba(56, 189, 248, 0.35);
+  background: rgba(var(--unity-accent-rgb), 0.35);
 }
 
 .track-header-rec-badge {

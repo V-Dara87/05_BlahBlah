@@ -17,8 +17,8 @@
 }
  
 .inspector-sidebar.drop-target {
-  background-color: rgba(56, 189, 248, 0.08);
-  box-shadow: inset 0 0 0 2px #38bdf8;
+  background-color: rgba(var(--unity-accent-rgb), 0.08);
+  box-shadow: inset 0 0 0 2px var(--unity-accent-blue);
 }
  
 .inspector-sidebar.empty {
@@ -84,9 +84,9 @@
 }
  
 .inspector-lock-btn.locked {
-  background: rgba(56, 189, 248, 0.15);
-  border-color: rgba(56, 189, 248, 0.5);
-  color: #38bdf8;
+  background: rgba(var(--unity-accent-rgb), 0.15);
+  border-color: rgba(var(--unity-accent-rgb), 0.5);
+  color: var(--unity-accent-blue);
 }
  
 .inspector-name-input, .inspector-track-select {
@@ -100,7 +100,7 @@
 }
  
 .inspector-track-select:focus, .inspector-name-input:focus {
-  border-color: #38bdf8;
+  border-color: var(--unity-accent-blue);
   outline: none;
 }
  
@@ -143,9 +143,9 @@
 }
  
 .inspector-auto-key-btn.active {
-  background: rgba(56, 189, 248, 0.12);
-  border-color: rgba(56, 189, 248, 0.4);
-  color: #38bdf8;
+  background: rgba(var(--unity-accent-rgb), 0.12);
+  border-color: rgba(var(--unity-accent-rgb), 0.4);
+  color: var(--unity-accent-blue);
 }
  
 .auto-key-state {
@@ -159,8 +159,8 @@
 }
  
 .inspector-auto-key-btn.active .auto-key-state {
-  background: rgba(56, 189, 248, 0.2);
-  color: #38bdf8;
+  background: rgba(var(--unity-accent-rgb), 0.2);
+  color: var(--unity-accent-blue);
 }
  
 .inspector-scroll-area::-webkit-scrollbar {
@@ -279,7 +279,7 @@
 }
  
 .comp-category-header:hover {
-  background: rgba(56, 189, 248, 0.1);
+  background: rgba(var(--unity-accent-rgb), 0.1);
 }
  
 .comp-category-items {
@@ -324,8 +324,8 @@
 
 /* Unity-style Prefab Instance Header Bar */
 .inspector-prefab-bar {
-  background: rgba(56, 189, 248, 0.08);
-  border: 1px solid rgba(56, 189, 248, 0.25);
+  background: rgba(var(--unity-accent-rgb), 0.08);
+  border: 1px solid rgba(var(--unity-accent-rgb), 0.25);
   border-radius: 4px;
   padding: 6px 8px;
   margin-bottom: 2px;
@@ -355,7 +355,7 @@
 }
 
 .inspector-prefab-name {
-  color: #38bdf8;
+  color: var(--unity-accent-blue);
   max-width: 110px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -369,9 +369,9 @@
   letter-spacing: 0.5px;
   padding: 1px 5px;
   border-radius: 3px;
-  background: rgba(56, 189, 248, 0.18);
-  color: #38bdf8;
-  border: 1px solid rgba(56, 189, 248, 0.35);
+  background: rgba(var(--unity-accent-rgb), 0.18);
+  color: var(--unity-accent-blue);
+  border: 1px solid rgba(var(--unity-accent-rgb), 0.35);
 }
 
 .inspector-prefab-actions {

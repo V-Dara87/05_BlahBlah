@@ -69,12 +69,12 @@
  
 .unity-hdr-btn:hover {
   background: var(--unity-subtle);
-  border-color: #38bdf8;
+  border-color: var(--unity-accent-blue);
 }
  
 .unity-hdr-btn.active-folder, .unity-folder-btn.active-folder {
-  background: rgba(56, 189, 248, 0.1);
-  border-color: rgba(56, 189, 248, 0.4);
+  background: rgba(var(--unity-accent-rgb), 0.1);
+  border-color: rgba(var(--unity-accent-rgb), 0.4);
 }
  
 .folder-name-label {
@@ -187,8 +187,8 @@
 }
  
 .unity-transport-btn.active-loop {
-  color: #38bdf8;
-  background: rgba(56, 189, 248, 0.15);
+  color: var(--unity-accent-blue);
+  background: rgba(var(--unity-accent-rgb), 0.15);
 }
  
 .unity-timecode-box {
@@ -203,7 +203,7 @@
   font-size: 11px;
 }
  
-.timecode-current { color: #38bdf8; font-weight: 600; }
+.timecode-current { color: var(--unity-accent-blue); font-weight: 600; }
  
 .timecode-sep { color: var(--unity-text-dim); }
  
@@ -293,7 +293,7 @@
  
 .unity-action-btn.code-btn:hover {
   background: var(--unity-hover);
-  border-color: #38bdf8;
+  border-color: var(--unity-accent-blue);
 }
  
 .unity-action-btn.primary-btn {

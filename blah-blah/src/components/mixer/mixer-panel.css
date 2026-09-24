@@ -216,7 +216,7 @@
 }
  
 .mixer-fader:focus-visible .mixer-fader-cap {
-  box-shadow: 0 0 0 2px var(--unity-accent-blue, #38bdf8);
+  box-shadow: 0 0 0 2px var(--unity-accent-blue, var(--unity-accent-blue));
 }
  
 .mixer-fader-rail {
@@ -239,7 +239,7 @@
   width: 2px;
   margin-left: -1px;
   border-radius: 1px;
-  background: var(--unity-accent-blue, #38bdf8);
+  background: var(--unity-accent-blue, var(--unity-accent-blue));
   opacity: 0.55;
   pointer-events: none;
 }

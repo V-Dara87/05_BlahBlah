@@ -107,9 +107,9 @@
 }
  
 .add-clip-action-btn {
-  color: #38bdf8;
-  border-color: rgba(56, 189, 248, 0.3);
-  background: rgba(56, 189, 248, 0.08);
+  color: var(--unity-accent-blue);
+  border-color: rgba(var(--unity-accent-rgb), 0.3);
+  background: rgba(var(--unity-accent-rgb), 0.08);
 }
  
 .add-track-action-btn:hover, .add-clip-action-btn:hover, .timeline-zoom-btn:hover {
@@ -118,8 +118,8 @@
 }
  
 .add-clip-action-btn:hover {
-  background: rgba(56, 189, 248, 0.18);
-  border-color: rgba(56, 189, 248, 0.6);
+  background: rgba(var(--unity-accent-rgb), 0.18);
+  border-color: rgba(var(--unity-accent-rgb), 0.6);
 }
  
 .timeline-split-wrapper {
@@ -187,7 +187,7 @@
 }
  
 .timeline-box-select {
-  border: 1.5px dashed rgba(56, 189, 248, 0.8);
-  background: rgba(56, 189, 248, 0.08);
+  border: 1.5px dashed rgba(var(--unity-accent-rgb), 0.8);
+  background: rgba(var(--unity-accent-rgb), 0.08);
   border-radius: 2px;
 }

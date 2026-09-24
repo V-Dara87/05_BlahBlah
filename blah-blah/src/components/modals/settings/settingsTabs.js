@@ -1,6 +1,7 @@
-import { MonitorPlay, Save, Mic, Keyboard, Cpu } from 'lucide-react';
+import { MonitorPlay, Save, Mic, Keyboard, Cpu, Palette } from 'lucide-react';
 import { ProjectTab } from './ProjectTab';
 import { AutosaveTab } from './AutosaveTab';
+import { AppearanceTab } from './AppearanceTab';
 import { AudioTab } from './AudioTab';
 import { KeyboardShortcutsTab } from './KeyboardShortcutsTab';
 import { SystemTab } from './SystemTab';
@@ -98,6 +99,15 @@ export const SETTINGS_SECTIONS = [
     // Does not belong: anything about the timeline or media processing.
   },
   {
+    id: 'appearance',
+    label: 'Appearance',
+    // How the editor LOOKS. Everything here is global, never per project: a
+    // theme belongs to the person and the machine, not to the document, and it
+    // applies to the Hub screen as well.
+    // Belongs here: the accent-colour theme.
+    // Does not belong: panel/dock arrangement (Window > Reset Layout owns it).
+  },
+  {
     id: 'editor',
     label: 'Editor',
     // How the editing surface behaves and how you drive it.
@@ -153,6 +163,22 @@ export const SETTINGS_TABS = [
     getProps: (ctx) => ({
       settings: ctx.autosaveSettings,
       onChange: ctx.onAutosaveSettingsChange,
+    }),
+  },
+
+  // ---- Appearance ----------------------------------------------------------
+  {
+    id: 'appearance',
+    label: 'Appearance',
+    icon: Palette,
+    section: 'appearance',
+    scope: 'global',
+    subtitle: 'Accent colour theme',
+    keywords: ['theme', 'color', 'colour', 'accent', 'palette', 'preset', 'harmony', 'look'],
+    Component: AppearanceTab,
+    getProps: (ctx) => ({
+      settings: ctx.themeSettings,
+      onChange: ctx.onThemeSettingsChange,
     }),
   },
 
