@@ -142,7 +142,8 @@ export function ScriptGizmoOverlay({
 
       const nextSelection = new Set(isShift ? selectedIds : []);
       gizmos.forEach((g) => {
-        if (g.x >= left && g.x <= right && g.y >= top && g.y <= bottom) {
+        const cpos = gizmoToCanvasCoords(g, safeResWidth, safeResHeight);
+        if (cpos.x >= left && cpos.x <= right && cpos.y >= top && cpos.y <= bottom) {
           nextSelection.add(g.id);
         }
       });

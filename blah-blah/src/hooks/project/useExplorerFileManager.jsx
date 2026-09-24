@@ -413,8 +413,8 @@ export default class NewScript extends CanvasComponent {
       this.canvas.height = canvasHeight;
     }
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    const x = this.canvas.width / 2 + Math.sin(time * (props?.speed ?? 2)) * 50;
-    const y = this.canvas.height / 2;
+    // (0, 0) is canvas center; toScreen() converts to pixel coordinates
+    const { x, y } = this.toScreen(Math.sin(time * (props?.speed ?? 2)) * 50, 0);
     this.ctx.fillStyle = props?.tint || '#ffffff';
     this.ctx.beginPath();
     this.ctx.arc(x, y, props?.radius ?? 8, 0, Math.PI * 2);

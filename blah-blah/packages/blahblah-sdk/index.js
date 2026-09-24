@@ -66,6 +66,52 @@ export class CanvasComponent extends MotionScript {
     this.ctx = null;
     this.container = null;
   }
+
+  /**
+   * Converts center-origin coordinates (where 0,0 is canvas center)
+   * to canvas pixel coordinates (where 0,0 is top-left).
+   * @param {number} x Offset from canvas center X
+   * @param {number} y Offset from canvas center Y
+   * @returns {{ x: number, y: number }}
+   */
+  toScreen(x, y) {
+    return {
+      x: (this.canvasWidth / 2) + (Number(x) || 0),
+      y: (this.canvasHeight / 2) + (Number(y) || 0),
+    };
+  }
+
+  /**
+   * Converts canvas pixel coordinates (where 0,0 is top-left)
+   * to center-origin coordinates (where 0,0 is canvas center).
+   * @param {number} x
+   * @param {number} y
+   * @returns {{ x: number, y: number }}
+   */
+  fromScreen(x, y) {
+    return {
+      x: (Number(x) || 0) - (this.canvasWidth / 2),
+      y: (Number(y) || 0) - (this.canvasHeight / 2),
+    };
+  }
+
+  /**
+   * Centers the 2D canvas context origin so (0, 0) is at the center of the canvas.
+   * Call `this.restoreOrigin()` or `this.ctx.restore()` when done.
+   */
+  centerOrigin() {
+    if (!this.ctx) return;
+    this.ctx.save();
+    this.ctx.translate(this.canvasWidth / 2, this.canvasHeight / 2);
+  }
+
+  /**
+   * Restores canvas transform previously saved by `centerOrigin()`.
+   */
+  restoreOrigin() {
+    if (!this.ctx) return;
+    this.ctx.restore();
+  }
 }
 
 export class ThreeComponent extends MotionScript {

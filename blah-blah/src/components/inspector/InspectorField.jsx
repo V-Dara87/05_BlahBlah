@@ -71,7 +71,26 @@ function StructArrayEditor({ field, value, onChange, entities, mediaAssets, trac
     return rawList.filter((it) => it != null && typeof it === 'object');
   }, [rawList]);
 
-  const subfields = useMemo(() => subfieldSchema(field.fields), [field.fields]);
+  const subfields = useMemo(() => {
+    if (field.fields && Object.keys(field.fields).length > 0) {
+      return subfieldSchema(field.fields);
+    }
+    if (validList.length > 0) {
+      const keys = new Set();
+      validList.forEach((it) => {
+        Object.keys(it).forEach((k) => {
+          if (!k.startsWith('_')) keys.add(k);
+        });
+      });
+      const inferredFields = {};
+      keys.forEach((k) => {
+        const sample = validList.find((it) => it[k] !== undefined)?.[k];
+        inferredFields[k] = sample;
+      });
+      return subfieldSchema(inferredFields);
+    }
+    return [];
+  }, [field.fields, validList]);
 
   const idsRef = useRef([]);
   if (idsRef.current.length !== validList.length) {
@@ -114,7 +133,7 @@ function StructArrayEditor({ field, value, onChange, entities, mediaAssets, trac
         createNewItem={() => ({ _id: crypto.randomUUID(), ...buildStructDefault(field.fields) })}
         renderItem={(item, index) => {
           if (!item) return <span className="struct-array-item-title">—</span>;
-          const label = item.label || item.title || item.name || `#${(index ?? 0) + 1} (${item.x ?? '—'}, ${item.y ?? '—'})`;
+          const label = item.label || item.title || item.name || item.id || `#${(index ?? 0) + 1} (${item.x ?? '—'}, ${item.y ?? '—'})`;
           return (
             <span className="struct-array-item-title">
               {label}
@@ -597,6 +616,20 @@ export function InspectorField({
         );
       default:
         if (typeof field.type === 'string' && field.type.endsWith('[]')) {
+          const hasObjects = Array.isArray(currentVal) && currentVal.some((it) => it != null && typeof it === 'object');
+          if (hasObjects) {
+            return (
+              <StructArrayEditor
+                field={field}
+                value={currentVal}
+                onChange={onChange}
+                entities={entities}
+                mediaAssets={mediaAssets}
+                tracks={tracks}
+                onAction={onAction}
+              />
+            );
+          }
           return (
             <PrimitiveArrayEditor
               field={field}

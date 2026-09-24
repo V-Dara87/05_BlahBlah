@@ -9,6 +9,7 @@ import {
   gizmoToCanvasCoords,
   canvasToGizmoCoords,
 } from '../src/engine/gizmoEngine.js';
+import { CanvasComponent } from '../packages/blahblah-sdk/index.js';
 
 test('getByPath and setByPath handles nested structures and arrays immutably', () => {
   const state = {
@@ -398,3 +399,47 @@ test('local vs global transform coordinate space helpers', () => {
   assert.deepEqual(gizmoToCanvasCoords(globalGizmo, 1920, 1080), { x: 500, y: 400 });
   assert.deepEqual(canvasToGizmoCoords({ x: 500, y: 400 }, globalGizmo, 1920, 1080), { x: 500, y: 400 });
 });
+
+test('gizmo defaults to space local with (0,0) as exact canvas center', () => {
+  const schema = {
+    marker: {
+      type: 'point2d',
+      default: { x: 0, y: 0 },
+      gizmo: true,
+    },
+  };
+
+  const gizmos = resolveScriptGizmos({
+    schema,
+    props: { marker: { x: 0, y: 0 } },
+    canvasWidth: 1920,
+    canvasHeight: 1080,
+  });
+
+  assert.equal(gizmos.length, 1);
+  assert.equal(gizmos[0].space, 'local');
+  assert.equal(gizmos[0].origin, 'center');
+
+  // Center coordinate (0, 0) maps to (960, 540)
+  const screenPos = gizmoToCanvasCoords(gizmos[0], 1920, 1080);
+  assert.deepEqual(screenPos, { x: 960, y: 540 });
+
+  // And back
+  const localPos = canvasToGizmoCoords(screenPos, gizmos[0], 1920, 1080);
+  assert.deepEqual(localPos, { x: 0, y: 0 });
+});
+
+test('CanvasComponent toScreen and fromScreen helpers map (0,0) to center and vice-versa', () => {
+  const comp = new CanvasComponent();
+  comp.canvasWidth = 1920;
+  comp.canvasHeight = 1080;
+
+  // (0, 0) should be screen center (960, 540)
+  assert.deepEqual(comp.toScreen(0, 0), { x: 960, y: 540 });
+  assert.deepEqual(comp.toScreen(-100, 200), { x: 860, y: 740 });
+
+  // Screen center (960, 540) should be (0, 0)
+  assert.deepEqual(comp.fromScreen(960, 540), { x: 0, y: 0 });
+  assert.deepEqual(comp.fromScreen(860, 740), { x: -100, y: 200 });
+});
+

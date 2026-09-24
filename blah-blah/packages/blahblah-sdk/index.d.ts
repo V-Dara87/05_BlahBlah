@@ -124,7 +124,7 @@ export interface ScriptGizmoDef {
   height?: number;
   /** Constraint axis for dragging: 'xy' (free), 'x' (horizontal only), 'y' (vertical only). */
   axes?: 'xy' | 'x' | 'y';
-  /** Coordinate space: 'local' (centered at canvas/entity origin) or 'global' (top-left canvas pixel coordinates). Defaults to 'global'. */
+  /** Coordinate space: 'local' (centered at canvas/entity origin, 0,0 is center) or 'global' (top-left canvas pixel coordinates). Defaults to 'local'. */
   space?: 'local' | 'global';
   /** Local rotation angle in degrees for orienting local axis handles and constraining local directional drags. */
   rotation?: number;
@@ -184,6 +184,15 @@ export class CanvasComponent extends MotionScript {
   canvasWidth: number;
   canvasHeight: number;
   aspect: number;
+
+  /** Converts center-origin coordinates (where 0,0 is canvas center) to canvas pixel coordinates (top-left 0,0). */
+  toScreen(x: number, y: number): { x: number; y: number };
+  /** Converts canvas pixel coordinates (top-left 0,0) to center-origin coordinates (where 0,0 is canvas center). */
+  fromScreen(x: number, y: number): { x: number; y: number };
+  /** Centers the 2D canvas context origin so (0, 0) is at the center of the canvas. Call restoreOrigin() or ctx.restore() when done. */
+  centerOrigin(): void;
+  /** Restores canvas transform previously saved by centerOrigin(). */
+  restoreOrigin(): void;
 }
 
 /**
