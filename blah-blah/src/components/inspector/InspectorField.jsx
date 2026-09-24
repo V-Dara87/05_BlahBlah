@@ -64,8 +64,30 @@ function StructFieldGroup({ field, value, onChange, entities, mediaAssets, track
  * same `subfieldSchema` pipeline as everything else.
  */
 function StructArrayEditor({ field, value, onChange, entities, mediaAssets, tracks = [], onAction }) {
-  const items = Array.isArray(value) ? value : [];
+  const rawList = Array.isArray(value)
+    ? value
+    : (Array.isArray(field.defaultVal) ? field.defaultVal : []);
+  const validList = useMemo(() => {
+    return rawList.filter((it) => it != null && typeof it === 'object');
+  }, [rawList]);
+
   const subfields = useMemo(() => subfieldSchema(field.fields), [field.fields]);
+
+  const idsRef = useRef([]);
+  if (idsRef.current.length !== validList.length) {
+    const nextIds = [];
+    for (let i = 0; i < validList.length; i++) {
+      nextIds.push(validList[i]?._id || idsRef.current[i] || crypto.randomUUID());
+    }
+    idsRef.current = nextIds;
+  }
+
+  const items = useMemo(() => {
+    return validList.map((it, idx) => ({
+      ...it,
+      _id: it?._id || idsRef.current[idx] || `struct-${idx}`,
+    }));
+  }, [validList]);
 
   return (
     <div className="struct-array-editor">
@@ -90,11 +112,15 @@ function StructArrayEditor({ field, value, onChange, entities, mediaAssets, trac
           return next;
         }}
         createNewItem={() => ({ _id: crypto.randomUUID(), ...buildStructDefault(field.fields) })}
-        renderItem={(item) => (
-          <span className="struct-array-item-title">
-            {item[Object.keys(field.fields || {})[0]] ?? '—'}
-          </span>
-        )}
+        renderItem={(item, index) => {
+          if (!item) return <span className="struct-array-item-title">—</span>;
+          const label = item.label || item.title || item.name || `#${(index ?? 0) + 1} (${item.x ?? '—'}, ${item.y ?? '—'})`;
+          return (
+            <span className="struct-array-item-title">
+              {label}
+            </span>
+          );
+        }}
         renderBody={(item, _index, onUpdate) => (
           <div className="struct-array-item-body">
             <InspectorFieldList

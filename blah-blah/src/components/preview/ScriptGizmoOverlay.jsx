@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { getMountedCanvasInstance } from '../../engine/canvasRunner.js';
 import { extractScriptProps } from '../../engine/scriptRunner.js';
 import { isScriptComponent } from '../../engine/ecs.js';
-import { resolveScriptGizmos, updateGizmoProperty } from '../../engine/gizmoEngine.js';
+import { resolveScriptGizmos, updateGizmoProperty, gizmoToCanvasCoords } from '../../engine/gizmoEngine.js';
 import './script-gizmo-overlay.css';
 
 /**
@@ -207,17 +208,43 @@ export function ScriptGizmoOverlay({
       let dx = currentCoord.x - session.startCoord.x;
       let dy = currentCoord.y - session.startCoord.y;
 
-      // Axis constraint
-      if (session.effectiveAxes === 'x') {
-        dy = 0;
-      } else if (session.effectiveAxes === 'y') {
-        dx = 0;
-      } else if (moveEvt.shiftKey) {
-        // Shift key locks to major axis
-        if (Math.abs(dx) > Math.abs(dy)) {
+      // Axis constraint (supports local rotation if gizmo has rotation)
+      const rotDeg = gizmo.rotation || 0;
+      if (rotDeg !== 0) {
+        const rotRad = (rotDeg * Math.PI) / 180;
+        const cosR = Math.cos(rotRad);
+        const sinR = Math.sin(rotRad);
+
+        if (session.effectiveAxes === 'x') {
+          const proj = dx * cosR + dy * sinR;
+          dx = proj * cosR;
+          dy = proj * sinR;
+        } else if (session.effectiveAxes === 'y') {
+          const proj = -dx * sinR + dy * cosR;
+          dx = -proj * sinR;
+          dy = proj * cosR;
+        } else if (moveEvt.shiftKey) {
+          const projX = dx * cosR + dy * sinR;
+          const projY = -dx * sinR + dy * cosR;
+          if (Math.abs(projX) > Math.abs(projY)) {
+            dx = projX * cosR;
+            dy = projX * sinR;
+          } else {
+            dx = -projY * sinR;
+            dy = projY * cosR;
+          }
+        }
+      } else {
+        if (session.effectiveAxes === 'x') {
           dy = 0;
-        } else {
+        } else if (session.effectiveAxes === 'y') {
           dx = 0;
+        } else if (moveEvt.shiftKey) {
+          if (Math.abs(dx) > Math.abs(dy)) {
+            dy = 0;
+          } else {
+            dx = 0;
+          }
         }
       }
 
@@ -238,6 +265,8 @@ export function ScriptGizmoOverlay({
         dx: Math.round(dx),
         dy: Math.round(dy),
         axes: session.effectiveAxes,
+        isLocal: gizmo.space === 'local',
+        rotation: rotDeg,
       });
 
       // Apply updates to all selected gizmos
@@ -314,6 +343,33 @@ export function ScriptGizmoOverlay({
       });
     }
 
+    // Coordinate Space Switcher
+    items.push({
+      label: gizmo.space === 'local' ? '🌐 Switch to Global Coordinates' : '📍 Switch to Local Coordinates',
+      onClick: () => {
+        const isCurrentlyLocal = gizmo.space === 'local';
+        const cx = Math.round(safeResWidth / 2);
+        const cy = Math.round(safeResHeight / 2);
+        const newX = isCurrentlyLocal ? Math.round(cx + gizmo.x) : Math.round(gizmo.x - cx);
+        const newY = isCurrentlyLocal ? Math.round(cy + gizmo.y) : Math.round(gizmo.y - cy);
+        gizmo.space = isCurrentlyLocal ? 'global' : 'local';
+
+        const patch = updateGizmoProperty({
+          entity,
+          scriptId: gizmo.scriptId,
+          gizmo,
+          newX,
+          newY,
+          autoKeyEnabled,
+          currentTime,
+          fps,
+          instance: gizmo.instance,
+        });
+        if (patch && onUpdateEntity) onUpdateEntity(entity.id, patch);
+        setContextMenu(null);
+      },
+    });
+
     // Default handy actions
     items.push({
       label: 'Reset to Center',
@@ -322,8 +378,8 @@ export function ScriptGizmoOverlay({
           entity,
           scriptId: gizmo.scriptId,
           gizmo,
-          newX: Math.round(safeResWidth / 2),
-          newY: Math.round(safeResHeight / 2),
+          newX: gizmo.space === 'local' ? 0 : Math.round(safeResWidth / 2),
+          newY: gizmo.space === 'local' ? 0 : Math.round(safeResHeight / 2),
           autoKeyEnabled,
           currentTime,
           fps,
@@ -378,7 +434,7 @@ export function ScriptGizmoOverlay({
       )}
 
       {/* Numerical HUD */}
-      {hudState && (
+      {hudState && createPortal(
         <div
           className="script-gizmo-hud"
           style={{
@@ -387,7 +443,17 @@ export function ScriptGizmoOverlay({
             top: `${hudState.screenY}px`,
           }}
         >
-          <div className="script-gizmo-hud-title">{hudState.title}</div>
+          <div className="script-gizmo-hud-title">
+            {hudState.title}
+            <span style={{ marginLeft: 6, fontSize: 9, padding: '1px 4px', borderRadius: 3, background: hudState.isLocal ? '#8b5cf6' : '#0284c7', color: '#fff' }}>
+              {hudState.isLocal ? 'LOCAL' : 'GLOBAL'}
+            </span>
+            {hudState.rotation ? (
+              <span style={{ marginLeft: 4, fontSize: 9, color: '#94a3b8' }}>
+                {Math.round(hudState.rotation)}°
+              </span>
+            ) : null}
+          </div>
           <div>
             X: <span className="script-gizmo-hud-val">{hudState.valX}</span>
             <span className="script-gizmo-hud-delta">
@@ -402,22 +468,25 @@ export function ScriptGizmoOverlay({
               </span>
             </div>
           )}
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Render each gizmo handle */}
       {gizmos.map((gizmo) => {
         const isItemActive = selectedIds.has(gizmo.id);
-        const posXPercent = (gizmo.x / safeResWidth) * 100;
-        const posYPercent = (gizmo.y / safeResHeight) * 100;
+        const canvasPos = gizmoToCanvasCoords(gizmo, safeResWidth, safeResHeight);
+        const posXPercent = (canvasPos.x / safeResWidth) * 100;
+        const posYPercent = (canvasPos.y / safeResHeight) * 100;
 
         return (
           <div
             key={gizmo.id}
-            className={`script-gizmo-item ${isItemActive ? 'selected' : ''} ${gizmo.size || 'normal'}`}
+            className={`script-gizmo-item ${isItemActive ? 'selected' : ''} ${gizmo.size || 'normal'} ${gizmo.space === 'local' ? 'is-local' : ''}`}
             style={{
               left: `${posXPercent}%`,
               top: `${posYPercent}%`,
+              transform: `translate(-50%, -50%) rotate(${gizmo.rotation || 0}deg)`,
             }}
             onPointerDown={(e) => handleGizmoPointerDown(e, gizmo)}
             onContextMenu={(e) => handleGizmoContextMenu(e, gizmo)}
@@ -464,7 +533,7 @@ export function ScriptGizmoOverlay({
       })}
 
       {/* Context Menu Popup */}
-      {contextMenu && (
+      {contextMenu && createPortal(
         <div
           className="script-gizmo-context-menu"
           style={{
@@ -482,7 +551,8 @@ export function ScriptGizmoOverlay({
               {item.label}
             </div>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

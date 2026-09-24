@@ -136,7 +136,8 @@ export const ArrayFieldEditor = memo(function ArrayFieldEditor({
       )}
  
       {items.map((item, index) => {
-        const itemId = item[itemIdKey];
+        if (!item || typeof item !== 'object') return null;
+        const itemId = item[itemIdKey] ?? `item-${index}`;
         const onUpdate = patchItem(itemId);
         const isDragging = dragItemId === itemId;
         const isDropTarget = dragOverItemId === itemId && dragItemId !== itemId;

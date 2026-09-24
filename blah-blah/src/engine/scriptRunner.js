@@ -769,6 +769,7 @@ export function extractScriptProps(code) {
                   label: def.label || name,
                   fields: def.fields || {},
                   defaultVal: def.type === 'struct[]' ? (Array.isArray(def.default) ? def.default : []) : buildStructDefault(def.fields || {}),
+                  ...(def.gizmo !== undefined && { gizmo: def.gizmo }),
                   ...attributes,
                 });
                 return;
@@ -784,6 +785,7 @@ export function extractScriptProps(code) {
                   itemType,
                   ...(def.targetComponent !== undefined && { targetComponent: def.targetComponent }),
                   ...(def.assetType !== undefined && { assetType: def.assetType }),
+                  ...(def.gizmo !== undefined && { gizmo: def.gizmo }),
                   label: def.label || name,
                   defaultVal: Array.isArray(def.default) ? def.default : [],
                   min: def.min,
@@ -802,6 +804,7 @@ export function extractScriptProps(code) {
                 defaultVal: isRef ? null : (def.default ?? (def.type === 'number' ? 0 : def.type === 'boolean' ? false : '')),
                 ...(def.targetComponent !== undefined && { targetComponent: def.targetComponent }),
                 ...(def.assetType !== undefined && { assetType: def.assetType }),
+                ...(def.gizmo !== undefined && { gizmo: def.gizmo }),
                 min: def.min,
                 max: def.max,
                 step: def.step,

@@ -81,13 +81,22 @@ export function resolveScriptGizmos({
   }
 
   // 3. Infer from static props schema
-  if (schema && typeof schema === 'object') {
-    Object.entries(schema).forEach(([propName, fieldDef], idx) => {
-      if (!fieldDef || !fieldDef.gizmo) return;
-      const gizmoOpt = typeof fieldDef.gizmo === 'object' ? fieldDef.gizmo : {};
-      const val = props[propName] ?? fieldDef.default;
+  if (schema) {
+    const entries = Array.isArray(schema)
+      ? schema.map((field) => [field.name || field.id, field])
+      : Object.entries(schema);
 
-      // Case 3a: point2d object { x, y }
+    entries.forEach(([propName, fieldDef], idx) => {
+      if (!fieldDef) return;
+      // Either explicitly marked with gizmo, or a struct/point with x and y fields
+      const isStructWithXY = fieldDef.type === 'struct' && (fieldDef.fields?.x || fieldDef.fields?.y);
+      const hasGizmo = Boolean(fieldDef.gizmo || isStructWithXY);
+      if (!hasGizmo) return;
+
+      const gizmoOpt = typeof fieldDef.gizmo === 'object' ? fieldDef.gizmo : {};
+      const val = props[propName] ?? fieldDef.defaultVal ?? fieldDef.default;
+
+      // Case 3a: point2d object or struct { x, y, ... }
       if (val && typeof val === 'object' && typeof val.x === 'number' && typeof val.y === 'number') {
         result.push(normalizeGizmoDef({
           id: propName,
@@ -96,25 +105,31 @@ export function resolveScriptGizmos({
           y: val.y,
           propPath: propName,
           axes: gizmoOpt.axes || 'xy',
+          space: gizmoOpt.space || 'global',
+          rotation: gizmoOpt.rotation || val.rotation || 0,
+          origin: gizmoOpt.origin || 'center',
           size: gizmoOpt.size || 'normal',
           color: gizmoOpt.color,
           contextMenu: gizmoOpt.contextMenu,
         }, idx, props));
       }
-      // Case 3b: Array of objects with x, y
+      // Case 3b: Array of objects with x, y (struct[] or point array)
       else if (Array.isArray(val)) {
         val.forEach((item, itemIdx) => {
           if (item && typeof item === 'object' && typeof item.x === 'number' && typeof item.y === 'number') {
             const itemAxes = item.axes || gizmoOpt.axes || 'xy';
             result.push(normalizeGizmoDef({
               id: item.id || `${propName}[${itemIdx}]`,
-              label: item.title || item.label || `${propName} #${itemIdx + 1}`,
+              label: item.title || item.label || `${fieldDef.label || propName} #${itemIdx + 1}`,
               x: item.x,
               y: item.y,
               width: item.width || 40,
               height: item.height || 40,
               propPath: `${propName}[${itemIdx}]`,
               axes: itemAxes,
+              space: item.space || gizmoOpt.space || 'global',
+              rotation: item.rotation || gizmoOpt.rotation || 0,
+              origin: item.origin || gizmoOpt.origin || 'center',
               size: item.size || gizmoOpt.size || (item.width && item.width < 30 ? 'compact' : 'normal'),
               color: item.color || gizmoOpt.color,
               contextMenu: gizmoOpt.contextMenu || item.contextMenu,
@@ -132,6 +147,7 @@ export function resolveScriptGizmos({
           y: !isX ? val : (gizmoOpt.originY ?? canvasHeight / 2),
           propPath: propName,
           axes: isX ? 'x' : 'y',
+          space: 'global',
           size: gizmoOpt.size || 'compact',
           color: gizmoOpt.color,
         }, idx, props));
@@ -140,6 +156,48 @@ export function resolveScriptGizmos({
   }
 
   return result;
+}
+
+/**
+ * Resolves the effective origin in canvas pixels for a gizmo.
+ */
+export function getGizmoOrigin(origin = 'center', canvasWidth = 1920, canvasHeight = 1080) {
+  if (origin && typeof origin === 'object' && Number.isFinite(origin.x) && Number.isFinite(origin.y)) {
+    return { x: origin.x, y: origin.y };
+  }
+  if (origin === 'top-left') {
+    return { x: 0, y: 0 };
+  }
+  // Default is center
+  return { x: canvasWidth / 2, y: canvasHeight / 2 };
+}
+
+/**
+ * Converts a gizmo's position into canvas pixel coordinates (0..canvasWidth, 0..canvasHeight).
+ */
+export function gizmoToCanvasCoords(gizmo, canvasWidth = 1920, canvasHeight = 1080) {
+  if (gizmo.space === 'local') {
+    const origin = getGizmoOrigin(gizmo.origin, canvasWidth, canvasHeight);
+    return {
+      x: origin.x + gizmo.x,
+      y: origin.y + gizmo.y,
+    };
+  }
+  return { x: gizmo.x, y: gizmo.y };
+}
+
+/**
+ * Converts canvas pixel coordinates to the gizmo's native coordinate space.
+ */
+export function canvasToGizmoCoords(canvasCoords, gizmo, canvasWidth = 1920, canvasHeight = 1080) {
+  if (gizmo.space === 'local') {
+    const origin = getGizmoOrigin(gizmo.origin, canvasWidth, canvasHeight);
+    return {
+      x: canvasCoords.x - origin.x,
+      y: canvasCoords.y - origin.y,
+    };
+  }
+  return { x: canvasCoords.x, y: canvasCoords.y };
 }
 
 /**
@@ -159,6 +217,9 @@ function normalizeGizmoDef(raw, index) {
     width: Number.isFinite(raw.width) && raw.width > 0 ? raw.width : 28,
     height: Number.isFinite(raw.height) && raw.height > 0 ? raw.height : 28,
     axes: raw.axes === 'x' || raw.axes === 'y' ? raw.axes : 'xy',
+    space: raw.space === 'local' ? 'local' : 'global',
+    rotation: Number.isFinite(Number(raw.rotation)) ? Number(raw.rotation) : 0,
+    origin: raw.origin || 'center',
     size: raw.size === 'compact' || raw.size === 'large' ? raw.size : 'normal',
     color: raw.color || '#38bdf8', // Tailwind sky-400
     shape: raw.shape || 'circle',

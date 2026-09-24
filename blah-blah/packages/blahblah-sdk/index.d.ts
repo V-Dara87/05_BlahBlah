@@ -124,6 +124,12 @@ export interface ScriptGizmoDef {
   height?: number;
   /** Constraint axis for dragging: 'xy' (free), 'x' (horizontal only), 'y' (vertical only). */
   axes?: 'xy' | 'x' | 'y';
+  /** Coordinate space: 'local' (centered at canvas/entity origin) or 'global' (top-left canvas pixel coordinates). Defaults to 'global'. */
+  space?: 'local' | 'global';
+  /** Local rotation angle in degrees for orienting local axis handles and constraining local directional drags. */
+  rotation?: number;
+  /** Origin point for local space: 'center' | 'top-left' | { x: number, y: number }. Defaults to 'center'. */
+  origin?: 'center' | 'top-left' | { x: number; y: number };
   /** Display size: 'compact' (small objects/pins), 'normal' (standard), 'large'. */
   size?: 'compact' | 'normal' | 'large';
   /** Visual accent color of the handle (e.g. hex '#38bdf8'). */

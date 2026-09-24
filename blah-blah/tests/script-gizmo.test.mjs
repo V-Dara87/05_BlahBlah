@@ -6,6 +6,8 @@ import {
   setByPath,
   resolveScriptGizmos,
   updateGizmoProperty,
+  gizmoToCanvasCoords,
+  canvasToGizmoCoords,
 } from '../src/engine/gizmoEngine.js';
 
 test('getByPath and setByPath handles nested structures and arrays immutably', () => {
@@ -231,4 +233,168 @@ test('updateGizmoProperty respects axis constraint (axes: x)', () => {
   const updatedComp = patch.components.find((c) => c.scriptId === 'slider-script');
   assert.equal(updatedComp.props.sliderPos.x, 180);
   assert.equal(updatedComp.props.sliderPos.y, 200); // Unchanged Y
+});
+
+test('resolveScriptGizmos handles Array schema from extractScriptProps and struct with x, y', () => {
+  const arraySchema = [
+    {
+      name: 'star',
+      type: 'struct',
+      label: 'Star Transform',
+      fields: {
+        x: { type: 'number', default: 960 },
+        y: { type: 'number', default: 540 },
+        scale: { type: 'number', default: 1 },
+      },
+      defaultVal: { x: 960, y: 540, scale: 1 },
+    },
+  ];
+
+  const props = {
+    star: { x: 400, y: 300, scale: 1.5 },
+  };
+
+  const gizmos = resolveScriptGizmos({
+    schema: arraySchema,
+    props,
+    canvasWidth: 1920,
+    canvasHeight: 1080,
+  });
+
+  assert.equal(gizmos.length, 1);
+  assert.equal(gizmos[0].id, 'star');
+  assert.equal(gizmos[0].x, 400);
+  assert.equal(gizmos[0].y, 300);
+  assert.equal(gizmos[0].propPath, 'star');
+});
+
+test('updateGizmoProperty updates struct x and y while preserving scale and extra fields', () => {
+  const entity = {
+    id: 'ent-star',
+    startTime: 0,
+    components: [
+      {
+        type: 'ScriptComponent',
+        scriptId: 'star-script',
+        props: {
+          star: { x: 960, y: 540, scale: 2.5, points: 5, color: '#facc15' },
+        },
+      },
+    ],
+  };
+
+  const gizmo = {
+    id: 'star-gizmo',
+    propPath: 'star',
+    axes: 'xy',
+  };
+
+  const patch = updateGizmoProperty({
+    entity,
+    scriptId: 'star-script',
+    gizmo,
+    newX: 350,
+    newY: 420,
+    autoKeyEnabled: false,
+  });
+
+  assert.ok(patch);
+  const updatedComp = patch.components.find((c) => c.scriptId === 'star-script');
+  assert.equal(updatedComp.props.star.x, 350);
+  assert.equal(updatedComp.props.star.y, 420);
+  assert.equal(updatedComp.props.star.scale, 2.5); // Preserved!
+  assert.equal(updatedComp.props.star.points, 5); // Preserved!
+  assert.equal(updatedComp.props.star.color, '#facc15'); // Preserved!
+});
+
+test('resolveScriptGizmos and updateGizmoProperty handle array of multiple stars', () => {
+  const starsArray = [
+    { x: 100, y: 100, scale: 1.0, color: '#facc15' },
+    { x: 300, y: 200, scale: 0.5, color: '#38bdf8' },
+    { x: 600, y: 500, scale: 1.5, color: '#ec4899' },
+  ];
+
+  const arraySchema = [
+    {
+      name: 'stars',
+      type: 'struct[]',
+      label: 'Stars',
+      gizmo: true,
+      defaultVal: starsArray,
+    },
+  ];
+
+  const gizmos = resolveScriptGizmos({
+    schema: arraySchema,
+    props: { stars: starsArray },
+    canvasWidth: 1920,
+    canvasHeight: 1080,
+  });
+
+  assert.equal(gizmos.length, 3);
+  assert.equal(gizmos[0].x, 100);
+  assert.equal(gizmos[0].propPath, 'stars[0]');
+  assert.equal(gizmos[1].x, 300);
+  assert.equal(gizmos[1].propPath, 'stars[1]');
+  assert.equal(gizmos[2].x, 600);
+  assert.equal(gizmos[2].propPath, 'stars[2]');
+
+  // Update second star
+  const entity = {
+    id: 'ent-multistar',
+    startTime: 0,
+    components: [
+      {
+        type: 'ScriptComponent',
+        scriptId: 'star-script',
+        props: { stars: starsArray },
+      },
+    ],
+  };
+
+  const patch = updateGizmoProperty({
+    entity,
+    scriptId: 'star-script',
+    gizmo: gizmos[1],
+    newX: 350,
+    newY: 250,
+    autoKeyEnabled: false,
+  });
+
+  assert.ok(patch);
+  const updatedComp = patch.components.find((c) => c.scriptId === 'star-script');
+  assert.equal(updatedComp.props.stars[0].x, 100); // 0 unchanged
+  assert.equal(updatedComp.props.stars[1].x, 350); // 1 updated
+  assert.equal(updatedComp.props.stars[1].y, 250); // 1 updated
+  assert.equal(updatedComp.props.stars[1].scale, 0.5); // scale preserved
+  assert.equal(updatedComp.props.stars[2].x, 600); // 2 unchanged
+});
+
+test('local vs global transform coordinate space helpers', () => {
+  const localGizmo = {
+    id: 'star-local',
+    x: -200,
+    y: 150,
+    space: 'local',
+    rotation: 45,
+    origin: 'center',
+  };
+
+  const canvasCoords = gizmoToCanvasCoords(localGizmo, 1920, 1080);
+  assert.equal(canvasCoords.x, 960 - 200); // 760
+  assert.equal(canvasCoords.y, 540 + 150); // 690
+
+  const backToGizmo = canvasToGizmoCoords({ x: 760, y: 690 }, localGizmo, 1920, 1080);
+  assert.equal(backToGizmo.x, -200);
+  assert.equal(backToGizmo.y, 150);
+
+  // Global gizmo (passthrough)
+  const globalGizmo = {
+    id: 'star-global',
+    x: 500,
+    y: 400,
+    space: 'global',
+  };
+  assert.deepEqual(gizmoToCanvasCoords(globalGizmo, 1920, 1080), { x: 500, y: 400 });
+  assert.deepEqual(canvasToGizmoCoords({ x: 500, y: 400 }, globalGizmo, 1920, 1080), { x: 500, y: 400 });
 });
