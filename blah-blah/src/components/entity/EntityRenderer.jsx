@@ -411,6 +411,7 @@ export function EntityRenderer({
             handleMoveGizmoPointerDown={handleMoveGizmoPointerDown}
             handleRotateGizmoPointerDown={handleRotateGizmoPointerDown}
             handleScaleGizmoPointerDown={handleScaleGizmoPointerDown}
+            autoKeyEnabled={autoKeyEnabled}
           />
  
           </div>

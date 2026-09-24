@@ -293,7 +293,11 @@ test('the status colours are never themed', () => {
   ]) {
     assert.equal(readRootDeclaration(name), hex, `${name} keeps its shipped value`);
   }
-  assert.ok(!/accent-(emerald|amber|red)/.test(source.slice(source.indexOf(':root'))), 'no theme override');
+  // ...and nothing in the theme CONTRACT mentions them, so there is no code path
+  // through which picking a theme could ever rewrite them.
+  const contract = JSON.stringify(THEME_CSS_VARS);
+  assert.ok(!/emerald/.test(contract), 'the theme never owns the success colour');
+  assert.ok(!/--unity-accent-(amber|red)/.test(contract), 'the theme never owns warning/error');
   for (const preset of THEME_PRESETS) {
     const theme = resolveTheme({ presetId: preset.id });
     assert.ok(!Object.hasOwn(theme.accent, 'emerald'), `${preset.id}: does not theme a status colour`);
@@ -351,8 +355,10 @@ test('the secondary accent follows the preset harmony rule', () => {
     assert.ok(delta <= 2, `${preset.id}: secondary hue ${actual} ~= ${expected} (${rule.label})`);
   }
 
-  const complementary = resolveThemePalette({ presetId: 'rose' });
-  assert.equal(hexToHsl(complementary.secondary).hue, 180, 'a complementary preset sits opposite');
+  const rose = THEME_PRESETS.find((p) => p.harmony === 'complementary');
+  const partner = hexToHsl(resolveThemePalette({ presetId: rose.id }).secondary).hue;
+  assert.equal(partner, (rose.hue + 180) % 360, 'a complementary partner is derived opposite');
+  assert.equal((partner - rose.hue + 360) % 360, 180, '...half a turn away, wrap included');
 
   // Monochromatic means the partner is the SAME hue, not a small offset.
   const mono = resolveThemePalette({ presetId: 'mono' });
@@ -402,7 +408,7 @@ test('the surface ramp keeps its ordering, honours depth, and never touches the 
 test('a pinned text colour is used exactly, and its muted roles keep the shipped ratios', () => {
   // #d2d2d2 is the shipped body colour, so at the shipped ratios the derived
   // index.css palette (muted #999999, dim #6e6e6e) must come back out.
-  const shipped = buildTextPalette(hexToHsl('#d2d2d2'));
+  const shipped = buildTextPalette({ hex: '#d2d2d2' });
   assert.equal(shipped.text, '#d2d2d2');
   assert.equal(shipped.textMuted, '#999999');
   assert.equal(shipped.textDim, '#6e6e6e');

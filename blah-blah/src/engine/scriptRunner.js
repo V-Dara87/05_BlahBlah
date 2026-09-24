@@ -16,6 +16,11 @@ import {
 } from './motionTween.js';
 import { resolveScriptProps } from './referenceTypes.js';
 import { parseFieldAttributes } from './inspectorAttributes.js';
+// The prop-declaration helpers (num/bool/color/…/group/row/Presets). They are
+// injected as globals below, in BOTH evaluators, so a script can call them
+// with no import line; scriptBundler.js also serves this module as the
+// `blahblah` virtual module for scripts that prefer an explicit import.
+import { PROP_HELPER_NAMES, derivePropLabel, propHelperValues } from './scriptProps.js';
  
 /**
  * Cache for compiled JavaScript/JSX modules to ensure 60fps performance without recompiling.
@@ -598,6 +603,19 @@ export function buildStructDefault(subfields) {
  * struct / struct[] shape:
  *   { type: 'struct',   label: 'My Group', fields: { key: { type, default, ...} } }
  *   { type: 'struct[]', label: 'My List',  fields: { key: { type, default, ...} } }
+ *
+ * The props OBJECT may also be built with the prop helpers
+ * (engine/scriptProps.js: num/bool/color/text/select/asset/entity/font/button,
+ * group/row, and the Presets.* blocks). Those are injected as parameters of
+ * the evaluator below, so a helper call in the object literal resolves here
+ * exactly as it does at runtime — no import line, and no parser change: the
+ * helpers return the same plain objects literals always did.
+ *
+ * Because a helper cannot know which key it is assigned to, it marks its
+ * result and `derivePropLabel` fills the label in here, where the key IS
+ * known (`startDelay` + `unit: 's'` -> "Start Delay (s)"). Only marked fields
+ * are relabelled, so an old-style literal with no `label` still gets its raw
+ * key, unchanged.
  */
 /**
  * Finds the `static props = { ... }` (or `props = { ... }` /
@@ -709,10 +727,15 @@ export function extractScriptProps(code) {
     const propsObjectSource = extractPropsObjectSource(code);
     if (propsObjectSource) {
       try {
-        const schemaFunc = new Function(`return (${propsObjectSource});`);
-        const schemaObj = schemaFunc();
+        // Bound as parameters rather than looked up globally: the object
+        // literal is evaluated in its own scope, and this keeps the helpers
+        // out of the real global object (so two scripts cannot fight over
+        // them, and nothing leaks if evaluation throws).
+        const schemaFunc = new Function(...PROP_HELPER_NAMES, `return (${propsObjectSource});`);
+        const schemaObj = schemaFunc(...propHelperValues());
         if (schemaObj && typeof schemaObj === 'object') {
-          Object.entries(schemaObj).forEach(([name, def]) => {
+          Object.entries(schemaObj).forEach(([name, rawDef]) => {
+            const def = derivePropLabel(name, rawDef);
             if (Array.isArray(def)) {
               const itemType = def.length > 0 && typeof def[0] === 'number' ? 'number' : 'string';
               fields.push({
@@ -959,6 +982,12 @@ function runCompiledModule(transpiled) {
     'MathUtils',
     'interpolate',
     'spring',
+    // The prop helpers, so `static props = { speed: num(2) }` — which the
+    // class body evaluates the moment the class is defined — resolves here
+    // exactly as it does in extractScriptProps' evaluator above. Same
+    // mechanism as React/MathUtils: parameters of the wrapper, so they are
+    // in scope for the whole script and never touch the real global object.
+    ...PROP_HELPER_NAMES,
     moduleWrapper
   );
  
@@ -972,7 +1001,8 @@ function runCompiledModule(transpiled) {
     LoopType,
     MathUtils,
     interpolate,
-    spring
+    spring,
+    ...propHelperValues()
   );
 }
  

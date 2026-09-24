@@ -99,6 +99,7 @@ const {
   getScriptError,
   hasImportStatements,
   extractImportSpecifiers,
+  extractScriptProps,
   isScriptBundlePending,
   precompileWithBundler,
   precompileAllProjectScripts,
@@ -359,6 +360,63 @@ export default class JsxShimProbe {
   assert.equal(instance.createRootIsFn, true);
   // The shim must hand back the APP's React, never a bundled second copy.
   assert.equal(instance.sameReact, true, 'react shim must resolve to the injected React instance');
+});
+
+// ─── 7c. Prop helpers (globals AND the 'blahblah' import) in bundled scripts ─
+
+await test('prop helpers are globals in a script that uses real imports', async () => {
+  // The helpers are injected into the module wrapper runCompiledModule builds,
+  // which is ALSO where a bundled script's code ends up — so a script that
+  // mixes an npm/relative import with a helper-built `static props` must
+  // compile (the class body evaluates the helpers the moment it is defined)
+  // and must produce the same Inspector schema as an import-free one.
+  const script = `
+import { double } from './helper.js';
+export default class HelperProbe {
+  static props = {
+    ...Presets.timing,
+    amplitude: num(35, { min: 0, max: 100, unit: '%' }),
+    tint: color('#38bdf8'),
+  };
+  onMount() {
+    this.doubled = double(21);
+    this.amplitude = HelperProbe.props.amplitude.default;
+  }
+}`;
+  await precompileWithBundler(script, helpersProject);
+  assert.equal(getScriptError(script), null, `no error expected, got: ${getScriptError(script)}`);
+
+  const instance = instantiateAndMount(compileScriptModule(script));
+  assert.equal(instance.doubled, 42, 'the bundled class body evaluated the helpers');
+  assert.equal(instance.amplitude, 35);
+
+  const fields = extractScriptProps(script);
+  assert.equal(fields.find((f) => f.name === 'amplitude').label, 'Amplitude (%)');
+  assert.equal(fields.find((f) => f.name === 'startDelay').label, 'Start Delay (s)');
+  assert.equal(fields.find((f) => f.name === 'ease').type, 'select');
+});
+
+await test("import { num } from 'blahblah' resolves to the same helpers", async () => {
+  // The explicit-import form is served by the bundler as a virtual module,
+  // backed by the very same source file the engine injects — so this cannot
+  // drift from the globals.
+  const script = `
+import { num, Presets, group } from 'blahblah';
+export default class ImportedHelpers {
+  static props = {
+    ...group('Main', { speed: num(3, { min: 0 }), ...Presets.colors }),
+  };
+  onMount() { this.speed = ImportedHelpers.props.speed.default; }
+}`;
+  await precompileWithBundler(script, emptyProject);
+  assert.equal(getScriptError(script), null, `no error expected, got: ${getScriptError(script)}`);
+
+  const instance = instantiateAndMount(compileScriptModule(script));
+  assert.equal(instance.speed, 3);
+
+  const fields = extractScriptProps(script);
+  assert.equal(fields.find((f) => f.name === 'nodeFill').label, 'Node Fill');
+  assert.equal(fields.find((f) => f.name === 'speed').tab, 'Main');
 });
 
 // ─── 8. Failure modes degrade gracefully ─────────────────────────────────────

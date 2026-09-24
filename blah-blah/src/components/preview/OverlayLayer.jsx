@@ -4,6 +4,7 @@ import { resolveScriptProps } from '../../engine/referenceTypes';
 import { resolveTextRendererText, cssFontFamily, DEFAULT_TEXT_FONT_SIZE, DEFAULT_TEXT_FONT_COLOR, DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_WEIGHT } from '../../engine/textRenderer';
 import { isScriptComponent } from '../../engine/ecs';
 import { EntityErrorBoundary } from '../entity/EntityErrorBoundary';
+import { ScriptGizmoOverlay } from './ScriptGizmoOverlay';
 import './overlay-layer.css';
  
 /**
@@ -35,6 +36,7 @@ export function OverlayLayer({
   handleMoveGizmoPointerDown,
   handleRotateGizmoPointerDown,
   handleScaleGizmoPointerDown,
+  autoKeyEnabled = false,
 }) {
   return items.map((item) => {
     const { entity, transform, localTransform } = item;
@@ -169,6 +171,21 @@ export function OverlayLayer({
               />
             );
           })}
+
+          {/* Canvas Script Gizmo Overlay for interactive parameter/object editing */}
+          {isSelected && scriptComps.length > 0 && onUpdateEntity && (
+            <ScriptGizmoOverlay
+              entity={entity}
+              scripts={scripts}
+              isSelected={isSelected}
+              currentTime={currentTime}
+              fps={fps}
+              autoKeyEnabled={autoKeyEnabled}
+              safeResWidth={safeResWidth}
+              safeResHeight={safeResHeight}
+              onUpdateEntity={onUpdateEntity}
+            />
+          )}
  
           {/* Shape Component */}
           {shapeComp && (

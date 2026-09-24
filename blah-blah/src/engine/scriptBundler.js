@@ -84,6 +84,24 @@ export function isBlahblahSdkSpecifier(spec) {
 }
 
 /**
+ * The prop-declaration helpers as an importable module.
+ *
+ * `import { num, Presets } from 'blahblah'` — the helpers are GLOBALS by
+ * default (scriptRunner.js injects them into both execution paths), so this
+ * exists for scripts that prefer an explicit import, and for editors/type
+ * tooling that want the names written down. Matched on the exact bare
+ * specifier only: a real npm package named `blahblah` must not be shadowed by
+ * a prefix match, and no subpath is offered because this module has one flat
+ * export surface.
+ */
+export const PROP_HELPERS_SPECIFIER = 'blahblah';
+
+/** Whether a specifier asks for the prop-declaration helpers. */
+export function isPropHelpersSpecifier(spec) {
+  return spec === PROP_HELPERS_SPECIFIER;
+}
+
+/**
  * Which React shim a specifier needs, or null if it's not React-family.
  * Handles bare specifiers AND esm.sh's absolute react paths (peer
  * dependencies stay external in esm.sh output, e.g. framer-motion's
@@ -104,6 +122,29 @@ export function reactFamilyKind(spec) {
     }
   }
   return null;
+}
+
+/**
+ * Virtual module body for `import { num, Presets } from 'blahblah'`.
+ *
+ * Deliberately NOT the helpers module's raw text: the bundled code already runs
+ * inside runCompiledModule's `new Function(...)`, where the helpers are injected
+ * as parameters. Exporting those very identifiers (the same trick the React
+ * shims below use for `React`) means an explicit import and the injected global
+ * are the same object by construction — they cannot drift, and there is no
+ * second copy of the module to keep in sync.
+ *
+ * It also avoids `?raw`: that suffix is a bundler-only convention, so under a
+ * plain Node runner the import binds the MODULE rather than its source text,
+ * which is exactly how the first version of this broke.
+ */
+export function propHelperShimContents() {
+  return [
+    'const __helpers = { num, bool, color, text, select, asset, entity, font, button, group, row, Presets };',
+    'module.exports = __helpers;',
+    'module.exports.default = __helpers;',
+    'module.exports.__esModule = true;',
+  ].join('\n');
 }
 
 /**
@@ -209,6 +250,13 @@ export function createImportPlugin(dirHandle) {
           return { path, namespace: 'blahblah-sdk' };
         }
 
+        // The same helpers the engine injects as globals, as an explicit
+        // import. Checked before the bare-specifier branch below, which would
+        // otherwise try to fetch a package literally named `blahblah`.
+        if (isPropHelpersSpecifier(path)) {
+          return { path, namespace: 'blahblah-props' };
+        }
+
         const reactKind = reactFamilyKind(path);
         if (reactKind) {
           return { path, namespace: 'blahblah-react', pluginData: { kind: reactKind } };
@@ -255,6 +303,12 @@ export function createImportPlugin(dirHandle) {
       build.onLoad({ filter: /.*/, namespace: 'blahblah-sdk' }, () => ({
         loader: 'js',
         contents: blahblahSdkSource,
+      }));
+
+      // The prop helpers, re-exported from the injected globals.
+      build.onLoad({ filter: /.*/, namespace: 'blahblah-props' }, () => ({
+        loader: 'js',
+        contents: propHelperShimContents(),
       }));
 
       build.onLoad({ filter: /.*/, namespace: 'blahblah-react' }, (args) => ({

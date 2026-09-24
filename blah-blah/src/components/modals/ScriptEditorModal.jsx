@@ -73,7 +73,7 @@ function ScriptEditorModalContent({
         <div className="modal-body script-modal-body">
           <div className="script-toolbar">
             <span className="script-hint">
-              Define <code>static props = &#123; speed: 2.5 &#125;</code> to auto-expose interactive controls in the Inspector! Motion scripts use <code>onStart/onUpdate</code> with a <code>transform</code>; React components export a function returning JSX; canvas components export a class with <code>onMount/onUpdate</code>. JSX, TypeScript, and real <code>import</code> statements are all supported.
+              Define <code>static props = &#123; speed: num(2.5) &#125;</code> (or <code>speed: 2.5</code>) to auto-expose interactive controls in the Inspector — <code>num</code>, <code>bool</code>, <code>color</code>, <code>text</code>, <code>select</code>, <code>asset</code>, <code>font</code>, <code>button</code>, <code>group</code>, <code>row</code> and <code>Presets</code> are always in scope. Motion scripts use <code>onStart/onUpdate</code> with a <code>transform</code>; React components export a function returning JSX; canvas components export a class with <code>onMount/onUpdate</code>. JSX, TypeScript, and real <code>import</code> statements are all supported.
             </span>
           </div>
  

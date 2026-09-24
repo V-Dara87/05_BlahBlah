@@ -107,7 +107,48 @@ export interface MotionScriptUnmountArgs {
 /**
  * Common base for motion / canvas scripts.
  * All lifecycle methods are optional — implement only what you need.
- */
+// ─── Script Gizmo Definitions ───────────────────────────────────────────────
+
+export interface ScriptGizmoDef {
+  /** Unique identifier for the gizmo within the script. */
+  id: string;
+  /** Human-readable label shown in tooltips and the numerical HUD. */
+  label?: string;
+  /** X coordinate in canvas pixels (0 to canvasWidth). */
+  x: number;
+  /** Y coordinate in canvas pixels (0 to canvasHeight). */
+  y: number;
+  /** Optional hit-testing width in pixels (minimum 28px). */
+  width?: number;
+  /** Optional hit-testing height in pixels (minimum 28px). */
+  height?: number;
+  /** Constraint axis for dragging: 'xy' (free), 'x' (horizontal only), 'y' (vertical only). */
+  axes?: 'xy' | 'x' | 'y';
+  /** Display size: 'compact' (small objects/pins), 'normal' (standard), 'large'. */
+  size?: 'compact' | 'normal' | 'large';
+  /** Visual accent color of the handle (e.g. hex '#38bdf8'). */
+  color?: string;
+  /** Shape of the handle: 'circle' | 'rect' | 'diamond'. */
+  shape?: 'circle' | 'rect' | 'diamond';
+  /** Nested property path on script props to write to (e.g. 'center', 'points[0]'). */
+  propPath?: string;
+  /** Optional drag callback hook. */
+  onDrag?: (coords: { x: number; y: number; dx: number; dy: number }) => void;
+  /** Right-click context menu actions. */
+  contextMenu?: Array<{
+    label: string;
+    action: string | ((gizmo: ScriptGizmoDef) => void);
+  }>;
+}
+
+export interface MotionScriptGizmoArgs {
+  props: Record<string, any>;
+  time?: number;
+  canvasWidth?: number;
+  canvasHeight?: number;
+}
+
+/** Bare base class for all visual motion/canvas scripts. */
 export class MotionScript {
   /** Called once when the script's host element is mounted into the DOM. */
   onMount?(args: MotionScriptMountArgs): void | Promise<void>;
@@ -117,6 +158,13 @@ export class MotionScript {
   onSeek?(args: MotionScriptSeekArgs): void;
   /** Called when the script's host element is removed from the DOM. */
   onUnmount?(args: MotionScriptUnmountArgs): void;
+  /**
+   * Optional hook called during preview to generate interactive handles (gizmos).
+   * Allows visual dragging of script parameters, graph nodes, or sub-objects.
+   */
+  getGizmos?(args: MotionScriptGizmoArgs): ScriptGizmoDef[];
+  /** Optional hook called when any gizmo attached to this script is dragged. */
+  onGizmoDrag?(args: { id: string; x: number; y: number; dx: number; dy: number; propPath?: string }): void;
 }
 
 /**

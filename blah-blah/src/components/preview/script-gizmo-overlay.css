@@ -1,0 +1,214 @@
+/* Script Gizmo Overlay Container */
+.script-gizmo-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none; /* children enable pointer-events */
+  z-index: 2000;
+  user-select: none;
+}
+
+.script-gizmo-interactive-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: auto;
+}
+
+/* Individual Gizmo Item */
+.script-gizmo-item {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  cursor: grab;
+  pointer-events: auto;
+  transition: transform 0.05s ease-out;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.script-gizmo-item:active {
+  cursor: grabbing;
+}
+
+/* Hitbox expansion for small objects */
+.script-gizmo-hitbox {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: transparent;
+}
+
+/* Gizmo Visual Handle */
+.script-gizmo-handle {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.6), inset 0 0 2px rgba(0, 0, 0, 0.4);
+  background: #38bdf8;
+  transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+  pointer-events: none;
+}
+
+.script-gizmo-item.compact .script-gizmo-handle {
+  width: 10px;
+  height: 10px;
+  border-width: 1.5px;
+}
+
+.script-gizmo-item:hover .script-gizmo-handle {
+  transform: scale(1.3);
+  box-shadow: 0 0 10px #38bdf8, 0 0 4px rgba(0,0,0,0.8);
+}
+
+.script-gizmo-item.selected .script-gizmo-handle {
+  background: #facc15; /* Active yellow */
+  border-color: #ffffff;
+  transform: scale(1.4);
+  box-shadow: 0 0 12px #facc15, 0 0 4px rgba(0,0,0,0.9);
+}
+
+/* Axis indicators for selected gizmo */
+.script-gizmo-axis-arrow {
+  position: absolute;
+  pointer-events: auto;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.script-gizmo-axis-x {
+  right: -32px;
+  width: 32px;
+  height: 12px;
+  cursor: ew-resize;
+}
+
+.script-gizmo-axis-x::after {
+  content: '';
+  width: 100%;
+  height: 2px;
+  background: #ef4444; /* Red for X axis */
+  box-shadow: 0 0 4px rgba(239, 68, 68, 0.8);
+}
+
+.script-gizmo-axis-y {
+  top: -32px;
+  width: 12px;
+  height: 32px;
+  cursor: ns-resize;
+}
+
+.script-gizmo-axis-y::after {
+  content: '';
+  width: 2px;
+  height: 100%;
+  background: #22c55e; /* Green for Y axis */
+  box-shadow: 0 0 4px rgba(34, 197, 94, 0.8);
+}
+
+/* Label above gizmo */
+.script-gizmo-label {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(15, 23, 42, 0.85);
+  color: #f1f5f9;
+  font-size: 11px;
+  font-family: monospace;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.script-gizmo-item:hover .script-gizmo-label,
+.script-gizmo-item.selected .script-gizmo-label {
+  opacity: 1;
+}
+
+/* Marquee / Rubberband Box Selection */
+.script-gizmo-marquee {
+  position: absolute;
+  border: 1px dashed #38bdf8;
+  background: rgba(56, 189, 248, 0.15);
+  pointer-events: none;
+  z-index: 1060;
+}
+
+/* Numerical HUD floating with cursor during drag */
+.script-gizmo-hud {
+  position: absolute;
+  transform: translate(16px, 16px);
+  background: rgba(15, 23, 42, 0.92);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  color: #f8fafc;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  z-index: 1070;
+  white-space: nowrap;
+}
+
+.script-gizmo-hud-title {
+  color: #94a3b8;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.script-gizmo-hud-val {
+  color: #38bdf8;
+}
+
+.script-gizmo-hud-delta {
+  color: #facc15;
+  margin-left: 6px;
+  font-size: 10px;
+}
+
+/* Right Click Context Menu */
+.script-gizmo-context-menu {
+  position: absolute;
+  background: #1e293b;
+  border: 1px solid #334155;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+  border-radius: 6px;
+  padding: 4px;
+  min-width: 140px;
+  z-index: 1080;
+  pointer-events: auto;
+}
+
+.script-gizmo-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #e2e8f0;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s ease;
+}
+
+.script-gizmo-menu-item:hover {
+  background: #38bdf8;
+  color: #0f172a;
+}

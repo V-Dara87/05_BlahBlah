@@ -379,10 +379,21 @@ export function useExplorerFileManager({
       name,
       folder: targetFolder,
       description: 'Blank JavaScript Motion script',
+      // The starter declares its props with the prop helpers, which are
+      // globals in every script (engine/scriptProps.js) — no import line. They
+      // return the same plain objects the long-hand form does, so the two can
+      // be mixed freely, e.g. `tint: { type: 'color', default: '#ffffff' }`
+      // instead of `tint: color('#ffffff')`. `...Presets.colors`,
+      // `...Presets.timing`, `...Presets.typography`, `...Presets.audioFx` and
+      // `...Presets.fitTransform` drop in a whole ready-made Inspector block.
       code: `import { CanvasComponent } from '@blahblah/sdk';
  
 export default class NewScript extends CanvasComponent {
-  static props = {};
+  static props = {
+    speed: num(2, { min: 0, max: 10, step: 0.1, label: 'Wobble Speed' }),
+    radius: num(8, { min: 1, max: 60, unit: 'px' }),
+    tint: color('#ffffff'),
+  };
  
   onMount({ container, canvasWidth, canvasHeight }) {
     this.canvas = document.createElement('canvas');
@@ -395,18 +406,18 @@ export default class NewScript extends CanvasComponent {
     this.ctx = this.canvas.getContext('2d');
   }
  
-  onUpdate({ time, canvasWidth, canvasHeight }) {
+  onUpdate({ time, canvasWidth, canvasHeight, props }) {
     if (!this.ctx) return;
     if (this.canvas.width !== canvasWidth || this.canvas.height !== canvasHeight) {
       this.canvas.width = canvasWidth;
       this.canvas.height = canvasHeight;
     }
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    const x = this.canvas.width / 2 + Math.sin(time * 2) * 50;
+    const x = this.canvas.width / 2 + Math.sin(time * (props?.speed ?? 2)) * 50;
     const y = this.canvas.height / 2;
-    this.ctx.fillStyle = '#ffffff';
+    this.ctx.fillStyle = props?.tint || '#ffffff';
     this.ctx.beginPath();
-    this.ctx.arc(x, y, 8, 0, Math.PI * 2);
+    this.ctx.arc(x, y, props?.radius ?? 8, 0, Math.PI * 2);
     this.ctx.fill();
   }
  

@@ -112,24 +112,57 @@ Any script (motion, canvas, or react) can declare a \`static props\` object.
 Each field automatically becomes an editable control in the Inspector, and
 (except for \`entity\`/\`asset\` refs and \`font\`) becomes keyframeable.
 
+Write it with the **prop helpers**, which are available by name in every script
+— there is no import line to add:
+
 \`\`\`js
 static props = {
-  speed:   { type: 'number', default: 2.5, min: 0, max: 10, step: 0.1, label: 'Speed' },
-  color:   { type: 'color', default: '#ff0000' },
-  enabled: { type: 'boolean', default: true },
-  mode:    { type: 'select', default: 'a', options: ['a', 'b', 'c'] },
-  note:    { type: 'string', default: 'hello' },
-  font:    { type: 'font', default: 'Inter', label: 'Font' },   // searchable font picker
-  target:  { type: 'entity', targetComponent: 'AudioSource', label: 'Audio Track' }, // filter by component
-  clip:    { type: 'asset', assetType: 'image', label: 'Background Image' },         // filter by asset type ('image'|'video'|'audio')
+  speed:   num(2.5, { min: 0, max: 10, step: 0.1, unit: '/s' }),   // label: 'Speed (/s)'
+  color:   color('#ff0000'),
+  enabled: bool(true),
+  mode:    select('a', ['a', 'b', 'c']),
+  note:    text('hello'),                                        // text(…, { multiline: true }) for a textarea
+  font:    font('Inter'),                                        // searchable font picker
+  target:  entity({ targetComponent: 'AudioSource', label: 'Audio Track' }), // filter by component
+  clip:    asset('image', { label: 'Background Image' }),         // filter by asset type ('image'|'video'|'audio')
 };
 \`\`\`
 
-Shorthand form (direct values instead of \`{ type, default }\`) also works and
-infers the type:
+| Helper | Field it declares |
+| --- | --- |
+| \`num(default, opts)\` | number, with \`min\`/\`max\`/\`step\` |
+| \`bool(default, opts)\` | checkbox |
+| \`color(default, opts)\` | colour picker |
+| \`text(default, opts)\` | string; \`{ multiline: true }\` makes it a textarea |
+| \`select(default, options, opts)\` | dropdown (\`{ selectButton: true }\` for a button strip) |
+| \`asset(assetType, opts)\` | media slot; \`assetType\` is \`'image'\`, \`'video'\` or \`'audio'\` |
+| \`entity(opts)\` | entity slot; \`{ targetComponent: 'AudioSource' }\` filters it |
+| \`font(default, opts)\` | searchable font-family picker |
+| \`button(action, opts)\` | action button (calls the method named \`action\`) |
+| \`group(tab, opts, props)\` | applies one tab (and box) to a whole block |
+| \`row(props)\` | puts a block's fields on one Inspector row |
+
+\`opts\` is just the field's other keys, so anything in §2 works there too.
+\`opts.unit\` appends a unit to the auto-generated label (\`unit: 'px'\` →
+"Radius (px)"); an explicit \`opts.label\` wins. The label itself is derived from
+the key you assign the field to, so \`startDelay\` becomes "Start Delay" with no
+\`label\` to type.
+
+Shorthand values are still accepted in place of a helper — the type is inferred:
 
 \`\`\`js
 static props = { speed: 2.5, color: '#ff0000', label: 'hello' };
+\`\`\`
+
+Helpers return ordinary prop definitions, so they mix with the long-hand form in
+one object. Every one of these lines means the same thing:
+
+\`\`\`js
+static props = {
+  speed:        num(2.5, { min: 0, max: 10, unit: '/s' }),
+  sameThing:    { type: 'number', default: 2.5, min: 0, max: 10, label: 'Same Thing (/s)' },
+  shorthandToo: 2.5,
+};
 \`\`\`
 
 Field \`type\` values: \`number\`, \`color\`, \`boolean\`, \`select\`, \`string\`,
@@ -196,7 +229,8 @@ static props = {
 
 ## 2. Field attributes — boxes, tabs, conditions, buttons
 
-Attributes are extra keys on a prop definition (same object as \`type\`/\`default\`).
+Attributes are extra keys on a prop definition — the same object a helper's
+\`opts\` argument fills in, or (long-hand) the object next to \`type\`/\`default\`.
 They change how a field is laid out and when it applies, so a long props list can
 read like an Odin/Unity inspector instead of a flat column of rows. Fields with
 no attributes render exactly as before.
@@ -204,19 +238,42 @@ no attributes render exactly as before.
 \`\`\`js
 static props = {
   // A group switch: this checkbox turns the whole 'Motion' box on and off.
-  animated:  { type: 'boolean', default: true, label: 'Motion', box: 'Motion', controls: 'Motion' },
-  speed:     { type: 'number',  default: 1, box: 'Motion', showIf: 'animated' },
-  amplitude: { type: 'number',  default: 20, box: 'Motion', inline: true },
-  frequency: { type: 'number',  default: 2, box: 'Motion', inline: true },
+  animated: bool(true, { label: 'Motion', box: 'Motion', controls: 'Motion' }),
 
-  mode:      { type: 'select',  default: 'sine', options: ['sine', 'noise'], selectButton: true, tab: 'Wave' },
-  seed:      { type: 'number',  default: 0, tab: 'Wave', button: { label: 'Randomise', action: 'randomise' } },
-  bake:      { type: 'button',  label: 'Bake Wave', action: 'bake', tab: 'Wave' },
+  ...group('Body', { box: 'Motion' }, {
+    speed: num(1, { showIf: 'animated' }),
+    ...row({ amplitude: num(20), frequency: num(2) }),
+  }),
+
+  ...group('Wave', {
+    mode: select('sine', ['sine', 'noise'], { selectButton: true }),
+    seed: num(0, { button: { label: 'Randomise', action: 'randomise' } }),
+    bake: button('bake', { label: 'Bake Wave' }),
+  }),
 };
 
 randomise({ set }) { set('seed', Math.round(Math.random() * 1000)); }
 bake() { /* … */ }
 \`\`\`
+
+\`group(tab, opts, props)\` sets the tab on every field inside it (and a box,
+when you pass one), so a block does not repeat the same layout keys; \`row()\`
+is the same idea for \`inline: true\`. Both are spread with \`...\` into
+\`static props\` and keep your field order. A later key overrides an earlier one,
+which is how a preset gets adjusted:
+
+\`\`\`js
+static props = {
+  ...Presets.colors,                                  // the whole Colors box
+  nodeStroke: color('#fb7185'),                       // …with one colour repainted
+  ...Presets.timing,
+  startDelay: num(1.2, { unit: 's' }),                // overrides the preset's 0.3
+};
+\`\`\`
+
+The built-in blocks are \`Presets.timing\`, \`Presets.audioFx\`,
+\`Presets.typography\`, \`Presets.colors\` and \`Presets.fitTransform\` — the
+timing, sound-effect, font, palette and fit/transform fields, ready to drop in.
 
 ### Grouping and layout
 
