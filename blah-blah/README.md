@@ -61,13 +61,17 @@ export default class MyScript extends MotionScript {
 
 Auto-creates and sizes a `<canvas>` element inside `container`. Handles resize in `onUpdate`, removes on unmount.
 
-| Property | Type | Description |
+| Property / Method | Type | Description |
 |---|---|---|
 | `canvas` | `HTMLCanvasElement` | The managed canvas element |
 | `ctx` | `CanvasRenderingContext2D` | 2D drawing context |
 | `canvasWidth` | `number` | Current canvas width in px |
 | `canvasHeight` | `number` | Current canvas height in px |
 | `aspect` | `number` | `canvasWidth / canvasHeight` |
+| `toScreen(x, y)` | `(x, y) => { x, y }` | Converts center-origin coords (where 0,0 is center) to canvas pixel coords |
+| `fromScreen(x, y)` | `(x, y) => { x, y }` | Converts canvas pixel coords to center-origin coords |
+| `centerOrigin()` | `() => void` | Centers 2D context origin so (0,0) is canvas center (`ctx.save()` + `ctx.translate()`) |
+| `restoreOrigin()` | `() => void` | Restores context matrix saved by `centerOrigin()` |
 
 ```js
 import { CanvasComponent } from '@blahblah/sdk';
@@ -79,7 +83,18 @@ export default class MyCanvas extends CanvasComponent {
   onUpdate({ time }) {
     const { ctx, canvasWidth, canvasHeight } = this;
     ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-    // draw...
+
+    // Option A: use toScreen helper with (0,0) center origin
+    const { x, y } = this.toScreen(Math.sin(time * 2) * 100, 0);
+    ctx.fillStyle = '#38bdf8';
+    ctx.beginPath();
+    ctx.arc(x, y, 20, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Option B: center 2D context transform
+    this.centerOrigin();
+    // (0, 0) is now canvas center!
+    this.restoreOrigin();
   }
 }
 ```
@@ -213,6 +228,110 @@ onUpdate({ props }) {
 `entity` / `asset` references (both top-level and inside `asset[]`, `entity[]`, or struct subfields) are automatically resolved to `EntityRef` / `AssetRef` instances at runtime.
 
 Canvas-kind scripts automatically receive **CANVAS SIZE** controls in the Inspector (`canvasWidth` / `canvasHeight`) — no need to declare them in `static props`.
+
+---
+
+### Script Gizmos — Interactive Viewport Handles
+
+Scripts can expose interactive visual handles (gizmos) rendered directly on top of the preview viewport. Users can click, drag, multi-select, and configure these handles visually, with updates written automatically back to script `props` and timeline keyframes.
+
+#### 1. Declaring Gizmos
+
+##### Method A: Dynamic Hook `getGizmos()` (Recommended)
+
+Implement `getGizmos({ props, time, canvasWidth, canvasHeight })` on your script class. This allows dynamic generation of handles based on current props, array lengths, or timeline time:
+
+```js
+import { CanvasComponent } from '@blahblah/sdk';
+
+export default class InteractiveNodes extends CanvasComponent {
+  static props = {
+    nodes: {
+      type: 'struct[]',
+      default: [
+        { id: 'start', label: 'Start', x: -200, y: 0 },
+        { id: 'end', label: 'End', x: 200, y: 0 },
+      ],
+    },
+  };
+
+  getGizmos({ props }) {
+    return (props.nodes || []).map((node, index) => ({
+      id: node.id || `node-${index}`,
+      label: node.label,
+      x: node.x,
+      y: node.y,
+      propPath: `nodes[${index}]`, // Automatically writes dragged position back to this prop
+      axes: 'xy',                  // 'xy' | 'x' | 'y'
+      space: 'local',              // (0, 0) is canvas center (default)
+      color: '#38bdf8',
+      contextMenu: [
+        { label: 'Reset Position', action: (gizmo) => { /* custom action */ } },
+      ],
+    }));
+  }
+}
+```
+
+##### Method B: Property Schema Annotation (`gizmo: true`)
+
+Add `gizmo: true` or a gizmo options object to any `point2d`, `struct` with `x`/`y`, `struct[]`, or 1D `number` prop:
+
+```js
+static props = {
+  // 2D Point (defaults to center 0,0)
+  targetPoint: {
+    type: 'point2d',
+    default: { x: 0, y: 0 },
+    gizmo: true, // or { axes: 'xy', color: '#ec4899' }
+  },
+
+  // 1D Slider handle along a single axis
+  splitX: {
+    type: 'number',
+    default: 0,
+    gizmo: { axis: 'x', size: 'compact' },
+  },
+
+  // Struct array with gizmo handles automatically bound to each element
+  pins: {
+    type: 'struct[]',
+    gizmo: true,
+    default: [{ x: -100, y: -50 }, { x: 100, y: 50 }],
+  },
+};
+```
+
+#### 2. `ScriptGizmoDef` Reference
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `id` | `string` | *(required)* | Unique identifier for the handle within the script |
+| `label` | `string` | `id` | Label shown in viewport tooltips and HUD |
+| `x` | `number` | `0` | X coordinate |
+| `y` | `number` | `0` | Y coordinate |
+| `space` | `'local' \| 'global'` | `'local'` | **Coordinate space**: `'local'` places `(0, 0)` at the canvas center (responsive to resolution/aspect ratio changes). `'global'` uses top-left canvas pixel coordinates `[0..width, 0..height]`. |
+| `axes` | `'xy' \| 'x' \| 'y'` | `'xy'` | Drag axis constraint (`'xy'` = free 2D, `'x'` = horizontal only, `'y'` = vertical only) |
+| `rotation` | `number` | `0` | Local rotation angle in degrees. In `'local'` space, axis drag arrows rotate along with the object's orientation. |
+| `size` | `'compact' \| 'normal' \| 'large'` | `'normal'` | Display scale of the handle |
+| `color` | `string` | `'#38bdf8'` | Accent color of the handle |
+| `shape` | `'circle' \| 'rect' \| 'diamond'` | `'circle'` | Shape of the handle icon |
+| `propPath` | `string` | - | Nested property path to update on drag (e.g. `'targetPoint'`, `'nodes[0]'`) |
+| `onDrag` | `Function` | - | Optional drag callback `({ x, y, dx, dy }) => void` |
+| `contextMenu` | `Array<{ label, action }>` | - | Custom right-click menu items |
+
+#### 3. Viewport Interaction Features
+
+- **Center Origin (0, 0)**: In default `'local'` mode, `(0, 0)` is the center of the canvas. Switching project aspect ratio (e.g. 16:9 to 9:16 Shorts) preserves center-aligned layouts automatically.
+- **Axis Constraint & Snapping**: Dragging along axis arrows constrains motion to that axis. Holding `Shift` during a free drag snaps movement to the dominant axis.
+- **Multi-Selection & Box (Marquee) Select**: Hold `Shift + Click` to select multiple gizmos for unified dragging. Click and drag on empty canvas background to box-select multiple handles.
+- **Numerical Heads-Up Display (HUD)**: While dragging, a floating HUD displays coordinates `(X, Y)`, delta `(dx, dy)`, rotation angle, and active coordinate space (`LOCAL` / `GLOBAL`).
+- **Right-Click Context Menu**: Right-click any gizmo in preview to:
+  - Switch between Local and Global coordinates on the fly.
+  - Reset position to center `(0, 0)`.
+  - Align to X axis only.
+  - Trigger custom actions defined on the gizmo.
+- **Auto-Keying Integration**: If the timeline's **Auto-Key** button is active (or if existing keyframes exist on the property), dragging a gizmo records a keyframe at the current playhead time.
 
 ---
 

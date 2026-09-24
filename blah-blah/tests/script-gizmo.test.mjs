@@ -443,3 +443,30 @@ test('CanvasComponent toScreen and fromScreen helpers map (0,0) to center and vi
   assert.deepEqual(comp.fromScreen(860, 740), { x: -100, y: 200 });
 });
 
+test('ScriptDocsModal includes Script Gizmos and CanvasComponent coordinate helpers', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const modalPath = path.resolve('src/components/modals/ScriptDocsModal.jsx');
+  const content = fs.readFileSync(modalPath, 'utf8');
+
+  // Verify SECTIONS includes Script gizmos
+  assert.match(content, /id:\s*'gizmos',\s*label:\s*'Script gizmos'/);
+
+  // Verify SCRIPT_API_DOCS_MARKDOWN includes the dedicated gizmo section
+  assert.match(content, /## 5\. Script gizmos — interactive handles in preview/);
+  assert.match(content, /getGizmos\(\{ props, time, canvasWidth, canvasHeight \}\)/);
+  assert.match(content, /ScriptGizmoDef/);
+  assert.match(content, /propPath/);
+
+  // Verify CanvasComponent centerOrigin and toScreen/fromScreen helpers are documented
+  assert.match(content, /CanvasComponent/);
+  assert.match(content, /toScreen/);
+  assert.match(content, /fromScreen/);
+  assert.match(content, /centerOrigin/);
+  assert.match(content, /restoreOrigin/);
+
+  // Verify cheat sheet includes gizmo summary
+  assert.match(content, /getGizmos\(.*\) →/);
+});
+
+

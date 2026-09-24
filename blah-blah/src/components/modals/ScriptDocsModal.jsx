@@ -41,6 +41,7 @@ const SECTIONS = [
   { id: 'motion', label: 'Motion scripts', match: 'animating a clip' },
   { id: 'generic-tween', label: 'Generic tween', match: 'Generic tween' },
   { id: 'canvas', label: 'Canvas scripts', match: 'custom rendering' },
+  { id: 'gizmos', label: 'Script gizmos', match: 'Script gizmos' },
   { id: 'refs', label: 'entity / asset refs', match: 'Reference props' },
   { id: 'react', label: 'React scripts', match: 'custom React clip content' },
   { id: 'shader', label: 'Shader transitions', match: 'custom transitions' },
@@ -221,7 +222,7 @@ static props = {
 - \`entity\`/\`asset\` fields (and \`entity[]\`/\`asset[]\` array items) render as drag-drop
   slots in the Inspector and are **never keyframeable** — the slot itself is the whole control.
   At runtime their stored ID is automatically resolved into an \`EntityRef\` / \`AssetRef\`
-  object (see §5) before your script sees it — you never see a raw ID string.
+  object (see §6) before your script sees it — you never see a raw ID string.
 - \`font\` fields and all array types (\`*[]\`, \`struct[]\`) are not keyframeable.
 - All primitive single-value fields (\`number\`, \`color\`, \`boolean\`, \`string\`) are keyframeable from the Dopesheet.
 
@@ -488,7 +489,7 @@ export default class MyCanvasThing {
   \`static props\` — the resolved prop value then wins.
 - External packages (three, gsap, etc.) come from plain \`import\` statements
   at the top of the file — no separate \`libs\` object, no CDN \`<script>\` tags.
-  See §8.
+  See §9.
 - \`onMount\` is called once per (script code, container) pair — not once per
   frame.
 - \`signal\` (an \`AbortSignal\`) is passed to \`onMount\` only. It aborts when the
@@ -502,9 +503,154 @@ export default class MyCanvasThing {
   \`OrthographicCamera\` is **not** updated). Set \`this.autoResize = false\` to turn
   this off. A plain \`canvas\` is never resized for you.
 
+### \`CanvasComponent\` base class & center origin \`(0, 0)\`
+
+Scripts that draw into a 2D \`<canvas>\` can extend \`CanvasComponent\` from \`@blahblah/sdk\`. It automatically manages the \`<canvas>\` element lifecycle, synchronizes resolution, and provides center-origin coordinate helpers:
+
+\`\`\`js
+import { CanvasComponent } from '@blahblah/sdk';
+
+export default class MyVisualizer extends CanvasComponent {
+  static props = {
+    color: { type: 'color', default: '#38bdf8' },
+  };
+
+  onUpdate({ time, props }) {
+    const { ctx } = this;
+    ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
+
+    // Center the 2D context so (0, 0) is at the center of the canvas:
+    this.centerOrigin();
+
+    ctx.fillStyle = props.color;
+    ctx.beginPath();
+    ctx.arc(0, 0, 40, 0, Math.PI * 2); // drawn directly at canvas center
+    ctx.fill();
+
+    this.restoreOrigin();
+  }
+}
+\`\`\`
+
+- **Center origin \`(0, 0)\`**: In BlahBlah canvas scripts and gizmos, local coordinates are centered so \`(0, 0)\` is the center of the canvas (\`x\` ranges from \`-canvasWidth/2\` to \`+canvasWidth/2\`, \`y\` from \`-canvasHeight/2\` to \`+canvasHeight/2\`). This keeps graphics centered when changing project resolution or aspect ratio (e.g. 16:9 widescreen to 9:16 vertical).
+- **\`this.centerOrigin(ctx?)\`**: Translates the context origin to \`(canvasWidth / 2, canvasHeight / 2)\` after calling \`ctx.save()\`.
+- **\`this.restoreOrigin(ctx?)\`**: Calls \`ctx.restore()\` to reset transformations.
+- **\`this.toScreen(x, y)\`**: Converts center-relative coordinates to screen pixel coordinates \`(x + canvasWidth / 2, y + canvasHeight / 2)\`. Useful for DOM elements, SVGs, or external libraries (e.g. D3).
+- **\`this.fromScreen(screenX, screenY)\`**: Converts screen pixel coordinates \`(0, 0 = top-left)\` back to center-relative coordinates \`(screenX - canvasWidth / 2, screenY - canvasHeight / 2)\`.
+
 ---
 
-## 5. Reference props — \`entity\` and \`asset\` types
+## 5. Script gizmos — interactive handles in preview
+
+Scripts can expose interactive handles (gizmos) rendered directly on top of the preview viewport. Users can click, drag, multi-select, and configure these handles visually, with updates written automatically back to script \`props\` and timeline keyframes.
+
+### Declaring gizmos
+
+There are two ways to declare gizmos:
+
+#### Method A: Dynamic \`getGizmos()\` hook (Recommended)
+
+Implement \`getGizmos({ props, time, canvasWidth, canvasHeight })\` on your script class. This allows dynamic generation of handles based on current props, array lengths, or timeline time:
+
+\`\`\`js
+import { CanvasComponent } from '@blahblah/sdk';
+
+export default class InteractiveNodes extends CanvasComponent {
+  static props = {
+    nodes: {
+      type: 'struct[]',
+      default: [
+        { id: 'start', label: 'Start', x: -150, y: 0 },
+        { id: 'end', label: 'End', x: 150, y: 0 },
+      ],
+    },
+  };
+
+  getGizmos({ props }) {
+    return (props.nodes || []).map((node, index) => ({
+      id: node.id || ('node-' + index),
+      label: node.label,
+      x: node.x,
+      y: node.y,
+      propPath: 'nodes.' + index, // Automatically writes dragged position back to this prop
+      axes: 'xy',                  // 'xy' | 'x' | 'y'
+      space: 'local',              // (0, 0) is canvas center (default)
+      color: '#38bdf8',
+      contextMenu: [
+        { label: 'Reset Position', action: (gizmo) => { /* custom action */ } },
+      ],
+    }));
+  }
+}
+\`\`\`
+
+#### Method B: Property schema annotation (\`gizmo: true\`)
+
+Add \`gizmo: true\` or a gizmo configuration object to any \`struct\` with \`x\`/\`y\`, \`struct[]\`, or 1D \`number\` prop in \`static props\`:
+
+\`\`\`js
+static props = {
+  // 2D Point (defaults to center 0, 0)
+  targetPoint: {
+    type: 'struct',
+    gizmo: true, // or { axes: 'xy', color: '#ec4899' }
+    fields: {
+      x: { type: 'number', default: 0 },
+      y: { type: 'number', default: 0 },
+    },
+  },
+
+  // 1D Slider handle along a single axis
+  splitX: {
+    type: 'number',
+    default: 0,
+    gizmo: { axis: 'x', size: 'compact' },
+  },
+
+  // Struct array with gizmo handles automatically bound to each element
+  pins: {
+    type: 'struct[]',
+    gizmo: true,
+    fields: {
+      x: { type: 'number', default: 0 },
+      y: { type: 'number', default: 0 },
+    },
+    default: [{ x: -100, y: -50 }, { x: 100, y: 50 }],
+  },
+};
+\`\`\`
+
+### \`ScriptGizmoDef\` reference
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| \`id\` | \`string\` | *(required)* | Unique identifier for the handle within the script |
+| \`label\` | \`string\` | \`id\` | Label shown in viewport tooltips and HUD |
+| \`x\` | \`number\` | \`0\` | X coordinate |
+| \`y\` | \`number\` | \`0\` | Y coordinate |
+| \`space\` | \`'local' \| 'global'\` | \`'local'\` | **Coordinate space**: \`'local'\` places \`(0, 0)\` at the canvas center (responsive to resolution/aspect ratio changes). \`'global'\` uses top-left canvas pixel coordinates \`[0..width, 0..height]\`. |
+| \`axes\` | \`'xy' \| 'x' \| 'y'\` | \`'xy'\` | Drag axis constraint (\`'xy'\` = free 2D, \`'x'\` = horizontal only, \`'y'\` = vertical only) |
+| \`rotation\` | \`number\` | \`0\` | Local rotation angle in degrees. In \`'local'\` space, axis drag arrows rotate along with the handle's orientation. |
+| \`size\` | \`'compact' \| 'normal' \| 'large'\` | \`'normal'\` | Display scale of the handle |
+| \`color\` | \`string\` | \`'#38bdf8'\` | Accent color of the handle |
+| \`shape\` | \`'circle' \| 'rect' \| 'diamond'\` | \`'circle'\` | Shape of the handle icon |
+| \`propPath\` | \`string\` | - | Nested property path to update on drag (e.g. \`'targetPoint'\`, \`'nodes.0'\`, \`'pos.x,pos.y'\`) |
+| \`onDrag\` | \`Function\` | - | Optional drag callback \`({ x, y, dx, dy })\` for custom handling |
+| \`contextMenu\` | \`Array<{ label, action }>\` | - | Custom right-click menu items |
+
+### Viewport interaction features
+
+- **Center origin (0, 0)**: In default \`'local'\` space, \`(0, 0)\` is the exact center of the canvas. Changing project aspect ratio (e.g. 16:9 widescreen to 9:16 vertical) preserves center-aligned layouts automatically.
+- **Axis constraint & snapping**: Dragging along axis arrows constrains motion to that axis. Holding \`Shift\` during a free 2D drag snaps movement to the dominant horizontal or vertical axis.
+- **Multi-selection & marquee box select**: Hold \`Shift + Click\` to select multiple gizmos for unified dragging. Click and drag on empty canvas background to box-select multiple handles.
+- **Arrow keys nudge**: Selected gizmos can be nudged with arrow keys (1px, or 10px holding \`Shift\`).
+- **Numerical heads-up display (HUD)**: While dragging, a floating HUD displays coordinates \`(X, Y)\`, delta \`(dx, dy)\`, rotation angle, and active coordinate space (\`LOCAL\` / \`GLOBAL\`).
+- **Right-click context menu**: Right-click any gizmo in preview to switch between Local and Global coordinates on the fly, reset position to center \`(0, 0)\`, or trigger custom actions defined in \`contextMenu\`.
+- **Auto-keying integration**: When the timeline's **Auto-Key** button is active (or if existing keyframes exist on the property), dragging a gizmo automatically records a keyframe at the current playhead time.
+
+---
+
+## 6. Reference props — \`entity\` and \`asset\` types
 
 Declare a prop as \`{ type: 'entity' }\` or \`{ type: 'asset' }\` (or array equivalents \`entity[]\`, \`asset[]\`).
 The stored ID is automatically resolved into an \`EntityRef\` or \`AssetRef\` instance before your script runs:
@@ -642,7 +788,7 @@ write back to them.
 
 ---
 
-## 6. \`react\` scripts — custom React clip content
+## 7. \`react\` scripts — custom React clip content
 
 Any script that returns JSX and isn't a class is auto-detected as a React
 component:
@@ -666,7 +812,7 @@ export default function MyClip() {
 
 ---
 
-## 7. \`shader\` scripts — custom transitions
+## 8. \`shader\` scripts — custom transitions
 
 Detected via \`vec4 transition(...)\` / \`gl_FragColor\` in the code. Compatible
 with the \`gl-transitions\` GLSL format:
@@ -694,7 +840,7 @@ The \`// = <value>\` comment after a uniform sets its default.
 
 ---
 
-## 8. Real \`import\` statements (npm packages)
+## 9. Real \`import\` statements (npm packages)
 
 All script kinds support genuine ES \`import\` statements — no bundler config
 needed on your end:
@@ -727,6 +873,9 @@ REACT    → function returning JSX (or h(tag, props, children))
 SHADER   → GLSL: uniform ...; vec4 transition(vec2 uv) { ... getFromColor/getToColor/progress ... }
 
 static props = { name: { type: 'number'|'color'|'boolean'|'select'|'string'|'textarea'|'font'|'entity'|'asset'|'string[]'|'number[]'|'asset[]'|'entity[]'|'struct'|'struct[]', default, min, max, step, options, label } };
+
+getGizmos({ props, time, canvasWidth, canvasHeight }) → [ { id, label, x, y, space: 'local'|'global', axes: 'xy'|'x'|'y', propPath } ]
+CanvasComponent: toScreen(x, y), fromScreen(x, y), centerOrigin(ctx), restoreOrigin(ctx)
 
 tween.to/from/spring/punch/shake/sine(target, props, options)  // motion onStart only
 Tween.progress/between/loop/pingPong/stagger/ease/lerp/remap    // generic, all script kinds
