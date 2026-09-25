@@ -75,7 +75,10 @@
  
 .timeline-top-bar {
   height: 28px;
-  background: #22242a;
+  /* Panel chrome, so it follows the theme like every other tool/header strip
+     (Dopesheet, the menu bar, UnityHeader). It used to be a hardcoded
+     #22242a, which left a grey strip above a fully themed timeline. */
+  background: var(--unity-panel);
   border-bottom: 1px solid var(--unity-border);
   display: flex;
   align-items: center;
@@ -160,7 +163,9 @@
   height: 30px;
   overflow-x: hidden;
   overflow-y: visible;
-  background: #18191f;
+  /* The lanes' own backdrop (see .timeline-scroll-area), so the ruler is
+     re-tinted with the theme instead of staying the hardcoded #18191f. */
+  background: var(--unity-darkest);
   border-bottom: 1px solid var(--unity-border);
   flex-shrink: 0;
   position: relative;

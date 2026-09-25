@@ -607,8 +607,15 @@ export function useEntityActions({
       setEntities(currentEntities);
     }
   }, [entities, setEntities]);
- 
-  // Create an Empty Clip with Transform & Shape / Renderer
+
+  // Create an Empty Clip — a Transform and nothing else.
+  //
+  // It used to ship with a ShapeRenderer (a white 140x140 rect), which meant
+  // every "New Clip" arrived pre-loaded with a renderer the user then had to
+  // delete before adding the one they actually wanted, and it drew a white box
+  // in the preview. Empty means empty: `type: 'empty'` so no video/audio
+  // meaning is implied either, and createGameObject() prepends the default
+  // Transform because the component list has none.
   const handleAddEmptyClip = useCallback((targetTrackId = 'track-1', startTime) => {
     const playheadTime = getPlaybackTime();
     const newGO = createGameObject({
@@ -616,22 +623,10 @@ export function useEntityActions({
       trackId: targetTrackId || 'track-1',
       startTime: startTime !== undefined ? startTime : playheadTime,
       duration: 5,
-      type: 'shape',
-      components: [
-        createDefaultTransform({ x: 0, y: 0 }),
-        {
-          type: 'ShapeRenderer',
-          shapeType: 'rect',
-          width: 140,
-          height: 140,
-          color: '#ffffff',
-          strokeColor: '#38bdf8',
-          strokeWidth: 0,
-          borderRadius: 0
-        }
-      ]
+      type: 'empty',
+      components: []
     });
- 
+
     setEntities(prev => [...prev, newGO]);
     setSelectedEntityId(newGO.id);
   }, [getPlaybackTime]);

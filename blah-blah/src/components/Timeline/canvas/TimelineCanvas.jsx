@@ -5,6 +5,7 @@ import { readTimelineTheme, drawTimelineScene, waveformRectFor, wantsWaveform, c
 import { bucketsForCard } from './drawWaveform';
 import { getWaveformPeaks } from '../../../utils/audioWaveform';
 import { subscribePeaksUpdated } from '../../../services/peakCache';
+import { subscribeThemeChanges } from '../../../services/themeSettings';
 import { usePlaybackStore } from '../../../hooks/PlaybackContext';
 import { applyEdgeAutoScroll } from '../../../utils/timelineAutoScroll';
 import { computeTrimmedOffset } from '../../../utils/mediaOffset';
@@ -612,6 +613,20 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       draw();
     });
   }, [draw]);
+ 
+  // themeRef is filled ONCE (see draw(), `if (!themeRef.current) ...`) so that
+  // getComputedStyle isn't paid every frame. That means it never notices a
+  // theme change applied later via CSS custom properties on <html> — same
+  // problem useWaveformColor.js solves for the per-clip waveform colour (see
+  // its header comment): React can't observe a `:root` CSS variable changing,
+  // so services/themeSettings.js broadcasts THEME_CHANGED_EVENT after
+  // applying one. Subscribe here too, drop the stale cache, and redraw so
+  // Settings -> Appearance actually reaches the canvas timeline instead of
+  // only the DOM-based one.
+  useEffect(() => subscribeThemeChanges(() => {
+    themeRef.current = null;
+    schedule();
+  }), [schedule]);
  
   // Redraw when anything structural changes, and keep the canvas sized to its
   // box (dockview shows/hides panels, so the size can change without a scroll).

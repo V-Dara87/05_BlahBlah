@@ -29,7 +29,10 @@ import { drawWaveformEnvelope, drawWaveformPlaceholder } from './drawWaveform.js
  *   - `laneBackground` is `.track-lane-row`'s `rgba(28, 28, 32, 0.4)`
  *     composited over `--unity-darkest` (#191919), since a canvas cannot layer
  *     a translucent fill over a background it does not control and the
- *     pre-multiplied result is what the eye actually sees.
+ *     pre-multiplied result is what the eye actually sees. With a DOM present
+ *     that composite is derived from the LIVE backdrop (see laneBackgroundFor),
+ *     so an Appearance background tint/depth re-themes the lanes too; this is
+ *     only the shipped-backdrop result.
  *   - `laneLockedA/B` are `.track-lane-row.lane-locked`'s repeating 45deg
  *     gradient bands (rgba(22,22,26,0.6) / rgba(28,28,34,0.6), 10px each).
  *   - `gridLine` is `.track-grid-pattern`'s line colour, and `divider` is
@@ -58,6 +61,42 @@ const FALLBACK = Object.freeze({
   // `rgba(139, 92, 246, 0.55)` (see services/themeSettings.js).
   waveformRgb: '139, 92, 246',
 });
+
+/**
+ * `.track-lane-row`'s own background, painted OVER `.timeline-scroll-area`'s
+ * `background: var(--unity-darkest)` — a lane's apparent colour is the two
+ * composited.
+ */
+const LANE_OVERLAY_RGB = [28, 28, 32];
+const LANE_OVERLAY_ALPHA = 0.4;
+
+/** `#rrggbb` -> `[r, g, b]`, or null when it is not a plain hex colour. */
+function parseHexColor(value) {
+  const match = /^#([0-9a-f]{6})$/i.exec(String(value ?? '').trim());
+  if (!match) return null;
+  const n = parseInt(match[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+/**
+ * The unlocked-lane colour for the backdrop the theme currently applies.
+ *
+ * The whole app is themed by writing custom properties on <html>, but canvas
+ * has no `var()` and `.track-lane-row` is translucent, so the canvas has to
+ * paint the pre-multiplied result itself. Deriving it from the live
+ * `--unity-darkest` (rather than keeping the shipped #1a1a1c constant) is what
+ * makes Settings -> Appearance's Background tint/depth reach the canvas
+ * timeline — with the constant, picking a preset re-themed the rest of the app
+ * and the DOM timeline while the canvas lanes stayed the old grey.
+ */
+function laneBackgroundFor(darkest) {
+  const base = parseHexColor(darkest);
+  if (!base) return FALLBACK.laneBackground;
+  const blend = (channel, index) =>
+    Math.round(channel * (1 - LANE_OVERLAY_ALPHA) + LANE_OVERLAY_RGB[index] * LANE_OVERLAY_ALPHA);
+  const [r, g, b] = base.map(blend);
+  return `rgb(${r}, ${g}, ${b})`;
+}
 
 /**
  * Per-category card colours, copied from clip-item.css
@@ -141,10 +180,12 @@ export function readTimelineTheme(el) {
     })
   );
 
+  const darkest = read('--unity-darkest', FALLBACK.darkest);
+
   return {
     panel: read('--unity-panel', FALLBACK.panel),
     dark: read('--unity-dark', FALLBACK.dark),
-    darkest: read('--unity-darkest', FALLBACK.darkest),
+    darkest,
     subtle: read('--unity-subtle', FALLBACK.subtle),
     border: read('--unity-border', FALLBACK.border),
     text: read('--unity-text', FALLBACK.text),
@@ -155,7 +196,7 @@ export function readTimelineTheme(el) {
     waveformRgb: read('--unity-waveform-rgb', FALLBACK.waveformRgb),
     gridLine: FALLBACK.gridLine,
     divider: FALLBACK.divider,
-    laneBackground: FALLBACK.laneBackground,
+    laneBackground: laneBackgroundFor(darkest),
     laneLockedA: FALLBACK.laneLockedA,
     laneLockedB: FALLBACK.laneLockedB,
     cards,

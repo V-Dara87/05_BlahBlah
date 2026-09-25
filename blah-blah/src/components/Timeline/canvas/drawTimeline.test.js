@@ -100,6 +100,33 @@ test('readTimelineTheme falls back cleanly without a DOM', () => {
   assert.equal(theme.cards.audio.accent, '#8b5cf6');
 });
 
+test('the lane background is composited over the live themed backdrop', () => {
+  const original = globalThis.getComputedStyle;
+  try {
+    // Only --unity-darkest is themed; every other variable falls back.
+    globalThis.getComputedStyle = () => ({
+      getPropertyValue: (name) => (name === '--unity-darkest' ? '#2a1a3a' : ''),
+    });
+    // `.track-lane-row` is rgba(28, 28, 32, 0.4), so #2a1a3a (42, 26, 58)
+    // composited with it is (36, 27, 48).
+    assert.equal(readTimelineTheme({}).laneBackground, 'rgb(36, 27, 48)');
+
+    // The shipped backdrop still reproduces the CSS literal, #1a1a1c.
+    globalThis.getComputedStyle = () => ({
+      getPropertyValue: (name) => (name === '--unity-darkest' ? '#191919' : ''),
+    });
+    assert.equal(readTimelineTheme({}).laneBackground, 'rgb(26, 26, 28)');
+
+    // A backdrop the canvas cannot decompose keeps the literal fallback.
+    globalThis.getComputedStyle = () => ({
+      getPropertyValue: (name) => (name === '--unity-darkest' ? 'hsl(220, 10%, 10%)' : ''),
+    });
+    assert.equal(readTimelineTheme({}).laneBackground, '#1a1a1c');
+  } finally {
+    globalThis.getComputedStyle = original;
+  }
+});
+
 test('drawTimelineScene renders visible clips and never throws', () => {
   const clips = [clip('a', 0, 4), clip('b', 10, 4), clip('far', 4000, 4)];
   const scene = buildTimelineScene({

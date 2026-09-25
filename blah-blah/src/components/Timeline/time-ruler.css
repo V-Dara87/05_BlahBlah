@@ -71,10 +71,13 @@
   pointer-events: none;
 }
  
+/* The tick label + line used to be a hardcoded slate (#94a3b8), so the ruler's
+   text ignored Settings -> Appearance's Text colour. They follow the themed
+   muted text role now, keeping the label/line pairing the design had. */
 .ruler-tick.major .tick-label {
   font-size: 10px;
   font-family: var(--font-mono);
-  color: #94a3b8;
+  color: var(--unity-text-muted);
   padding-top: 3px;
   font-weight: 500;
 }
@@ -86,7 +89,7 @@
 .ruler-tick.major .tick-line {
   height: 10px;
   width: 1px;
-  background: #94a3b8;
+  background: var(--unity-text-muted);
   align-self: center;
 }
  
