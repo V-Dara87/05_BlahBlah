@@ -102,11 +102,6 @@ export interface MotionScriptUnmountArgs {
   [key: string]: any;
 }
 
-// ─── Lifecycle Base Classes ──────────────────────────────────────────────────
-
-/**
- * Common base for motion / canvas scripts.
- * All lifecycle methods are optional — implement only what you need.
 // ─── Script Gizmo Definitions ───────────────────────────────────────────────
 
 export interface ScriptGizmoDef {
@@ -325,6 +320,10 @@ export const MathUtils: {
   vec2(x: number, y: number): Vector2;
   /** Creates a 3D vector object `{ x, y, z }`. */
   vec3(x: number, y: number, z?: number): Vector3;
+  /** Point on a cubic Bézier at `t` (0..1). Pure math, no SVG reflow. */
+  bezierPointAt(p0: Vector2, p1: Vector2, p2: Vector2, p3: Vector2, t: number): Vector2;
+  /** Tangent (velocity direction) of a cubic Bézier at `t`. */
+  bezierTangentAt(p0: Vector2, p1: Vector2, p2: Vector2, p3: Vector2, t: number): Vector2;
 };
 
 export interface TweenWindowOptions {
@@ -344,8 +343,113 @@ export const Tween: {
   between(from: number, to: number, time: number, options?: TweenWindowOptions): number;
   loop(time: number, duration?: number, mode?: 'restart' | 'yoyo' | 'pingpong'): number;
   pingPong(time: number, duration?: number): number;
+  /** Delay in seconds for item `index`. */
   stagger(index: number, each?: number): number;
+  /** Multi-target form: a sequence of per-item nodes, each delayed by `i * each`. */
+  stagger<T>(items: T[], factory: (item: T, index: number, delay: number) => SequenceNode<any> | number, options?: StaggerOptions): SequenceNode<any[]>;
 };
+
+// ─── Seekable sequence API ───────────────────────────────────────────────────
+
+/**
+ * A pure animation node: `duration` seconds long, and `valueAt(time)` returns
+ * the value at that moment with no retained state — safe to call at any time
+ * (scrub / seek / export) and as often as you like.
+ */
+export interface SequenceNode<T = any> {
+  readonly duration: number;
+  valueAt(time: number): T;
+  /** Alias for `valueAt`. */
+  at(time: number): T;
+  /** Evaluate at `time` and hand the value to `apply(value, time)`. */
+  applyAt(time: number, apply?: (value: T, time: number) => void): T;
+}
+
+export interface TweenSpec<T = number> {
+  from?: T;
+  to?: T;
+  duration?: number;
+  delay?: number;
+  ease?: EasingFunction | EasingName;
+  /** Finite number of passes. */
+  loop?: number;
+  /** Alternate direction on each pass. */
+  yoyo?: boolean;
+  /** Override the eased interpolation entirely. */
+  sample?: (time: number) => T;
+}
+
+export interface StaggerOptions {
+  each?: number;
+  start?: number;
+}
+
+/** A single value tween as a sequence node. */
+export function tween<T = number>(spec?: TweenSpec<T>): SequenceNode<T>;
+/** A node that holds for `duration` seconds (value `undefined`). */
+export function wait(duration?: number): SequenceNode<undefined>;
+/** A node that returns `value` for `duration` seconds. */
+export function hold<T>(value: T, duration?: number): SequenceNode<T>;
+/** Shift a node later by `delay` seconds. */
+export function offset<T>(delay: number, child: SequenceNode<T>): SequenceNode<T>;
+/** Run nodes one after another; returns each child's value as an array. */
+export function chain(...nodes: Array<SequenceNode<any> | SequenceNode<any>[]>): SequenceNode<any[]>;
+/** Run nodes in parallel; duration is the longest child. */
+export function all(...nodes: Array<SequenceNode<any> | SequenceNode<any>[]>): SequenceNode<any[]>;
+/** Stagger per-item nodes by `i * each` (parallel). */
+export function stagger<T>(
+  items: T[],
+  factory: (item: T, index: number, delay: number) => SequenceNode<any> | number,
+  options?: StaggerOptions
+): SequenceNode<any[]>;
+/** Evaluate a node at `time` and hand the value to `apply(value, time)`. */
+export function applyAt<T>(node: SequenceNode<T>, time: number, apply?: (value: T, time: number) => void): T;
+
+/**
+ * Memoise a function by a chosen set of props — rebuild an expensive
+ * parse/layout only when the structural props change, while tweens evaluate
+ * every frame.
+ */
+export function memoizeByProps<P extends object, R>(
+  fn: (props: P) => R,
+  keys?: (keyof P & string)[]
+): ((props: P) => R) & { invalidate(): void };
+
+// ─── Shape helpers ───────────────────────────────────────────────────────────
+
+/** Pure SVG path-string builders plus Canvas2D draw functions. */
+export const shapes: {
+  roundedRect(x: number, y: number, w: number, h: number, r?: number): string;
+  pill(x: number, y: number, w: number, h: number): string;
+  diamond(cx: number, cy: number, w: number, h: number): string;
+  arrowPath(from: Vector2, to: Vector2, options?: { curved?: boolean; curvature?: number; arrowSize?: number }): string;
+  drawRoundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r?: number): void;
+  drawArrow(ctx: CanvasRenderingContext2D, from: Vector2, to: Vector2, options?: { arrowSize?: number }): void;
+};
+
+/**
+ * d3-style enter / update / exit for a list of elements inside `layer`.
+ * Keeps stable identities by `keyFn` and removes exited nodes.
+ */
+export function svgList(
+  layer: Element,
+  data: any[],
+  keyFn?: (datum: any, index: number) => string | number,
+  handlers?: {
+    tag?: string;
+    enter?: (node: Element, datum: any, index: number) => void;
+    update?: (node: Element, datum: any, index: number) => void;
+    exit?: (node: Element) => void;
+  }
+): Element[];
+
+/** Merge human-edited entries onto an auto-generated list, keyed by `key`. */
+export function mergeManualOverrides<T extends Record<string, any>>(
+  autoList: T[],
+  manualList: Array<Partial<T>>,
+  key?: string,
+  fields?: string[]
+): T[];
 
 // ─── Interpolate & Spring ────────────────────────────────────────────────────
 

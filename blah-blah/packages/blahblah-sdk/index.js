@@ -258,6 +258,37 @@ export const MathUtils = {
   radToDeg: (rad) => (rad * 180) / Math.PI,
   vec2: (x, y) => ({ x, y }),
   vec3: (x, y, z = 0) => ({ x, y, z }),
+  /**
+   * Point on a cubic Bézier at `t` (0..1), given four control points `{x,y}`.
+   * Pure math — unlike SVG's `getPointAtLength()`, this never forces a reflow,
+   * so it is safe to call every frame while drawing a curve on a timeline.
+   */
+  bezierPointAt(p0, p1, p2, p3, t) {
+    const u = 1 - t;
+    const a = u * u * u;
+    const b = 3 * u * u * t;
+    const c = 3 * u * t * t;
+    const d = t * t * t;
+    return {
+      x: a * p0.x + b * p1.x + c * p2.x + d * p3.x,
+      y: a * p0.y + b * p1.y + c * p2.y + d * p3.y,
+    };
+  },
+  /**
+   * Tangent (velocity direction) of the same cubic Bézier at `t`.
+   * Normalise it for a unit direction, or scale by `1 / |derivative|` for
+   * constant-speed sampling.
+   */
+  bezierTangentAt(p0, p1, p2, p3, t) {
+    const u = 1 - t;
+    const a = 3 * u * u;
+    const b = 6 * u * t;
+    const c = 3 * t * t;
+    return {
+      x: a * (p1.x - p0.x) + b * (p2.x - p1.x) + c * (p3.x - p2.x),
+      y: a * (p1.y - p0.y) + b * (p2.y - p1.y) + c * (p3.y - p2.y),
+    };
+  },
 };
 
 // Stateless timeline helpers. These intentionally never retain state or mutate
@@ -291,8 +322,20 @@ export const Tween = Object.freeze({
   pingPong(time, duration = 1) {
     return Tween.loop(time, duration, 'pingpong');
   },
-  stagger(index, each = 0.1) {
-    return Math.max(0, index) * each;
+  /**
+   * Two forms:
+   *   `stagger(index, each)`               - delay in seconds for one item.
+   *   `stagger(items, factory, options)`   - a `chain()` of per-item nodes, each
+   *                                          delayed by `i * each` (the
+   *                                          multi-target form; identical to
+   *                                          the top-level `stagger`).
+   */
+  stagger(indexOrItems, eachOrFactory = 0.1, options) {
+    if (Array.isArray(indexOrItems)) {
+      return stagger(indexOrItems, eachOrFactory, options);
+    }
+    const each = typeof eachOrFactory === 'number' ? eachOrFactory : 0.1;
+    return Math.max(0, indexOrItems) * each;
   },
 });
 
@@ -358,6 +401,391 @@ export function spring({ frame = 0, fps = 30, config = {} }) {
     const envelope = Math.exp(-w0 * t);
     return 1 - envelope * (1 + (w0 - initialVelocity) * t);
   }
+}
+
+// ─── Seekable sequence API ───────────────────────────────────────────────────
+//
+// A small, PURE animation-composition layer. Every node is a plain object with
+// a `duration` and `valueAt(localTime)` that returns the value at that moment,
+// so a sequence can be evaluated at ANY time as often as you like (scrub,
+// seek, export) without retaining state — the same guarantee the rest of the
+// SDK makes:
+//
+//   const shot = chain(
+//     tween({ from: 0, to: 120, duration: 0.6, ease: 'outCubic' }),
+//     wait(0.2),
+//     tween({ from: 0, to: 1, duration: 0.4 }),
+//   );
+//   shot.valueAt(time);                  // [x, undefined, opacity] at `time`
+//   shot.applyAt(time, (v) => { ... });  // same, plus your apply callback
+//
+// `stagger(items, factory, { each })` builds a chain of per-item nodes, so a
+// factory never has to compute `i * each` itself.
+
+/** Wrap a sampler as a sequence node. Methods are bound for ergonomic use. */
+function makeNode(duration, sample) {
+  const total = Math.max(0, Number.isFinite(duration) ? duration : 0);
+  const node = {
+    duration: total,
+    /** Value at `time`, clamped to [0, duration]. */
+    valueAt(time) {
+      return sample(Math.max(0, Math.min(total, Number.isFinite(time) ? time : 0)));
+    },
+    /** Alias for `valueAt`. */
+    at(time) {
+      return node.valueAt(time);
+    },
+    /** Evaluate at `time` and hand the value to `apply(value, time)`. */
+    applyAt(time, apply) {
+      const value = node.valueAt(time);
+      if (typeof apply === 'function') apply(value, time);
+      return value;
+    },
+  };
+  return node;
+}
+
+/** Interpolate numbers, arrays and plain objects of numbers. */
+function interpolateValue(from, to, t) {
+  if (typeof from === 'number' && typeof to === 'number') return from + (to - from) * t;
+  if (Array.isArray(from) && Array.isArray(to)) return to.map((v, i) => interpolateValue(from[i], v, t));
+  if (from && to && typeof from === 'object' && typeof to === 'object') {
+    const out = {};
+    for (const k of new Set([...Object.keys(from), ...Object.keys(to)])) {
+      out[k] = interpolateValue(from[k], to[k], t);
+    }
+    return out;
+  }
+  return t >= 1 ? to : from;
+}
+
+/**
+ * A single value tween as a sequence node.
+ *
+ * @param {object} spec
+ * @param {number|Array|object} [spec.from=0]
+ * @param {number|Array|object} [spec.to=1]
+ * @param {number} [spec.duration=1] seconds
+ * @param {number} [spec.delay=0]
+ * @param {string|function} [spec.ease='linear']
+ * @param {number} [spec.loop=1] finite number of passes
+ * @param {boolean} [spec.yoyo=false] alternate direction on each pass
+ * @param {(time:number)=>any} [spec.sample] override the eased interpolation
+ */
+export function tween(spec = {}) {
+  const {
+    from = 0,
+    to = 1,
+    duration = 1,
+    delay = 0,
+    ease = 'linear',
+    loop = 1,
+    yoyo = false,
+    sample,
+  } = spec;
+
+  const easeFn = resolveEase(ease);
+  const d = Math.max(0, duration);
+  const loops = Number.isFinite(loop) && loop > 1 ? Math.floor(loop) : 1;
+  const total = Math.max(0, delay) + d * loops;
+
+  return makeNode(total, (time) => {
+    const local = time - delay;
+    if (typeof sample === 'function') return sample(Math.max(0, local));
+    if (local <= 0) return from;
+    if (d <= 0) return to;
+    let p;
+    if (loops > 1) {
+      const i = Math.floor(local / d);
+      if (i >= loops) {
+        p = yoyo && loops % 2 === 0 ? 0 : 1;
+      } else {
+        p = (local % d) / d;
+        if (yoyo && i % 2 === 1) p = 1 - p;
+      }
+    } else {
+      p = local / d;
+    }
+    return interpolateValue(from, to, easeFn(Math.max(0, Math.min(1, p))));
+  });
+}
+
+/** A node that holds for `duration` seconds (value `undefined`). */
+export function wait(duration = 0) {
+  return makeNode(duration, () => undefined);
+}
+
+/** A node that returns `value` for `duration` seconds. */
+export function hold(value, duration = 0) {
+  return makeNode(duration, () => value);
+}
+
+/** Shift a node later by `delay` seconds. */
+export function offset(delay, child) {
+  const d = Math.max(0, delay);
+  return makeNode(d + (child?.duration || 0), (time) => child?.valueAt(time - d));
+}
+
+/** Run nodes one after another; `valueAt` returns each child's value as an array. */
+export function chain(...nodes) {
+  const children = nodes.flat().filter(Boolean);
+  const duration = children.reduce((sum, n) => sum + n.duration, 0);
+  return makeNode(duration, (time) => {
+    let acc = 0;
+    return children.map((n) => {
+      const local = time - acc;
+      acc += n.duration;
+      return n.valueAt(local);
+    });
+  });
+}
+
+/** Run nodes in parallel; duration is the longest child, `valueAt` returns an array. */
+export function all(...nodes) {
+  const children = nodes.flat().filter(Boolean);
+  const duration = children.reduce((max, n) => Math.max(max, n.duration), 0);
+  return makeNode(duration, (time) => children.map((n) => n.valueAt(time)));
+}
+
+/**
+ * Build a chain where each item's node starts `i * each` seconds after the
+ * previous one. The factory receives `(item, index, delaySeconds)` and returns
+ * a sequence node (a number is accepted too, and is held as a value).
+ */
+export function stagger(items, factory, { each = 0.1, start = 0 } = {}) {
+  const list = Array.isArray(items) ? items : [];
+  const children = list.map((item, i) => {
+    const at = Math.max(0, start) + i * each;
+    const child = typeof factory === 'function' ? factory(item, i, at) : item;
+    if (child && typeof child.valueAt === 'function') return offset(at, child);
+    if (typeof child === 'number') return offset(at, hold(child, 0));
+    return offset(at, wait(0));
+  });
+  // Parallel, like a staggered row of objects: `valueAt(t)` returns an array
+  // of each item's value at `t`, and the total duration is the last item's end.
+  return all(children);
+}
+
+/** Evaluate a node at `time` and hand the value to `apply(value, time)`. */
+export function applyAt(node, time, apply) {
+  return node?.applyAt ? node.applyAt(time, apply) : undefined;
+}
+
+/**
+ * Memoise a function by a chosen set of props. The classic use is a canvas
+ * script that rebuilds an expensive parse/layout only when the STRUCTURAL
+ * props change, while tween evaluation runs every frame:
+ *
+ *   const layout = memoizeByProps((props) => buildGraph(props.nodes), ['nodes', 'edges']);
+ *   onUpdate({ props, time }) {
+ *     const graph = layout(props);        // rebuilt only when nodes/edges change
+ *     draw(graph, time);
+ *   }
+ *
+ * @param {(props: object) => any} fn
+ * @param {string[]} [keys] props to compare; defaults to every own key of `props`
+ */
+export function memoizeByProps(fn, keys) {
+  let lastDeps = null;
+  let lastValue;
+  let hasValue = false;
+  const memoized = (props) => {
+    const source = props || {};
+    const deps = (Array.isArray(keys) ? keys : Object.keys(source)).map((k) => source[k]);
+    if (hasValue && lastDeps && deps.length === lastDeps.length && deps.every((v, i) => Object.is(v, lastDeps[i]))) {
+      return lastValue;
+    }
+    lastDeps = deps;
+    lastValue = fn(source);
+    hasValue = true;
+    return lastValue;
+  };
+  /** Drop the cached value so the next call rebuilds. */
+  memoized.invalidate = () => {
+    hasValue = false;
+    lastDeps = null;
+    lastValue = undefined;
+  };
+  return memoized;
+}
+
+// ─── Shape helpers ───────────────────────────────────────────────────────────
+
+/** Build the SVG path `d` string for a rounded rectangle. */
+function roundedRectPath(x, y, w, h, r = 0) {
+  const radius = Math.max(0, Math.min(r, Math.min(Math.abs(w), Math.abs(h)) / 2));
+  if (radius <= 0) return `M ${x} ${y} H ${x + w} V ${y + h} H ${x} Z`;
+  return [
+    `M ${x + radius} ${y}`,
+    `H ${x + w - radius}`,
+    `A ${radius} ${radius} 0 0 1 ${x + w} ${y + radius}`,
+    `V ${y + h - radius}`,
+    `A ${radius} ${radius} 0 0 1 ${x + w - radius} ${y + h}`,
+    `H ${x + radius}`,
+    `A ${radius} ${radius} 0 0 1 ${x} ${y + h - radius}`,
+    `V ${y + radius}`,
+    `A ${radius} ${radius} 0 0 1 ${x + radius} ${y}`,
+    'Z',
+  ].join(' ');
+}
+
+/**
+ * Pure shape geometry: SVG path-string builders plus Canvas2D draw functions.
+ * Stateless, so both halves are usable from canvas and DOM/SVG scripts alike.
+ */
+export const shapes = Object.freeze({
+  /** SVG path for a rounded rectangle. */
+  roundedRect(x, y, w, h, r = 0) {
+    return roundedRectPath(x, y, w, h, r);
+  },
+  /** SVG path for a fully rounded (pill) rectangle. */
+  pill(x, y, w, h) {
+    return roundedRectPath(x, y, w, h, Math.min(Math.abs(w), Math.abs(h)) / 2);
+  },
+  /** SVG path for a diamond centred on (cx, cy). */
+  diamond(cx, cy, w, h) {
+    const hw = Math.abs(w) / 2;
+    const hh = Math.abs(h) / 2;
+    return `M ${cx} ${cy - hh} L ${cx + hw} ${cy} L ${cx} ${cy + hh} L ${cx - hw} ${cy} Z`;
+  },
+  /** SVG path for an arrow from `from` to `to` ({x,y}), optionally curved. */
+  arrowPath(from, to, { curved = false, curvature = 0.25, arrowSize = 10 } = {}) {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len;
+    const uy = dy / len;
+    // Shorten the shaft so the head never overlaps the tip.
+    const shaftX = to.x - ux * arrowSize;
+    const shaftY = to.y - uy * arrowSize;
+    const nx = -uy;
+    const ny = ux;
+    const bow = curved ? curvature * len : 0;
+    const midX = (from.x + shaftX) / 2 + nx * bow;
+    const midY = (from.y + shaftY) / 2 + ny * bow;
+    const headBack1 = `${shaftX + nx * arrowSize * 0.5} ${shaftY + ny * arrowSize * 0.5}`;
+    const headBack2 = `${shaftX - nx * arrowSize * 0.5} ${shaftY - ny * arrowSize * 0.5}`;
+    const shaft = curved
+      ? `M ${from.x} ${from.y} Q ${midX} ${midY} ${shaftX} ${shaftY}`
+      : `M ${from.x} ${from.y} L ${shaftX} ${shaftY}`;
+    return `${shaft} M ${headBack1} L ${to.x} ${to.y} L ${headBack2}`;
+  },
+  /** Canvas2D: fill a rounded rectangle using the current ctx styles. */
+  drawRoundedRect(ctx, x, y, w, h, r = 0) {
+    if (!ctx) return;
+    const radius = Math.max(0, Math.min(r, Math.min(Math.abs(w), Math.abs(h)) / 2));
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(x, y, w, h, radius);
+    } else {
+      ctx.moveTo(x + radius, y);
+      ctx.arcTo(x + w, y, x + w, y + h, radius);
+      ctx.arcTo(x + w, y + h, x, y + h, radius);
+      ctx.arcTo(x, y + h, x, y, radius);
+      ctx.arcTo(x, y, x + w, y, radius);
+      ctx.closePath();
+    }
+    ctx.fill();
+  },
+  /** Canvas2D: draw a straight arrow with a triangular head. */
+  drawArrow(ctx, from, to, { arrowSize = 10 } = {}) {
+    if (!ctx) return;
+    const angle = Math.atan2(to.y - from.y, to.x - from.x);
+    const shaftX = to.x - Math.cos(angle) * arrowSize;
+    const shaftY = to.y - Math.sin(angle) * arrowSize;
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(shaftX, shaftY);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(to.x, to.y);
+    ctx.lineTo(to.x - Math.cos(angle - Math.PI / 6) * arrowSize * 0.6, to.y - Math.sin(angle - Math.PI / 6) * arrowSize * 0.6);
+    ctx.lineTo(to.x - Math.cos(angle + Math.PI / 6) * arrowSize * 0.6, to.y - Math.sin(angle + Math.PI / 6) * arrowSize * 0.6);
+    ctx.closePath();
+    ctx.fill();
+  },
+});
+
+/**
+ * d3-style enter / update / exit for a list of elements inside `layer`, so a
+ * script drawing N shapes from an array does not hand-roll the bookkeeping.
+ *
+ * @param {Element} layer            parent to append into
+ * @param {Array} data
+ * @param {(datum:any, index:number)=>string|number} keyFn  stable identity
+ * @param {object} [handlers]
+ * @param {string} [handlers.tag='g'] SVG tag used when creating an element
+ * @param {(node:Element, datum:any, index:number)=>void} [handlers.enter]
+ * @param {(node:Element, datum:any, index:number)=>void} [handlers.update]
+ * @param {(node:Element)=>void} [handlers.exit]
+ * @returns {Element[]} the nodes, in `data` order
+ */
+export function svgList(layer, data, keyFn, handlers = {}) {
+  if (!layer) return [];
+  const { tag = 'g', enter, update, exit } = handlers;
+  const prev = layer.__blahblahList instanceof Map ? layer.__blahblahList : new Map();
+  const next = new Map();
+  const list = Array.isArray(data) ? data : [];
+  const nodes = list.map((datum, i) => {
+    const key = String(keyFn ? keyFn(datum, i) : i);
+    let node = prev.get(key);
+    if (node) {
+      prev.delete(key);
+      if (update) update(node, datum, i);
+    } else {
+      node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+      if (enter) enter(node, datum, i);
+      layer.appendChild(node);
+    }
+    next.set(key, node);
+    return node;
+  });
+  for (const node of prev.values()) {
+    if (exit) exit(node);
+    node.remove?.();
+  }
+  layer.__blahblahList = next;
+  return nodes;
+}
+
+/**
+ * Merge human-edited entries onto an auto-generated list, keyed by `key`.
+ *
+ *   const merged = mergeManualOverrides(autoNodes, props.nodeOverrides, 'id', ['label', 'x', 'y']);
+ *
+ * Auto entries win on structure; the listed `fields` are taken from the manual
+ * entry when present. Manual entries with no auto counterpart are appended, and
+ * when `fields` is omitted every manual key is copied.
+ */
+export function mergeManualOverrides(autoList = [], manualList = [], key = 'id', fields) {
+  const manual = new Map();
+  for (const entry of Array.isArray(manualList) ? manualList : []) {
+    const k = entry && entry[key];
+    if (k != null) manual.set(String(k), entry);
+  }
+  const keys = Array.isArray(fields) && fields.length > 0 ? fields : null;
+  const seen = new Set();
+  const result = [];
+  for (const auto of Array.isArray(autoList) ? autoList : []) {
+    const k = auto && auto[key];
+    const override = k != null ? manual.get(String(k)) : undefined;
+    if (override) {
+      seen.add(String(k));
+      const merged = { ...auto };
+      if (keys) {
+        for (const f of keys) if (override[f] !== undefined) merged[f] = override[f];
+      } else {
+        for (const [f, v] of Object.entries(override)) if (f !== key) merged[f] = v;
+      }
+      result.push(merged);
+    } else {
+      result.push({ ...auto });
+    }
+  }
+  for (const [k, entry] of manual) {
+    if (!seen.has(k)) result.push({ ...entry });
+  }
+  return result;
 }
 
 // ─── MotionTweenContext ──────────────────────────────────────────────────────
@@ -607,5 +1035,18 @@ export default {
   MotionTweenContext,
   EntityRef,
   AssetRef,
+  // Seekable sequence API + composition helpers
+  tween,
+  wait,
+  hold,
+  offset,
+  chain,
+  all,
+  stagger,
+  applyAt,
+  memoizeByProps,
+  shapes,
+  svgList,
+  mergeManualOverrides,
 };
 

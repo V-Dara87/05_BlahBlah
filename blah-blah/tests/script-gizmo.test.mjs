@@ -37,6 +37,43 @@ test('getByPath and setByPath handles nested structures and arrays immutably', (
   assert.equal(state.config.center.x, 50);
 });
 
+test('a key selector targets the matching array item, not its index', () => {
+  const state = {
+    nodes: [
+      { id: 'n1', x: 100 },
+      { id: 'n2', x: 300 },
+    ],
+  };
+
+  assert.equal(getByPath(state, 'nodes[id=n2].x'), 300);
+  assert.equal(getByPath(state, 'nodes[id=missing].x'), undefined);
+
+  const updated = setByPath(state, 'nodes[id=n1].x', 120);
+  assert.equal(updated.nodes[0].x, 120);
+  assert.equal(state.nodes[0].x, 100, 'original left untouched');
+
+  // Reordering the array does not change which item a key path writes to.
+  const reordered = { nodes: [{ id: 'n2', x: 300 }, { id: 'n1', x: 100 }] };
+  assert.equal(setByPath(reordered, 'nodes[id=n1].x', 999).nodes[1].x, 999);
+
+  // An unmatched selector is a no-op, never a wrong-item write.
+  assert.equal(setByPath(state, 'nodes[id=missing].x', 1), state);
+});
+
+test('array gizmos use the item id as a stable propPath when present', () => {
+  const items = [
+    { id: 'pin1', x: 1, y: 2 },
+    { id: 'pin2', x: 3, y: 4 },
+  ];
+  const gizmos = resolveScriptGizmos({
+    schema: [{ name: 'items', type: 'struct[]', label: 'Items', gizmo: true, defaultVal: items }],
+    props: { items },
+  });
+  assert.equal(gizmos.length, 2);
+  assert.equal(gizmos[0].propPath, 'items[id=pin1]');
+  assert.equal(gizmos[1].propPath, 'items[id=pin2]');
+});
+
 test('resolveScriptGizmos calls getGizmos dynamic hook if implemented', () => {
   const instance = {
     getGizmos({ props, canvasWidth, canvasHeight }) {

@@ -1,25 +1,112 @@
 import { trackKeyFor, getFieldKeyframes, setKeyframe } from './keyframes.js';
 
 /**
- * Reads a nested property by path (e.g. "nodes[0].x" or "center").
+ * Parse a property path into segments. Supported forms:
+ *
+ *   a.b             object key
+ *   a[0].b          array index
+ *   a[foo]          object / array key access (legacy `a.foo`)
+ *   a[id=n3].b      KEY SELECTOR — the array item whose `id` === 'n3'.
+ *
+ * The key-selector form is what keeps a gizmo pointing at the SAME item when a
+ * script re-orders its struct[] list between renders (auto-layout order vs.
+ * stored order), which index paths cannot express.
+ */
+function parsePropPath(path) {
+  const rawParts = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of String(path ?? '')) {
+    if (ch === '[') depth++;
+    else if (ch === ']') depth = Math.max(0, depth - 1);
+    if (ch === '.' && depth === 0) {
+      if (cur) rawParts.push(cur);
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur) rawParts.push(cur);
+
+  return rawParts.map((part) => {
+    const m = part.match(/^([^[\]]+)(?:\[([^\]]*)\])?$/);
+    if (!m) return { key: part, kind: 'key' };
+    const key = m[1];
+    if (m[2] === undefined) return { key, kind: 'key' };
+    const inner = m[2];
+    const eq = inner.indexOf('=');
+    if (eq !== -1) {
+      return { key, kind: 'match', prop: inner.slice(0, eq).trim(), value: inner.slice(eq + 1).trim() };
+    }
+    if (/^\d+$/.test(inner)) return { key, kind: 'index', index: Number(inner) };
+    return { key, kind: 'key', childKey: inner };
+  });
+}
+
+/** Index of the array item matched by a key selector, or -1. */
+function selectorIndex(arr, prop, value) {
+  if (!Array.isArray(arr)) return -1;
+  return arr.findIndex((item) => item && String(item[prop]) === String(value));
+}
+
+/**
+ * Reads a nested property by path (e.g. "nodes[0].x", "nodes[id=n3].x" or
+ * "center").
  */
 export function getByPath(obj, path) {
   if (!obj || !path) return undefined;
-  const parts = path.replace(/\[(\w+)\]/g, '.$1').split('.').filter(Boolean);
   let curr = obj;
-  for (const part of parts) {
+  for (const seg of parsePropPath(path)) {
     if (curr == null) return undefined;
-    curr = curr[part];
+    if (seg.kind === 'key') {
+      curr = seg.childKey !== undefined ? curr[seg.key]?.[seg.childKey] : curr[seg.key];
+    } else if (seg.kind === 'index') {
+      curr = curr[seg.key]?.[seg.index];
+    } else {
+      const arr = curr[seg.key];
+      const idx = selectorIndex(arr, seg.prop, seg.value);
+      curr = idx < 0 ? undefined : arr[idx];
+    }
   }
   return curr;
 }
 
 /**
- * Immutably updates a nested property by path.
+ * Rewrites a path's key selectors into concrete array indices, using `obj` to
+ * resolve them. Returns null when a selector cannot be matched — the caller
+ * must then leave the object untouched rather than write to the wrong item.
+ */
+function resolveIndexPath(obj, path) {
+  const out = [];
+  let curr = obj;
+  for (const seg of parsePropPath(path)) {
+    if (seg.kind === 'match') {
+      const arr = curr?.[seg.key];
+      const idx = selectorIndex(arr, seg.prop, seg.value);
+      if (idx < 0) return null;
+      out.push(`${seg.key}[${idx}]`);
+      curr = arr[idx];
+    } else if (seg.kind === 'index') {
+      out.push(`${seg.key}[${seg.index}]`);
+      curr = curr?.[seg.key]?.[seg.index];
+    } else {
+      out.push(seg.childKey !== undefined ? `${seg.key}.${seg.childKey}` : seg.key);
+      curr = seg.childKey !== undefined ? curr?.[seg.key]?.[seg.childKey] : curr?.[seg.key];
+    }
+  }
+  return out.join('.');
+}
+
+/**
+ * Immutably updates a nested property by path. Key selectors
+ * (`nodes[id=n3].x`) are resolved against `obj` first; if no item matches, the
+ * object is returned unchanged.
  */
 export function setByPath(obj, path, value) {
   if (!path) return obj;
-  const parts = path.replace(/\[(\w+)\]/g, '.$1').split('.').filter(Boolean);
+  const resolvedPath = resolveIndexPath(obj, path);
+  if (!resolvedPath) return obj;
+  const parts = resolvedPath.replace(/\[(\w+)\]/g, '.$1').split('.').filter(Boolean);
   if (parts.length === 0) return obj;
 
   const clone = Array.isArray(obj) ? [...obj] : { ...obj };
@@ -37,6 +124,18 @@ export function setByPath(obj, path, value) {
   }
   curr[parts[parts.length - 1]] = value;
   return clone;
+}
+
+/**
+ * `propName[id=abc]` when the item carries a selector-safe `id`, else
+ * `propName[idx]`. A key selector must survive the path parser, so ids
+ * containing `]`, `=` or `.` fall back to the index.
+ */
+function arrayItemPropPath(propName, item, itemIdx) {
+  const rawId = item && item.id;
+  const id = rawId == null ? '' : String(rawId);
+  if (id && /^[A-Za-z0-9_-]+$/.test(id)) return `${propName}[id=${id}]`;
+  return `${propName}[${itemIdx}]`;
 }
 
 /**
@@ -125,7 +224,12 @@ export function resolveScriptGizmos({
               y: item.y,
               width: item.width || 40,
               height: item.height || 40,
-              propPath: `${propName}[${itemIdx}]`,
+              // Prefer the item's own id as a STABLE selector over its current
+              // index: a script that re-orders `struct[]` between renders (an
+              // auto-layout pass vs. the stored order) would otherwise make an
+              // index path target a different item after the reorder, so a
+              // gizmo drag silently overwrote the wrong entry.
+              propPath: arrayItemPropPath(propName, item, itemIdx),
               axes: itemAxes,
               space: item.space || gizmoOpt.space || 'local',
               rotation: item.rotation || gizmoOpt.rotation || 0,
