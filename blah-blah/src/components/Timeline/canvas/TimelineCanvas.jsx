@@ -13,6 +13,8 @@ import { isVideoEntity, isAudioEntity } from '../../../engine/ecs';
 import { ContextMenu } from '../../shared/ContextMenu';
 import { hasClipboardClips } from '../../../utils/clipClipboard';
 import { buildGapRemovalUpdates } from '../../../utils/removeGaps';
+import { spawnDroppedItemOnTrack } from '../../../utils/timelineDrop';
+import { DRAG_PAYLOAD_MIME } from '../../../utils/dragData';
 import {
   findTransitionNeighbours,
   maxTransitionDuration,
@@ -312,6 +314,13 @@ export const TimelineCanvas = memo(function TimelineCanvas({
   onPasteClips,
   onSplitVideoAndAudio,
   onOpenSilenceRemover,
+  // ── Drag & drop onto a lane ───────────────────────────────────────────
+  // The same callbacks the DOM path's TrackLane receives. In canvas mode the
+  // canvas layer is the topmost surface over the lanes, so a media/asset drop
+  // lands HERE — the `.track-lane-spacer` rows underneath never see the event
+  // (the overlay has pointer-events: auto and sits above them).
+  onDropItemOnTrack,
+  onAddMediaAsset,
 }) {
   const playbackStore = usePlaybackStore();
   const hostRef = useRef(null);
@@ -359,7 +368,16 @@ export const TimelineCanvas = memo(function TimelineCanvas({
   // Shape: { sourceClipId, x, y, targetClipId, isCycle }.
   const pickwhipRef = useRef(null);
   const [pickwhipVersion, setPickwhipVersion] = useState(0);
- 
+
+  // Track currently under an in-progress drop drag (OS file drop or in-app
+  // asset drag), or null. Drives the same blue lane highlight the DOM path
+  // gets from `.track-lane-row.drag-target`. Ref+state for the same reason as
+  // hover: the rAF draw reads the ref, and the state only re-runs the draw
+  // effect when the target lane actually changes rather than on every
+  // dragover tick.
+  const dragOverTrackIdRef = useRef(null);
+  const [dragOverTrackId, setDragOverTrackId] = useState(null);
+
   // The scene depends ONLY on what changes geometry. `selectedIds` is
   // deliberately NOT here: selection is a draw-time highlight (state.selectedIds
   // below), and keying the layout on it meant every click and every lasso tick
@@ -404,6 +422,7 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     recordingStartTime,
     recordingLevel,
     silenceCuts,
+    dragOverTrackId,
   };
   const themeRef = useRef(null);
  
@@ -600,6 +619,10 @@ export const TimelineCanvas = memo(function TimelineCanvas({
             }
           : null,
         silenceCuts: cuts,
+        // Which lane an in-progress drop is hovering, so drawLaneBackground can
+        // paint the same blue `drag-target` highlight the DOM path gets from
+        // `.track-lane-row.drag-target`.
+        dragOverTrackId: latestRef.current.dragOverTrackId,
         peaksFor: (item) => (wantsWaveform(item) ? ensureEnvelope(item) : null),
         peaksPending: (item) => (wantsWaveform(item) ? isEnvelopePending(item) : false),
       },
@@ -632,7 +655,7 @@ export const TimelineCanvas = memo(function TimelineCanvas({
   // box (dockview shows/hides panels, so the size can change without a scroll).
   useEffect(() => {
     schedule();
-  }, [schedule, scene, selectedIds, exportRange, recordingTrackId, recordingStartTime, recordingLevel, silenceCuts, stateVersion, hoverVersion, lassoVersion, pickwhipVersion]);
+  }, [schedule, scene, selectedIds, exportRange, recordingTrackId, recordingStartTime, recordingLevel, silenceCuts, stateVersion, hoverVersion, lassoVersion, pickwhipVersion, dragOverTrackId]);
  
   // While recording, the preview bar grows with the playhead, which moves
   // without any React re-render — so subscribe to the playback store's frame
@@ -1615,6 +1638,73 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     closeCtxMenu();
   };
 
+  // ── Drag & drop onto a lane ───────────────────────────────────────────
+  // The canvas layer is the topmost surface over the lanes, so in this mode a
+  // dragged media asset / project item lands here — Timeline.jsx's per-row
+  // `.track-lane-spacer` divs never receive the event. Same payload handling
+  // as the DOM path, via the shared spawnDroppedItemOnTrack helper.
+
+  /** The scene row whose Y range contains a content-space y, or null. */
+  const trackRowAtContentY = useCallback((y) => {
+    const currentScene = latestRef.current.scene;
+    if (!currentScene) return null;
+    return currentScene.rows.find((row) => y >= row.y && y < row.y + row.height) || null;
+  }, []);
+
+  /** Is this drag one the timeline handles (in-app JSON payload or OS files)? */
+  const isTrackDrop = (event) => {
+    const dt = event.dataTransfer;
+    if (!dt) return false;
+    if (dt.files && dt.files.length > 0) return true;
+    return typeof dt.types?.includes === 'function' && dt.types.includes(DRAG_PAYLOAD_MIME);
+  };
+
+  const handleDragOver = useCallback((event) => {
+    if (!isTrackDrop(event)) return;
+    event.preventDefault();
+    const point = contentPointAtClientPoint(event.clientX, event.clientY);
+    const row = point ? trackRowAtContentY(point.y) : null;
+    const trackId = row && !row.track?.locked ? row.trackId : null;
+    if (event.dataTransfer) event.dataTransfer.dropEffect = trackId ? 'copy' : 'none';
+    if (dragOverTrackIdRef.current !== trackId) {
+      dragOverTrackIdRef.current = trackId;
+      setDragOverTrackId(trackId);
+    }
+  }, [contentPointAtClientPoint, trackRowAtContentY]);
+
+  const handleDragLeave = useCallback((event) => {
+    // Moving between the layer and its own <canvas> child also fires dragleave,
+    // so only clear when the pointer actually leaves the overlay.
+    if (event.currentTarget.contains(event.relatedTarget)) return;
+    if (dragOverTrackIdRef.current === null) return;
+    dragOverTrackIdRef.current = null;
+    setDragOverTrackId(null);
+  }, []);
+
+  const handleDrop = useCallback((event) => {
+    const point = contentPointAtClientPoint(event.clientX, event.clientY);
+    const row = point ? trackRowAtContentY(point.y) : null;
+    if (dragOverTrackIdRef.current !== null) {
+      dragOverTrackIdRef.current = null;
+      setDragOverTrackId(null);
+    }
+    if (!row || row.track?.locked) return;
+    event.preventDefault();
+    // Stop the drop reaching useOsFileDrop's document-level listener, which
+    // would otherwise import an OS file a second time (and without a track).
+    event.stopPropagation();
+    const pps = latestRef.current.pixelsPerSecond || 1;
+    const dropTime = Math.max(0, (point?.x ?? 0) / pps);
+    spawnDroppedItemOnTrack({
+      event,
+      dropTime,
+      targetTrackId: row.trackId,
+      mediaAssets: latestRef.current.mediaAssets,
+      onAddMediaAsset,
+      onDropItemOnTrack,
+    });
+  }, [contentPointAtClientPoint, trackRowAtContentY, onAddMediaAsset, onDropItemOnTrack]);
+
   return (
     <div
       ref={hostRef}
@@ -1624,6 +1714,9 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       onPointerDown={handlePointerDown}
       onPointerUp={handlePointerUp}
       onContextMenu={handleContextMenu}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
     >
       <canvas ref={canvasRef} className="timeline-canvas" />
       {ctxMenu && ctxClip && (

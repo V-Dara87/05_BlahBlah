@@ -68,6 +68,10 @@ const FALLBACK = Object.freeze({
  * composited.
  */
 const LANE_OVERLAY_RGB = [28, 28, 32];
+
+/** `.track-lane-row.drag-target`: background rgba(37,99,235,0.15), border #2563eb. */
+const DRAG_TARGET_FILL = 'rgba(37, 99, 235, 0.15)';
+const DRAG_TARGET_BORDER = '#2563eb';
 const LANE_OVERLAY_ALPHA = 0.4;
 
 /** `#rrggbb` -> `[r, g, b]`, or null when it is not a plain hex colour. */
@@ -216,6 +220,7 @@ export function readTimelineTheme(el) {
  * @param {object|null} [params.state.exportRange] {in, out} seconds
  * @param {{x0:number,y0:number,x1:number,y1:number}|null} [params.state.lasso] content-space box
  * @param {object|null} [params.state.hover] {clipId, zone} | {trackId} | null
+ * @param {string|null} [params.state.dragOverTrackId] lane an in-progress drop is over
  * @param {object|null} [params.state.recording] {trackId, startTime, level}
  * @param {Map<string, object>} [params.state.silenceCuts] clipId -> cuts[]
  * @param {(item: object) => object|null} [params.state.peaksFor] envelope lookup for a clip
@@ -249,7 +254,7 @@ export function drawTimelineScene(ctx, {
   ctx.rect(scrollLeft, scrollTop, width, height);
   ctx.clip();
 
-  drawLaneBackground(ctx, { scene, theme, view });
+  drawLaneBackground(ctx, { scene, theme, view, dragOverTrackId: state.dragOverTrackId });
   drawGrid(ctx, { scene, theme, view, pps });
 
   // Export-range dimming belongs BEHIND the cards, matching the DOM timeline
@@ -307,7 +312,7 @@ export function drawTimelineScene(ctx, {
 }
 
 /** Lane rows + their divider lines + the locked-track hatching. */
-function drawLaneBackground(ctx, { scene, theme, view }) {
+function drawLaneBackground(ctx, { scene, theme, view, dragOverTrackId = null }) {
   const left = view.scrollLeft;
   const width = view.width;
   for (const row of scene.rows) {
@@ -325,6 +330,17 @@ function drawLaneBackground(ctx, { scene, theme, view }) {
 
     ctx.fillStyle = theme.divider;
     ctx.fillRect(left, row.y + row.height - 1, width, 1);
+
+    // The lane a drop is currently over, matching `.track-lane-row.drag-target`
+    // (a translucent blue fill plus a solid blue top/bottom edge). A locked
+    // track never reaches here — TimelineCanvas clears the target for those.
+    if (dragOverTrackId && dragOverTrackId === row.trackId) {
+      ctx.fillStyle = DRAG_TARGET_FILL;
+      ctx.fillRect(left, row.y, width, row.height);
+      ctx.fillStyle = DRAG_TARGET_BORDER;
+      ctx.fillRect(left, row.y, width, 1);
+      ctx.fillRect(left, row.y + row.height - 1, width, 1);
+    }
   }
 
   // Below the last row (empty space past the tracks) is the scroll area's own

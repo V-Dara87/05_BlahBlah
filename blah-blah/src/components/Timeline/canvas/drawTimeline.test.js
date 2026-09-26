@@ -261,6 +261,39 @@ test('grid lines and lane backgrounds match the DOM classes they replace', () =>
   assert.ok(locked.strokedWith.includes(theme.laneLockedB));
 });
 
+test('the drag target lane is highlighted like .track-lane-row.drag-target', () => {
+  const theme = readTimelineTheme(null);
+  const scene = buildTimelineScene({
+    tracks: TRACKS,
+    clips: [clip('a', 0, 4)],
+    pixelsPerSecond: 40,
+  });
+  const ctx = mockContext();
+  drawTimelineScene(ctx, {
+    scene,
+    theme,
+    view: { scrollLeft: 0, scrollTop: 0, width: 200, height: 160 },
+    state: { dragOverTrackId: 't1' },
+  });
+
+  assert.ok(
+    ctx.filledRects.some((r) => r.style === 'rgba(37, 99, 235, 0.15)' && r.y === 0 && r.h === TRACK_HEIGHT),
+    'the row gets the translucent blue drag-target fill'
+  );
+  const border = ctx.filledRects.filter((r) => r.style === '#2563eb' && r.h === 1);
+  assert.deepEqual(border.map((r) => r.y).sort((a, b) => a - b), [0, TRACK_HEIGHT - 1]);
+
+  // With no target lane there is no highlight at all.
+  const none = mockContext();
+  drawTimelineScene(none, {
+    scene,
+    theme,
+    view: { scrollLeft: 0, scrollTop: 0, width: 200, height: 160 },
+    state: {},
+  });
+  assert.ok(!none.filledRects.some((r) => r.style === 'rgba(37, 99, 235, 0.15)'));
+});
+
 test('a locked track draws but reports no interactive handles', () => {
   const scene = buildTimelineScene({
     tracks: [{ id: 't1', name: 'locked', visible: true, locked: true }],

@@ -6,7 +6,7 @@ import { ContextMenu } from '../shared/ContextMenu';
 import { hasClipboardClips } from '../../utils/clipClipboard';
 import { LiveRecordingClipPreview } from './LiveRecordingClipPreview';
 import { TRACK_HEIGHT, computeClipSubLanes, getTickIntervalSeconds, isTransitionClipLike } from '../../utils/timelineLayout';
-import { importMediaFiles, detectMediaKind } from '../../services/mediaImport';
+import { spawnDroppedItemOnTrack } from '../../utils/timelineDrop';
 import './track-lane.css';
  
 /**
@@ -94,57 +94,18 @@ export const TrackLane = memo(function TrackLane({
   // the lines running through the track lane always line up with the
   // ruler instead of staying a fixed 40px regardless of zoom.
   const gridSpacingPx = getTickIntervalSeconds(pixelsPerSecond) * pixelsPerSecond;
- 
+
   const spawnFromDrop = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const dropTime = Math.max(0, (e.clientX - rect.left) / pixelsPerSecond);
- 
-    const files = e.dataTransfer?.files;
-    if (files && files.length > 0 && onAddMediaAsset && onDropItemOnTrack) {
-      // FIXED — same MIME-only filter bug as mediaImport.js: some
-      // platforms (Tauri drag&drop especially) report an empty file.type
-      // for formats like .wav, which silently dropped them here before
-      // importMediaFiles ever got a chance to run its own (now also
-      // extension-aware) check. detectMediaKind falls back to the file
-      // extension when the MIME type is missing/unrecognized.
-      const fileList = Array.from(files).filter((f) => detectMediaKind(f) !== null);
-      if (fileList.length > 0) {
-        importMediaFiles({
-          files: fileList,
-          mediaAssets,
-          onAddMediaAsset: (asset, file) => {
-            onAddMediaAsset(asset, file);
-            onDropItemOnTrack({
-              itemType: 'media',
-              itemId: asset.id,
-              itemData: asset,
-              targetTrackId: track.id,
-              startTime: dropTime,
-            });
-          },
-        });
-        return true;
-      }
-    }
- 
-    // In-app drag (Project panel media/prefab/script, shared library).
-    try {
-      const dataStr = e.dataTransfer.getData('application/json');
-      if (!dataStr) return false;
-      const data = JSON.parse(dataStr);
-      if (onDropItemOnTrack) {
-        onDropItemOnTrack({
-          itemType: data.itemType,
-          itemId: data.itemData?.id,
-          itemData: data.itemData,
-          targetTrackId: track.id,
-          startTime: dropTime,
-        });
-      }
-      return true;
-    } catch {
-      return false;
-    }
+    return spawnDroppedItemOnTrack({
+      event: e,
+      dropTime,
+      targetTrackId: track.id,
+      mediaAssets,
+      onAddMediaAsset,
+      onDropItemOnTrack,
+    });
   };
  
   const handleDragOver = (e) => {

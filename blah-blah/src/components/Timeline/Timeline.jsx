@@ -1510,6 +1510,11 @@ export const Timeline = memo(function Timeline({
               onPasteClips={onPasteClips}
               onSplitVideoAndAudio={onSplitVideoAndAudio}
               onOpenSilenceRemover={onOpenSilenceRemover}
+              // Drop handling: the canvas layer is the top surface over the
+              // lanes in this mode, so it owns a drop that the (clip-less)
+              // `.track-lane-spacer` rows can't receive.
+              onDropItemOnTrack={onDropItemOnTrack}
+              onAddMediaAsset={onAddMediaAsset}
             />
           )}
         </div>
