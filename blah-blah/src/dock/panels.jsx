@@ -311,7 +311,6 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
         onCopySelected={onCopySelected}
         onCutSelected={onCutSelected}
         onPasteClips={onPasteClips}
-        canvasTimeline={Boolean(editorSettings?.canvasTimeline)}
         zoomAnchorMode={editorSettings?.zoomAnchorMode === 'playhead' ? 'playhead' : 'cursor'}
         onUpdateTrack={handleUpdateTrack}
         onDeleteTrack={handleDeleteTrack}

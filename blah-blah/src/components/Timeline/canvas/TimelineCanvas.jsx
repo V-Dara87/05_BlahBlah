@@ -23,11 +23,11 @@ import {
 } from '../../../engine/renderPipeline';
 import './canvas-timeline.css';
 // .ctx-menu-item/.ctx-menu-row/.ctx-menu-label/.ctx-menu-hint/.ctx-menu-divider
-// (all scoped under .clip-context-menu) are defined in clip-item.css, which
-// ClipItem.jsx imports for the DOM path. ClipItem.jsx is never mounted in
-// canvas mode (see the file header), so without this import the ported
-// context menu below would render completely unstyled the first time
-// nothing else in the app happens to have pulled clip-item.css in already.
+// (all scoped under .clip-context-menu) live in clip-item.css — a leftover
+// filename from the removed DOM renderer, kept because the canvas's own clip
+// and lane context menus (below) depend on those styles. Without this import
+// the menus would render completely unstyled the first time nothing else in
+// the app happens to have pulled clip-item.css in already.
 import '../clip-item.css';
  
 /** Return true if candidateChild is a descendant of ancestorId (cycle guard).
@@ -1451,13 +1451,11 @@ export const TimelineCanvas = memo(function TimelineCanvas({
   }, [scrollRef]);
 
   /**
-   * Right-click clip menu, ported from ClipItem.jsx's own
-   * handleContextMenu/<ContextMenu> (cut/copy/paste/duplicate/split
-   * audio/cut silence/parent linking). ClipItem.jsx is never mounted in
-   * canvas mode (Timeline.jsx renders only a spacer div per row when
-   * canvasTimeline is on — see that file), so this feature simply didn't
-   * exist here yet; it isn't something the pan fix above broke. Reused
-   * verbatim: same menu items, same enable/disable conditions, same
+   * Right-click clip menu (cut/copy/paste/duplicate/split audio/cut
+   * silence/parent linking), ported from the old DOM ClipItem.jsx's own
+   * handleContextMenu/<ContextMenu>. The canvas is the only renderer now —
+   * ClipItem.jsx has been removed — so this is the sole implementation of
+   * that menu. Same menu items, same enable/disable conditions, same
    * selection-then-act sequencing (right-clicking a clip outside the
    * current selection selects it first, deferring the copy/cut/paste
    * handler by one tick so it sees the updated selection — same as
@@ -1467,10 +1465,28 @@ export const TimelineCanvas = memo(function TimelineCanvas({
   const closeCtxMenu = useCallback(() => setCtxMenu(null), []);
   const ctxSelectionWillChangeRef = useRef(false);
 
+  // Bare-lane right-click menu, ported from TrackLane.handleLaneContextMenu:
+  // { x, y, time } | null. Clips stop their own contextmenu at the hit test
+  // above, so this only ever opens on empty lane space.
+  const [laneMenu, setLaneMenu] = useState(null);
+  const closeLaneMenu = useCallback(() => setLaneMenu(null), []);
+
   const handleContextMenu = useCallback((event) => {
     const hit = hitTestAtClientPoint(event.clientX, event.clientY);
-    if (hit?.type !== 'clip' || hit.item.kind === 'transition') return; // No menu for transitions/empty space, matching ClipItem.jsx (transitions have no context menu) and the DOM path's lack of one on bare lane space.
+
+    // Empty lane space -> Paste menu at the clicked time. A locked track can't
+    // receive new clips, so it falls through to the browser default.
+    if (hit?.type === 'lane') {
+      if (hit.track?.locked) return;
+      event.preventDefault();
+      setCtxMenu(null);
+      setLaneMenu({ x: event.clientX, y: event.clientY, time: hit.time });
+      return;
+    }
+
+    if (hit?.type !== 'clip' || hit.item.kind === 'transition') return; // No menu for transitions, or empty space past the last track.
     event.preventDefault();
+    setLaneMenu(null);
 
     const { selectedIds: currentSelectedIds } = latestRef.current;
     const clipId = hit.clipId;
@@ -1638,6 +1654,16 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     closeCtxMenu();
   };
 
+  const handleLanePaste = () => {
+    const at = laneMenu?.time;
+    closeLaneMenu();
+    // Paste lands at the playhead, so move the playhead to the clicked spot
+    // first. Store updates are synchronous, but the paste handler reads the
+    // playhead time when it runs, so defer one tick to be safe.
+    if (Number.isFinite(at) && onSeek) onSeek(at);
+    setTimeout(() => onPasteClips?.(), 0);
+  };
+
   // ── Drag & drop onto a lane ───────────────────────────────────────────
   // The canvas layer is the topmost surface over the lanes, so in this mode a
   // dragged media asset / project item lands here — Timeline.jsx's per-row
@@ -1719,6 +1745,18 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       onDrop={handleDrop}
     >
       <canvas ref={canvasRef} className="timeline-canvas" />
+      {laneMenu && (
+        <ContextMenu x={laneMenu.x} y={laneMenu.y} onClose={closeLaneMenu} className="clip-context-menu" minWidth={160}>
+          <button
+            className="ctx-menu-item ctx-menu-row"
+            onClick={handleLanePaste}
+            disabled={!hasClipboardClips() || !onPasteClips}
+          >
+            <span className="ctx-menu-label"><ClipboardPaste size={12} /> Paste</span>
+            <span className="ctx-menu-hint">Ctrl+V</span>
+          </button>
+        </ContextMenu>
+      )}
       {ctxMenu && ctxClip && (
         <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onClose={closeCtxMenu} className="clip-context-menu" minWidth={170}>
           {onCutSelected && !ctxIsLocked && (

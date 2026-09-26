@@ -191,8 +191,3 @@
   cursor: grabbing;
 }
  
-.timeline-box-select {
-  border: 1.5px dashed rgba(var(--unity-accent-rgb), 0.8);
-  background: rgba(var(--unity-accent-rgb), 0.08);
-  border-radius: 2px;
-}

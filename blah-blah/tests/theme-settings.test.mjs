@@ -249,7 +249,6 @@ test('no stylesheet freezes a themed colour as a literal any more', () => {
     '../src/dock/dockview-unity-theme.css',
     '../src/components/Timeline/clip-item.css',
     '../src/components/Timeline/timeline.css',
-    '../src/components/Timeline/track-lane.css',
     '../src/components/unity-inspector.css',
     '../src/components/project-panel.css',
     '../src/components/shell/unity-header.css',

@@ -179,27 +179,6 @@ export function SystemTab({ onResetAll, editorSettings, onEditorSettingsChange }
         </div>
       )}
 
-      {onEditorSettingsChange && (
-        <div className="form-field-group settings-group-spaced">
-          <label className="form-label">Timeline rendering</label>
-          <label className="settings-check-row">
-            <input
-              type="checkbox"
-              checked={Boolean(editorSettings?.canvasTimeline)}
-              onChange={(e) => onEditorSettingsChange({ ...(editorSettings || {}), canvasTimeline: e.target.checked })}
-            />
-            <span>
-              Draw the timeline on a canvas (experimental)
-              <span className="hint-text-sm settings-hint-block">
-                Renders the clips, lanes and waveforms with one canvas instead of a component per
-                clip, which is much faster on very long projects. Editing tools (drag, trim, menus)
-                are still being ported to it — turn this off to get the classic timeline back.
-              </span>
-            </span>
-          </label>
-        </div>
-      )}
-
       {onResetAll && (
         <div className="form-field-group settings-group-spaced">
           <label className="form-label">Reset</label>

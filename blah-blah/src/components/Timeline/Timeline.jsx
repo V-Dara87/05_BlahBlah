@@ -1,48 +1,23 @@
 /**
  * Timeline — the clip/lane area of the editor.
  *
- * TWO RENDERERS, ONE MODEL
+ * ONE RENDERER
  * ----------------------------------------------------------------------------
- * With the `canvasTimeline` editor setting OFF (the default) this component
- * renders the classic DOM timeline: one TrackLane per track, one ClipItem per
- * clip, each with its own pointer handlers and waveform canvas. With it ON, the
- * clip/lane area is drawn by components/Timeline/canvas/TimelineCanvas.jsx —
- * one viewport-sized canvas over a spacer of the same size — while everything
- * else here stays React: the toolbar, track headers, minimap scrollbar, zoom
- * and scroll logic, context menus, the Inspector, and the playhead (a DOM
- * element updated through playbackStore without a React render). Both paths
- * read their geometry from the SAME model (utils/timelineScene.js), so a clip
- * is in the same place either way.
- *
- * The canvas path in progress is view-only for trim/pickwhip/menus/drops, and
- * now has click select + multi-select, lasso/box-select, and move + Alt-
- * duplicate + Ctrl-drag-to-parent (plan steps 2–4); the DOM path is the
- * supported default and stays until the canvas has parity.
- *
- * WHEN THE CANVAS BECOMES THE DEFAULT (rollout checklist, plan step 8): once
- * the parity walk-through passes (selection, multi-select, Alt-duplicate,
- * Ctrl-parent, trims, silence cuts, transitions, drops, menus, locked tracks,
- * undo granularity) and the frame-time measurements on a ~1 hour / ~3000 clip
- * test project look right while scrolling, wheel-zooming, dragging, trimming
- * and playing, the DOM renderer can be deleted. Files that then go away:
- *   components/Timeline/ClipItem.jsx        (cards → canvas draw)
- *   components/Timeline/TrackLane.jsx       (lane + drop targets → canvas)
- *   components/Timeline/TransitionClipItem.jsx
- *   components/Timeline/TimeRuler.jsx       (ruler ticks → canvas draw)
- *   components/shared/WaveformCanvas.jsx    (per-clip canvas → drawWaveform)
- * Keeping them one release behind the setting is intentional, so anyone who
- * hits a canvas bug has a working timeline to switch back to.
+ * The clip/lane area is drawn by components/Timeline/canvas/TimelineCanvas.jsx
+ * — one viewport-sized canvas over a spacer of the same size. Everything else
+ * here stays React: the toolbar, track headers, ruler, minimap scrollbar, zoom
+ * and scroll logic, and the playhead (a DOM element updated through
+ * playbackStore without a React render). Geometry comes from the shared model
+ * (utils/timelineScene.js).
  */
 import { useRef, useState, useMemo, useCallback, useEffect, useLayoutEffect, memo } from 'react';
 import { Plus, ZoomIn, ZoomOut, ArrowLeftToLine, ArrowRightToLine, X } from 'lucide-react';
 import { TimeRuler } from './TimeRuler';
 import { formatTimecode } from '../../utils/timeFormat';
 import { TrackHeader } from './TrackHeader';
-import { TrackLane } from './TrackLane';
 import { PlayheadHandle, PlayheadLine } from './Playhead';
 import { usePlaybackStore } from '../../hooks/PlaybackContext';
 import { registerTimelineCenterOnPlayhead } from '../../services/timelineViewControls';
-import { applyEdgeAutoScroll } from '../../utils/timelineAutoScroll';
 import { TimelineCanvas } from './canvas/TimelineCanvas';
 // The zoom bounds + step live with the view state itself
 // (dock/TimelineViewContext owns pixelsPerSecond), so the clamp here can never
@@ -73,10 +48,10 @@ const ZOOM_WHEEL_IMPULSE = 0.5;
 const ZOOM_WHEEL_MAX_DELTA = 60;
  
 // Vertical layout constants + pure lane geometry for the flat timeline
-// live in utils/timelineLayout.js (shared with TrackLane / TrackHeader and
-// unit-tested). Re-exported here so existing importers stay unchanged.
+// live in utils/timelineLayout.js (shared with TrackHeader and unit-tested).
+// Re-exported here so existing importers stay unchanged.
 export { TRACK_HEIGHT } from '../../utils/timelineLayout';
-import { TRACK_HEIGHT, computeTrackLanes, isTransitionClipLike } from '../../utils/timelineLayout';
+import { computeTrackLanes, isTransitionClipLike } from '../../utils/timelineLayout';
 import './timeline.css';
  
 export const Timeline = memo(function Timeline({
@@ -85,7 +60,6 @@ export const Timeline = memo(function Timeline({
   mediaAssets = [],
   totalDuration,
   pixelsPerSecond,
-  selectedClipId,
   snappingEnabled,
   recordingTrackId,
   recordingStartTime = 0,
@@ -97,8 +71,8 @@ export const Timeline = memo(function Timeline({
   onDuplicateClips,
   onDeleteClip,
   // Clipboard actions for the timeline's right-click menus. These have always
-  // been passed down from panels.jsx (and TrackLane/ClipItem have always
-  // declared them) but were never declared HERE, so they arrived as
+  // been passed down from panels.jsx (and the removed TrackLane/ClipItem used
+  // to declare them) but were never declared HERE, so they arrived as
   // `undefined` and Copy / Cut / Paste silently never appeared in either menu.
   onCopySelected,
   onCutSelected,
@@ -120,15 +94,11 @@ export const Timeline = memo(function Timeline({
   onClearSelection,
   setSelectedIds,
   setSelectedEntityId,
-  onAttachScriptToEntity,
   onAddMediaAsset,
   onSplitVideoAndAudio,
   onOpenSilenceRemover,
   onOpenSilenceRemoverForTrack,
   silencePreviewData = null,
-  // Draw the clip/lane area on a canvas instead of one ClipItem per clip
-  // (services/editorSettings.js -> canvasTimeline). Off = today's DOM path.
-  canvasTimeline = false,
   // What screen position Ctrl/Cmd+wheel zoom holds fixed while pixelsPerSecond
   // changes (services/editorSettings.js -> zoomAnchorMode). 'cursor' (default)
   // anchors on the mouse position over the lanes; 'playhead' anchors on the
@@ -137,13 +107,10 @@ export const Timeline = memo(function Timeline({
   // anchor to, so they always use the playhead regardless of this setting.
   zoomAnchorMode = 'cursor',
 }) {
-  const [boxSelect, setBoxSelect] = useState(null); // { startX, startY, endX, endY } for lasso
   const playbackStore = usePlaybackStore();
   const lanesScrollRef = useRef(null);
-  const lanesSurfaceRef = useRef(null);
   const rulerScrollRef = useRef(null);
   const scrollAreaRef = useRef(null);
-  const justDraggedRef = useRef(false);
   const lastUserScrollTimeRef = useRef(0);
   // Raw last-observed scrollLeft plus a short "restoring" flag — see
   // handleLanesScroll / restoreScrollPosition below. dockview hides panels
@@ -213,24 +180,11 @@ export const Timeline = memo(function Timeline({
   // TrackHeader.jsx's resize handle and track.height in types.js.
   const layout = useMemo(() => {
     const trackRows = computeTrackLanes(tracks, clips);
-    const clipPositions = new Map(); // clipId -> { top, height }
     let surfaceY = 0;
- 
     for (const row of trackRows) {
-      row.y = surfaceY;
-      row.clips.forEach((clip) => {
-        // BUG FIX: this previously hardcoded TRACK_HEIGHT regardless of
-        // the row's actual (possibly resized) height, so box-select's
-        // vertical hit-test against pos.top + pos.height silently used
-        // the wrong bottom edge for any track the user had resized —
-        // clips in a taller track could fail to box-select past 64px in,
-        // and clips in a shorter track had a hit-box taller than the row.
-        clipPositions.set(clip.id, { top: surfaceY, height: row.rowHeight });
-      });
       surfaceY += row.rowHeight;
     }
- 
-    return { trackRows, clipPositions, surfaceY };
+    return { trackRows, surfaceY };
   }, [tracks, clips]);
  
   const timelineLanesHeight = Math.max(layout.surfaceY, 180);
@@ -989,171 +943,7 @@ export const Timeline = memo(function Timeline({
     // owns the eased loop), so a zoom gesture no longer tears down and
     // re-attaches this listener once per frame.
   }, [startSmoothScroll, stopSmoothScroll, zoomBy, playbackStore, zoomAnchorMode]);
- 
-  const handleLanesPointerDown = (e) => {
-    stopSmoothScroll();
-    if (
-      e.target.closest('.timeline-clip-card') ||
-      e.target.closest('.track-header-sticky') ||
-      e.target.closest('.track-btn') ||
-      e.target.closest('.track-name-input')
-    ) {
-      return;
-    }
- 
-    // Right mouse button, middle mouse button, or Alt/Space drag: Pan.
-    // Right-click pan suppresses the browser's native context menu for
-    // the duration of the gesture (see handlePanStart) so a right-drag
-    // never flashes the OS menu on release — a plain right-click with no
-    // movement still lets the menu through as normal.
-    if (e.button === 2 || e.button === 1 || e.altKey) {
-      handlePanStart(e);
-      return;
-    }
- 
-    // Left mouse button: Marquee/Lasso Selection
-    if (e.button === 0) {
-      handleLassoStart(e);
-    }
-  };
- 
-  const handlePanStart = (e) => {
-    const scroller = lanesScrollRef.current;
-    if (!scroller) return;
-    e.preventDefault();
-    const isRightButton = e.button === 2;
-    const startClientX = e.clientX;
-    const startClientY = e.clientY;
-    const startScrollLeft = scroller.scrollLeft;
-    const startScrollTop = scroller.scrollTop;
-    let hasMoved = false;
- 
-    const onMove = (me) => {
-      if (!hasMoved) {
-        const movedPx = Math.abs(me.clientX - startClientX) + Math.abs(me.clientY - startClientY);
-        if (movedPx > 2) hasMoved = true;
-      }
-      scroller.scrollLeft = startScrollLeft - (me.clientX - startClientX);
-      scroller.scrollTop = startScrollTop - (me.clientY - startClientY);
-    };
-    // Right-click-drag needs its context menu suppressed only for the
-    // gesture that actually panned — a right-click with no movement
-    // should still open the menu normally, same as anywhere else.
-    const onContextMenu = (ce) => {
-      if (isRightButton && hasMoved) {
-        ce.preventDefault();
-      }
-    };
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      if (isRightButton) {
-        // The 'contextmenu' event fires right after 'pointerup' for the
-        // same right-click, so this listener has to still be attached
-        // when it fires — remove it on the next tick instead of now.
-        setTimeout(() => {
-          window.removeEventListener('contextmenu', onContextMenu, true);
-        }, 0);
-      }
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-    if (isRightButton) {
-      window.addEventListener('contextmenu', onContextMenu, true);
-    }
-  };
- 
-  const handleLassoStart = (e) => {
-    e.preventDefault();
-    const surfaceEl = lanesSurfaceRef.current;
-    if (!surfaceEl) return;
-    const surfaceRect = surfaceEl.getBoundingClientRect();
-    const startX = e.clientX - surfaceRect.left;
-    const startY = e.clientY - surfaceRect.top;
-    const isAdditive = e.shiftKey;
-    const baseSelected = isAdditive ? [...selectedIds] : [];
-    let hasMoved = false;
- 
-    setBoxSelect({ startX, startY, endX: startX, endY: startY });
-    if (!isAdditive) {
-      onClearSelection();
-    }
- 
-    const onMove = (me) => {
-      if (!lanesSurfaceRef.current) return;
-      const curRect = lanesSurfaceRef.current.getBoundingClientRect();
-      const endX = me.clientX - curRect.left;
-      const endY = me.clientY - curRect.top;
- 
-      if (Math.abs(endX - startX) > 4 || Math.abs(endY - startY) > 4) {
-        hasMoved = true;
-        justDraggedRef.current = true;
-      }
-      setBoxSelect({ startX, startY, endX, endY });
- 
-      // Edge auto-scroll during lasso. The shared helper also mirrors the
-      // scroll onto the ruler so its tick marks stay aligned with the lanes.
-      applyEdgeAutoScroll(me.clientX, {
-        lanesEl: lanesScrollRef.current,
-        rulerEl: rulerScrollRef.current,
-        headerWidth: HEADER_WIDTH,
-        edgeMargin: 40,
-        scrollSpeed: 10,
-      });
-    };
- 
-    const onUp = (upEvent) => {
-      if (hasMoved && lanesSurfaceRef.current) {
-        const curRect = lanesSurfaceRef.current.getBoundingClientRect();
-        const ux1 = Math.min(startX, upEvent.clientX - curRect.left);
-        const ux2 = Math.max(startX, upEvent.clientX - curRect.left);
-        const uy1 = Math.min(startY, upEvent.clientY - curRect.top);
-        const uy2 = Math.max(startY, upEvent.clientY - curRect.top);
- 
-        const hitIds = [];
-        clips.forEach((clip) => {
-          const clipLeft = HEADER_WIDTH + clip.startTime * pixelsPerSecond;
-          const clipRight = clipLeft + Math.max(16, clip.duration * pixelsPerSecond);
-          const pos = layout.clipPositions.get(clip.id);
-          if (!pos) return;
-          const clipTop = pos.top;
-          const clipBottom = pos.top + pos.height;
-          if (clipLeft < ux2 && clipRight > ux1 && clipTop < uy2 && clipBottom > uy1) {
-            hitIds.push(clip.id);
-          }
-        });
- 
-        const finalIds = [...new Set([...baseSelected, ...hitIds])];
-        if (finalIds.length > 0) {
-          setSelectedIds(finalIds);
-          setSelectedEntityId(finalIds[0]);
-        } else if (!isAdditive) {
-          setSelectedIds([]);
-          setSelectedEntityId(null);
-        }
-      } else if (!hasMoved) {
-        // Plain left-click (no drag) on empty lane space: move the
-        // playhead to that position, same as clicking the ruler —
-        // startX is already in lanes-surface coordinates, which bake in
-        // HEADER_WIDTH the same way the clip hit-test above does.
-        const clickTime = Math.max(0, (startX - HEADER_WIDTH) / pixelsPerSecond);
-        if (onSeek) onSeek(clickTime);
-      }
- 
-      setBoxSelect(null);
-      setTimeout(() => {
-        justDraggedRef.current = false;
-      }, 50);
- 
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-    };
- 
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-  };
- 
-  // Compute which clips are inside the box selection in real-time
+
   // Silence-cut preview for the canvas renderer: TrackLane matches cuts to a
   // clip per row (clip / its children / its parent / the whole track); the
   // canvas needs the same matching keyed by clip id, so it can overlay them
@@ -1174,45 +964,8 @@ export const Timeline = memo(function Timeline({
     }
     return map;
   }, [silencePreviewData, clips]);
- 
-  const boxSelectedIds = useMemo(() => {
-    if (!boxSelect) return [];
-    const x1 = Math.min(boxSelect.startX, boxSelect.endX);
-    const x2 = Math.max(boxSelect.startX, boxSelect.endX);
-    const y1 = Math.min(boxSelect.startY, boxSelect.endY);
-    const y2 = Math.max(boxSelect.startY, boxSelect.endY);
-    if (x2 - x1 < 4 && y2 - y1 < 4) return [];
- 
-    const selected = [];
-    clips.forEach((clip) => {
-      const clipLeft = HEADER_WIDTH + clip.startTime * pixelsPerSecond;
-      const clipRight = clipLeft + Math.max(16, clip.duration * pixelsPerSecond);
-      const pos = layout.clipPositions.get(clip.id);
-      if (!pos) return;
-      const clipTop = pos.top;
-      const clipBottom = pos.top + pos.height;
-      if (clipLeft < x2 && clipRight > x1 && clipTop < y2 && clipBottom > y1) {
-        selected.push(clip.id);
-      }
-    });
-    return selected;
-  }, [boxSelect, clips, pixelsPerSecond, layout]);
- 
-  // PERF FIX: previously this merge was built inline as
-  // `[...new Set([...selectedIds, ...boxSelectedIds])]` at the TrackLane
-  // call site below, which allocates a brand-new array every single
-  // Timeline render regardless of whether the actual selection changed.
-  // Every ClipItem is wrapped in React.memo and compares this array by
-  // reference, so a new array each render meant every clip on every track
-  // re-rendered on any Timeline re-render (zoom, scroll, playhead tick,
-  // unrelated state changes) — not just on real selection changes. Memoizing
-  // it here means ClipItem's memo comparison actually holds when the
-  // selection hasn't changed, which is the single biggest win available
-  // without restructuring the component tree.
-  const mergedSelectedIds = useMemo(
-    () => [...new Set([...selectedIds, ...boxSelectedIds])],
-    [selectedIds, boxSelectedIds]
-  );
+  const mergedSelectedIds = selectedIds;
+
  
   return (
     <section className="timeline-editor-panel">
@@ -1303,44 +1056,11 @@ export const Timeline = memo(function Timeline({
             className="lanes-wrapper"
             ref={lanesScrollRef}
             onScroll={handleLanesScroll}
-            onClick={(e) => {
-              if (justDraggedRef.current) return;
-              if (
-                e.target === e.currentTarget ||
-                e.target.classList.contains('track-grid-pattern') ||
-                // Canvas renderer: the lanes are spacers, so the empty space
-                // a user clicks is `.track-lane-spacer` — without this, click
-                // -to-clear-selection silently stops working with the canvas
-                // on, since the old class checks never match.
-                e.target.classList.contains('track-lane-spacer') ||
-                e.target.classList.contains('track-lane-row')
-              ) {
-                onSelectClip(null);
-                onClearSelection();
-              }
-            }}
           >
             <div
-              ref={lanesSurfaceRef}
               className="lanes-surface"
               style={{ width: `${totalWidth + HEADER_WIDTH}px`, position: 'relative' }}
-              onPointerDown={handleLanesPointerDown}
             >
-              {/* Box selection overlay */}
-              {boxSelect && (
-                <div
-                  className="timeline-box-select"
-                  style={{
-                    position: 'absolute',
-                    left: Math.min(boxSelect.startX, boxSelect.endX),
-                    top: Math.min(boxSelect.startY, boxSelect.endY),
-                    width: Math.abs(boxSelect.endX - boxSelect.startX),
-                    height: Math.abs(boxSelect.endY - boxSelect.startY),
-                    pointerEvents: 'none',
-                    zIndex: 50,
-                  }}
-                />
-              )}
  
               {/* Export range overlay on track lanes */}
               {exportRange && (
@@ -1409,57 +1129,19 @@ export const Timeline = memo(function Timeline({
                       onOpenSilenceRemoverForTrack={onOpenSilenceRemoverForTrack}
                     />
                   </div>
-                  {canvasTimeline ? (
-                    // Canvas renderer: the row keeps its exact size so native
-                    // scrolling, the minimap scrollbar and zoom anchoring are
-                    // untouched, but the clips are drawn by TimelineCanvas
-                    // instead of being DOM nodes.
-                    <div
-                      className="track-lane-spacer"
-                      style={{ width: `${totalWidth}px`, height: row.rowHeight, flexShrink: 0 }}
-                    />
-                  ) : (
-                  <TrackLane
-                    track={row.track}
-                    tracks={tracks}
-                    mediaAssets={mediaAssets}
-                    clips={row.clips}
-                    allClips={clips}
-                    rowHeight={row.rowHeight}
-                    pixelsPerSecond={pixelsPerSecond}
-                    isRecordingTarget={recordingTrackId === row.track.id}
-                    recordingStartTime={recordingStartTime}
-                    recordingLevel={recordingLevel}
-                    selectedClipId={selectedClipId}
-                    selectedIds={mergedSelectedIds}
-                    onSelectClip={onSelectClip}
-                    onToggleSelect={onToggleSelect}
-                    onRangeSelect={onRangeSelect}
-                    onUpdateClip={onUpdateClip}
-                    onUpdateClips={onUpdateClips}
-                    onDuplicateClips={onDuplicateClips}
-                    onDeleteClip={onDeleteClip}
-                    onCopySelected={onCopySelected}
-                    onCutSelected={onCutSelected}
-                    onPasteClips={onPasteClips}
-                    onAttachScriptToEntity={onAttachScriptToEntity}
-                    onDropItemOnTrack={onDropItemOnTrack}
-                    onAddMediaAsset={onAddMediaAsset}
-                    onSplitVideoAndAudio={onSplitVideoAndAudio}
-                    onOpenSilenceRemover={onOpenSilenceRemover}
-                    silencePreviewData={silencePreviewData}
-                    snappingPoints={snappingPoints}
-                    snappingEnabled={snappingEnabled}
-                    totalWidth={totalWidth}
+                  {/* The row keeps its exact size so native scrolling, the
+                      minimap scrollbar and zoom anchoring stay untouched,
+                      while the clips are drawn by TimelineCanvas. */}
+                  <div
+                    className="track-lane-spacer"
+                    style={{ width: `${totalWidth}px`, height: row.rowHeight, flexShrink: 0 }}
                   />
-                  )}
                 </div>
               ))}
             </div>
           </div>
- 
-          {/* Canvas renderer: a viewport-pinned overlay over the lanes area.
- 
+          {/* The viewport-pinned canvas overlay over the lanes area.
+
               It is a SIBLING of `.lanes-wrapper`, not a child: an absolutely
               positioned element inside a scroll container is scrolled with
               that container's content, so nesting it there moved the overlay
@@ -1470,15 +1152,12 @@ export const Timeline = memo(function Timeline({
               and canvas-timeline.css offsets the layer past the ruler and the
               sticky track-header column, so the overlay stays exactly over
               the lanes viewport and only what it DRAWS changes with scroll. */}
-          {/* setSelectedIds / setSelectedEntityId / onSeek (plan step 3): the
-              canvas's own lasso/box-select writes selection the same way
-              Timeline.jsx's handleLassoStart does below — a box can select
-              many clips at once, which onSelectClip/onRangeSelect/
-              onToggleSelect (single-id callbacks) don't express — and falls
-              back to onSeek for a press-release with no drag, matching the
-              DOM lasso's own click-to-seek-on-empty-space behavior. */}
-          {canvasTimeline && (
-            <TimelineCanvas
+          {/* setSelectedIds / setSelectedEntityId / onSeek: the canvas's lasso
+              writes selection directly (a box can select many clips at once,
+              which onSelectClip/onRangeSelect/onToggleSelect don't express)
+              and falls back to onSeek for a press-release with no drag. */}
+          <TimelineCanvas
+
               tracks={tracks}
               clips={clips}
               mediaAssets={mediaAssets}
@@ -1516,7 +1195,6 @@ export const Timeline = memo(function Timeline({
               onDropItemOnTrack={onDropItemOnTrack}
               onAddMediaAsset={onAddMediaAsset}
             />
-          )}
         </div>
  
         {/* Always-visible horizontal minimap scrollbar. Its thumb width

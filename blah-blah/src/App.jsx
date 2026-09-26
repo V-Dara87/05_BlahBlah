@@ -611,7 +611,7 @@ export function App() {
           fps: projectState.fps,
           autoKeyEnabled,
           // Global editor preferences (services/editorSettings.js) — the
-          // timeline reads canvasTimeline from here (via the Timeline dock
+          // timeline reads zoomAnchorMode from here (via the Timeline dock
           // panel) and the Settings modal edits it.
           editorSettings,
           isPrefabMode,

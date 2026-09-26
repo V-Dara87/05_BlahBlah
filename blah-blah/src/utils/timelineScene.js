@@ -8,9 +8,9 @@
  * testing read one shared definition of where a clip is, instead of the two
  * drifting apart (which is the classic failure mode of a canvas rewrite).
  *
- * Geometry conventions — deliberately identical to the DOM timeline it
- * replaces, so switching the `canvasTimeline` setting on does not move
- * anything by a pixel:
+ * Geometry conventions — deliberately identical to the DOM timeline this
+ * canvas renderer replaced, so the canvas draws every clip exactly where the
+ * old DOM renderer put it:
  *
  *   - Content-space X is `time * pixelsPerSecond` (the lanes area's own
  *     coordinate space; the track-header column and the container's scroll

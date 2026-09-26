@@ -30,10 +30,9 @@ export function useOsFileDrop({ mediaAssets, handleAddMediaAsset }) {
     };
     const onDrop = (e) => {
       if (!isFileDrop(e)) return;
-      // Timeline track lanes handle OS file drops themselves (import + place
-      // at the drop position, see TrackLane.jsx) — skip so files aren't
-      // imported twice.
-      if (e.target?.closest?.('.track-lane-row')) return;
+      // Dropping onto a timeline lane is handled by the canvas timeline itself
+      // (import + place at the drop position), and that handler stops
+      // propagation, so a file dropped on a lane never reaches this listener.
       e.preventDefault();
  
       // Check if dropped into a specific folder or into ProjectPanel with a folder open
