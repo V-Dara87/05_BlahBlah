@@ -2,6 +2,7 @@
 import { compileScriptModule, getScriptError, extractScriptProps } from './scriptRunner.js';
 import { resolveScriptProps } from './referenceTypes.js';
 import { Tween } from './motionTween.js';
+import { pushRuntimeError, withScriptConsole } from './scriptConsole.js';
  
 /**
  * P0 #2 — canvas-kind script lifecycle runner.
@@ -105,6 +106,7 @@ function resolveCanvasSize(props, defaultWidth, defaultHeight) {
 export function updateCanvasComponent({
   entityId,
   scriptId = '',
+  scriptName = '',
   scriptCode,
   container,
   localTime = 0,
@@ -119,14 +121,15 @@ export function updateCanvasComponent({
   allAssets = [],
 }) {
   if (!scriptCode || !container) return;
- 
+
   const mountKey = mountKeyFor(entityId, scriptId);
   let mounted = mountedInstances.get(mountKey);
- 
-  const compiled = compileScriptModule(scriptCode);
+
+  const compiled = compileScriptModule(scriptCode, scriptName);
   if (!compiled) return; // compile error already recorded in scriptRunner's lastErrorCache
- 
+
   const needsRemount = !mounted || mounted.scriptCode !== scriptCode;
+
 
   // Container re-attachment: if the DOM container changed (e.g. React reconciliation,
   // Dockview panel layout change or remount) while the script code is identical, do NOT
@@ -148,7 +151,7 @@ export function updateCanvasComponent({
       mounted.instance.container = container;
     }
 
-    safeCall(mounted.instance, 'onContainerReattach', { container, prevContainer });
+    safeCall(mounted.instance, 'onContainerReattach', { container, prevContainer }, scriptName);
   }
  
  
@@ -178,9 +181,9 @@ export function updateCanvasComponent({
  
   if (needsRemount) {
     if (mounted) {
-      safeCall(mounted.instance, 'onUnmount', { container: mounted.container });
+      safeCall(mounted.instance, 'onUnmount', { container: mounted.container }, scriptName);
     }
- 
+
     let instance = null;
     try {
       if (typeof compiled === 'function' && compiled.prototype) {
@@ -189,13 +192,13 @@ export function updateCanvasComponent({
         instance = compiled;
       }
     } catch (err) {
-      console.warn('CanvasRenderer instantiation error:', err);
+      pushRuntimeError(`error in constructor: ${err.message}`, scriptName || 'script');
       return;
     }
- 
+
     mounted = { instance, scriptCode, container, prevContainer: null, lastLocalTime: null, controller: new AbortController() };
     mountedInstances.set(mountKey, mounted);
- 
+
     // Expose size and aspect directly on the instance so user scripts can access
     // this.canvasWidth / this.canvasHeight / this.aspect without manual boilerplate
     if (instance && typeof instance === 'object') {
@@ -214,8 +217,9 @@ export function updateCanvasComponent({
       tween: Tween,
       Tween,
       ...timingArgs,
-    });
+    }, scriptName);
   }
+
  
   // Scrub/seek detection. onMount only fires once per (scriptCode,
   // container) pair (see mount/remount logic above), which is correct for
@@ -247,7 +251,7 @@ export function updateCanvasComponent({
       tween: Tween,
       Tween,
       ...timingArgs,
-    });
+    }, scriptName);
   }
  
   mounted.lastLocalTime = localTime;
@@ -295,8 +299,9 @@ export function updateCanvasComponent({
     tween: Tween,
     Tween,
     ...timingArgs,
-  });
+  }, scriptName);
 }
+
  
 export function unmountCanvasComponent(entityId, scriptId = '') {
   const mountKey = mountKeyFor(entityId, scriptId);
@@ -322,15 +327,17 @@ export function pruneCanvasComponents(activeMountKeys) {
   }
 }
  
-function safeCall(instance, methodName, args) {
+function safeCall(instance, methodName, args, scriptName) {
   const fn = instance?.[methodName];
   if (typeof fn !== 'function') return;
   try {
-    fn.call(instance, args);
+    withScriptConsole(scriptName || 'script', () => fn.call(instance, args));
   } catch (err) {
-    console.warn(`CanvasRenderer ${methodName}() error:`, err);
+    const msg = `error in ${methodName}(): ${err.message}`;
+    pushRuntimeError(msg, scriptName || 'script');
   }
 }
+
  
 export { getScriptError };
  

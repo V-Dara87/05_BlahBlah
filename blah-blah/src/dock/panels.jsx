@@ -10,6 +10,7 @@ import { Dopesheet } from '../components/Dopesheet/Dopesheet';
 import { CurveEditorTab } from '../components/shared/CurveEditor';
 import { SilenceRemoverPanel } from '../components/silence-remover/SilenceRemoverPanel';
 import { MixerPanel } from '../components/mixer/MixerPanel';
+import { ConsolePanel } from '../components/shared/ConsolePanel';
 import { setKeyframeCurve, findKeyframeById, DEFAULT_CP1, DEFAULT_CP2 } from '../engine/keyframes';
 import { useEditorContext } from './EditorContext';
 import { useTimelineView } from './TimelineViewContext';
@@ -473,3 +474,7 @@ export const MixerDockPanel = memo(function MixerDockPanel() {
     />
   );
 });
+
+export const ConsoleDockPanel = memo(function ConsoleDockPanel() {
+  return <ConsolePanel />;
+});

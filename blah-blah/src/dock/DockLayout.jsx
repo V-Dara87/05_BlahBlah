@@ -11,6 +11,7 @@ import {
   CurveEditorDockPanel,
   SilenceRemoverDockPanel,
   MixerDockPanel,
+  ConsoleDockPanel,
 } from './panels';
 import { useEditorContext } from './EditorContext';
 import { popoutGroup, closeEmptyPopoutGroups } from './popoutGroup';
@@ -34,6 +35,7 @@ const DOCK_COMPONENTS = {
   curveEditor: CurveEditorDockPanel,
   silenceRemover: SilenceRemoverDockPanel,
   mixer: MixerDockPanel,
+  console: ConsoleDockPanel,
   // Fallbacks for removed tabs from previous builds
   clips: FallbackPanel,
 };
@@ -107,6 +109,13 @@ function buildDefaultLayout(api) {
     id: 'mixer',
     component: 'mixer',
     title: 'Mixer',
+    position: { direction: 'within', referencePanel: dopesheetPanel },
+  });
+
+  api.addPanel({
+    id: 'console',
+    component: 'console',
+    title: 'Console',
     position: { direction: 'within', referencePanel: dopesheetPanel },
   });
 }

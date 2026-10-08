@@ -1,0 +1,291 @@
+.console-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #0d0d0f;
+  font-family: var(--font-mono, 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace);
+  font-size: 11px;
+  color: #c9d1d9;
+  overflow: hidden;
+}
+
+/* ── Toolbar ── */
+.console-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: #161618;
+  border-bottom: 1px solid #2a2a2e;
+  flex-shrink: 0;
+  min-height: 28px;
+}
+
+.console-icon {
+  color: #7c8592;
+  flex-shrink: 0;
+}
+
+.console-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  flex-shrink: 0;
+}
+
+.console-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.console-badge--error {
+  background: rgba(248, 81, 73, 0.2);
+  color: #f85149;
+  border: 1px solid rgba(248, 81, 73, 0.35);
+}
+
+.console-badge--warn {
+  background: rgba(210, 153, 34, 0.2);
+  color: #d29922;
+  border: 1px solid rgba(210, 153, 34, 0.35);
+}
+
+.console-filters {
+  display: flex;
+  gap: 2px;
+  margin-left: 4px;
+}
+
+.console-filter-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: #6e7681;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 7px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: color 0.1s, border-color 0.1s, background 0.1s;
+  font-family: inherit;
+}
+
+.console-filter-btn:hover {
+  color: #c9d1d9;
+  border-color: #30363d;
+  background: #21262d;
+}
+
+.console-filter-btn.is-active {
+  color: #e6edf3;
+  background: #21262d;
+  border-color: #444c56;
+}
+
+.console-clear-btn {
+  background: transparent;
+  border: none;
+  color: #6e7681;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  transition: color 0.1s, background 0.1s;
+}
+
+.console-clear-btn:hover {
+  color: #c9d1d9;
+  background: #21262d;
+}
+
+/* ── Entries ── */
+.console-entries {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+  padding: 2px 0;
+  scrollbar-width: thin;
+  scrollbar-color: #30363d transparent;
+}
+
+.console-entries::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.console-entries::-webkit-scrollbar-thumb {
+  background: #30363d;
+  border-radius: 3px;
+}
+
+.console-empty {
+  padding: 20px 16px;
+  color: #484f58;
+  font-size: 11px;
+  font-style: italic;
+}
+
+/* ── Entry row ── */
+.console-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 3px 10px;
+  border-bottom: 1px solid transparent;
+  line-height: 1.5;
+  border-left: 3px solid transparent;
+}
+
+.console-entry:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* Compile error — most prominent, red left border + tinted bg */
+.console-entry--compile-error {
+  background: rgba(248, 81, 73, 0.07);
+  border-left-color: #f85149;
+  border-bottom-color: rgba(248, 81, 73, 0.15);
+}
+
+/* Runtime error */
+.console-entry--error {
+  background: rgba(248, 81, 73, 0.04);
+  border-left-color: rgba(248, 81, 73, 0.6);
+}
+
+/* Warn */
+.console-entry--warn {
+  background: rgba(210, 153, 34, 0.04);
+  border-left-color: rgba(210, 153, 34, 0.55);
+}
+
+/* Log / info */
+.console-entry--log,
+.console-entry--info {
+  border-left-color: transparent;
+}
+
+/* Metadata chips */
+.console-entry-time {
+  color: #484f58;
+  font-size: 10px;
+  flex-shrink: 0;
+  margin-top: 2px;
+  min-width: 56px;
+}
+
+.console-entry-level {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  padding: 1px 4px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.console-entry-level--compile-error,
+.console-entry-level--error {
+  background: rgba(248, 81, 73, 0.18);
+  color: #f85149;
+}
+
+.console-entry-level--warn {
+  background: rgba(210, 153, 34, 0.18);
+  color: #d29922;
+}
+
+.console-entry-level--log {
+  background: rgba(99, 110, 123, 0.18);
+  color: #6e7681;
+}
+
+.console-entry-level--info {
+  background: rgba(31, 111, 235, 0.18);
+  color: #58a6ff;
+}
+
+.console-entry-script {
+  color: #79c0ff;
+  font-size: 10px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* The message itself — monospaced pre so Rust-style caret lines render */
+.console-entry-msg {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 11px;
+  color: #c9d1d9;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.55;
+}
+
+.console-entry--compile-error .console-entry-msg {
+  color: #ffa198;
+}
+
+.console-entry--error .console-entry-msg {
+  color: #ffa198;
+}
+
+.console-entry--warn .console-entry-msg {
+  color: #e3b341;
+}
+
+/* ── Copy buttons ── */
+.console-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.console-copy-btn {
+  background: transparent;
+  border: none;
+  color: #6e7681;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.1s, background 0.1s;
+  flex-shrink: 0;
+}
+
+.console-copy-btn:hover {
+  color: #c9d1d9;
+  background: #21262d;
+}
+
+/* Per-entry copy button — hidden until the row is hovered */
+.console-entry-copy {
+  opacity: 0;
+  transition: opacity 0.12s;
+  align-self: flex-start;
+  margin-top: 1px;
+}
+
+.console-entry:hover .console-entry-copy {
+  opacity: 1;
+}
+
+/* "Copy all" toolbar button — always visible when there are entries */
+.console-copy-all-btn {
+  color: #6e7681;
+}
+
+.console-copy-all-btn:hover {
+  color: #79c0ff;
+}
+

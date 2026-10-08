@@ -1,5 +1,6 @@
  
 import React from 'react';
+import { pushCompileError, pushRuntimeError, withScriptConsole } from './scriptConsole.js';
 import ReactDOM from 'react-dom';
 import ReactDOMClient from 'react-dom/client';
 import * as esbuild from 'esbuild-wasm';
@@ -267,15 +268,51 @@ export function isScriptBundlePending(scriptCode) {
   return !!scriptCode && pendingBundleCache.has(scriptCode);
 }
  
+/**
+ * Format a bundle/compile error in a Rust-like structured style:
+ *
+ *   error[E001]: Cannot find name 'fooBar'
+ *    --> entry.jsx:12:5
+ *    |
+ *    12 |   fooBar();
+ *    |   ^^^^^^ not found in scope
+ *
+ * This makes errors trivially readable both for humans and AI code fixers.
+ */
 function formatBundleError(err) {
-  const esbuildError = err?.errors?.[0];
-  if (esbuildError?.text) {
-    const loc = esbuildError.location
-      ? ` (line ${esbuildError.location.line}, column ${esbuildError.location.column})`
-      : '';
-    return `${esbuildError.text}${loc}`;
+  // esbuild errors array — may have multiple
+  const esbuildErrors = err?.errors;
+  if (esbuildErrors && esbuildErrors.length > 0) {
+    return esbuildErrors
+      .map((e, i) => {
+        const loc = e.location;
+        let out = `error[E${String(i + 1).padStart(3, '0')}]: ${e.text}`;
+        if (loc) {
+          out += `\n --> ${loc.file || 'entry.jsx'}:${loc.line}:${loc.column + 1}`;
+          if (loc.lineText) {
+            const lineNum = String(loc.line);
+            const pad = ' '.repeat(lineNum.length);
+            out += `\n ${pad}|`;
+            out += `\n ${lineNum} | ${loc.lineText}`;
+            const caretCol = loc.column;
+            const caretLen = loc.length || e.text?.length || 1;
+            out += `\n ${pad} | ${' '.repeat(caretCol)}${'~'.repeat(Math.max(1, caretLen))}`;
+          }
+          if (e.notes && e.notes.length > 0) {
+            e.notes.forEach((note) => {
+              out += `\n note: ${note.text}`;
+            });
+          }
+        }
+        return out;
+      })
+      .join('\n\n');
   }
-  return err?.message || String(err);
+  // SyntaxError / generic JS runtime error from new Function(...)
+  if (err instanceof SyntaxError) {
+    return `error: SyntaxError — ${err.message}\n note: Check for mismatched braces, missing semicolons, or invalid JSX`;
+  }
+  return `error: ${err?.message || String(err)}`;
 }
  
 /** Broadcast that some script finished bundling, so React re-renders. */
@@ -302,13 +339,13 @@ function notifyScriptsRecompiled() {
  *   folder (scripts/ is resolved from it). May be null/undefined — the
  *   bundle will then fail on relative imports but still resolve packages.
  */
-export async function precompileWithBundler(scriptCode, projectDirHandle) {
+export async function precompileWithBundler(scriptCode, projectDirHandle, scriptName) {
   if (!scriptCode) return;
   if (!hasImportStatements(scriptCode)) return; // regex path handles these
- 
+
   await esbuildInitPromise;
   if (!esbuildReady) return;
- 
+
   try {
     const bundled = await bundleScript(scriptCode, projectDirHandle);
     const exportedResult = runCompiledModule(toCommonJsExports(bundled));
@@ -317,11 +354,15 @@ export async function precompileWithBundler(scriptCode, projectDirHandle) {
     compiledModuleCache.set(scriptCode, exportedResult);
     notifyScriptsRecompiled();
   } catch (err) {
-    console.warn('Script bundling failed:', err);
+    // ── STRICT GATE ── compile failed → never execute, log structured error
+    const msg = formatBundleError(err);
     pendingBundleCache.delete(scriptCode);
-    lastErrorCache.set(scriptCode, formatBundleError(err));
+    lastErrorCache.set(scriptCode, msg);
+    pushCompileError(msg, scriptName);
+    notifyScriptsRecompiled(); // so the badge updates immediately
   }
 }
+
  
 /**
  * Kick off background bundling for every script that needs it (project
@@ -1034,35 +1075,41 @@ function runCompiledModule(transpiled) {
  *    regex transpiler would silently delete those imports and leave the
  *    script referencing undefined names, so it must not run on them.
  */
-export function compileScriptModule(scriptCode) {
+export function compileScriptModule(scriptCode, scriptName) {
   if (!scriptCode) return null;
   if (compiledModuleCache.has(scriptCode)) {
     return compiledModuleCache.get(scriptCode);
   }
- 
+
+  // ── STRICT GATE ── if a previous compile recorded an error, never run
+  if (lastErrorCache.has(scriptCode)) return null;
+
   if (hasImportStatements(scriptCode)) {
     // Mark pending only while there's no recorded error yet — a failed
     // bundle records a real error (red badge) and must NOT keep showing
     // the "Resolving imports…" state on every subsequent sync call.
-    if (!lastErrorCache.has(scriptCode)) {
-      pendingBundleCache.add(scriptCode);
-    }
+    pendingBundleCache.add(scriptCode);
     return null;
   }
- 
+
   try {
     const transpiled = transpileJsxToJs(scriptCode);
     const exportedResult = runCompiledModule(transpiled);
- 
+
     lastErrorCache.delete(scriptCode);
     compiledModuleCache.set(scriptCode, exportedResult);
     return exportedResult;
   } catch (err) {
-    console.warn('Script compilation error:', err);
-    lastErrorCache.set(scriptCode, err.message);
+    // ── STRICT GATE ── compile failed → never execute, log structured error
+    const msg = err instanceof SyntaxError
+      ? `error: SyntaxError — ${err.message}\n note: Check for mismatched braces, missing semicolons, or invalid JSX`
+      : `error: ${err.message}`;
+    lastErrorCache.set(scriptCode, msg);
+    pushCompileError(msg, scriptName);
     return null;
   }
 }
+
  
 /**
  * Deterministically executes a behavior motion script for a GameObject transform
