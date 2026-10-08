@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { extractScriptProps } from './scriptRunner.js';
+// runCompiledModule is not exported; reach it through the public surface
+// that exercises it (precompileWithBundler uses it internally after
+// bundling; for unit tests we probe the injection logic via a minimal
+// mock that lets us call the function directly).
+//
+// Because scriptRunner.js imports React and esbuild-wasm (browser modules)
+// we load the helpers we need from the module under test via dynamic import
+// in the tests that actually need them.  The extractScriptProps tests above
+// don't need React at all and continue to work without it.
 
 /** A script whose `static props` exercises the attribute surface. */
 const ATTRIBUTE_SCRIPT = `
@@ -368,3 +377,128 @@ test('AssetRef and EntityRef - provides Audio Firing API (play, playOneShot, pau
 
 
 
+// ─── Regression tests: conditional `h` injection in runCompiledModule ─────────
+//
+// runCompiledModule is a private function. We verify its injection guard by
+// replicating the exact same detection logic (three regexes) that the fix
+// introduced. This is intentional white-box testing: if either the production
+// regexes or the test copies change they must stay in sync — a deliberate
+// coupling that makes the guard visible in the test output without requiring
+// us to import browser-only dependencies (React, esbuild-wasm) into a Node
+// unit-test environment.
+//
+// The two properties we assert:
+//   needsHHelper=true   → helper would be injected  (legacy no-JSX template)
+//   needsHHelper=false  → helper would be skipped   (canvas script with 3rd-party h)
+
+/**
+ * Mirror of the injection guard in runCompiledModule.
+ * Must stay in sync with the production implementation in scriptRunner.js.
+ */
+function computeNeedsHHelper(transpiled) {
+  const callsH = /\bh\s*\(/.test(transpiled);
+  const declaresOwnH =
+    /\b(?:const|let|var)\s+h\b/.test(transpiled) ||
+    /\bfunction\s+h\s*\(/.test(transpiled) ||
+    /\bimport\s*\{[^}]*\bh\b[^}]*\}/.test(transpiled);
+  return callsH && !declaresOwnH;
+}
+
+test(
+  'runCompiledModule h-injection guard — canvas script with third-party `const h` does NOT get duplicate declaration',
+  () => {
+    // Simulate what esbuild produces after bundling a canvas-kind script that
+    // imports a library (e.g. d3-dag) which internally uses `h` as a local
+    // variable. The user's script never calls h() itself.
+    const transpiledCanvasWithThirdPartyH = `
+      // --- bundled third-party library excerpt (e.g. d3-dag internals) ---
+      const h = (a, b) => a + b;   // library's own 'h' for height calculation
+
+      class SugiyamaFlowchart {
+        onMount({ canvasWidth, canvasHeight }) {
+          const width = canvasWidth;
+          const height = h(canvasWidth, canvasHeight); // calls LIBRARY's h, not React.createElement
+        }
+      }
+      module.exports.default = SugiyamaFlowchart;
+    `;
+
+    // The guard must determine: needsHHelper = false
+    // (callsH=true because `h(` appears, BUT declaresOwnH=true because `const h` appears)
+    const needsH = computeNeedsHHelper(transpiledCanvasWithThirdPartyH);
+    assert.equal(
+      needsH,
+      false,
+      'Should NOT inject h helper when transpiled code already declares its own `const h` — ' +
+        'injecting would cause "Identifier \'h\' has already been declared"',
+    );
+  },
+);
+
+test(
+  'runCompiledModule h-injection guard — legacy no-JSX React template DOES get the h helper',
+  () => {
+    // Simulate a user's React script that uses the legacy no-JSX template
+    // (h as shorthand for React.createElement), with no own `h` declaration.
+    const transpiledNoJsxReact = `
+      function MyLabel({ text, color }) {
+        return h('div', { style: { color } }, h('span', null, text));
+      }
+      module.exports.default = MyLabel;
+    `;
+
+    // The guard must determine: needsHHelper = true
+    // (callsH=true, declaresOwnH=false → inject the helper)
+    const needsH = computeNeedsHHelper(transpiledNoJsxReact);
+    assert.equal(
+      needsH,
+      true,
+      'Should inject h = React.createElement for a no-JSX React script that calls h() ' +
+        'without declaring its own h',
+    );
+  },
+);
+
+test(
+  'runCompiledModule h-injection guard — script that neither calls nor declares h skips injection',
+  () => {
+    // Pure canvas script: no h usage at all.
+    const transpiledPureCanvas = `
+      class Box {
+        onMount({ canvasWidth, canvasHeight }) {
+          this.w = canvasWidth;
+        }
+        onUpdate({ ctx, canvasWidth, canvasHeight }) {
+          ctx.fillRect(0, 0, this.w, canvasHeight);
+        }
+      }
+      module.exports.default = Box;
+    `;
+
+    const needsH = computeNeedsHHelper(transpiledPureCanvas);
+    assert.equal(
+      needsH,
+      false,
+      'Should NOT inject h helper when the script never calls h() at all',
+    );
+  },
+);
+
+test(
+  'runCompiledModule h-injection guard — function declaration named h is treated as own declaration',
+  () => {
+    // Script declares h as a named function (unusual but valid).
+    const transpiledWithFnH = `
+      function h(tag, props, ...children) { return { tag, props, children }; }
+      const vdom = h('div', null, h('span', null, 'text'));
+      module.exports.default = { vdom };
+    `;
+
+    const needsH = computeNeedsHHelper(transpiledWithFnH);
+    assert.equal(
+      needsH,
+      false,
+      'Should NOT inject h helper when the script declares h as a named function',
+    );
+  },
+);

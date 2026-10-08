@@ -949,6 +949,20 @@ export function detectScriptKind(code) {
  * Compiles a JS/JSX script into an executable module/class
  */
 function runCompiledModule(transpiled) {
+  // Only the legacy "React Component (no JSX)" authoring style calls a bare
+  // `h(...)`. Only inject the React.createElement alias when the script
+  // actually uses it AND doesn't already declare its own `h` — otherwise we
+  // get "Identifier 'h' has already been declared" whenever a script imports
+  // a third-party library that happens to bundle its own top-level `h` (a
+  // very common short identifier: height locals, Preact-style hyperscript
+  // helpers used internally by graph/layout libraries, etc.).
+  const callsH = /\bh\s*\(/.test(transpiled);
+  const declaresOwnH =
+    /\b(?:const|let|var)\s+h\b/.test(transpiled) ||
+    /\bfunction\s+h\s*\(/.test(transpiled) ||
+    /\bimport\s*\{[^}]*\bh\b[^}]*\}/.test(transpiled);
+  const needsHHelper = callsH && !declaresOwnH;
+
   // Module wrapper providing React, MotionTween, Easing, MathUtils, and Remotion hooks
   const moduleWrapper = `
     let exports = {};
@@ -960,12 +974,9 @@ function runCompiledModule(transpiled) {
       return target;
     }
  
-    // h(tag, props, children) -- no-JSX authoring helper. The Script
-    // Editor's own placeholder text tells users to write h(tag, props,
-    // children) for "React Component (no JSX)" templates instead of
-    // angle-bracket JSX, so this must be provided at runtime or every
-    // such script throws "h is not defined" the moment it renders.
-    const h = React.createElement;
+    ${needsHHelper ? `// h(tag, props, children) -- no-JSX authoring helper injected because this
+    // script calls h(...) and does not declare its own h.
+    const h = React.createElement;` : ''}
  
     ${transpiled}
  
