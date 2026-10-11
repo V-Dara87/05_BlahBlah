@@ -104,6 +104,8 @@ export const UnityInspector = memo(function UnityInspector({
   mediaAssets = [],
   isLocked = false,
   onToggleLock,
+  // Project framerate, used by script actions (a [Button]'s timing context).
+  fps = 30,
 }) {
   const [openFoldouts, setOpenFoldouts] = useState({
     Transform: true,
@@ -702,6 +704,7 @@ export const UnityInspector = memo(function UnityInspector({
               entities={entities}
               mediaAssets={mediaAssets}
               tracks={tracks}
+              fps={fps}
             />
           );
         })}

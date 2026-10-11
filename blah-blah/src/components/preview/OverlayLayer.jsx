@@ -63,6 +63,12 @@ export function OverlayLayer({
     const scriptComps = (entity.components || []).filter(
       (c) => isScriptComponent(c) && c.enabled !== false
     );
+    // Name the boundary after the script(s) it wraps, so a render crash is
+    // reported in the Console against the script that caused it.
+    const boundaryScriptName = scriptComps
+      .map((c) => scripts.find((s) => s.id === c.scriptId)?.name || c.scriptName)
+      .filter(Boolean)
+      .join(', ');
     const ReactComponentNodes = [];
     for (const comp of scriptComps) {
       const scriptDef = scripts.find((s) => s.id === comp.scriptId);
@@ -120,6 +126,7 @@ export function OverlayLayer({
       >
         <EntityErrorBoundary
           entityName={entity.name}
+          scriptName={boundaryScriptName || undefined}
           resetKey={scriptComps.map((c) => c.scriptId).join(',')}
         >
           {/* React-kind component renderer */}

@@ -1,5 +1,13 @@
  
-import { compileScriptModule, getScriptError, extractScriptProps } from './scriptRunner.js';
+import {
+  compileScriptModule,
+  getScriptError,
+  extractScriptProps,
+  isScriptDisabled,
+  markScriptSlow,
+  formatRuntimeError,
+  getCallBudgetMs,
+} from './scriptRunner.js';
 import { resolveScriptProps } from './referenceTypes.js';
 import { Tween } from './motionTween.js';
 import { pushRuntimeError, withScriptConsole } from './scriptConsole.js';
@@ -61,6 +69,12 @@ import { pushRuntimeError, withScriptConsole } from './scriptConsole.js';
 // window or their script changes — and so multiple canvas-kind scripts on
 // one entity each get their own independent lifecycle.
 const mountedInstances = new Map();
+ 
+// Constructor failures, remembered per mount key as the exact code string that
+// failed. A constructor that throws (a bad import, a missing WebGL context)
+// would otherwise be retried on EVERY frame — 60 thrown errors and 60 Console
+// entries a second. Only a code change (a new string) clears the memory.
+const failedConstructors = new Map();
  
 const mountKeyFor = (entityId, scriptId = '') => `${entityId}::${scriptId || ''}`;
 
@@ -128,6 +142,11 @@ export function updateCanvasComponent({
   const compiled = compileScriptModule(scriptCode, scriptName);
   if (!compiled) return; // compile error already recorded in scriptRunner's lastErrorCache
 
+  // Do not retry a constructor that already threw for this exact code — see
+  // failedConstructors above. Editing the script produces a new code string and
+  // therefore a fresh attempt.
+  if (failedConstructors.get(mountKey) === scriptCode) return;
+
   const needsRemount = !mounted || mounted.scriptCode !== scriptCode;
 
 
@@ -151,7 +170,7 @@ export function updateCanvasComponent({
       mounted.instance.container = container;
     }
 
-    safeCall(mounted.instance, 'onContainerReattach', { container, prevContainer }, scriptName);
+    safeCall(mounted.instance, 'onContainerReattach', { container, prevContainer }, scriptName, scriptCode);
   }
  
  
@@ -181,7 +200,15 @@ export function updateCanvasComponent({
  
   if (needsRemount) {
     if (mounted) {
-      safeCall(mounted.instance, 'onUnmount', { container: mounted.container }, scriptName);
+      safeCall(mounted.instance, 'onUnmount', { container: mounted.container }, mounted.scriptName, mounted.scriptCode);
+      // Tearing the old instance down means ALL of it, not just onUnmount:
+      //   - its AbortController is aborted here, or async onMount work (a fetch,
+      //     a FontLoader) keeps running against a dead instance;
+      //   - its DOM (a <canvas>, a renderer.domElement, anything else it
+      //     appended) is removed, or the new instance puts a second canvas next
+      //     to the old one and every edit leaks another canvas + WebGL context.
+      mounted.controller?.abort();
+      removeInstanceDom(mounted.instance, mounted.container);
     }
 
     let instance = null;
@@ -192,11 +219,32 @@ export function updateCanvasComponent({
         instance = compiled;
       }
     } catch (err) {
-      pushRuntimeError(`error in constructor: ${err.message}`, scriptName || 'script');
+      // Remember the failure (so it is not retried every frame) and drop the
+      // record — there is no instance left to call onUpdate on.
+      failedConstructors.set(mountKey, scriptCode);
+      mountedInstances.delete(mountKey);
+      pushRuntimeError(
+        formatRuntimeError(err, 'error in constructor', scriptName),
+        scriptName || 'script',
+      );
       return;
     }
+    failedConstructors.delete(mountKey);
 
-    mounted = { instance, scriptCode, container, prevContainer: null, lastLocalTime: null, controller: new AbortController() };
+    mounted = {
+      instance,
+      scriptCode,
+      scriptName,
+      // Stored so pruneCanvasComponents can unmount by id instead of splitting
+      // the "entityId::scriptId" key back apart.
+      entityId,
+      scriptId,
+      container,
+      prevContainer: null,
+      lastLocalTime: null,
+      controller: new AbortController(),
+      mountFailed: false,
+    };
     mountedInstances.set(mountKey, mounted);
 
     // Expose size and aspect directly on the instance so user scripts can access
@@ -207,7 +255,7 @@ export function updateCanvasComponent({
       instance.aspect = effHeight > 0 ? effWidth / effHeight : 1;
     }
 
-    safeCall(instance, 'onMount', {
+    const onMountThrew = safeCall(instance, 'onMount', {
       container,
       signal: mounted.controller.signal,
       props: effProps,
@@ -217,7 +265,15 @@ export function updateCanvasComponent({
       tween: Tween,
       Tween,
       ...timingArgs,
-    }, scriptName);
+    }, scriptName, scriptCode);
+
+    if (onMountThrew) {
+      // Without a successful onMount the instance has no usable state: calling
+      // onUpdate/onSeek on it every frame would throw (and flood the Console)
+      // 60 times a second. Pause it until the code is edited.
+      mounted.mountFailed = true;
+      pushRuntimeError('onMount failed — script paused until you edit it', scriptName || 'script');
+    }
   }
 
  
@@ -239,7 +295,7 @@ export function updateCanvasComponent({
   const isScrub =
     mounted.lastLocalTime !== null && Math.abs(localTime - mounted.lastLocalTime) > scrubThreshold;
  
-  if (isScrub) {
+  if (isScrub && !mounted.mountFailed) {
     safeCall(mounted.instance, 'onSeek', {
       container,
       time: localTime,
@@ -251,7 +307,7 @@ export function updateCanvasComponent({
       tween: Tween,
       Tween,
       ...timingArgs,
-    }, scriptName);
+    }, scriptName, scriptCode);
   }
  
   mounted.lastLocalTime = localTime;
@@ -287,7 +343,7 @@ export function updateCanvasComponent({
     }
   }
 
-  safeCall(mounted.instance, 'onUpdate', {
+  if (!mounted.mountFailed) safeCall(mounted.instance, 'onUpdate', {
     container,
     time: localTime,
     frame,
@@ -299,17 +355,24 @@ export function updateCanvasComponent({
     tween: Tween,
     Tween,
     ...timingArgs,
-  }, scriptName);
+  }, scriptName, scriptCode);
 }
 
  
 export function unmountCanvasComponent(entityId, scriptId = '') {
   const mountKey = mountKeyFor(entityId, scriptId);
   const mounted = mountedInstances.get(mountKey);
+  // A failed constructor leaves no instance, only a remembered failure; clear
+  // it here so the entity can mount cleanly if it comes back.
+  failedConstructors.delete(mountKey);
   if (!mounted) return;
   mounted.controller?.abort();
-  safeCall(mounted.instance, 'onUnmount', { container: mounted.container });
+  safeCall(mounted.instance, 'onUnmount', { container: mounted.container }, mounted.scriptName, mounted.scriptCode);
+  // onUnmount has run (it may still want to read the DOM), now clear out what
+  // the instance left in the container and release its GPU resources.
+  removeInstanceDom(mounted.instance, mounted.container);
   mountedInstances.delete(mountKey);
+  failedConstructors.delete(mountKey);
 }
  
 /**
@@ -319,22 +382,73 @@ export function unmountCanvasComponent(entityId, scriptId = '') {
  */
 export function pruneCanvasComponents(activeMountKeys) {
   const activeSet = new Set(activeMountKeys);
-  for (const mountKey of mountedInstances.keys()) {
+  for (const [mountKey, mounted] of mountedInstances) {
     if (!activeSet.has(mountKey)) {
-      const [entityId, scriptId = ''] = mountKey.split('::');
-      unmountCanvasComponent(entityId, scriptId);
+      // The record carries its own ids, so nothing has to be reconstructed by
+      // splitting the key back apart.
+      unmountCanvasComponent(mounted.entityId, mounted.scriptId);
     }
   }
 }
  
-function safeCall(instance, methodName, args, scriptName) {
+function nowMs() {
+  return typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
+}
+ 
+/**
+ * Remove the DOM an instance left behind in its container, and dispose the
+ * renderer it exposed.
+ *
+ * The container is a plain per-script <div> owned by EntityRenderer and is
+ * treated as script-owned throughout this file (container re-attachment moves
+ * every child from the old container to the new one), so removing all of its
+ * remaining children is exactly "remove what this instance appended".
+ */
+function removeInstanceDom(instance, container) {
+  if (instance && typeof instance === 'object') {
+    try {
+      instance.renderer?.dispose?.();
+    } catch {
+      // A throwing dispose() must not abort the rest of the teardown.
+    }
+  }
+  if (!container) return;
+  while (container.firstChild) {
+    container.removeChild(container.firstChild);
+  }
+}
+
+/**
+ * Call one script hook. Returns true when the hook THREW, false otherwise
+ * (including "the script does not implement it"), so callers can react to a
+ * failed onMount.
+ */
+function safeCall(instance, methodName, args, scriptName, scriptCode) {
   const fn = instance?.[methodName];
-  if (typeof fn !== 'function') return;
+  if (typeof fn !== 'function') return false;
+  // A script disabled for a runaway callback (an infinite or very heavy
+  // loop) is skipped from then on. onUnmount is exempt so teardown always
+  // runs and nothing is leaked. JS cannot interrupt the loop itself; this
+  // catches it after the call returns and stops the freeze recurring.
+  if (methodName !== 'onUnmount' && isScriptDisabled(scriptCode)) return false;
   try {
+    const t0 = nowMs();
     withScriptConsole(scriptName || 'script', () => fn.call(instance, args));
+    const elapsed = nowMs() - t0;
+    // Budgets come from scriptRunner.js so onMount (one-time setup) is allowed
+    // to take far longer than onUpdate/onSeek/onStart (per-frame work).
+    if (methodName !== 'onUnmount' && elapsed > getCallBudgetMs(methodName)) {
+      markScriptSlow(scriptCode, scriptName, elapsed, methodName);
+    }
+    return false;
   } catch (err) {
-    const msg = `error in ${methodName}(): ${err.message}`;
-    pushRuntimeError(msg, scriptName || 'script');
+    pushRuntimeError(
+      formatRuntimeError(err, `error in ${methodName}()`, scriptName),
+      scriptName || 'script',
+    );
+    return true;
   }
 }
 

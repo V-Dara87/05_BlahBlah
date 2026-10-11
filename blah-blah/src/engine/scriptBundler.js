@@ -361,32 +361,86 @@ async function resolveScriptsDir(projectDirHandle) {
 }
 
 /**
- * Bundle `scriptCode` (which must contain at least one static import) into
- * a single CJS-style string ready for runCompiledModule. Throws on any
- * resolution/parse failure — callers record the error message.
+ * Shared compiler options. Both the bundler (below) and the import-free
+ * transform use the CLASSIC JSX transform (jsxFactory React.createElement)
+ * and output CJS, with `sourcefile` set to the script's own name so esbuild's
+ * structured errors read `MyScript.jsx:12:5` rather than `entry.jsx:12:5`.
+ *
+ * The source map is EXTERNAL (`sourcemap: true` for transform, `'external'`
+ * for build) and returned alongside the code — it is NOT embedded inline.
+ * scriptRunner parses it and keeps it in a small per-script cache, so a
+ * runtime stack frame can be mapped back to the user's own line without
+ * bloating the evaluated string with a base64 blob.
  */
-export async function bundleScript(scriptCode, projectDirHandle) {
+function compileOptions(sourcefile) {
+  return {
+    loader: 'tsx',
+    format: 'cjs',
+    target: 'es2020',
+    jsx: 'transform',
+    jsxFactory: 'React.createElement',
+    jsxFragment: 'React.Fragment',
+    sourcemap: true,
+    sourcefile: sourcefile || 'entry.jsx',
+  };
+}
+
+/**
+ * Compile an import-free script (JSX + TypeScript stripped) to a CJS-style
+ * string. `transform` (not `build`) is enough when there is nothing to
+ * resolve, and it stays entirely offline. Throws on parse errors — callers
+ * record the message.
+ *
+ * @returns {Promise<{ code: string, map: string|null }>}
+ */
+export async function transformScript(scriptCode, scriptName) {
+  const result = await esbuild.transform(scriptCode, compileOptions(scriptName));
+  return { code: result.code, map: result.map || null };
+}
+
+/**
+ * Bundle `scriptCode` (which may contain static imports) into a single
+ * CJS-style string ready for runCompiledModule. Throws on any
+ * resolution/parse failure — callers record the error message.
+ *
+ * `write: false` means esbuild hands back outputFiles instead of writing to
+ * disk; an EXTERNAL source map requires an `outfile` even then, so one is
+ * set and the resulting `.map` output file is returned separately. The
+ * `//# sourceMappingURL=` comment esbuild appends is stripped: the map never
+ * lives next to the evaluated string, so leaving a dangling pointer would be
+ * misleading.
+ *
+ * @returns {Promise<{ code: string, map: string|null }>}
+ */
+export async function bundleScript(scriptCode, projectDirHandle, scriptName) {
   const scriptsDir = await resolveScriptsDir(projectDirHandle);
+  const opts = compileOptions(scriptName);
 
   const result = await esbuild.build({
     stdin: {
       contents: scriptCode,
-      sourcefile: 'entry.jsx',
+      sourcefile: opts.sourcefile,
       resolveDir: '.',
       loader: 'tsx',
     },
     bundle: true,
     write: false,
-    format: 'cjs',
+    format: opts.format,
     platform: 'browser',
-    target: 'es2020',
-    jsx: 'transform',
-    jsxFactory: 'React.createElement',
-    jsxFragment: 'React.Fragment',
+    target: opts.target,
+    // External maps must have a path; write:false keeps everything in memory.
+    outfile: 'bundle.js',
+    jsx: opts.jsx,
+    jsxFactory: opts.jsxFactory,
+    jsxFragment: opts.jsxFragment,
+    sourcemap: 'external',
     minify: false,
     logLevel: 'silent',
     plugins: [createImportPlugin(scriptsDir)],
   });
 
-  return result.outputFiles[0].text;
+  const jsFile = result.outputFiles.find((f) => !f.path.endsWith('.map'));
+  const mapFile = result.outputFiles.find((f) => f.path.endsWith('.map'));
+  const code = (jsFile?.text || '').replace(/\n?\/\/# sourceMappingURL=.*\s*$/, '');
+  return { code, map: mapFile?.text || null };
 }

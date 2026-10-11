@@ -1,6 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Clock, Trash2, Sparkles, Boxes, FileCode, Check } from 'lucide-react';
-import { extractScriptProps, getScriptError, detectScriptKind, isScriptBundlePending } from '../../engine/scriptRunner';
+import {
+  extractScriptProps,
+  getScriptError,
+  getScriptPropsWarnings,
+  detectScriptKind,
+  isScriptBundlePending,
+  isScriptDisabled,
+  resetScriptDisabled,
+} from '../../engine/scriptRunner';
 import { invokeScriptAction } from '../../engine/scriptActions';
 import { InspectorFieldList } from './InspectorField';
 import { InspectorCardHeader } from './InspectorCardHeader';
@@ -56,14 +64,44 @@ export function ScriptCard({
   entities,
   mediaAssets,
   tracks = [],
+  // Project framerate, passed down from UnityInspector. Used for the timing
+  // context a script action receives; falls back to 30 only if a caller
+  // doesn't provide it (older integrations/tests).
+  fps = 30,
 }) {
   const scriptDef = scripts.find((s) => s.id === scriptComp.scriptId);
-  const kind = scriptDef ? detectScriptKind(scriptDef.code) : 'unknown';
-  const Meta = scriptKindMeta(kind);
-  const fields = scriptDef ? extractScriptProps(scriptDef.code) : [];
-  const scriptError = scriptDef ? getScriptError(scriptDef.code) : null;
-  const bundlePending = scriptDef ? isScriptBundlePending(scriptDef.code) : false;
   const dragKey = `script:${scriptComp.scriptId}`;
+
+  // A background compile finishing does NOT change the `scripts` array, so
+  // without this the "Compiling…" badge (and a fresh error) could linger
+  // until some unrelated re-render. Tick on the engine's recompiled event and
+  // recompute the derived schema/error/pending state from it.
+  const [recompiledTick, setRecompiledTick] = useState(0);
+  useEffect(() => {
+    const handler = () => setRecompiledTick((t) => t + 1);
+    window.addEventListener('blahblah:scripts-recompiled', handler);
+    return () => window.removeEventListener('blahblah:scripts-recompiled', handler);
+  }, []);
+
+  const { kind, fields, scriptError, bundlePending, propsWarnings, paused } = useMemo(() => ({
+    kind: scriptDef ? detectScriptKind(scriptDef.code) : 'unknown',
+    fields: scriptDef ? extractScriptProps(scriptDef.code) : [],
+    scriptError: scriptDef ? getScriptError(scriptDef.code) : null,
+    bundlePending: scriptDef ? isScriptBundlePending(scriptDef.code) : false,
+    propsWarnings: scriptDef ? getScriptPropsWarnings(scriptDef.code) : [],
+    // The freeze guard disables a script that repeatedly blows its per-method
+    // time budget; the card is where the user un-pauses it.
+    paused: scriptDef ? isScriptDisabled(scriptDef.code) : false,
+  }), [scriptDef, recompiledTick]);
+  const Meta = scriptKindMeta(kind);
+
+  // Re-enable = clear the disabled flag and its strike counters, then re-render
+  // through the same event the engine uses when a compile lands.
+  const handleReenable = useCallback(() => {
+    if (!scriptDef) return;
+    resetScriptDisabled(scriptDef.code);
+    window.dispatchEvent(new CustomEvent('blahblah:scripts-recompiled'));
+  }, [scriptDef]);
 
   // Resolved once, for the fields and for the action context: a button must see
   // exactly the values the fields show (refs resolved, defaults applied).
@@ -107,8 +145,8 @@ export function ScriptCard({
       setProps: (patch) => setScriptProps?.(scriptComp.scriptId, patch),
       timing: {
         time: localTime,
-        frame: Math.round(localTime * 30),
-        fps: 30,
+        frame: Math.round(localTime * fps),
+        fps,
         duration: scriptComp.duration ?? selectedEntity?.duration,
       },
     }).then((result) => {
@@ -120,7 +158,7 @@ export function ScriptCard({
     });
   }, [
     scriptDef, scriptError, values, scriptComp.scriptId, scriptComp.duration,
-    selectedEntity, currentTime, setScriptProps, showFeedback,
+    selectedEntity, currentTime, setScriptProps, showFeedback, fps,
   ]);
  
   return (
@@ -156,10 +194,29 @@ export function ScriptCard({
               <span>{scriptError}</span>
             </div>
           )}
+          {paused && (
+            <div className="script-paused-badge">
+              <AlertCircle size={12} />
+              <span>Script paused: too slow</span>
+              <button className="script-reenable-btn" onClick={handleReenable}>
+                Re-enable
+              </button>
+            </div>
+          )}
           {!scriptError && bundlePending && (
             <div className="script-pending-badge">
               <Clock size={12} />
-              <span>Bundling…</span>
+              <span>Compiling…</span>
+            </div>
+          )}
+          {propsWarnings.length > 0 && (
+            <div className="script-warning-badge">
+              <AlertCircle size={12} />
+              <ul>
+                {propsWarnings.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
             </div>
           )}
  

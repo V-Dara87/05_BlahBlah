@@ -216,6 +216,34 @@
   margin-top: 2px;
 }
 
+/* Script name as a link — only when the panel can open the script editor */
+.console-entry-script--link {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
+.console-entry-script--link:hover {
+  color: #a5d6ff;
+  text-decoration: underline;
+}
+
+/* "×N" for an entry collapsed from repeated identical pushes */
+.console-entry-count {
+  flex-shrink: 0;
+  margin-top: 2px;
+  padding: 0 4px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  color: #d29922;
+  background: rgba(210, 153, 34, 0.16);
+  border: 1px solid rgba(210, 153, 34, 0.35);
+}
+
 /* The message itself — monospaced pre so Rust-style caret lines render */
 .console-entry-msg {
   margin: 0;

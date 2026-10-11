@@ -109,15 +109,15 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
     handleUpdateEntity, handleUpdateClips, handleDeleteEntity,
     onOpenScriptEditor, handleSaveAsPrefab,
     handleAttachScriptToEntity,
-    autoKeyEnabled, setAutoKeyEnabled,
-    mediaAssets,
+    autoKeyEnabled, setAutoKeyEnabled,    mediaAssets,
     resolution,
+    fps = 30,
     onEnterPrefabMode,
     onDetachPrefab,
     onRevertToPrefab,
     onApplyToPrefab,
   } = useEditorContext();
- 
+
   const [isLocked, setIsLocked] = useState(false);
   const [lockedEntityId, setLockedEntityId] = useState(null);
  
@@ -200,6 +200,7 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
         setAutoKeyEnabled={setAutoKeyEnabled}
         mediaAssets={mediaAssets}
         resolution={resolution}
+        fps={fps}
         isLocked={isLocked}
         onToggleLock={handleToggleLock}
       />
@@ -476,5 +477,15 @@ export const MixerDockPanel = memo(function MixerDockPanel() {
 });
 
 export const ConsoleDockPanel = memo(function ConsoleDockPanel() {
-  return <ConsolePanel />;
+  const { scripts, onOpenScriptEditor } = useEditorContext();
+  // Console entries carry a script NAME; the editor opens a script OBJECT.
+  // Only wire the click-through when both sides are available, so the panel
+  // works unchanged when this prop is missing (e.g. tests, older callers).
+  const handleOpenScript = onOpenScriptEditor
+    ? (name) => {
+        const script = (scripts || []).find((s) => s.name === name);
+        if (script) onOpenScriptEditor(script);
+      }
+    : undefined;
+  return <ConsolePanel onOpenScript={handleOpenScript} />;
 });

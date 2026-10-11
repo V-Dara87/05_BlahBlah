@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { makeEntityRef, makeAssetRef, resolveScriptProps } from '../src/engine/referenceTypes.js';
-import { extractScriptProps, executeScriptComponent } from '../src/engine/scriptRunner.js';
+import { extractScriptProps, executeScriptComponent, precompileWithBundler } from '../src/engine/scriptRunner.js';
 import { computeActiveEntitiesAtTime } from '../src/engine/renderPipeline.js';
 
 let passed = 0;
@@ -21,6 +21,48 @@ function test(name, fn) {
 }
 
 console.log('\nReference Feature Tests\n');
+
+// The engine compiles every script through esbuild on the async precompile
+// path, so warm the cache for the two motion scripts these tests execute.
+const FOLLOWER_SCRIPT = `
+  export default class Follower {
+    static props = {
+      target: { type: 'entity', label: 'Target' },
+      offsetX: { type: 'number', default: 50 }
+    };
+
+    onUpdate({ transform, props }) {
+      if (props.target && props.target.exists()) {
+        const t = props.target.getTransform();
+        if (t) {
+          transform.position.x = t.x + (props.offsetX || 0);
+          transform.position.y = t.y;
+        }
+      }
+    }
+  }
+`;
+
+const FOLLOW_SCRIPT = `
+  export default class FollowerScript {
+    static props = {
+      target: { type: 'entity' }
+    };
+    onUpdate({ transform, props }) {
+      if (props.target && props.target.exists()) {
+        const t = props.target.getTransform();
+        if (t) {
+          transform.position.x = t.x + 20;
+        }
+      }
+    }
+  }
+`;
+
+await Promise.all([
+  precompileWithBundler(FOLLOWER_SCRIPT, null, 'Follower.jsx'),
+  precompileWithBundler(FOLLOW_SCRIPT, null, 'FollowScript.jsx'),
+]);
 
 // ─── 1. makeEntityRef ────────────────────────────────────────────────────────
 
@@ -244,30 +286,11 @@ test('executeScriptComponent: motion script reads props.target.getTransform()', 
     ],
   };
 
-  const followerScript = `
-    export default class Follower {
-      static props = {
-        target: { type: 'entity', label: 'Target' },
-        offsetX: { type: 'number', default: 50 }
-      };
-
-      onUpdate({ transform, props }) {
-        if (props.target && props.target.exists()) {
-          const t = props.target.getTransform();
-          if (t) {
-            transform.position.x = t.x + (props.offsetX || 0);
-            transform.position.y = t.y;
-          }
-        }
-      }
-    }
-  `;
-
   const initialTransform = { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1 };
   const publicValues = { target: 'leader', offsetX: 30 };
 
   const updatedTransform = executeScriptComponent({
-    scriptCode: followerScript,
+    scriptCode: FOLLOWER_SCRIPT,
     transform: initialTransform,
     localTime: 1.0,
     clipDuration: 5,
@@ -315,25 +338,7 @@ test('computeActiveEntitiesAtTime: resolves reference in motion script across ti
   };
 
   const scripts = [
-    {
-      id: 'follow-script-id',
-      name: 'FollowScript.jsx',
-      code: `
-        export default class FollowerScript {
-          static props = {
-            target: { type: 'entity' }
-          };
-          onUpdate({ transform, props }) {
-            if (props.target && props.target.exists()) {
-              const t = props.target.getTransform();
-              if (t) {
-                transform.position.x = t.x + 20;
-              }
-            }
-          }
-        }
-      `,
-    },
+    { id: 'follow-script-id', name: 'FollowScript.jsx', code: FOLLOW_SCRIPT },
   ];
 
   const tracks = [

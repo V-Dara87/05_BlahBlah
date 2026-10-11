@@ -1,6 +1,7 @@
  
 import { Component } from 'react';
 import { AlertTriangle } from 'lucide-react';
+import { pushRuntimeError } from '../../engine/scriptConsole.js';
 import './entity-error-boundary.css';
  
 /**
@@ -28,6 +29,15 @@ export class EntityErrorBoundary extends Component {
   }
  
   componentDidCatch(error, info) {
+    // Also surface the crash in the Console panel (with the script name and
+    // stack) — a render-phase throw is exactly the kind of real error a user
+    // needs to see without opening devtools.
+    const scriptName = this.props.scriptName || this.props.entityName || 'entity';
+    const stack = error?.stack || String(error);
+    pushRuntimeError(
+      `"${this.props.entityName || scriptName}" crashed during render: ${error?.message || error}\n${stack}`,
+      scriptName,
+    );
     console.warn(`[EntityErrorBoundary] "${this.props.entityName || 'entity'}" crashed during render:`, error, info);
   }
  

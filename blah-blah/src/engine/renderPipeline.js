@@ -157,6 +157,8 @@ function resolveEntityLocal({ entity, scripts, time, fps, allEntities = [], allA
     try {
       currentTransform = executeScriptComponent({
         scriptCode: scriptDef.code,
+        // Pass the name so runtime errors reach the Console labelled with it.
+        scriptName: scriptDef.name,
         transform: currentTransform,
         localTime: scriptLocalTime,
         clipDuration: entity.duration,

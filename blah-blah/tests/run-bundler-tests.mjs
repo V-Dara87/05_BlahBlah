@@ -164,7 +164,11 @@ export default class FloatProbe {
   }
 }`;
 
-await test('import-free script still compiles via the regex path', () => {
+await test('import-free script compiles through the esbuild precompile path', async () => {
+  // Every script — import-free included — is compiled asynchronously by
+  // esbuild; the sync path is "pending" until that lands.
+  const result = await precompileWithBundler(plainScript, null, 'Plain.jsx');
+  assert.equal(result.ok, true, `compile failed: ${result.error}`);
   assert.equal(isScriptBundlePending(plainScript), false);
   const compiled = compileScriptModule(plainScript);
   assert.ok(compiled, 'compiled module should exist');
@@ -441,11 +445,11 @@ await test('node builtin import is rejected with a clear message', async () => {
 
 // ─── 9. precompileAllProjectScripts skips import-free scripts ────────────────
 
-await test('precompileAllProjectScripts no-ops on import-free scripts', async () => {
-  const before = isScriptBundlePending(plainScript);
-  await precompileAllProjectScripts([{ code: plainScript }], emptyProject);
-  assert.equal(isScriptBundlePending(plainScript), before);
+await test('precompileAllProjectScripts compiles import-free scripts too', async () => {
+  await precompileAllProjectScripts([{ name: 'Plain.jsx', code: plainScript }], emptyProject);
+  assert.equal(isScriptBundlePending(plainScript), false);
   assert.equal(getScriptError(plainScript), null);
+  assert.ok(compileScriptModule(plainScript), 'compiled module should exist');
 });
 
 // ─── 10. Old-project migration (ReactRenderer/CanvasRenderer/MonoBehaviour → ScriptComponent) ──
@@ -623,6 +627,9 @@ const RAMP_CODE = `export default class RampY {
     transform.position.y = time * 100;
   }
 }`;
+// Every script is compiled by esbuild on the async precompile path now, so
+// warm the cache before computeActiveEntitiesAtTime executes it synchronously.
+await precompileWithBundler(RAMP_CODE, null, 'RampY.jsx');
 const RAMP_SCRIPTS = [{ id: 's-ramp', name: 'RampY.jsx', code: RAMP_CODE }];
 const RAMP_TRACKS = [
   { id: 't1', name: 'Track 1', type: 'layer', muted: false, locked: false, visible: true, volume: 1.0 },

@@ -1,10 +1,10 @@
  
 import React from 'react';
-import { pushCompileError, pushRuntimeError, withScriptConsole } from './scriptConsole.js';
+import { pushCompileError, pushRuntimeError, getConsoleGeneration } from './scriptConsole.js';
 import ReactDOM from 'react-dom';
 import ReactDOMClient from 'react-dom/client';
 import * as esbuild from 'esbuild-wasm';
-import { bundleScript } from './scriptBundler.js';
+import { bundleScript, transformScript } from './scriptBundler.js';
 import { 
   MotionTweenContext, 
   Easing, 
@@ -17,6 +17,9 @@ import {
 } from './motionTween.js';
 import { resolveScriptProps } from './referenceTypes.js';
 import { parseFieldAttributes } from './inspectorAttributes.js';
+// Runtime errors are reported against the USER'S line, not the generated one:
+// scriptBundler hands us an external esbuild source map, this decodes it.
+import { decodeSourceMap, originalPosition, formatSourceContext } from './sourceMap.js';
 // The prop-declaration helpers (num/bool/color/…/group/row/Presets). They are
 // injected as globals below, in BOTH evaluators, so a script can call them
 // with no import line; scriptBundler.js also serves this module as the
@@ -25,11 +28,242 @@ import { PROP_HELPER_NAMES, derivePropLabel, propHelperValues } from './scriptPr
  
 /**
  * Cache for compiled JavaScript/JSX modules to ensure 60fps performance without recompiling.
+ *
+ * All four source-keyed caches below are capped at CACHE_LIMIT entries with a
+ * simple LRU (oldest key evicted on insert). Every edit in the script editor
+ * produces a NEW code string and therefore a new key, so without a cap these
+ * maps grow for the lifetime of the app; a few thousand edits of a long
+ * script is enough to retain a few thousand compiled modules.
  */
+const CACHE_LIMIT = 50;
+
 const compiledModuleCache = new Map();
 const propsSchemaCache = new Map();
 const lastErrorCache = new Map();
 const scriptKindCache = new Map();
+// Validation warnings per source string (Task 4), filled alongside the schema.
+const propsWarningsCache = new Map();
+// The console generation at which each script's compile error was last
+// pushed, so a still-broken script re-emits once after clearConsole().
+const lastErrorGeneration = new Map();
+
+/**
+ * Insert into one of the capped caches, evicting the oldest entry once size
+ * exceeds CACHE_LIMIT. Map preserves insertion order, so the first key is the
+ * least recently used; re-inserting refreshes recency. Returns the value so
+ * call sites can `return cacheSet(...)`.
+ */
+function cacheSet(map, key, value) {
+  if (map.has(key)) map.delete(key);
+  map.set(key, value);
+  if (map.size > CACHE_LIMIT) {
+    map.delete(map.keys().next().value);
+  }
+  return value;
+}
+
+// ─── freeze guard (slow / runaway script callbacks) ──────────────────────
+//
+// JS cannot interrupt a true infinite loop on the main thread — nothing else
+// runs until the loop itself yields. This does NOT prevent the freeze; it
+// catches a script after a callback blew past its budget, disables that exact
+// script (keyed by its source string, so editing or saving re-enables it), and
+// says why in the Console. That turns "the editor hangs every second" into one
+// clear message and stops the freeze from recurring.
+//
+// Budgets are PER METHOD, because "slow" means very different things for
+// one-time setup and for a per-frame callback: a Three.js scene, a first
+// shader compile or a font/texture load in onMount legitimately takes seconds,
+// while an onUpdate that takes 500ms is already a hang. A single shared 500ms
+// budget (the previous behaviour) disabled healthy scripts on their very first
+// frame — and, because the disabled flag was keyed only by the code string, a
+// save of otherwise-identical code could not clear it.
+export const SLOW_CALL_BUDGETS = {
+  // One-time work: scene setup, shader compile, asset load, re-parenting.
+  onMount: 5000,
+  onContainerReattach: 5000,
+  // Per-frame / per-seek work: a 60fps frame has ~16ms of budget to stay
+  // smooth, so even 500ms is the "this will never finish" line rather than a
+  // performance warning.
+  onStart: 500,
+  onUpdate: 500,
+  onSeek: 500,
+};
+
+/** Budget for one script callback. Unknown methods get the per-frame budget. */
+export function getCallBudgetMs(methodName) {
+  return SLOW_CALL_BUDGETS[methodName] ?? SLOW_CALL_BUDGETS.onUpdate;
+}
+
+// The per-frame budget, kept as a named export because it is the default
+// every other budget is compared against.
+export const SLOW_CALL_MS = SLOW_CALL_BUDGETS.onUpdate;
+
+// Two strikes: ONE over-budget call is forgiven — a single slow first frame, a
+// cold shader compile, a GC pause, a breakpoint. Only a script that takes too
+// long TWICE with the same method is disabled, and the counter is cleared by
+// resetScriptDisabled (a save from the editor, or the Inspector's Re-enable).
+const SLOW_STRIKES = 2;
+const slowScriptCache = new Set();
+// scriptCode -> Map(methodName -> how many over-budget calls so far).
+const slowStrikeCounts = new Map();
+
+function nowMs() {
+  return typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
+}
+
+/** True once a script has been disabled for repeatedly taking too long. */
+export function isScriptDisabled(scriptCode) {
+  return !!scriptCode && slowScriptCache.has(scriptCode);
+}
+
+/**
+ * Record one over-budget callback. The first strike is forgiven; the second
+ * disables the script and explains why, once.
+ */
+export function markScriptSlow(scriptCode, scriptName, elapsedMs, methodName = 'onUpdate') {
+  if (!scriptCode || slowScriptCache.has(scriptCode)) return;
+  let strikes = slowStrikeCounts.get(scriptCode);
+  if (!strikes) {
+    strikes = new Map();
+    slowStrikeCounts.set(scriptCode, strikes);
+    // Same cap as the compile caches: a few thousand edits must not grow this
+    // map for the lifetime of the app.
+    if (slowStrikeCounts.size > CACHE_LIMIT) {
+      slowStrikeCounts.delete(slowStrikeCounts.keys().next().value);
+    }
+  }
+  const count = (strikes.get(methodName) || 0) + 1;
+  strikes.set(methodName, count);
+  if (count < SLOW_STRIKES) return; // one slow call is forgiven
+
+  slowScriptCache.add(scriptCode);
+  pushRuntimeError(
+    `Script paused: ${methodName}() took ${Math.round(elapsedMs)}ms twice (budget ${getCallBudgetMs(methodName)}ms), which usually means an infinite or very heavy loop. Press Re-enable in the Inspector, or edit the code and save.`,
+    scriptName || 'script',
+  );
+}
+
+/**
+ * Clear a script's disabled state and its strike counters. Called when the
+ * user presses Save in the editor — even when the code string is unchanged,
+ * because saving is an explicit "try this again" — and by the Inspector's
+ * Re-enable button.
+ */
+export function resetScriptDisabled(scriptCode) {
+  if (!scriptCode) return;
+  slowScriptCache.delete(scriptCode);
+  slowStrikeCounts.delete(scriptCode);
+}
+
+// ─── runtime error → original line (source maps) ─────────────────────────
+//
+// The compiled script runs inside `new Function(...)`, so a runtime error's
+// stack points at a line in the GENERATED body. esbuild gave us a real source
+// map for that body (see scriptBundler.js); these helpers keep the decoded map
+// for each compiled script so formatRuntimeError can turn the generated line
+// back into the line the user actually wrote.
+//
+// Two offsets sit between a generated line and a stack line:
+//   * V8 wraps the body as "function anonymous(a,b\n) {\n<body>\n}", so the
+//     header is FUNCTION_HEADER_LINES lines tall.
+//   * the module wrapper adds its own prefix before the user's code.
+// Both are measured, never guessed — see the "runtime error line mapping" tests
+// in scriptCompile.test.js, which assert an exact line number.
+const FUNCTION_HEADER_LINES = 2;
+
+/** Per compiled script: decoded map + the wrapper's line offset. */
+const runtimeMapCache = new Map(); // scriptCode -> entry
+const runtimeMapByName = new Map(); // sanitised script name -> entry
+
+/** Sanitise a script name for use inside a `//# sourceURL=` marker. */
+export function sanitizeScriptName(scriptName) {
+  return String(scriptName || 'script').replace(/[^A-Za-z0-9_.-]/g, '_') || 'script';
+}
+
+/** The `blahblah-script:` marker every compiled script's frames carry. */
+export function scriptSourceURL(scriptName) {
+  return `blahblah-script:${sanitizeScriptName(scriptName)}`;
+}
+
+function capCache(map) {
+  while (map.size > CACHE_LIMIT) map.delete(map.keys().next().value);
+}
+
+/**
+ * Remember the source map a compile produced, so a later runtime error can be
+ * mapped. Also indexed by the sanitised script name, because
+ * formatRuntimeError only receives the name (not the code).
+ */
+function registerRuntimeMap(scriptCode, scriptName, mapJson, wrapperLineOffset) {
+  if (!scriptCode) return;
+  const entry = {
+    name: sanitizeScriptName(scriptName),
+    decoded: mapJson ? decodeSourceMap(mapJson) : null,
+    offset: wrapperLineOffset,
+  };
+  runtimeMapCache.set(scriptCode, entry);
+  capCache(runtimeMapCache);
+  runtimeMapByName.set(entry.name, entry);
+  capCache(runtimeMapByName);
+}
+
+/**
+ * Find the first frame that belongs to a compiled script (`blahblah-script:`)
+ * and map it back to the script's own line.
+ *
+ * @param {string} stack
+ * @param {string} [scriptName] When given, only a frame for that script is
+ *   considered — one script's error must never be reported against another's
+ *   source. When omitted, any known script name found in the stack is used
+ *   (the stack names the script itself).
+ * @returns {{displayName: string, line: number, column: number, content: string|null}|null}
+ */
+function mapRuntimeFrame(stack, scriptName) {
+  if (!stack) return null;
+  const frameRe = /blahblah-script:([A-Za-z0-9_.-]+):(\d+):(\d+)/g;
+  const wantedName = scriptName ? sanitizeScriptName(scriptName) : null;
+  let frame;
+  while ((frame = frameRe.exec(stack))) {
+    const name = frame[1];
+    if (wantedName && name !== wantedName) continue;
+    const entry = runtimeMapByName.get(name);
+    if (!entry || !entry.decoded) continue;
+    // Stack lines are 1-based and count the whole `new Function` source:
+    // header first, then the wrapper prefix, then the esbuild output.
+    const generatedLine = Number(frame[2]) - FUNCTION_HEADER_LINES - entry.offset;
+    if (generatedLine < 1) continue;
+    const pos = originalPosition(entry.decoded, generatedLine, Number(frame[3]));
+    if (!pos) continue;
+    return {
+      displayName: pos.source || name,
+      line: pos.line,
+      column: pos.column,
+      content: pos.content,
+    };
+  }
+  return null;
+}
+
+/**
+ * Message + stack, for a runtime error the Console should show in full.
+ *
+ * When the error came from a compiled script, this points at the user's own
+ * line — `--> MyScript.jsx:12:5` plus the offending source line and a caret —
+ * mirroring formatBundleError's style for compile errors. When the position
+ * cannot be mapped (no map, a frame outside the script, a native error) it
+ * falls back to the raw message + stack, exactly as before.
+ */
+export function formatRuntimeError(err, context, scriptName) {
+  const msg = err?.message || String(err);
+  const stack = err?.stack ? `\n${err.stack}` : '';
+  const header = context ? `${context}: ${msg}` : msg;
+  const mapped = mapRuntimeFrame(err?.stack, scriptName);
+  if (!mapped) return `${header}${stack}`;
+  return `${header}\n --> ${mapped.displayName}:${mapped.line}:${mapped.column}${formatSourceContext(mapped.content, mapped.line, mapped.column)}`;
+}
  
 /**
  * Scripts whose code contains real ESM `import` statements and which have
@@ -91,6 +325,15 @@ function toCommonJsExports(js) {
  
 /** True once `esbuild.initialize()` has resolved successfully. */
 let esbuildReady = false;
+
+/**
+ * True once `esbuildInitPromise` has SETTLED (success OR failure). Until
+ * then, an uncompiled script is "pending" rather than a compile error: the
+ * wasm binary is still loading and the async compile is about to run. Only
+ * after this is true AND esbuildReady is false do we know esbuild is
+ * unavailable and fall back to the regex transpiler.
+ */
+let esbuildInitSettled = false;
  
 /** Resolves once `esbuild.initialize()` finishes (success or failure). */
 const esbuildInitPromise = (async () => {
@@ -126,6 +369,11 @@ const esbuildInitPromise = (async () => {
     esbuildReady = true;
   } catch (err) {
     console.warn('esbuild-wasm init failed, staying on regex transpiler:', err);
+  } finally {
+    // Whatever happened, the sync path can now stop treating every script as
+    // "still starting up": either esbuild is ready (compile via esbuild) or
+    // it is not (regex fallback).
+    esbuildInitSettled = true;
   }
 })();
  
@@ -154,10 +402,19 @@ const esbuildInitPromise = (async () => {
  * Implemented as a tiny scanner (not regex over the raw text) so comments
  * and string literals can NEVER fake an import: it walks the code keeping
  * track of '//' / '/* *\/' comments and ' " ` string state, and only
- * captures a `from 'x'` / `import 'x'` specifier when it appears outside
- * them. (A regex pass has to strip strings to avoid false positives, but
- * stripping strings also destroys the very quotes the specifiers live in —
- * the first version of this function made that exact mistake.)
+ * captures a specifier at the exact positions the grammar allows:
+ *
+ *   - after `import` with only whitespace/comments between (`import 'x'`),
+ *   - after the `from` of an import/export statement (`… from 'x'`),
+ *   - as the literal argument of `import('x')`.
+ *
+ * Everything else is just source text. In particular `export` does NOT open a
+ * specifier window on its own: `export default function A(){ return 'x'; }`
+ * and `export const NAME = 'hello'` are declarations whose strings are data,
+ * not imports (the previous version reported 'x' and 'hello' as packages and
+ * sent those scripts to the network bundler, which then failed). Only
+ * `export { … } from 'x'` and `export * from 'x'` have a specifier. `import.meta`
+ * is not an import either.
  */
 export function extractImportSpecifiers(code) {
   if (!code) return [];
@@ -168,11 +425,63 @@ export function extractImportSpecifiers(code) {
   let quote = null; // ' " or ` when inside a string literal
   let lineComment = false;
   let blockComment = false;
-  let sawImportKeyword = false; // last keyword was `import` (or `export`)
-  let expectingFrom = false; // `from` seen after import/export — next quote is the specifier
+  // Statement state. `export` alone is not an import statement — only a
+  // `from` clause makes it one — so a declaration keyword clears it again.
+  let inImport = false; // inside an `import …` statement
+  let inExport = false; // inside an `export …` statement that may re-export
+  let braceDepth = 0; // { … } nesting inside the current statement
  
   const isWordChar = (ch) => /[A-Za-z0-9_$]/.test(ch);
   const isIdentStart = (ch) => /[A-Za-z_$]/.test(ch);
+  // Words that turn an `export` into a plain declaration — proof that no
+  // `from` clause can follow.
+  const DECLARATION_WORDS = new Set(['const', 'let', 'var', 'function', 'class', 'default', 'async']);
+ 
+  // Skip whitespace and comments. `import /* c */ 'x'` and 
+  // `import /* c */ { a } from 'x'` are both legal, and a multi-line import
+  // always has newlines between the keywords.
+  const skipTrivia = (from) => {
+    let k = from;
+    while (k < n) {
+      const c = code[k];
+      if (c === ' ' || c === '\t' || c === '\r' || c === '\n') { k++; continue; }
+      if (c === '/' && code[k + 1] === '/') { k += 2; while (k < n && code[k] !== '\n') k++; continue; }
+      if (c === '/' && code[k + 1] === '*') {
+        k += 2;
+        while (k < n && !(code[k] === '*' && code[k + 1] === '/')) k++;
+        k = Math.min(n, k + 2);
+        continue;
+      }
+      break;
+    }
+    return k;
+  };
+ 
+  // The character before `idx`, ignoring whitespace: `obj.from('x')` must not
+  // be read as an import `from` clause.
+  const prevSignificantChar = (idx) => {
+    for (let k = idx - 1; k >= 0; k--) {
+      const c = code[k];
+      if (c === ' ' || c === '\t' || c === '\r' || c === '\n') continue;
+      return c;
+    }
+    return '';
+  };
+ 
+  // Read the specifier if a plain ' or " literal starts exactly at `at`.
+  const readSpecifierAt = (at) => {
+    const c = code[at];
+    if (c !== '"' && c !== "'") return null;
+    let j = at + 1;
+    while (j < n && code[j] !== c) {
+      if (code[j] === '\\') j++;
+      j++;
+    }
+    return { spec: code.slice(at + 1, j), end: j + 1 };
+  };
+  const pushSpecifier = (lit) => {
+    if (lit && lit.spec && !specs.includes(lit.spec)) specs.push(lit.spec);
+  };
  
   while (i < n) {
     const ch = code[i];
@@ -208,49 +517,78 @@ export function extractImportSpecifiers(code) {
       continue;
     }
  
-    // The specifier quote: either right after `from` or immediately after
-    // `import` (side-effect import: `import 'x'`). MUST run before the
-    // generic string-start check below, or the opening quote gets consumed
-    // as a string start and the specifier is never captured.
-    if ((expectingFrom || sawImportKeyword) && (ch === '"' || ch === "'")) {
-      const q = ch;
-      let j = i + 1;
-      while (j < n && code[j] !== q) j++;
-      const spec = code.slice(i + 1, j);
-      if (spec && !specs.includes(spec)) specs.push(spec);
-      expectingFrom = false;
-      sawImportKeyword = false;
-      i = j + 1;
+    if (isIdentStart(ch)) {
+      let j = i;
+      while (j < n && isWordChar(code[j])) j++;
+      const word = code.slice(i, j);
+ 
+      if (word === 'import') {
+        const after = skipTrivia(j);
+        // `import 'x'` — a side-effect import: the very next thing is the
+        // specifier.
+        const lit = readSpecifierAt(after);
+        if (lit) {
+          pushSpecifier(lit);
+          i = lit.end;
+          continue;
+        }
+        if (code[after] === '(') {
+          // Dynamic import: `import('x')` has a specifier, `import(expr)` does
+          // not. `import.meta` falls through without one too.
+          pushSpecifier(readSpecifierAt(skipTrivia(after + 1)));
+          i = j;
+          continue;
+        }
+        inImport = true;
+        i = j;
+        continue;
+      }
+ 
+      if (word === 'export') {
+        inExport = true;
+        i = j;
+        continue;
+      }
+ 
+      if (DECLARATION_WORDS.has(word)) {
+        // `export const/let/var/function/class/default` is a declaration, never
+        // an import: any string after it is data. This is the fix for
+        // `export default function A(){ return 'x'; }`.
+        inExport = false;
+      } else if (word === 'from' && (inImport || inExport) && prevSignificantChar(i) !== '.') {
+        const lit = readSpecifierAt(skipTrivia(j));
+        if (lit) {
+          pushSpecifier(lit);
+          i = lit.end;
+          continue;
+        }
+      }
+      i = j;
       continue;
     }
  
     if (ch === '"' || ch === "'" || ch === '`') {
+      // An ordinary string/template literal: consumes its own content, so a
+      // `from 'x'` written inside one can never be mistaken for an import.
       quote = ch;
       i++;
       continue;
     }
  
-    if (isIdentStart(ch)) {
-      let j = i;
-      while (j < n && isWordChar(code[j])) j++;
-      const word = code.slice(i, j);
-      if (word === 'import' || word === 'export') {
-        sawImportKeyword = true;
-        expectingFrom = false;
-      } else if (sawImportKeyword && word === 'from') {
-        expectingFrom = true;
-      }
-      // Any other identifier between import/export and the specifier
-      // (module name, `type`, `default`, `{`, ...) — for `import 'x'`
-      // side-effect imports the quote comes with NO intervening word, so
-      // other words only matter for the `from` state handled above.
-      i = j;
-      continue;
-    }
- 
-    if (ch === ';' || ch === '\n') {
-      sawImportKeyword = false;
-      expectingFrom = false;
+    // Statement separators. A newline ends the statement only OUTSIDE an
+    // import clause's braces, so `import {\n a,\n b\n} from 'x'` still finds
+    // its `from`.
+    if (ch === ';') {
+      inImport = false;
+      inExport = false;
+      braceDepth = 0;
+    } else if (ch === '{' && (inImport || inExport)) {
+      braceDepth += 1;
+    } else if (ch === '}' && braceDepth > 0) {
+      braceDepth -= 1;
+    } else if (ch === '\n' && braceDepth === 0) {
+      inImport = false;
+      inExport = false;
     }
     i++;
   }
@@ -323,12 +661,22 @@ function notifyScriptsRecompiled() {
 }
  
 /**
- * Async, esbuild-bundled compile path for scripts that contain real
- * `import` statements. Resolves the full module graph (npm packages via
- * esm.sh once-then-cached, local scripts/ files, React shims), bundles to
- * one CJS string, evaluates it the same way compileScriptModule does, and
- * on success overwrites compiledModuleCache for this exact script string
- * so the next synchronous compileScriptModule call picks it up.
+ * Async esbuild compile path for EVERY script — not just ones with imports.
+ *
+ * Scripts WITH imports go through the full bundler (npm packages via esm.sh
+ * once-then-cached, local scripts/ files, React shims); scripts WITHOUT
+ * imports go through esbuild.transform. Both produce the same CJS string and
+ * both hand back an EXTERNAL source map, so the regex transpiler's nested-brace
+ * JSX and TypeScript-annotation bugs no longer affect anything the editor
+ * actually runs. Evaluates the result exactly like compileScriptModule and
+ * caches it under this exact source string, so the next synchronous
+ * compileScriptModule call picks it up. The source map is cached as well
+ * (registerRuntimeMap), so a RUNTIME error is reported against the author's own
+ * line by formatRuntimeError instead of a line in the generated body.
+ *
+ * `//# sourceURL=blahblah-script:<name>` is appended to the evaluated body by
+ * runCompiledModule, which is what makes those stack frames identifiable as
+ * script frames at all.
  *
  * On failure it records a real error in lastErrorCache (shown as the red
  * badge) and leaves any previously-compiled entry untouched. Safe to call
@@ -338,28 +686,57 @@ function notifyScriptsRecompiled() {
  * @param {*} projectDirHandle File System Access handle for the project
  *   folder (scripts/ is resolved from it). May be null/undefined — the
  *   bundle will then fail on relative imports but still resolve packages.
+ * @param {string} [scriptName] Used as the esbuild sourcefile (so errors and
+ *   the source map name the user's script), in the stack marker and in Console
+ *   messages.
+ * @returns {Promise<{ ok: boolean, error?: string }>} The compile result, so
+ *   a caller that wants to report it (the script editor) can await it.
  */
 export async function precompileWithBundler(scriptCode, projectDirHandle, scriptName) {
-  if (!scriptCode) return;
-  if (!hasImportStatements(scriptCode)) return; // regex path handles these
+  if (!scriptCode) return { ok: true };
 
+  // Mark pending up front: the Inspector should show "Compiling…" while the
+  // async compile is in flight, never a false red error.
+  pendingBundleCache.add(scriptCode);
   await esbuildInitPromise;
-  if (!esbuildReady) return;
+
+  if (!esbuildReady) {
+    // esbuild never initialised (no wasm) — fall back to the regex
+    // transpiler so scripts still run, and report its result.
+    compileWithRegex(scriptCode, scriptName);
+    return lastErrorCache.has(scriptCode)
+      ? { ok: false, error: lastErrorCache.get(scriptCode) }
+      : { ok: true };
+  }
 
   try {
-    const bundled = await bundleScript(scriptCode, projectDirHandle);
-    const exportedResult = runCompiledModule(toCommonJsExports(bundled));
+    // ONE compile path for every script: import-free scripts go through
+    // esbuild.transform (JSX + TS, no module graph), scripts with imports
+    // through the full bundler. Both emit the same CJS shape + inline map.
+    const compiled = hasImportStatements(scriptCode)
+      ? await bundleScript(scriptCode, projectDirHandle, scriptName)
+      : await transformScript(scriptCode, scriptName);
+    const { result: exportedResult, wrapperLineOffset } = runCompiledModule(
+      toCommonJsExports(compiled.code),
+      scriptName,
+      scriptName,
+    );
+    registerRuntimeMap(scriptCode, scriptName, compiled.map, wrapperLineOffset);
     lastErrorCache.delete(scriptCode);
+    lastErrorGeneration.delete(scriptCode);
     pendingBundleCache.delete(scriptCode);
-    compiledModuleCache.set(scriptCode, exportedResult);
+    cacheSet(compiledModuleCache, scriptCode, exportedResult);
     notifyScriptsRecompiled();
+    return { ok: true };
   } catch (err) {
     // ── STRICT GATE ── compile failed → never execute, log structured error
     const msg = formatBundleError(err);
     pendingBundleCache.delete(scriptCode);
-    lastErrorCache.set(scriptCode, msg);
+    cacheSet(lastErrorCache, scriptCode, msg);
+    cacheSet(lastErrorGeneration, scriptCode, getConsoleGeneration());
     pushCompileError(msg, scriptName);
     notifyScriptsRecompiled(); // so the badge updates immediately
+    return { ok: false, error: msg };
   }
 }
 
@@ -389,11 +766,20 @@ export async function precompileWithBundler(scriptCode, projectDirHandle, script
  */
 export async function precompileAllProjectScripts(scripts, projectDirHandle) {
   if (!scripts || scripts.length === 0) return;
-  const needsBundle = (s) =>
-    !!s?.code && hasImportStatements(s.code) && !compiledModuleCache.has(s.code) && !pendingBundleCache.has(s.code);
-  const toBundle = scripts.filter(needsBundle);
-  if (toBundle.length === 0) return;
-  await Promise.allSettled(toBundle.map((s) => precompileWithBundler(s.code, projectDirHandle)));
+  // Compile every script whose exact source string is not already compiled,
+  // in flight, or known-broken. Keying on the source string means an
+  // unchanged script is skipped in O(1) and only genuinely new/changed code
+  // gets a compile pass.
+  const needsCompile = (s) =>
+    !!s?.code &&
+    !compiledModuleCache.has(s.code) &&
+    !pendingBundleCache.has(s.code) &&
+    !lastErrorCache.has(s.code);
+  const toCompile = scripts.filter(needsCompile);
+  if (toCompile.length === 0) return;
+  // Pass the script NAME through, so Console entries and esbuild errors are
+  // labelled with [ScriptName] instead of a bare "script".
+  await Promise.allSettled(toCompile.map((s) => precompileWithBundler(s.code, projectDirHandle, s.name)));
 }
  
 /**
@@ -753,6 +1139,79 @@ function extractPropsObjectSource(code) {
   return null;
 }
 
+// Every `static props` type the Inspector understands. Anything else is a
+// typo ('numbr') and would silently render no control at all.
+const KNOWN_PROP_TYPES = new Set([
+  'number', 'boolean', 'string', 'color', 'select', 'textarea', 'font',
+  'entity', 'asset', 'struct', 'struct[]', 'button', 'array',
+  'string[]', 'number[]', 'color[]', 'boolean[]', 'select[]', 'asset[]', 'entity[]',
+]);
+
+/** True if `code` defines a method (or static method) named `methodName`. */
+function codeHasMethod(code, methodName) {
+  if (!methodName || !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(methodName)) return true; // can't check → don't warn
+  const escaped = methodName.replace(/\$/g, '\\$');
+  return new RegExp(`(?:^|[\\s;{(,])${escaped}\\s*\\(`).test(code);
+}
+
+/**
+ * Collect non-fatal problems with a props schema. NEVER throws — a warning
+ * must not stop the props from being registered; it is shown as a badge in
+ * the Inspector so a typo is visible instead of silently doing nothing.
+ */
+function collectPropsWarnings(schemaObj, code, warnings) {
+  for (const [name, def] of Object.entries(schemaObj)) {
+    // Shorthand values ({ speed: 2.5 }) have nothing to validate.
+    if (Array.isArray(def) || typeof def !== 'object' || def === null) continue;
+    const { type } = def;
+
+    if (typeof type === 'string' && !KNOWN_PROP_TYPES.has(type)) {
+      warnings.push(`"${name}": unknown prop type '${type}'.`);
+    }
+    if (typeof def.min === 'number' && typeof def.max === 'number' && def.min > def.max) {
+      warnings.push(`"${name}": min (${def.min}) is greater than max (${def.max}).`);
+    }
+    if (type === 'select' && !Array.isArray(def.options)) {
+      warnings.push(`"${name}": select has no options array, so the dropdown will be empty.`);
+    }
+    if (type === 'number' && typeof def.default === 'number' && Number.isFinite(def.default)) {
+      if (typeof def.min === 'number' && def.default < def.min) {
+        warnings.push(`"${name}": default (${def.default}) is below min (${def.min}).`);
+      }
+      if (typeof def.max === 'number' && def.default > def.max) {
+        warnings.push(`"${name}": default (${def.default}) is above max (${def.max}).`);
+      }
+    }
+    if ((type === 'struct' || type === 'struct[]') &&
+        (typeof def.fields !== 'object' || def.fields === null || Array.isArray(def.fields))) {
+      warnings.push(`"${name}": ${type} has no \`fields\` sub-schema, so no controls can be shown.`);
+    }
+    if (type === 'button') {
+      const action = def.action || name;
+      if (!codeHasMethod(code, action)) {
+        warnings.push(`"${name}": button calls '${action}()', but the script defines no such method.`);
+      }
+    }
+  }
+}
+
+/**
+ * Warnings for a script's props schema: unknown types, min > max, selects
+ * without options, defaults outside their range, structs without fields, and
+ * buttons whose method does not exist. Also reports the case where the props
+ * OBJECT could not be evaluated at all (the regex fallback then runs, which
+ * does not understand struct/select — the user should know the schema shown
+ * may be incomplete). Returns [] for a clean schema. Never throws.
+ */
+export function getScriptPropsWarnings(code) {
+  if (!code) return [];
+  extractScriptProps(code); // fills propsWarningsCache
+  return [...(propsWarningsCache.get(code) || [])];
+}
+
+/**
+ * Extracts public props schema for the Unity-style Inspector.
+ */
 export function extractScriptProps(code) {
   if (!code) return [];
   if (propsSchemaCache.has(code)) {
@@ -760,6 +1219,7 @@ export function extractScriptProps(code) {
   }
  
   const fields = [];
+  const warnings = [];
  
   try {
     // 1. Find `static props = { ... }` via a brace-counting scan that
@@ -775,6 +1235,7 @@ export function extractScriptProps(code) {
         const schemaFunc = new Function(...PROP_HELPER_NAMES, `return (${propsObjectSource});`);
         const schemaObj = schemaFunc(...propHelperValues());
         if (schemaObj && typeof schemaObj === 'object') {
+          collectPropsWarnings(schemaObj, code, warnings);
           Object.entries(schemaObj).forEach(([name, rawDef]) => {
             const def = derivePropLabel(name, rawDef);
             if (Array.isArray(def)) {
@@ -865,8 +1326,15 @@ export function extractScriptProps(code) {
             }
           });
         }
-      } catch {
-        // Fallback to regex parser below
+      } catch (evalErr) {
+        // The props OBJECT could not be evaluated (a helper misuse, a syntax
+        // error, a reference to something out of scope). The regex fallback
+        // below then runs, which does not understand struct/select — record
+        // it so the Inspector can warn instead of silently showing a wrong
+        // or partial schema.
+        warnings.push(
+          `Props object could not be evaluated (${evalErr?.message || evalErr}); showing a basic text scan instead — struct/select props may be missing.`,
+        );
       }
     }
  
@@ -898,7 +1366,8 @@ export function extractScriptProps(code) {
     console.warn('Prop extraction warning:', err);
   }
  
-  propsSchemaCache.set(code, fields);
+  cacheSet(propsSchemaCache, code, fields);
+  cacheSet(propsWarningsCache, code, warnings);
   return fields;
 }
  
@@ -982,14 +1451,14 @@ export function detectScriptKind(code) {
     kind = 'motion';
   }
  
-  scriptKindCache.set(code, kind);
+  cacheSet(scriptKindCache, code, kind);
   return kind;
 }
  
 /**
  * Compiles a JS/JSX script into an executable module/class
  */
-function runCompiledModule(transpiled) {
+function runCompiledModule(transpiled, sourceName, scriptName = '') {
   // Only the legacy "React Component (no JSX)" authoring style calls a bare
   // `h(...)`. Only inject the React.createElement alias when the script
   // actually uses it AND doesn't already declare its own `h` — otherwise we
@@ -1004,29 +1473,70 @@ function runCompiledModule(transpiled) {
     /\bimport\s*\{[^}]*\bh\b[^}]*\}/.test(transpiled);
   const needsHHelper = callsH && !declaresOwnH;
 
-  // Module wrapper providing React, MotionTween, Easing, MathUtils, and Remotion hooks
-  const moduleWrapper = `
+  // Module wrapper providing React, MotionTween, Easing, MathUtils, and Remotion hooks.
+  //
+  // Built as prefix + user code + suffix (instead of one template literal) so
+  // the wrapper's exact line offset is known: the number of newlines in
+  // `prefix` is how many lines sit above the user's code once the body is
+  // handed to `new Function`. formatRuntimeError needs that number to turn a
+  // stack line back into the line the author actually wrote.
+  const prefix = `
     let exports = {};
     let module = { exports: {} };
- 
+
     // Helper function to simulate default export
     function exportDefault(target) {
       module.exports.default = target;
       return target;
     }
- 
+
     ${needsHHelper ? `// h(tag, props, children) -- no-JSX authoring helper injected because this
     // script calls h(...) and does not declare its own h.
     const h = React.createElement;` : ''}
- 
-    ${transpiled}
- 
-    // Resolve exported entity
-    const result = module.exports.default || module.exports || (typeof CustomComponent !== 'undefined' ? CustomComponent : null);
+
+    `;
+
+  // `//# sourceURL=` gives every frame of this evaluated body a stable name
+  // (`blahblah-script:MyScript.jsx`) — that marker is what lets a runtime stack
+  // frame be recognised as a script frame, and what FIX 4 in scriptConsole.js
+  // uses to forward only real script errors. The name is sanitised because it
+  // is injected into the source text.
+  const suffix = `
+
+    // Resolve the exported entity.
+    //
+    // A script with no \`export default\` used to come back as esbuild's CJS
+    // module object with no \`default\` and was treated as a valid module that
+    // silently did nothing. It now fails loudly as a normal compile error
+    // (Console entry + red Inspector badge + the editor's error box).
+    const ownKeys = module.exports && typeof module.exports === 'object' ? Object.keys(module.exports) : [];
+    const hasDefaultKey = ownKeys.includes('default');
+    const defaultExport = hasDefaultKey ? module.exports.default : undefined;
+    if (!hasDefaultKey) {
+      if (ownKeys.length === 0) {
+        throw new Error('Script has no default export. Add \`export default class MyScript { ... }\` (or a function for React scripts).');
+      }
+    } else if (
+      defaultExport === undefined ||
+      defaultExport === null ||
+      (typeof defaultExport !== 'function' && typeof defaultExport !== 'object')
+    ) {
+      throw new Error('default export must be a class, function, or object');
+    }
+
+    const result = hasDefaultKey
+      ? defaultExport
+      : (module.exports || (typeof CustomComponent !== 'undefined' ? CustomComponent : null));
     return result;
-  `;
+  //# sourceURL=${scriptSourceURL(scriptName || sourceName)}
+`;
+
+  const moduleWrapper = prefix + transpiled + suffix;
+  const wrapperLineOffset = prefix.split('\n').length - 1;
  
-  const compiledFn = new Function(
+  let compiledFn;
+  try {
+    compiledFn = new Function(
     'React',
     'ReactDOM',
     'ReactDOMClient',
@@ -1044,9 +1554,17 @@ function runCompiledModule(transpiled) {
     // in scope for the whole script and never touch the real global object.
     ...PROP_HELPER_NAMES,
     moduleWrapper
-  );
- 
-  return compiledFn(
+    );
+  } catch (err) {
+    // A SyntaxError here means the compiled body itself is malformed; name
+    // the script so the Console entry is actionable.
+    if (sourceName && err instanceof SyntaxError && !String(err.message).includes(sourceName)) {
+      err.message = `in ${sourceName}: ${err.message}`;
+    }
+    throw err;
+  }
+
+  const result = compiledFn(
     React,
     ReactDOM,
     ReactDOMClient,
@@ -1059,21 +1577,55 @@ function runCompiledModule(transpiled) {
     spring,
     ...propHelperValues()
   );
+  // The offset travels with the result so the caller can register the source
+  // map keyed by this exact script code (see registerRuntimeMap).
+  return { result, wrapperLineOffset };
 }
  
+/**
+ * Last-resort synchronous compile with the REGEX transpiler.
+ *
+ * Only reached when esbuild failed to initialise (no wasm available): it is
+ * the offline escape hatch, not the normal path. It is deliberately broken
+ * for some inputs (nested-brace JSX, `a ? b : any`), which is why nothing
+ * routes through it while esbuild is available.
+ */
+function compileWithRegex(scriptCode, scriptName) {
+  try {
+    const transpiled = transpileJsxToJs(scriptCode);
+    // The regex path has no source map (esbuild is the only compiler that
+    // produces one), so a runtime error here falls back to the raw stack.
+    const { result: exportedResult } = runCompiledModule(transpiled, scriptName, scriptName);
+    lastErrorCache.delete(scriptCode);
+    lastErrorGeneration.delete(scriptCode);
+    pendingBundleCache.delete(scriptCode);
+    return cacheSet(compiledModuleCache, scriptCode, exportedResult);
+  } catch (err) {
+    // ── STRICT GATE ── compile failed → never execute, log structured error
+    const msg = err instanceof SyntaxError
+      ? `error: SyntaxError — ${err.message}\n note: Check for mismatched braces, missing semicolons, or invalid JSX`
+      : `error: ${err.message}`;
+    pendingBundleCache.delete(scriptCode);
+    cacheSet(lastErrorCache, scriptCode, msg);
+    cacheSet(lastErrorGeneration, scriptCode, getConsoleGeneration());
+    pushCompileError(msg, scriptName);
+    return null;
+  }
+}
+
 /**
  * Compiles a JS/JSX script into an executable module/class. Always
  * synchronous — never awaits anything — because this is called from
  * inside React's useMemo (EntityRenderer) and the export render loop.
  *
- * Two paths:
- *  - Scripts WITHOUT import statements compile via the regex transpiler
- *    (`transpileJsxToJs`), exactly as always.
- *  - Scripts WITH import statements return null and are marked "pending"
- *    until `precompileWithBundler` (the async esbuild bundle, triggered on
- *    save / project load / hot-reload) lands and fills the cache — the
- *    regex transpiler would silently delete those imports and leave the
- *    script referencing undefined names, so it must not run on them.
+ * EVERY script is compiled by esbuild on the async precompile path
+ * (precompileWithBundler, triggered on project load / hot-reload / create /
+ * save). Until that compile lands, the script is marked "pending" (the same
+ * mechanism the import case used to use) and this returns null — the
+ * Inspector shows "Compiling…", not an error, and never a regex-mangled
+ * result. The regex transpiler runs ONLY if esbuild failed to initialise
+ * AND its init promise has settled (esbuildReady === false), so the app
+ * still works offline without wasm.
  */
 export function compileScriptModule(scriptCode, scriptName) {
   if (!scriptCode) return null;
@@ -1081,33 +1633,26 @@ export function compileScriptModule(scriptCode, scriptName) {
     return compiledModuleCache.get(scriptCode);
   }
 
-  // ── STRICT GATE ── if a previous compile recorded an error, never run
-  if (lastErrorCache.has(scriptCode)) return null;
+  // ── STRICT GATE ── if a previous compile recorded an error, never run.
+  // Re-emit it once if the Console was cleared since it was last pushed, so
+  // clearing the panel cannot permanently hide a real error.
+  if (lastErrorCache.has(scriptCode)) {
+    if (lastErrorGeneration.get(scriptCode) !== getConsoleGeneration()) {
+      pushCompileError(lastErrorCache.get(scriptCode), scriptName);
+      cacheSet(lastErrorGeneration, scriptCode, getConsoleGeneration());
+    }
+    return null;
+  }
 
-  if (hasImportStatements(scriptCode)) {
-    // Mark pending only while there's no recorded error yet — a failed
-    // bundle records a real error (red badge) and must NOT keep showing
-    // the "Resolving imports…" state on every subsequent sync call.
+  // Still starting esbuild, or it is ready and this script simply has not
+  // been compiled yet → pending. Never a false error, never the regex path.
+  if (!esbuildInitSettled || esbuildReady) {
     pendingBundleCache.add(scriptCode);
     return null;
   }
 
-  try {
-    const transpiled = transpileJsxToJs(scriptCode);
-    const exportedResult = runCompiledModule(transpiled);
-
-    lastErrorCache.delete(scriptCode);
-    compiledModuleCache.set(scriptCode, exportedResult);
-    return exportedResult;
-  } catch (err) {
-    // ── STRICT GATE ── compile failed → never execute, log structured error
-    const msg = err instanceof SyntaxError
-      ? `error: SyntaxError — ${err.message}\n note: Check for mismatched braces, missing semicolons, or invalid JSX`
-      : `error: ${err.message}`;
-    lastErrorCache.set(scriptCode, msg);
-    pushCompileError(msg, scriptName);
-    return null;
-  }
+  // esbuild could not initialise — degrade to the regex transpiler.
+  return compileWithRegex(scriptCode, scriptName);
 }
 
  
@@ -1116,6 +1661,7 @@ export function compileScriptModule(scriptCode, scriptName) {
  */
 export function executeScriptComponent({
   scriptCode,
+  scriptName,
   transform,
   localTime = 0,
   clipDuration = 5,
@@ -1126,9 +1672,15 @@ export function executeScriptComponent({
   allAssets = [],
 }) {
   if (!scriptCode) return transform;
- 
+
+  // Freeze guard: once a callback of THIS script has blown its budget twice,
+  // skip it on every subsequent frame until the code changes (a new source
+  // string) or resetScriptDisabled re-enables it, so a runaway script cannot
+  // freeze the preview/export loop every single frame.
+  if (isScriptDisabled(scriptCode)) return transform;
+
   try {
-    const compiled = compileScriptModule(scriptCode);
+    const compiled = compileScriptModule(scriptCode, scriptName);
     if (!compiled) return transform;
  
     const tweenContext = new MotionTweenContext({ ...transform });
@@ -1168,6 +1720,7 @@ export function executeScriptComponent({
     // 1. Call onStart() / Start() for tween setup
     const onStartFn = instance?.onStart || instance?.Start || compiled?.onStart;
     if (typeof onStartFn === 'function') {
+      const startT0 = nowMs();
       onStartFn.call(instance, {
         transform: transformProxy,
         tween: tweenContext,
@@ -1179,6 +1732,11 @@ export function executeScriptComponent({
         Math: MathUtils,
         Tween,
       });
+      const startMs = nowMs() - startT0;
+      if (startMs > getCallBudgetMs('onStart')) {
+        markScriptSlow(scriptCode, scriptName, startMs, 'onStart');
+        return transform;
+      }
     }
  
     // 2. Deterministically evaluate tweens at localTime
@@ -1201,6 +1759,7 @@ export function executeScriptComponent({
     // 3. Call onUpdate() / Update() for custom frame-based math
     const onUpdateFn = instance?.onUpdate || instance?.Update || compiled?.onUpdate;
     if (typeof onUpdateFn === 'function') {
+      const updateT0 = nowMs();
       onUpdateFn.call(instance, {
         transform: transformProxy,
         props: scriptProps,
@@ -1218,8 +1777,13 @@ export function executeScriptComponent({
         tween: Tween,
         Tween,
       });
+      const updateMs = nowMs() - updateT0;
+      if (updateMs > getCallBudgetMs('onUpdate')) {
+        markScriptSlow(scriptCode, scriptName, updateMs, 'onUpdate');
+        return transform;
+      }
     }
- 
+
     return {
       ...transform,
       x: transformProxy.position.x,
@@ -1230,11 +1794,18 @@ export function executeScriptComponent({
       opacity: Math.max(0, Math.min(1, transformProxy.opacity)),
     };
   } catch (err) {
-    console.warn('Script execution warning:', err);
+    // Motion script errors used to be console.warn-only (invisible unless
+    // devtools was open). Push them to the Console panel with the script name
+    // and stack, and still fall back to the input transform so a broken
+    // script cannot abort the whole preview/export frame.
+    pushRuntimeError(
+      formatRuntimeError(err, 'executeScriptComponent', scriptName),
+      scriptName || 'script',
+    );
     return transform;
   }
 }
- 
+
 /**
  * Returns the compiled React Component for clips that render custom React / Web UI
  */

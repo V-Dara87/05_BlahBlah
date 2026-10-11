@@ -1,5 +1,6 @@
 import {
   precompileWithBundler,
+  resetScriptDisabled,
 } from '../engine/scriptRunner';
 import { isScriptComponent } from '../engine/ecs';
 import {
@@ -185,8 +186,11 @@ export function usePrefabScriptActions({
       await writeScriptFile(projectFolderHandle, newScript.name, newScript.code).catch(
         (err) => console.warn('Could not write new script file:', err)
       );
-      precompileWithBundler(newScript.code, projectFolderHandle).catch(() => {});
     }
+    // Compile EVERY new script up front (the sync path is now pending until
+    // esbuild has compiled it), naming it so Console entries read
+    // [ScriptName]. Nothing awaits it here — the render path polls the cache.
+    return precompileWithBundler(newScript.code, projectFolderHandle, newScript.name);
   };
 
   // Save from the Script Editor modal. The modal calls this as
@@ -216,15 +220,24 @@ export function usePrefabScriptActions({
       )
     );
 
-    if (projectFolderHandle) {
-      // A rename already wrote the new file via renameScriptFile.
-      if (!renamed) {
-        await writeScriptFile(projectFolderHandle, nextName, nextCode).catch(
-          (err) => console.warn('Could not write script file:', err)
-        );
-      }
-      precompileWithBundler(nextCode, projectFolderHandle).catch(() => {});
+    // A rename already wrote the new file via renameScriptFile.
+    if (projectFolderHandle && !renamed) {
+      await writeScriptFile(projectFolderHandle, nextName, nextCode).catch(
+        (err) => console.warn('Could not write script file:', err)
+      );
     }
+
+    // Pressing Save is an explicit "try this again": clear any freeze-guard
+    // pause and its strike counters first, even when the code string is
+    // unchanged (editing the code alone would otherwise be the only way to
+    // un-pause a script).
+    resetScriptDisabled(nextCode);
+
+    // Compile AFTER the setScripts above (the sync path is pending until
+    // esbuild lands) and RETURN the result so the editor can report
+    // "Saved ✓" vs "Saved — N error(s)". Runs even without a project folder,
+    // so an unsaved project still gets an in-memory compile.
+    return precompileWithBundler(nextCode, projectFolderHandle, nextName);
   };
 
   return {

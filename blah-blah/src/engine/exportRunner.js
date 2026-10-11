@@ -555,6 +555,7 @@ export async function drawExportFrame({
             updateCanvasComponent({
               entityId: entity.id,
               scriptId: comp.scriptId,
+              scriptName: scriptDef.name,
               scriptCode: scriptDef.code,
               container,
               localTime,

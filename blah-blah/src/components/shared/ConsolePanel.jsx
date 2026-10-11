@@ -74,7 +74,7 @@ function fallbackCopy(text) {
  * output from user scripts. Each entry has a one-click copy button so errors
  * can be pasted straight into an AI for fixing.
  */
-export function ConsolePanel() {
+export function ConsolePanel({ onOpenScript }) {
   const [entries, setEntries] = useState(() => getConsoleEntries());
   const [filter, setFilter] = useState('all'); // 'all' | 'errors' | 'logs'
   const bottomRef = useRef(null);
@@ -181,7 +181,23 @@ export function ConsolePanel() {
               {SEVERITY_LABELS[entry.severity] || entry.severity.toUpperCase()}
             </span>
             {entry.scriptName && (
-              <span className="console-entry-script">[{entry.scriptName}]</span>
+              onOpenScript ? (
+                <button
+                  type="button"
+                  className="console-entry-script console-entry-script--link"
+                  onClick={(e) => { e.stopPropagation(); onOpenScript(entry.scriptName); }}
+                  title={`Open ${entry.scriptName} in the script editor`}
+                >
+                  [{entry.scriptName}]
+                </button>
+              ) : (
+                <span className="console-entry-script">[{entry.scriptName}]</span>
+              )
+            )}
+            {entry.count > 1 && (
+              <span className="console-entry-count" title={`Repeated ${entry.count} times`}>
+                ×{entry.count}
+              </span>
             )}
             <pre className="console-entry-msg">{entry.message}</pre>
             <CopyButton text={entry.message} className="console-entry-copy" />

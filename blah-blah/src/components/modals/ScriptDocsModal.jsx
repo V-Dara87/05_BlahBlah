@@ -80,6 +80,10 @@ in the BlahBlah timeline editor.
 
 Before writing any script code, review this checklist:
 
+- **Compiled with esbuild:** every script — with or without \`import\` — is compiled by esbuild, so JSX, TypeScript, and npm imports all work the same way.
+- **Errors show in the Console:** a compile or runtime error appears in the Console panel tagged with the script name and line/column, so nothing fails silently.
+- **Props are validated:** \`static props\` types, min/max ranges, select options, struct fields, and button methods are checked, and warnings appear as a yellow badge in the Inspector.
+
 | Task | Correct Pattern | Incorrect Pattern (Do NOT do this) |
 |---|---|---|
 | **2D Canvas script** | \`class MyScript extends CanvasComponent\` | Hand-rolling raw \`<canvas>\` without handling resize or container cleanup |

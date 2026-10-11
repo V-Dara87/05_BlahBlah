@@ -99,9 +99,9 @@ export function useProjectFileActions({
     setSchemaWarning?.(loaded.schemaWarning || null);
     setScreen('editor');
  
-    // Real-import support: pre-bundle every script with import statements
-    // up front, so by the time the user scrubs, the sync compile path's
-    // cache is already warm (scripts without imports no-op instantly).
+    // Compile EVERY script up front with esbuild, so by the time the user
+    // scrubs the sync compile path's cache is already warm (and the
+    // Inspector shows "Compiling…" instead of a false error while it is).
     precompileAllProjectScripts(loaded.scripts, dirHandle).catch(() => {});
  
     recordProjectOpened(dirHandle, loaded.projectName, null).catch((err) => {
@@ -178,8 +178,9 @@ export function useProjectFileActions({
         const updatedScripts = await checkScriptsForChanges(projectFolderHandle, scriptsRef.current);
         if (updatedScripts && !disposed) {
           setScripts(updatedScripts);
-          // Real-import support: an external edit may have added `import`
-          // statements — bundle the changed scripts in the background.
+          // An external edit may have changed any script — recompile every
+          // changed one in the background (unchanged ones are skipped by
+          // exact source string).
           precompileAllProjectScripts(updatedScripts, projectFolderHandle).catch(() => {});
         }
       } finally {

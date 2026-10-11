@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { invokeScriptAction, listScriptActions } from './scriptActions.js';
 import { updateCanvasComponent } from './canvasRunner.js';
+import { precompileWithBundler } from './scriptRunner.js';
 
 /** Silence the dispatcher's own warnings — these tests assert the result. */
 function quiet(fn) {
@@ -35,6 +36,15 @@ const COMPONENT_SCRIPT = `
 export default function Clip({ props }) { return props.label; }
 Clip.randomise = ({ set }) => set('seed', Math.random());
 `;
+
+// The engine compiles EVERY script through esbuild on the async precompile
+// path, so the sync compile path is "pending" until that lands. Warm the
+// cache for these fixtures before the tests below run.
+await Promise.all([
+  precompileWithBundler(CLASS_SCRIPT, null, 'Demo.jsx'),
+  precompileWithBundler(OBJECT_SCRIPT, null, 'Object.jsx'),
+  precompileWithBundler(COMPONENT_SCRIPT, null, 'Clip.jsx'),
+]);
 
 test('invokeScriptAction - a static method runs on the export', async () => {
   const res = await invokeScriptAction({
@@ -115,6 +125,7 @@ test('invokeScriptAction - prefers a live mounted canvas instance', async () => 
       probe() { return this.live ? 'live' : 'cold'; }
     }
   `;
+  await precompileWithBundler(code, null, 'Canvas.jsx');
   updateCanvasComponent({
     entityId: 'entity-1', scriptId: 'script-1', scriptCode: code,
     container: {}, localTime: 0, frame: 0, fps: 30, props: {},
