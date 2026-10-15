@@ -379,3 +379,65 @@ input, select, textarea {
   border-bottom: 1px solid var(--unity-border);
   flex-shrink: 0;
 }
+
+.curve-tab-quick-section {
+  padding: 10px;
+  border-bottom: 1px solid var(--unity-border);
+  flex-shrink: 0;
+}
+
+.curve-tab-section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 7px;
+  color: var(--unity-text);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.curve-tab-section-hint {
+  color: var(--unity-text-dim);
+  font-size: 9px;
+  font-weight: 400;
+}
+
+.curve-tab-quick-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.curve-tab-quick-btn {
+  min-height: 25px;
+  padding: 3px 5px;
+  border: 1px solid var(--unity-border);
+  border-radius: 4px;
+  background: var(--unity-dark);
+  color: var(--unity-text-muted);
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1.1;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.curve-tab-quick-btn:hover {
+  border-color: var(--unity-text-dim);
+  background: var(--unity-hover);
+  color: var(--unity-text);
+}
+
+.curve-tab-quick-btn.active {
+  border-color: var(--unity-accent-blue);
+  background: rgba(var(--unity-accent-rgb), 0.16);
+  color: #b8f7ff;
+}
+
+.curve-tab-editor-hint {
+  margin: 0;
+  padding: 1px 10px 10px;
+  color: var(--unity-text-dim);
+  font-size: 10px;
+  line-height: 1.4;
+}

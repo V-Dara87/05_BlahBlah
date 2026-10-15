@@ -104,6 +104,7 @@ export const UnityInspector = memo(function UnityInspector({
   mediaAssets = [],
   isLocked = false,
   onToggleLock,
+  onOpenPackageManager,
   // Project framerate, used by script actions (a [Button]'s timing context).
   fps = 30,
 }) {
@@ -670,6 +671,8 @@ export const UnityInspector = memo(function UnityInspector({
             handleCardDrop={handleCardDrop}
             handleCardDragEnd={handleCardDragEnd}
             removeComponent={removeComponent}
+            onOpenPackageManager={onOpenPackageManager}
+            mediaAssets={mediaAssets}
           />
         )}
  

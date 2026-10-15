@@ -16,6 +16,48 @@ npm run dev
 
 Requires a Chromium browser with File System Access API (Chrome, Edge, Brave) for on-disk projects.
 
+## AI Agent Automation & CLI (`@blahblah/cli` & `@blahblah/mcp`)
+
+BlahBlah is fully automatable by AI agents (Cursor, Claude Desktop, Antigravity, custom scripts) via its CLI and MCP Server:
+
+### 1. CLI Commands
+```bash
+# Initialize a new project
+npm run cli -- project init "My Project" --res 1080p
+
+# Inspect current project state (machine-readable)
+npm run cli -- project inspect --json
+
+# Add tracks and clips
+npm run cli -- track add "Subtitles"
+npm run cli -- clip add --file "./media/intro.mp4" --start 0 --duration 10
+
+# Add code-driven overlay script & entities
+npm run cli -- script new "MyOverlay" --type canvas
+npm run cli -- entity add --name "Overlay" --script "MyOverlay" --track "track-2" --start 1 --duration 5
+
+# Keyframe animation with easing
+npm run cli -- keyframe add --id "<entity-id>" --field y --time 0 --value 100 --ease easeInOut
+
+# Render frame preview at timestamp (SVG/inspection)
+npm run cli -- render frame --time 2.5 --out preview.svg
+```
+
+### 2. Model Context Protocol (MCP) Server for AI
+Configure in Cursor or Claude Desktop (`claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "blahblah": {
+      "command": "node",
+      "args": ["<path-to-repo>/blah-blah/packages/blahblah-mcp/bin/mcp-server.mjs"]
+    }
+  }
+}
+```
+Exposes tools: `blahblah_project_init`, `blahblah_project_inspect`, `blahblah_track_add`, `blahblah_clip_add`, `blahblah_entity_add`, `blahblah_keyframe_add`, `blahblah_script_create`, `blahblah_render_frame`, `blahblah_live_control`.
+
+
 ## Project layout (on disk)
 
 ```

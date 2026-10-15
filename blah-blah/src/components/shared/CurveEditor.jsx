@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback, useState, memo } from 'react';
-import { RotateCcw, MousePointer2, Maximize2 } from 'lucide-react';
-import { CURVE_PRESETS } from '../../engine/keyframes';
+import { RotateCcw, MousePointer2, Maximize2, Copy, ClipboardPaste, ArrowLeftRight } from 'lucide-react';
+import { CURVE_PRESETS, QUICK_CURVE_PRESETS } from '../../engine/keyframes';
 import { readThemeAccent } from '../../services/themeSettings';
 import { CurvePickerModal } from '../modals/CurvePickerModal';
  
@@ -270,6 +270,7 @@ export const CurveEditorTab = memo(function CurveEditorTab({
   keyframeInfo,
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [copiedCurve, setCopiedCurve] = useState(null);
   const canvasWrapRef = useRef(null);
   // Canvas grows to fill the tab's available width (and a proportional
   // height, capped so a very wide/tall dock panel doesn't produce a
@@ -277,6 +278,29 @@ export const CurveEditorTab = memo(function CurveEditorTab({
   // resizing the Curves tab (wider dock pane, different screen) now
   // resizes the curve editor with it.
   const [canvasSize, setCanvasSize] = useState({ width: 280, height: 200 });
+
+  const handleInvertCurve = useCallback(() => {
+    // Invert bezier: (1 - cp2.x, 1 - cp2.y) and (1 - cp1.x, 1 - cp1.y)
+    const nextCp1 = {
+      x: Math.max(0, Math.min(1, Number((1 - cp2.x).toFixed(3)))),
+      y: Number((1 - cp2.y).toFixed(3)),
+    };
+    const nextCp2 = {
+      x: Math.max(0, Math.min(1, Number((1 - cp1.x).toFixed(3)))),
+      y: Number((1 - cp1.y).toFixed(3)),
+    };
+    onChange?.(nextCp1, nextCp2);
+  }, [cp1, cp2, onChange]);
+
+  const handleCopyCurve = useCallback(() => {
+    setCopiedCurve({ cp1: { ...cp1 }, cp2: { ...cp2 } });
+  }, [cp1, cp2]);
+
+  const handlePasteCurve = useCallback(() => {
+    if (copiedCurve) {
+      onChange?.({ ...copiedCurve.cp1 }, { ...copiedCurve.cp2 });
+    }
+  }, [copiedCurve, onChange]);
  
   useEffect(() => {
     const el = canvasWrapRef.current;
@@ -297,7 +321,7 @@ export const CurveEditorTab = memo(function CurveEditorTab({
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
- 
+
   // Highlight the dropdown/list item matching the current curve, if any
   // (within a small tolerance since dragging can land just off-preset).
   const matchedPresetName = CURVE_PRESETS.find(
@@ -307,12 +331,12 @@ export const CurveEditorTab = memo(function CurveEditorTab({
       Math.abs(p.cp2.x - cp2.x) < 0.005 &&
       Math.abs(p.cp2.y - cp2.y) < 0.005
   )?.name || '';
- 
+
   const handleSelectPreset = (e) => {
     const preset = CURVE_PRESETS.find((p) => p.name === e.target.value);
     if (preset) onChange?.({ ...preset.cp1 }, { ...preset.cp2 });
   };
- 
+
   return (
     <div className="curve-tab-root">
       {/* Header */}
@@ -328,17 +352,70 @@ export const CurveEditorTab = memo(function CurveEditorTab({
           </span>
         )}
         {selectedKeyId && (
-          <button className="curve-tab-reset-btn" onClick={onReset} title="Reset to default (linear)">
-            <RotateCcw size={11} />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+            <button
+              className="curve-tab-reset-btn"
+              onClick={handleCopyCurve}
+              title="Copy curve (cp1 / cp2)"
+            >
+              <Copy size={11} />
+            </button>
+            <button
+              className="curve-tab-reset-btn"
+              onClick={handlePasteCurve}
+              disabled={!copiedCurve}
+              style={{ opacity: copiedCurve ? 1 : 0.4 }}
+              title="Paste copied curve"
+            >
+              <ClipboardPaste size={11} />
+            </button>
+            <button
+              className="curve-tab-reset-btn"
+              onClick={handleInvertCurve}
+              title="Invert / Flip curve direction"
+            >
+              <ArrowLeftRight size={11} />
+            </button>
+            <button
+              className="curve-tab-reset-btn"
+              onClick={onReset}
+              title="Reset to default (linear)"
+            >
+              <RotateCcw size={11} />
+            </button>
+          </div>
         )}
       </div>
  
       {selectedKeyId ? (
         <>
-          {/* Inline preset dropdown + Browse gallery button */}
+          <div className="curve-tab-quick-section">
+            <div className="curve-tab-section-heading">
+              <span>Quick easing</span>
+              <span className="curve-tab-section-hint">Applies to the next keyframe</span>
+            </div>
+            <div className="curve-tab-quick-grid" role="group" aria-label="Quick easing presets">
+              {QUICK_CURVE_PRESETS.map((preset) => {
+                const isActive = preset.name === matchedPresetName;
+                return (
+                  <button
+                    key={preset.name}
+                    type="button"
+                    className={`curve-tab-quick-btn ${isActive ? 'active' : ''}`}
+                    onClick={() => onChange?.({ ...preset.cp1 }, { ...preset.cp2 })}
+                    title={`Use ${preset.name} easing`}
+                    aria-pressed={isActive}
+                  >
+                    {preset.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Full preset library + visual editor for precise adjustments. */}
           <div className="curve-tab-preset-row inspector-row">
-            <span className="row-label">Preset</span>
+            <span className="row-label">More</span>
             <div className="preset-select-group">
               <select className="inspector-select" value={matchedPresetName} onChange={handleSelectPreset}>
                 <option value="" disabled>
@@ -351,7 +428,7 @@ export const CurveEditorTab = memo(function CurveEditorTab({
               <button
                 type="button"
                 className="gallery-open-btn"
-                title="Browse all curve presets visually"
+                title="Browse all easing presets visually"
                 onClick={() => setPickerOpen(true)}
               >
                 <Maximize2 size={11} />
@@ -368,6 +445,7 @@ export const CurveEditorTab = memo(function CurveEditorTab({
               height={canvasSize.height}
             />
           </div>
+          <p className="curve-tab-editor-hint">Drag either handle to fine-tune this easing. {matchedPresetName || 'Custom'} is selected.</p>
         </>
       ) : (
         <div className="curve-tab-empty-state">

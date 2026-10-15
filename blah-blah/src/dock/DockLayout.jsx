@@ -16,6 +16,7 @@ import {
 import { useEditorContext } from './EditorContext';
 import { popoutGroup, closeEmptyPopoutGroups } from './popoutGroup';
 import { attachTabDoubleClickMaximize } from './tabMaximize';
+import { DockAddWindowButton } from './DockAddWindowButton';
 import 'dockview-react/dist/styles/dockview.css';
 import './dockview-unity-theme.css';
  
@@ -120,6 +121,20 @@ function buildDefaultLayout(api) {
   });
 }
 
+const DockLeftHeaderActions = memo(function DockLeftHeaderActions({
+  containerApi,
+  group,
+}) {
+  return (
+    <DockAddWindowButton
+      containerApi={containerApi}
+      group={group}
+      variant="tab"
+      title="Add tab to this group"
+    />
+  );
+});
+
 const DockHeaderActions = memo(function DockHeaderActions({
   api,
   containerApi,
@@ -156,6 +171,12 @@ const DockHeaderActions = memo(function DockHeaderActions({
 
   return (
     <div className="dock-header-actions">
+      <DockAddWindowButton
+        containerApi={containerApi}
+        group={group}
+        variant="header"
+        title="Add window to this layout"
+      />
       {!isPopout && (
         <button
           className="dock-action-btn"
@@ -296,6 +317,7 @@ export const DockLayout = memo(function DockLayout() {
       <DockviewReact
         className="dockview-theme-dark dockview-theme-unity"
         components={DOCK_COMPONENTS}
+        leftHeaderActionsComponent={DockLeftHeaderActions}
         rightHeaderActionsComponent={DockHeaderActions}
         getTabContextMenuItems={getTabContextMenuItems}
         onReady={handleReady}

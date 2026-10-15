@@ -66,7 +66,7 @@ in the BlahBlah timeline editor.
 > **CRITICAL INSTRUCTIONS FOR AI CODE GENERATORS:**
 > When asked to generate a BlahBlah script, follow these rules strictly to avoid runtime errors:
 > 1. **Pick Exactly One Contract**: Choose \`canvas\`, \`motion\`, \`react\`, or \`shader\`. Never mix methods from different contracts.
-> 2. **For 2D Canvas Graphics**: Always \`import { CanvasComponent } from '@blahblah/sdk';\` and extend it. It automatically creates the \`<canvas>\`, tracks resolution, provides \`this.ctx\`, \`this.centerOrigin()\`, \`this.restoreOrigin()\`, and \`this.toScreen()\`.
+> 2. **For 2D Canvas Graphics**: Always \`import { CanvasComponent } from '@blahblah/sdk';\` and extend it. It automatically creates the \`<canvas>\`, tracks resolution, provides \`this.ctx\`, \`this.centerOrigin()\`, \`this.restoreOrigin()\`, and \`this.toScreen()\`. Do NOT override \`onMount()\` unless necessary (and if you do, you MUST call \`super.onMount(args)\`). Prefer writing all drawing in \`onUpdate({ time, props })\`.
 > 3. **For 3D Graphics**: Always \`import { ThreeComponent } from '@blahblah/sdk';\` and \`import * as THREE from 'three';\`. It automatically manages the WebGL renderer, perspective camera aspect ratio, and disposal.
 > 4. **Container Sizing**: NEVER set \`container.style.width\` or \`container.style.height\` to \`'100%'\`. The container is already sized in project output pixels.
 > 5. **Deterministic Animations**: \`onUpdate\` must be a pure function of \`time\` (local seconds) or \`frame\`. Never accumulate wall-clock deltas (\`this.x += 1\`) without handling \`onSeek\`.

@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import {
   FilePlus, FolderOpen, Save, Download, Undo2, Redo2, Scissors, Trash2,
   Code, MousePointer2, Settings, Sliders, PlaySquare, Clock, Layers,
-  Activity, Copy, ExternalLink, Maximize2, RotateCcw, BookOpen, Volume2, Terminal,
+  Activity, Copy, ExternalLink, Maximize2, RotateCcw, BookOpen, Volume2, Terminal, Package,
 } from 'lucide-react';
 import { isTauri } from '../services/tauriFsAdapter';
 import { openProjectInExplorer, openProjectInVsCode, openProjectInCursor } from '../services/ideLauncher';
@@ -47,6 +47,7 @@ export function useMenuBarConfig({
   setIsProjectJsonOpen,
   setIsScriptDocsOpen,
   setIsSettingsOpen,
+  onOpenPackageManager,
 }) {
   return useMemo(() => [
     {
@@ -80,6 +81,7 @@ export function useMenuBarConfig({
       items: [
         { label: 'Project Code', icon: <Code size={13} />, onClick: () => setIsProjectJsonOpen(true) },
         { label: 'Script API Docs', icon: <BookOpen size={13} />, onClick: () => setIsScriptDocsOpen(true) },
+        { label: 'Package Manager...', icon: <Package size={13} />, onClick: () => onOpenPackageManager?.('all') },
         { type: 'separator' },
         { label: 'Settings', icon: <Settings size={13} />, onClick: () => setIsSettingsOpen(true) },
       ],
@@ -113,5 +115,6 @@ export function useMenuBarConfig({
     projectFolderHandle, isPrefabMode,
     openOrFocusPanel, addNewPanelInstance, popoutActivePanel, floatActivePanel, handleResetLayout,
     setIsNewProjectOpen, setIsExportOpen, setIsProjectJsonOpen, setIsScriptDocsOpen, setIsSettingsOpen,
+    onOpenPackageManager,
   ]);
 }

@@ -1,0 +1,14 @@
+{
+  "name": "@blahblah/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "blahblah": "./bin/blahblah.mjs"
+  },
+  "scripts": {
+    "test": "node --test tests/**/*.test.mjs"
+  },
+  "keywords": ["blahblah", "cli", "ai", "automation", "video"],
+  "author": "",
+  "license": "MIT"
+}

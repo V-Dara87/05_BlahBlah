@@ -122,6 +122,266 @@ async fn run_ffmpeg(
     }
 }
 
+#[derive(Clone, serde::Serialize)]
+pub struct WhisperProgressEvent {
+    pub session_id: String,
+    pub line: String,
+}
+
+#[tauri::command]
+async fn whisper_version(app: tauri::AppHandle) -> Result<String, String> {
+    let sidecar_command = app
+        .shell()
+        .sidecar("whisper-cli")
+        .map_err(|e| format!("Failed to configure whisper-cli sidecar: {e}"))?;
+
+    let output = sidecar_command
+        .args(["--version"])
+        .output()
+        .await
+        .map_err(|e| format!("Failed to execute whisper-cli sidecar (--version): {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        return Err(format!(
+            "whisper-cli --version exited with code {:?}: {}",
+            output.status.code(),
+            if !stderr.is_empty() { stderr } else { stdout }
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let first_line = stdout.lines().next().unwrap_or("").trim().to_string();
+    if first_line.is_empty() {
+        return Err("whisper-cli --version returned empty output".to_string());
+    }
+
+    Ok(first_line)
+}
+
+#[tauri::command]
+async fn run_whisper(
+    app: tauri::AppHandle,
+    args: Vec<String>,
+    session_id: Option<String>,
+) -> Result<String, String> {
+    let sess_id = session_id.unwrap_or_default();
+
+    let sidecar_command = app
+        .shell()
+        .sidecar("whisper-cli")
+        .map_err(|e| format!("Failed to configure whisper-cli sidecar: {e}"))?;
+
+    let (mut rx, _child) = sidecar_command
+        .args(args)
+        .spawn()
+        .map_err(|e| format!("Failed to spawn whisper-cli sidecar: {e}"))?;
+
+    let mut stdout_accum = Vec::new();
+    let mut stderr_accum = Vec::new();
+    let mut exit_code = None;
+
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stdout(line_bytes) => {
+                let line_str = String::from_utf8_lossy(&line_bytes).to_string();
+                let _ = app.emit(
+                    "whisper-progress",
+                    WhisperProgressEvent {
+                        session_id: sess_id.clone(),
+                        line: line_str,
+                    },
+                );
+                stdout_accum.extend(line_bytes);
+                stdout_accum.push(b'\n');
+            }
+            CommandEvent::Stderr(line_bytes) => {
+                let line_str = String::from_utf8_lossy(&line_bytes).to_string();
+                let _ = app.emit(
+                    "whisper-progress",
+                    WhisperProgressEvent {
+                        session_id: sess_id.clone(),
+                        line: line_str,
+                    },
+                );
+                stderr_accum.extend(line_bytes);
+                stderr_accum.push(b'\n');
+            }
+            CommandEvent::Terminated(payload) => {
+                exit_code = payload.code;
+            }
+            CommandEvent::Error(err) => {
+                return Err(format!("whisper process error: {err}"));
+            }
+            _ => {}
+        }
+    }
+
+    let stdout = String::from_utf8_lossy(&stdout_accum).to_string();
+    let stderr = String::from_utf8_lossy(&stderr_accum).to_string();
+
+    if exit_code != Some(0) {
+        return Err(format!(
+            "whisper process exited with code {:?}: {}",
+            exit_code,
+            if !stderr.is_empty() { stderr } else { stdout }
+        ));
+    }
+
+    if stdout.trim().is_empty() && !stderr.trim().is_empty() {
+        Ok(stderr)
+    } else {
+        Ok(stdout)
+    }
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct PackageDownloadProgressEvent {
+    pub session_id: String,
+    pub bytes_downloaded: u64,
+    pub total_bytes: Option<u64>,
+    pub percent: Option<f64>,
+}
+
+#[tauri::command]
+async fn download_package(
+    app: tauri::AppHandle,
+    url: String,
+    dest_path: String,
+    session_id: Option<String>,
+) -> Result<u64, String> {
+    use futures_util::StreamExt;
+    use tokio::io::AsyncWriteExt;
+
+    let sess_id = session_id.unwrap_or_default();
+    let client = reqwest::Client::builder()
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Download failed with HTTP status: {}", response.status()));
+    }
+
+    let total_bytes = response.content_length();
+    let dest = std::path::PathBuf::from(&dest_path);
+    if let Some(parent) = dest.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("Failed to create destination directory: {e}"))?;
+    }
+
+    let tmp_dest = dest.with_extension(format!(
+        "{}.download.tmp",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    ));
+
+    let mut file = tokio::fs::File::create(&tmp_dest)
+        .await
+        .map_err(|e| format!("Failed to create temporary download file: {e}"))?;
+
+    let mut stream = response.bytes_stream();
+    let mut downloaded: u64 = 0;
+    let mut last_emit = std::time::Instant::now();
+
+    while let Some(chunk_result) = stream.next().await {
+        let chunk = chunk_result.map_err(|e| format!("Error reading download stream: {e}"))?;
+        file.write_all(&chunk)
+            .await
+            .map_err(|e| format!("Error writing chunk to file: {e}"))?;
+        downloaded += chunk.len() as u64;
+
+        if last_emit.elapsed().as_millis() >= 100 || downloaded == total_bytes.unwrap_or(0) {
+            last_emit = std::time::Instant::now();
+            let percent = total_bytes.map(|total| {
+                if total > 0 {
+                    (downloaded as f64 / total as f64) * 100.0
+                } else {
+                    0.0
+                }
+            });
+            let _ = app.emit(
+                "package-download-progress",
+                PackageDownloadProgressEvent {
+                    session_id: sess_id.clone(),
+                    bytes_downloaded: downloaded,
+                    total_bytes,
+                    percent,
+                },
+            );
+        }
+    }
+
+    file.flush()
+        .await
+        .map_err(|e| format!("Error flushing downloaded file: {e}"))?;
+    drop(file);
+
+    if dest.exists() {
+        let _ = tokio::fs::remove_file(&dest).await;
+    }
+    tokio::fs::rename(&tmp_dest, &dest)
+        .await
+        .map_err(|e| format!("Failed to finalize downloaded file: {e}"))?;
+
+    Ok(downloaded)
+}
+
+#[tauri::command]
+async fn verify_sha256(
+    file_path: String,
+    expected_hash: String,
+) -> Result<bool, String> {
+    use sha2::{Sha256, Digest};
+    use tokio::io::AsyncReadExt;
+
+    let path = std::path::Path::new(&file_path);
+    if !path.exists() {
+        return Err(format!("File does not exist: {file_path}"));
+    }
+
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .map_err(|e| format!("Failed to open file for hashing: {e}"))?;
+
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+
+    loop {
+        let n = file
+            .read(&mut buffer)
+            .await
+            .map_err(|e| format!("Failed to read file for hashing: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buffer[..n]);
+    }
+
+    let result = hasher.finalize();
+    let hash_hex = format!("{:x}", result);
+
+    Ok(hash_hex.eq_ignore_ascii_case(expected_hash.trim()))
+}
+
+#[tauri::command]
+async fn get_app_data_dir(app: tauri::AppHandle) -> Result<String, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {e}"))?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
 /// Sequence for pop-out window labels — a window label must be unique for the
 /// lifetime of the process.
 static POPOUT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -268,7 +528,15 @@ pub fn run() {
     .plugin(tauri_plugin_fs::init())
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_shell::init())
-    .invoke_handler(tauri::generate_handler![ffmpeg_version, run_ffmpeg])
+    .invoke_handler(tauri::generate_handler![
+      ffmpeg_version,
+      run_ffmpeg,
+      whisper_version,
+      run_whisper,
+      download_package,
+      verify_sha256,
+      get_app_data_dir
+    ])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

@@ -51,7 +51,13 @@ export function ScriptGizmoOverlay({
     const allGizmos = [];
 
     scriptComponents.forEach((comp) => {
-      const scriptDef = scripts.find((s) => s.id === comp.scriptId);
+      const scriptDef = scripts.find(
+        (s) =>
+          s.id === comp.scriptId ||
+          s.name === comp.scriptName ||
+          s.name === `${comp.scriptName}.jsx` ||
+          s.id === `script-${comp.scriptName}`
+      );
       if (!scriptDef?.code) return;
 
       const instance = getMountedCanvasInstance(entity.id, comp.scriptId);

@@ -71,7 +71,13 @@ export function OverlayLayer({
       .join(', ');
     const ReactComponentNodes = [];
     for (const comp of scriptComps) {
-      const scriptDef = scripts.find((s) => s.id === comp.scriptId);
+      const scriptDef = scripts.find(
+        (s) =>
+          s.id === comp.scriptId ||
+          s.name === comp.scriptName ||
+          s.name === `${comp.scriptName}.jsx` ||
+          s.id === `script-${comp.scriptName}`
+      );
       if (!scriptDef || !scriptDef.code) continue;
       if (detectScriptKind(scriptDef.code) !== 'react') continue;
       const CompiledComponent = getCompiledReactComponent(scriptDef.code);
@@ -141,7 +147,13 @@ export function OverlayLayer({
               entity::scriptId so multiple canvas scripts on one
               entity stay independent. */}
           {scriptComps.map((comp) => {
-            const scriptDef = scripts.find((s) => s.id === comp.scriptId);
+            const scriptDef = scripts.find(
+              (s) =>
+                s.id === comp.scriptId ||
+                s.name === comp.scriptName ||
+                s.name === `${comp.scriptName}.jsx` ||
+                s.id === `script-${comp.scriptName}`
+            );
             if (!scriptDef?.code || detectScriptKind(scriptDef.code) !== 'canvas') return null;
             const mountKey = `${entity.id}::${comp.scriptId}`;
             return (

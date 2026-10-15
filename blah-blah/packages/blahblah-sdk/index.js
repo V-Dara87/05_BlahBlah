@@ -52,6 +52,14 @@ export class CanvasComponent extends MotionScript {
     this.canvasHeight = args.canvasHeight || this.canvasHeight;
     this.aspect = args.aspect || (this.canvasHeight > 0 ? this.canvasWidth / this.canvasHeight : 1);
 
+    if (this.container && !this.canvas) {
+      this.canvas = document.createElement('canvas');
+      this.canvas.width = this.canvasWidth;
+      this.canvas.height = this.canvasHeight;
+      this.ctx = this.canvas.getContext('2d');
+      this.container.appendChild(this.canvas);
+    }
+
     if (this.canvas && (this.canvas.width !== this.canvasWidth || this.canvas.height !== this.canvasHeight)) {
       this.canvas.width = this.canvasWidth;
       this.canvas.height = this.canvasHeight;

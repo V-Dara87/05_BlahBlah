@@ -23,3 +23,10 @@ dist-ssr
 *.sln
 *.sw?
 .aibridge/
+.cache/
+*.peaks
+*.download.tmp
+
+# Demo and scratch projects
+demo_explainer/
+.demo_explainer/

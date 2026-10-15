@@ -1,4 +1,4 @@
-import { useState, useMemo, memo } from 'react';
+import { useState, useMemo, useEffect, memo } from 'react';
 import { X, Search, Waves, Check, RotateCcw } from 'lucide-react';
 import { CurveEditor } from '../shared/CurveEditor';
 import { CURVE_PRESETS } from '../../engine/keyframes';
@@ -39,6 +39,25 @@ export const CurvePickerModal = memo(function CurvePickerModal({
     cp1: currentCp1 || { x: 0.25, y: 0.25 },
     cp2: currentCp2 || { x: 0.75, y: 0.75 },
   }));
+
+  // This component stays mounted while the modal is closed. Start each new
+  // browsing session from the currently selected segment instead of reviving
+  // a previous, unapplied experiment.
+  useEffect(() => {
+    if (!isOpen) return;
+    const matchingPreset = CURVE_PRESETS.find(
+      (preset) =>
+        Math.abs(preset.cp1.x - (currentCp1?.x ?? 0.25)) < 0.005 &&
+        Math.abs(preset.cp1.y - (currentCp1?.y ?? 0.25)) < 0.005 &&
+        Math.abs(preset.cp2.x - (currentCp2?.x ?? 0.75)) < 0.005 &&
+        Math.abs(preset.cp2.y - (currentCp2?.y ?? 0.75)) < 0.005
+    );
+    setSelectedName(matchingPreset?.name || null);
+    setTweaked({
+      cp1: currentCp1 ? { ...currentCp1 } : { x: 0.25, y: 0.25 },
+      cp2: currentCp2 ? { ...currentCp2 } : { x: 0.75, y: 0.75 },
+    });
+  }, [isOpen, currentCp1, currentCp2]);
  
   if (!isOpen) return null;
  

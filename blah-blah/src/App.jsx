@@ -24,6 +24,7 @@ import { ScriptDocsModal } from './components/modals/ScriptDocsModal';
 import { ExportModal } from './components/modals/ExportModal';
 import { NewProjectModal } from './components/modals/NewProjectModal';
 import { SettingsModal } from './components/modals/SettingsModal';
+import { PackageManagerModal } from './components/modals/PackageManagerModal';
 import { HubScreen } from './components/shell/HubScreen';
 import { DockLayout } from './dock/DockLayout';
 import { EditorContext } from './dock/EditorContext';
@@ -164,6 +165,12 @@ export function App() {
   const [isScriptDocsOpen, setIsScriptDocsOpen] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isPackageManagerOpen, setIsPackageManagerOpen] = useState(false);
+  const [packageManagerCategory, setPackageManagerCategory] = useState('all');
+  const handleOpenPackageManager = useCallback((category = 'all') => {
+    setPackageManagerCategory(category);
+    setIsPackageManagerOpen(true);
+  }, []);
   // Global autosave preferences (Settings > Autosave). Shared with the modal below.
   const { autosaveSettings, updateAutosaveSettings } = useAutosaveSettings();
   // Global editor + export defaults (Settings > Timeline / Export). Called before
@@ -487,6 +494,7 @@ export function App() {
     setIsProjectJsonOpen,
     setIsScriptDocsOpen,
     setIsSettingsOpen,
+    onOpenPackageManager: handleOpenPackageManager,
   });
  
   // window-controls chrome is environment-dependent but cheap to compute
@@ -691,6 +699,7 @@ export function App() {
           setDockApi,
           setResetLayout,
           focusDockPanel,
+          onOpenPackageManager: handleOpenPackageManager,
         }}
       >
         <DockLayout />
@@ -755,6 +764,12 @@ export function App() {
         onExportSettingsChange={updateExportSettings}
         themeSettings={themeSettings}
         onThemeSettingsChange={updateThemeSettings}
+      />
+
+      <PackageManagerModal
+        isOpen={isPackageManagerOpen}
+        onClose={() => setIsPackageManagerOpen(false)}
+        initialCategory={packageManagerCategory}
       />
     </div>
       </TimelineViewProvider>

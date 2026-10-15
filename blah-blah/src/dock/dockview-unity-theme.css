@@ -137,4 +137,227 @@
   overflow: hidden;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7);
 }
+
+/* ========================================================
+   DOCK ADD WINDOW BUTTONS & DROPDOWN MENU
+   ======================================================== */
+
+.dockview-theme-unity .dv-left-actions-container {
+  display: flex;
+  align-items: center;
+  padding: 0 2px;
+  height: 100%;
+}
+
+/* Tab bar variant (+) placed right after tabs */
+.dock-tab-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  margin: 0 3px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--unity-text-dim);
+  cursor: pointer;
+  transition: color 0.12s, background-color 0.12s, border-color 0.12s;
+}
+
+.dock-tab-add-btn:hover,
+.dock-tab-add-btn.is-open {
+  background-color: var(--unity-subtle);
+  border-color: var(--unity-border-light);
+  color: #fff;
+}
+
+.dock-action-btn.is-open {
+  background-color: var(--unity-subtle);
+  color: var(--unity-accent-blue);
+}
+
+/* Add Window Dropdown Menu */
+.dock-add-window-dropdown {
+  position: fixed;
+  z-index: 10000;
+  width: 250px;
+  max-height: 380px;
+  background: var(--unity-panel);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 5px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.75);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: inherit;
+  animation: dockDropdownFadeIn 0.11s ease-out;
+}
+
+@keyframes dockDropdownFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.dock-add-window-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 7px 10px 6px;
+  background: var(--unity-darkest);
+  border-bottom: 1px solid var(--unity-border);
+}
+
+.dock-add-window-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.dock-add-window-subtitle {
+  font-size: 10px;
+  color: var(--unity-text-dim);
+}
+
+.dock-add-window-list {
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  overflow-y: auto;
+  max-height: 330px;
+  gap: 1px;
+}
+
+.dock-add-window-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  background: transparent;
+  transition: background-color 0.1s, color 0.1s;
+  user-select: none;
+}
+
+.dock-add-window-item:hover {
+  background-color: rgba(var(--unity-accent-rgb), 0.16);
+}
+
+.dock-add-window-item.is-active-tab {
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+.dock-add-window-item.is-active-tab:hover {
+  background-color: rgba(var(--unity-accent-rgb), 0.22);
+}
+
+.dock-add-window-item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--unity-accent-blue);
+  flex-shrink: 0;
+}
+
+.dock-add-window-item-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.dock-add-window-item-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--unity-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dock-add-window-item:hover .dock-add-window-item-name {
+  color: #fff;
+}
+
+.dock-add-window-item-desc {
+  font-size: 9.5px;
+  color: var(--unity-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: -1px;
+}
+
+.dock-add-window-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.dock-add-window-badge {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 2px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.dock-add-window-badge.in-group {
+  background: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.35);
+}
+
+.dock-add-window-badge.elsewhere {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.dock-add-window-badge.add {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--unity-text-dim);
+  border: 1px solid var(--unity-border);
+}
+
+.dock-add-window-item:hover .dock-add-window-badge.add {
+  background: rgba(var(--unity-accent-rgb), 0.25);
+  color: #fff;
+  border-color: var(--unity-accent-blue);
+}
+
+.dock-add-window-instance-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  color: var(--unity-text-dim);
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.dock-add-window-instance-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: var(--unity-border-light);
+  color: #fff;
+}
+
  

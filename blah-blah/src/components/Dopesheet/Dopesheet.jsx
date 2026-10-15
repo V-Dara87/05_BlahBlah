@@ -5,17 +5,24 @@ import {
   Move, SlidersHorizontal, Filter,
   ChevronsLeft, ChevronsRight, SkipBack, SkipForward, ZoomIn, ZoomOut,
   Undo2, Redo2, Scissors, Trash2, Copy, Magnet,
+  Activity, ClipboardPaste, Plus, Navigation, CornerDownRight,
+  ArrowLeftRight, Clock, FastForward,
 } from 'lucide-react';
 import { TRANSFORM_FIELD_GROUPS, TEXT_RENDERER_FIELDS } from '../inspector/InspectorField';
 import { extractScriptProps } from '../../engine/scriptRunner';
 import {
   trackKeyFor, getFieldKeyframes, setKeyframe, removeKeyframe,
   removeKeyframesByIds, moveKeyframesDelta,
+  QUICK_CURVE_PRESETS, setKeyframeCurve, evaluateField,
 } from '../../engine/keyframes';
 import { formatTimecode } from '../../utils/timeFormat';
 import { useEditorContext } from '../../dock/EditorContext';
 import { isScriptComponent } from '../../engine/ecs';
 import { loadKeybindSettings } from '../../services/keybindSettings';
+import { ContextMenu } from '../shared/ContextMenu';
+import {
+  copyKeyframesToClipboard, hasClipboardKeyframes, pasteKeyframesOntoEntity,
+} from '../../utils/keyframeClipboard';
 
 /**
  * Dopesheet — Professional GUI keyframing panel (Spine 2D / Blender style).
@@ -98,6 +105,9 @@ export const Dopesheet = memo(function Dopesheet({
 
   // Box (lasso) selection state: { startX, startY, endX, endY } in content coordinates
   const [boxSelect, setBoxSelect] = useState(null);
+
+  // Right-click context menu state
+  const [ctxMenu, setCtxMenu] = useState(null);
 
   const panelRef = useRef(null);
   const labelsScrollRef = useRef(null);
@@ -314,9 +324,221 @@ export const Dopesheet = memo(function Dopesheet({
     onUpdateEntity(entity.id, { keyframes });
     setSelectedKeyIds(new Set());
     setSelectedKeyId(null);
+    setCtxMenu(null);
   }, [selectedKeyIds, selectedKeyId, onUpdateEntity, setSelectedKeyId]);
 
-  // Drag a keyframe (supports multi-keyframe synchronized drag)
+  // Copy selected keyframes to clipboard
+  const handleCopySelected = useCallback(() => {
+    const entity = selectedEntityRef.current;
+    if (!entity) return;
+    const targetIds = selectedKeyIds.size > 0 ? selectedKeyIds : (selectedKeyId ? new Set([selectedKeyId]) : new Set());
+    if (targetIds.size === 0) return;
+    copyKeyframesToClipboard(entity, targetIds);
+    setCtxMenu(null);
+  }, [selectedKeyIds, selectedKeyId]);
+
+  // Cut selected keyframes
+  const handleCutSelected = useCallback(() => {
+    handleCopySelected();
+    handleDeleteSelectedKeyframes();
+    setCtxMenu(null);
+  }, [handleCopySelected, handleDeleteSelectedKeyframes]);
+
+  // Duplicate selected keyframes (shifted forward by 0.5s)
+  const handleDuplicateSelected = useCallback(() => {
+    const entity = selectedEntityRef.current;
+    if (!entity?.keyframes) return;
+    const targetIds = selectedKeyIds.size > 0 ? selectedKeyIds : (selectedKeyId ? new Set([selectedKeyId]) : new Set());
+    if (targetIds.size === 0) return;
+
+    const offset = 0.5;
+    let nextKeyframes = JSON.parse(JSON.stringify(entity.keyframes));
+    const newSelectedIds = new Set();
+
+    for (const tk of Object.keys(entity.keyframes)) {
+      const byField = entity.keyframes[tk];
+      for (const fn of Object.keys(byField)) {
+        for (const k of byField[fn] || []) {
+          if (targetIds.has(k.id)) {
+            const newTime = snapToFrame(k.time + offset);
+            const newId = `kf-${tk}-${fn}-${newTime.toFixed(3)}-${Math.random().toString(36).slice(2, 7)}`;
+            nextKeyframes[tk][fn] = nextKeyframes[tk][fn].filter(
+              (existing) => Math.abs(existing.time - newTime) > 0.001
+            );
+            nextKeyframes[tk][fn].push({
+              ...JSON.parse(JSON.stringify(k)),
+              id: newId,
+              time: newTime,
+            });
+            nextKeyframes[tk][fn].sort((a, b) => a.time - b.time);
+            newSelectedIds.add(newId);
+          }
+        }
+      }
+    }
+
+    onUpdateEntity(entity.id, { keyframes: nextKeyframes });
+    updateSelectedKeyIds(newSelectedIds);
+    setCtxMenu(null);
+  }, [selectedKeyIds, selectedKeyId, onUpdateEntity, snapToFrame, updateSelectedKeyIds]);
+
+  // Paste clipboard keyframes onto entity at targetTime
+  const handlePasteAtTime = useCallback((targetTime, targetTrackKey = null, targetFieldName = null) => {
+    const entity = selectedEntityRef.current;
+    if (!entity || !hasClipboardKeyframes()) return;
+    const nextKeyframes = pasteKeyframesOntoEntity(entity, targetTime, targetTrackKey, targetFieldName);
+    onUpdateEntity(entity.id, { keyframes: nextKeyframes });
+    setCtxMenu(null);
+  }, [onUpdateEntity]);
+
+  // Apply easing preset to all currently selected keyframes (or right-clicked keyframe)
+  const handleApplyEasing = useCallback((cp1, cp2) => {
+    const entity = selectedEntityRef.current;
+    if (!entity?.keyframes) return;
+    const targetIds = selectedKeyIds.size > 0
+      ? selectedKeyIds
+      : (ctxMenu?.keyframe ? new Set([ctxMenu.keyframe.id]) : (selectedKeyId ? new Set([selectedKeyId]) : new Set()));
+    if (targetIds.size === 0) return;
+
+    let currentKeyframes = entity.keyframes;
+    for (const tk of Object.keys(entity.keyframes)) {
+      const byField = entity.keyframes[tk];
+      for (const fn of Object.keys(byField)) {
+        for (const k of byField[fn] || []) {
+          if (targetIds.has(k.id)) {
+            currentKeyframes = setKeyframeCurve(
+              { ...entity, keyframes: currentKeyframes },
+              tk,
+              fn,
+              k.id,
+              cp1,
+              cp2
+            );
+          }
+        }
+      }
+    }
+    onUpdateEntity(entity.id, { keyframes: currentKeyframes });
+    setCtxMenu(null);
+  }, [selectedKeyIds, ctxMenu, selectedKeyId, onUpdateEntity]);
+
+  // Select all keyframes in a specific track/field
+  const handleSelectAllInTrack = useCallback((trackKey, fieldName) => {
+    const entity = selectedEntityRef.current;
+    if (!entity?.keyframes) return;
+    const kfs = getFieldKeyframes(entity, trackKey, fieldName);
+    const ids = new Set(kfs.map((k) => k.id));
+    updateSelectedKeyIds(ids);
+    setCtxMenu(null);
+  }, [updateSelectedKeyIds]);
+
+  // Clear all keyframes in a specific track/field
+  const handleClearAllInTrack = useCallback((trackKey, fieldName) => {
+    const entity = selectedEntityRef.current;
+    if (!entity?.keyframes) return;
+    const nextKeyframes = {
+      ...entity.keyframes,
+      [trackKey]: {
+        ...(entity.keyframes[trackKey] || {}),
+        [fieldName]: [],
+      },
+    };
+    onUpdateEntity(entity.id, { keyframes: nextKeyframes });
+    const kfs = getFieldKeyframes(entity, trackKey, fieldName);
+    const deletedIds = new Set(kfs.map((k) => k.id));
+    setSelectedKeyIds((prev) => {
+      const next = new Set([...prev].filter((id) => !deletedIds.has(id)));
+      return next;
+    });
+    setCtxMenu(null);
+  }, [onUpdateEntity]);
+
+  // Reverse (time invert) selected keyframes relative to their time bounds
+  const handleReverseSelected = useCallback(() => {
+    const entity = selectedEntityRef.current;
+    if (!entity?.keyframes) return;
+    const targetIds = selectedKeyIds.size > 0 ? selectedKeyIds : (selectedKeyId ? new Set([selectedKeyId]) : new Set());
+    if (targetIds.size < 2) return;
+
+    const targetKeys = [];
+    for (const tk of Object.keys(entity.keyframes)) {
+      const byF = entity.keyframes[tk];
+      for (const fn of Object.keys(byF || {})) {
+        for (const k of byF[fn] || []) {
+          if (targetIds.has(k.id)) {
+            targetKeys.push({ trackKey: tk, fieldName: fn, k });
+          }
+        }
+      }
+    }
+
+    if (targetKeys.length < 2) return;
+    const minTime = Math.min(...targetKeys.map((it) => it.k.time));
+    const maxTime = Math.max(...targetKeys.map((it) => it.k.time));
+
+    let nextKeyframes = JSON.parse(JSON.stringify(entity.keyframes));
+    targetKeys.forEach(({ trackKey, fieldName, k }) => {
+      const invertedTime = snapToFrame(minTime + maxTime - k.time);
+      const list = nextKeyframes[trackKey][fieldName];
+      const idx = list.findIndex((item) => item.id === k.id);
+      if (idx !== -1) {
+        list[idx] = { ...list[idx], time: invertedTime };
+      }
+    });
+
+    for (const tk of Object.keys(nextKeyframes)) {
+      for (const fn of Object.keys(nextKeyframes[tk])) {
+        nextKeyframes[tk][fn].sort((a, b) => a.time - b.time);
+      }
+    }
+
+    onUpdateEntity(entity.id, { keyframes: nextKeyframes });
+    setCtxMenu(null);
+  }, [selectedKeyIds, selectedKeyId, onUpdateEntity, snapToFrame]);
+
+  // Scale / Retime selected keyframes relative to their first keyframe
+  const handleScaleSelected = useCallback((scaleMultiplier) => {
+    const entity = selectedEntityRef.current;
+    if (!entity?.keyframes) return;
+    const targetIds = selectedKeyIds.size > 0 ? selectedKeyIds : (selectedKeyId ? new Set([selectedKeyId]) : new Set());
+    if (targetIds.size < 2) return;
+
+    const targetKeys = [];
+    for (const tk of Object.keys(entity.keyframes)) {
+      const byF = entity.keyframes[tk];
+      for (const fn of Object.keys(byF || {})) {
+        for (const k of byF[fn] || []) {
+          if (targetIds.has(k.id)) {
+            targetKeys.push({ trackKey: tk, fieldName: fn, k });
+          }
+        }
+      }
+    }
+
+    if (targetKeys.length < 2) return;
+    const minTime = Math.min(...targetKeys.map((it) => it.k.time));
+
+    let nextKeyframes = JSON.parse(JSON.stringify(entity.keyframes));
+    targetKeys.forEach(({ trackKey, fieldName, k }) => {
+      const scaledTime = snapToFrame(minTime + (k.time - minTime) * scaleMultiplier);
+      const list = nextKeyframes[trackKey][fieldName];
+      const idx = list.findIndex((item) => item.id === k.id);
+      if (idx !== -1) {
+        list[idx] = { ...list[idx], time: Math.max(0, scaledTime) };
+      }
+    });
+
+    for (const tk of Object.keys(nextKeyframes)) {
+      for (const fn of Object.keys(nextKeyframes[tk])) {
+        nextKeyframes[tk][fn].sort((a, b) => a.time - b.time);
+      }
+    }
+
+    onUpdateEntity(entity.id, { keyframes: nextKeyframes });
+    setCtxMenu(null);
+  }, [selectedKeyIds, selectedKeyId, onUpdateEntity, snapToFrame]);
+
+  // Drag a keyframe (supports multi-keyframe synchronized drag & Alt+Drag duplication)
   const handleDragKey = (trackKey, fieldName, keyId, keyTime) => (e) => {
     e.stopPropagation();
     if (e.button !== 0) return;
@@ -340,8 +562,34 @@ export const Dopesheet = memo(function Dopesheet({
 
     focusDockPanel?.('curveEditor', { onlyIfOpen: true });
 
-    const initialEntity = selectedEntityRef.current;
+    let initialEntity = selectedEntityRef.current;
     if (!initialEntity) return;
+
+    // Alt + Drag: Duplicate in-place and drag the clones (Blender / AE style)
+    let actualTargetIds = targetIds;
+    if (e.altKey && initialEntity.keyframes) {
+      const clonedKeyframes = JSON.parse(JSON.stringify(initialEntity.keyframes));
+      const clonedIds = new Set();
+      for (const tk of Object.keys(initialEntity.keyframes)) {
+        const byF = initialEntity.keyframes[tk];
+        for (const fn of Object.keys(byF || {})) {
+          for (const k of byF[fn] || []) {
+            if (targetIds.has(k.id)) {
+              const cloneId = `kf-${tk}-${fn}-${k.time.toFixed(3)}-${Math.random().toString(36).slice(2, 7)}`;
+              clonedKeyframes[tk][fn].push({
+                ...JSON.parse(JSON.stringify(k)),
+                id: cloneId,
+              });
+              clonedIds.add(cloneId);
+            }
+          }
+        }
+      }
+      actualTargetIds = clonedIds;
+      initialEntity = { ...initialEntity, keyframes: clonedKeyframes };
+      updateSelectedKeyIds(clonedIds);
+      onUpdateEntity(initialEntity.id, { keyframes: clonedKeyframes });
+    }
 
     // Find the minimum time among all selected keyframes to clamp at t=0
     let minTime = Infinity;
@@ -349,7 +597,7 @@ export const Dopesheet = memo(function Dopesheet({
       const byF = initialEntity.keyframes[tk];
       for (const fn of Object.keys(byF || {})) {
         for (const k of byF[fn] || []) {
-          if (targetIds.has(k.id)) {
+          if (actualTargetIds.has(k.id)) {
             if (k.time < minTime) minTime = k.time;
           }
         }
@@ -375,7 +623,7 @@ export const Dopesheet = memo(function Dopesheet({
         effectiveDeltaT = -minTime;
       }
 
-      const nextKeyframes = moveKeyframesDelta(initialEntity, targetIds, effectiveDeltaT, snapToFrame);
+      const nextKeyframes = moveKeyframesDelta(initialEntity, actualTargetIds, effectiveDeltaT, snapToFrame);
       onUpdateEntity(initialEntity.id, { keyframes: nextKeyframes });
     };
 
@@ -384,7 +632,7 @@ export const Dopesheet = memo(function Dopesheet({
       window.removeEventListener('pointerup', onUp);
 
       // If user clicked without dragging and without modifiers, select only this key
-      if (!hasMoved && !e.shiftKey && !e.ctrlKey && !e.metaKey && selectedKeyIds.size > 1) {
+      if (!hasMoved && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && selectedKeyIds.size > 1) {
         updateSelectedKeyIds(new Set([keyId]));
       }
     };
@@ -580,6 +828,18 @@ export const Dopesheet = memo(function Dopesheet({
         }
       }
       updateSelectedKeyIds(allIds);
+    } else if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
+      e.preventDefault();
+      handleCopySelected();
+    } else if ((e.ctrlKey || e.metaKey) && (e.key === 'x' || e.key === 'X')) {
+      e.preventDefault();
+      handleCutSelected();
+    } else if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V')) {
+      e.preventDefault();
+      handlePasteAtTime(localTime);
+    } else if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) {
+      e.preventDefault();
+      handleDuplicateSelected();
     } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       if (selectedKeyIds.size > 0 || selectedKeyId) {
         e.preventDefault();
@@ -590,7 +850,11 @@ export const Dopesheet = memo(function Dopesheet({
         onUpdateEntity(selectedEntityRef.current.id, { keyframes: nextKeyframes });
       }
     }
-  }, [handleDeleteSelectedKeyframes, selectedKeyIds, selectedKeyId, onUpdateEntity, updateSelectedKeyIds, setSelectedKeyId]);
+  }, [
+    handleDeleteSelectedKeyframes, handleCopySelected, handleCutSelected,
+    handlePasteAtTime, handleDuplicateSelected, localTime,
+    selectedKeyIds, selectedKeyId, onUpdateEntity, updateSelectedKeyIds, setSelectedKeyId, snapToFrame,
+  ]);
 
   // Keyframe navigation helpers
   const goToFirstKeyframe = () => {
@@ -918,6 +1182,20 @@ export const Dopesheet = memo(function Dopesheet({
                             style={{ left: `${timeToX(t)}px` }}
                             title={`Group Keyframes @ ${formatTimecode(t)}`}
                             onPointerDown={handleSummaryClickOrDrag(group, t)}
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              if (childKeysAtTime.length > 0) {
+                                updateSelectedKeyIds(new Set(childKeysAtTime));
+                              }
+                              setCtxMenu({
+                                x: e.clientX,
+                                y: e.clientY,
+                                type: 'summary',
+                                group,
+                                keyTime: t,
+                              });
+                            }}
                           />
                         );
                       })}
@@ -927,7 +1205,40 @@ export const Dopesheet = memo(function Dopesheet({
                     {isOpen && group.fields.map((field) => {
                       const kfs = getFieldKeyframes(selectedEntity, group.trackKey, field.name);
                       return (
-                        <div key={field.name} className="dopesheet-field-lane">
+                        <div
+                          key={field.name}
+                          className="dopesheet-field-lane"
+                          onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            const lanesRect = lanesInnerRef.current?.getBoundingClientRect();
+                            const clickX = e.clientX - (lanesRect?.left || 0);
+                            const clickTime = Math.min(clipDuration, Math.max(0, snapToFrame(xToTime(clickX))));
+                            const val = evaluateField(selectedEntity, group.trackKey, field.name, clickTime) ?? field.defaultVal;
+                            const keyframes = setKeyframe(selectedEntity, group.trackKey, field.name, clickTime, val);
+                            onUpdateEntity(selectedEntity.id, { keyframes });
+                            const added = (keyframes[group.trackKey]?.[field.name] || []).find((k) => Math.abs(k.time - clickTime) < 0.001);
+                            if (added) {
+                              updateSelectedKeyIds(new Set([added.id]));
+                            }
+                          }}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const lanesRect = lanesInnerRef.current?.getBoundingClientRect();
+                            const clickX = e.clientX - (lanesRect?.left || 0);
+                            const clickTime = Math.min(clipDuration, Math.max(0, snapToFrame(xToTime(clickX))));
+                            setCtxMenu({
+                              x: e.clientX,
+                              y: e.clientY,
+                              type: 'lane',
+                              trackKey: group.trackKey,
+                              fieldName: field.name,
+                              fieldLabel: field.label || field.name,
+                              defaultVal: field.defaultVal,
+                              clickTime,
+                            });
+                          }}
+                        >
                           {/* Segment connector lines */}
                           {kfs.slice(0, -1).map((k, i) => (
                             <div
@@ -952,6 +1263,23 @@ export const Dopesheet = memo(function Dopesheet({
                                   e.stopPropagation();
                                   handleDeleteKey(group.trackKey, field.name, k.id);
                                 }}
+                                onContextMenu={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  if (!selectedKeyIds.has(k.id)) {
+                                    updateSelectedKeyIds(new Set([k.id]));
+                                  }
+                                  setCtxMenu({
+                                    x: e.clientX,
+                                    y: e.clientY,
+                                    type: 'keyframe',
+                                    trackKey: group.trackKey,
+                                    fieldName: field.name,
+                                    fieldLabel: field.label || field.name,
+                                    keyframe: k,
+                                    keyTime: k.time,
+                                  });
+                                }}
                               />
                             );
                           })}
@@ -975,6 +1303,194 @@ export const Dopesheet = memo(function Dopesheet({
           </div>
         </div>
       </div>
+
+      {/* Dopesheet Right-Click Context Menu */}
+      {ctxMenu && (
+        <ContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          onClose={() => setCtxMenu(null)}
+          className="dopesheet-context-menu"
+          minWidth={190}
+        >
+          {/* Header */}
+          <div className="ctx-menu-header">
+            {ctxMenu.type === 'keyframe' && `${ctxMenu.fieldLabel} @ ${formatTimecode(ctxMenu.keyTime)}`}
+            {ctxMenu.type === 'summary' && `${ctxMenu.group.label} @ ${formatTimecode(ctxMenu.keyTime)}`}
+            {ctxMenu.type === 'lane' && `${ctxMenu.fieldLabel} (${formatTimecode(ctxMenu.clickTime)})`}
+          </div>
+          <div className="ctx-menu-divider" />
+
+          {/* Quick Curve Easing Presets */}
+          {(ctxMenu.type === 'keyframe' || ctxMenu.type === 'summary') && (
+            <>
+              <div className="ctx-menu-header">Curve Easing</div>
+              <div className="ctx-menu-preset-grid">
+                {QUICK_CURVE_PRESETS.map((preset) => (
+                  <button
+                    key={preset.name}
+                    className="ctx-menu-preset-btn"
+                    onClick={() => handleApplyEasing(preset.cp1, preset.cp2)}
+                  >
+                    <Activity size={10} />
+                    <span>{preset.name}</span>
+                  </button>
+                ))}
+              </div>
+              <button
+                className="ctx-menu-item ctx-menu-row"
+                onClick={() => {
+                  focusDockPanel?.('curveEditor');
+                  setCtxMenu(null);
+                }}
+              >
+                <span className="ctx-menu-label"><Activity size={12} /> Edit in Curves Tab</span>
+              </button>
+              <div className="ctx-menu-divider" />
+            </>
+          )}
+
+          {/* Add Keyframe on Lane */}
+          {ctxMenu.type === 'lane' && (
+            <>
+              <button
+                className="ctx-menu-item ctx-menu-row"
+                onClick={() => {
+                  const val = evaluateField(selectedEntity, ctxMenu.trackKey, ctxMenu.fieldName, ctxMenu.clickTime) ?? ctxMenu.defaultVal;
+                  const keyframes = setKeyframe(selectedEntity, ctxMenu.trackKey, ctxMenu.fieldName, ctxMenu.clickTime, val);
+                  onUpdateEntity(selectedEntity.id, { keyframes });
+                  setCtxMenu(null);
+                }}
+              >
+                <span className="ctx-menu-label"><Plus size={12} /> Add Keyframe Here</span>
+                <span className="ctx-menu-hint">{formatTimecode(ctxMenu.clickTime)}</span>
+              </button>
+              <button
+                className="ctx-menu-item ctx-menu-row"
+                onClick={() => {
+                  handleAddKeyAtPlayhead(ctxMenu.trackKey, ctxMenu.fieldName, ctxMenu.defaultVal);
+                  setCtxMenu(null);
+                }}
+              >
+                <span className="ctx-menu-label"><Plus size={12} /> Add Keyframe at Playhead</span>
+                <span className="ctx-menu-hint">{formatTimecode(localTime)}</span>
+              </button>
+              <div className="ctx-menu-divider" />
+            </>
+          )}
+
+          {/* Clipboard Actions */}
+          {(ctxMenu.type === 'keyframe' || ctxMenu.type === 'summary') && (
+            <>
+              <button className="ctx-menu-item ctx-menu-row" onClick={handleCopySelected}>
+                <span className="ctx-menu-label"><Copy size={12} /> Copy</span>
+                <span className="ctx-menu-hint">Ctrl+C</span>
+              </button>
+              <button className="ctx-menu-item ctx-menu-row" onClick={handleCutSelected}>
+                <span className="ctx-menu-label"><Scissors size={12} /> Cut</span>
+                <span className="ctx-menu-hint">Ctrl+X</span>
+              </button>
+              <button className="ctx-menu-item ctx-menu-row" onClick={handleDuplicateSelected}>
+                <span className="ctx-menu-label"><Copy size={12} /> Duplicate</span>
+                <span className="ctx-menu-hint">Ctrl+D</span>
+              </button>
+              {(selectedKeyIds.size >= 2 || ctxMenu.type === 'summary') && (
+                <>
+                  <div className="ctx-menu-divider" />
+                  <div className="ctx-menu-header">Timing & Retime</div>
+                  <button className="ctx-menu-item ctx-menu-row" onClick={handleReverseSelected}>
+                    <span className="ctx-menu-label"><ArrowLeftRight size={12} /> Reverse Timing</span>
+                  </button>
+                  <button className="ctx-menu-item ctx-menu-row" onClick={() => handleScaleSelected(0.5)}>
+                    <span className="ctx-menu-label"><FastForward size={12} /> Speed 2x (0.5x time)</span>
+                  </button>
+                  <button className="ctx-menu-item ctx-menu-row" onClick={() => handleScaleSelected(2.0)}>
+                    <span className="ctx-menu-label"><Clock size={12} /> Slow 0.5x (2x time)</span>
+                  </button>
+                </>
+              )}
+            </>
+          )}
+
+          {/* Paste */}
+          <button
+            className="ctx-menu-item ctx-menu-row"
+            disabled={!hasClipboardKeyframes()}
+            onClick={() => {
+              const pasteTime = ctxMenu.type === 'lane' ? ctxMenu.clickTime : (ctxMenu.keyTime ?? localTime);
+              handlePasteAtTime(pasteTime, ctxMenu.trackKey, ctxMenu.fieldName);
+            }}
+          >
+            <span className="ctx-menu-label"><ClipboardPaste size={12} /> Paste</span>
+            <span className="ctx-menu-hint">Ctrl+V</span>
+          </button>
+
+          {/* Delete */}
+          {(ctxMenu.type === 'keyframe' || ctxMenu.type === 'summary') && (
+            <button className="ctx-menu-item ctx-menu-row danger" onClick={handleDeleteSelectedKeyframes}>
+              <span className="ctx-menu-label"><Trash2 size={12} /> Delete Keyframe</span>
+              <span className="ctx-menu-hint">Del</span>
+            </button>
+          )}
+
+          <div className="ctx-menu-divider" />
+
+          {/* Jump Playhead */}
+          {(ctxMenu.type === 'keyframe' || ctxMenu.type === 'summary') && (
+            <button
+              className="ctx-menu-item ctx-menu-row"
+              onClick={() => {
+                onSeek(selectedEntity.startTime + ctxMenu.keyTime);
+                setCtxMenu(null);
+              }}
+            >
+              <span className="ctx-menu-label"><Navigation size={12} /> Jump Playhead Here</span>
+            </button>
+          )}
+
+          {/* Track operations */}
+          {ctxMenu.trackKey && ctxMenu.fieldName && (
+            <>
+              <button
+                className="ctx-menu-item"
+                onClick={() => handleSelectAllInTrack(ctxMenu.trackKey, ctxMenu.fieldName)}
+              >
+                Select All on This Track
+              </button>
+              <button
+                className="ctx-menu-item danger"
+                onClick={() => handleClearAllInTrack(ctxMenu.trackKey, ctxMenu.fieldName)}
+              >
+                Clear All on This Track
+              </button>
+            </>
+          )}
+
+          {/* Select All */}
+          <button
+            className="ctx-menu-item ctx-menu-row"
+            onClick={() => {
+              const allIds = new Set();
+              const entity = selectedEntityRef.current;
+              if (entity?.keyframes) {
+                for (const tk of Object.keys(entity.keyframes)) {
+                  const byF = entity.keyframes[tk];
+                  for (const fn of Object.keys(byF || {})) {
+                    for (const k of byF[fn] || []) {
+                      allIds.add(k.id);
+                    }
+                  }
+                }
+              }
+              updateSelectedKeyIds(allIds);
+              setCtxMenu(null);
+            }}
+          >
+            <span className="ctx-menu-label">Select All Keyframes</span>
+            <span className="ctx-menu-hint">Ctrl+A</span>
+          </button>
+        </ContextMenu>
+      )}
     </div>
   );
 });

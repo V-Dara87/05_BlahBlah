@@ -69,7 +69,13 @@ export function ScriptCard({
   // doesn't provide it (older integrations/tests).
   fps = 30,
 }) {
-  const scriptDef = scripts.find((s) => s.id === scriptComp.scriptId);
+  const scriptDef = scripts.find(
+    (s) =>
+      s.id === scriptComp.scriptId ||
+      s.name === scriptComp.scriptName ||
+      s.name === `${scriptComp.scriptName}.jsx` ||
+      s.id === `script-${scriptComp.scriptName}`
+  );
   const dragKey = `script:${scriptComp.scriptId}`;
 
   // A background compile finishing does NOT change the `scripts` array, so

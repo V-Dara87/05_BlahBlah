@@ -116,6 +116,7 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
     onDetachPrefab,
     onRevertToPrefab,
     onApplyToPrefab,
+    onOpenPackageManager,
   } = useEditorContext();
 
   const [isLocked, setIsLocked] = useState(false);
@@ -203,6 +204,7 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
         fps={fps}
         isLocked={isLocked}
         onToggleLock={handleToggleLock}
+        onOpenPackageManager={onOpenPackageManager}
       />
     </div>
   );

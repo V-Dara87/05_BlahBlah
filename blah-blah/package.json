@@ -3,11 +3,18 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "bin": {
+    "blahblah": "./packages/blahblah-cli/bin/blahblah.mjs",
+    "blahblah-mcp": "./packages/blahblah-mcp/bin/mcp-server.mjs"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "lint": "oxlint",
-    "test": "node tests/canvas-runner.test.mjs && node tests/parent-child.test.mjs && node tests/active-index.test.mjs && node src/utils/timelineScene.test.js && node src/components/Timeline/canvas/drawTimeline.test.js && node tests/transitions.test.mjs && node tests/ffmpeg-runner.test.mjs && node tests/ffmpeg-export.test.mjs && node tests/text-renderer.test.mjs && node tests/prefab-hierarchy.test.mjs && node tests/prefab-portable-instance.test.mjs && node tests/silence-detector.test.mjs && node src/utils/peaksFormat.test.js && node src/dock/popoutGroup.test.js && node src/dock/tabMaximize.test.js && node src/engine/inspectorAttributes.test.js && node src/engine/scriptActions.test.js && node src/engine/scriptRunner.props.test.js && node src/engine/scriptProps.test.js && node src/engine/scriptCompile.test.js && node tests/keyframes.test.mjs && node tests/theme-settings.test.mjs && node tests/project-templates.test.mjs && node tests/hub-project-list.test.mjs && node tests/script-gizmo.test.mjs && node tests/sdk-utils.test.mjs",
+    "test": "node tests/canvas-runner.test.mjs && node tests/parent-child.test.mjs && node tests/active-index.test.mjs && node src/utils/timelineScene.test.js && node src/components/Timeline/canvas/drawTimeline.test.js && node tests/transitions.test.mjs && node tests/ffmpeg-runner.test.mjs && node tests/ffmpeg-export.test.mjs && node tests/text-renderer.test.mjs && node tests/prefab-hierarchy.test.mjs && node tests/prefab-portable-instance.test.mjs && node tests/silence-detector.test.mjs && node src/utils/peaksFormat.test.js && node src/dock/popoutGroup.test.js && node src/dock/tabMaximize.test.js && node src/dock/DockAddWindow.test.js && node src/engine/inspectorAttributes.test.js && node src/engine/scriptActions.test.js && node src/engine/scriptRunner.props.test.js && node src/engine/scriptProps.test.js && node src/engine/scriptCompile.test.js && node tests/keyframes.test.mjs && node tests/theme-settings.test.mjs && node tests/project-templates.test.mjs && node tests/hub-project-list.test.mjs && node tests/script-gizmo.test.mjs && node tests/sdk-utils.test.mjs && node packages/blahblah-core/tests/core.test.mjs && node packages/blahblah-cli/tests/cli.test.mjs && node packages/blahblah-mcp/tests/mcp.test.mjs && node tests/package-manager.test.mjs && node tests/whisper-runner.test.mjs",
+    "cli": "node packages/blahblah-cli/bin/blahblah.mjs",
+    "mcp": "node packages/blahblah-mcp/bin/mcp-server.mjs",
+    "test:automation": "node packages/blahblah-core/tests/core.test.mjs && node packages/blahblah-cli/tests/cli.test.mjs && node packages/blahblah-mcp/tests/mcp.test.mjs",
     "test:timeline": "node tests/run-timeline-layout-tests.mjs",
     "bench:index": "node tests/bench-active-index.mjs",
     "preview": "vite preview",
@@ -18,6 +25,7 @@
     "@tauri-apps/plugin-dialog": "^2.7.3",
     "@tauri-apps/plugin-fs": "^2.5.2",
     "@tauri-apps/plugin-opener": "^2.5.5",
+    "canvas": "^3.2.3",
     "dockview-react": "^8.2.0",
     "esbuild-wasm": "^0.28.2",
     "gl-transitions": "^1.71.0",

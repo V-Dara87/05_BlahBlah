@@ -250,7 +250,13 @@ export const MultiInspector = memo(function MultiInspector({
  
   // ── ScriptComponent (props from the script's own static props schema) ───
   const renderScript = (trackKey, comp) => {
-    const scriptDef = scripts.find((s) => s.id === comp.scriptId);
+    const scriptDef = scripts.find(
+      (s) =>
+        s.id === comp.scriptId ||
+        s.name === comp.scriptName ||
+        s.name === `${comp.scriptName}.jsx` ||
+        s.id === `script-${comp.scriptName}`
+    );
     const fields = scriptDef ? extractScriptProps(scriptDef.code) : [];
     const enabled = summarizeComponentField(selectedEntities, trackKey, 'enabled', true);
     return (

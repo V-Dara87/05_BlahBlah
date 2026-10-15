@@ -22,6 +22,8 @@ export function SubtitleTrackCard({
   handleCardDrop,
   handleCardDragEnd,
   removeComponent,
+  onOpenPackageManager,
+  mediaAssets = [],
 }) {
   return (
     <div className="inspector-card">
@@ -49,6 +51,8 @@ export function SubtitleTrackCard({
             onUpdateEntity={onUpdateEntity}
             selectedEntity={selectedEntity}
             currentTime={currentTime}
+            onOpenPackageManager={onOpenPackageManager}
+            mediaAssets={mediaAssets}
           />
         </div>
       )}

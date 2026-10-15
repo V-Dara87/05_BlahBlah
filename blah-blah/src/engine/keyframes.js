@@ -154,6 +154,20 @@ export const CURVE_PRESETS = [
   { name: 'Smooth',      cp1: { x: 0.25, y: 0.1  }, cp2: { x: 0.25, y: 1    } },
   { name: 'Spring',      cp1: { x: 0.17, y: 0.67 }, cp2: { x: 0.68, y: -0.33 } },
 ];
+
+/**
+ * The six curves used most often while blocking an animation. Keep this
+ * deliberately small: it powers the one-click choices in the Curves panel,
+ * while CURVE_PRESETS remains the complete library for expressive motion.
+ */
+export const QUICK_CURVE_PRESETS = [
+  'Linear',
+  'Ease In',
+  'Ease Out',
+  'Ease In Out',
+  'Snap',
+  'Bounce Out',
+].map((name) => CURVE_PRESETS.find((preset) => preset.name === name));
  
 /**
  * Evaluate every keyframed field on an entity at local time `t`, merged

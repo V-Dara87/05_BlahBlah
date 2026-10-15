@@ -6,7 +6,16 @@ import {
   removeKeyframesByIds,
   moveKeyframesDelta,
   getFieldKeyframes,
+  CURVE_PRESETS,
+  QUICK_CURVE_PRESETS,
 } from '../src/engine/keyframes.js';
+
+test('quick curve presets are a stable, useful subset of the full easing library', () => {
+  assert.deepEqual(QUICK_CURVE_PRESETS.map((preset) => preset.name), [
+    'Linear', 'Ease In', 'Ease Out', 'Ease In Out', 'Snap', 'Bounce Out',
+  ]);
+  assert.ok(QUICK_CURVE_PRESETS.every((preset) => CURVE_PRESETS.includes(preset)));
+});
 
 test('removeKeyframesByIds removes multiple keyframes across tracks/fields', () => {
   let entity = {

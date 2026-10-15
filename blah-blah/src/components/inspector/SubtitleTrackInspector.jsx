@@ -10,6 +10,7 @@ import {
   recalculateSequentialPhrases,
 } from '../../engine/subtitleTrack';
 import { parseSrt, toSrt } from '../../engine/srt';
+import { AutoSubtitleGenerateButton } from './AutoSubtitleGenerateButton';
  
 /**
  * SubtitleTrackInspector — body of the Inspector's Subtitle Track card.
@@ -50,7 +51,14 @@ import { parseSrt, toSrt } from '../../engine/srt';
  * row degrades gracefully instead of overflowing, and the mode pill always
  * stays visible next to the delete button, matching 'range' mode.
  */
-export function SubtitleTrackInspector({ component, onUpdateEntity, selectedEntity, currentTime }) {
+export function SubtitleTrackInspector({
+  component,
+  onUpdateEntity,
+  selectedEntity,
+  currentTime,
+  onOpenPackageManager,
+  mediaAssets = [],
+}) {
   const phrases = component.phrases || [];
   const isDurationMode = (component.timingMode || 'duration') === 'duration';
  
@@ -240,7 +248,14 @@ export function SubtitleTrackInspector({ component, onUpdateEntity, selectedEnti
           />
         )}
         renderToolbar={() => (
-          <div className="inspector-row">
+          <div className="inspector-row" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+            <AutoSubtitleGenerateButton
+              component={component}
+              selectedEntity={selectedEntity}
+              commitComponent={commitComponent}
+              onOpenPackageManager={onOpenPackageManager}
+              mediaAssets={mediaAssets}
+            />
             <label className="unity-btn unity-btn-secondary btn-xs" style={{ cursor: 'pointer' }}>
               <Upload size={11} />
               <span>Import SRT</span>

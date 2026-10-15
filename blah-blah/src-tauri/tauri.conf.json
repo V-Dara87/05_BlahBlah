@@ -47,7 +47,8 @@
       "../public/esbuild.wasm": "esbuild.wasm"
     },
     "externalBin": [
-      "binaries/ffmpeg"
+      "binaries/ffmpeg",
+      "binaries/whisper-cli"
     ],
     "android": {
       "debugApplicationIdSuffix": ".debug"
