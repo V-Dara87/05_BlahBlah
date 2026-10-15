@@ -195,10 +195,26 @@ export function ScriptCard({
         onDragEnd={handleCardDragEnd}
         actions={
           <>
-            <button className="edit-cs-btn" onClick={() => scriptDef && onOpenScriptEditor(scriptDef)}>
-              Edit JS
+            <button
+              type="button"
+              className="edit-cs-btn"
+              title="Open this script in the editor"
+              onClick={() => scriptDef && onOpenScriptEditor(scriptDef)}
+            >
+              Edit
             </button>
-            <button className="del-btn-sm" onClick={() => removeComponent('ScriptComponent', scriptComp.scriptId)}>
+            <button
+              type="button"
+              className="del-btn-sm"
+              title="Remove this script from the clip"
+              aria-label="Remove this script from the clip"
+              onClick={() => {
+                const label = scriptComp.scriptName || 'this script';
+                if (window.confirm(`Remove "${label}" from this clip?\n\nThe script file itself is kept.`)) {
+                  removeComponent('ScriptComponent', scriptComp.scriptId);
+                }
+              }}
+            >
               <Trash2 size={11} />
             </button>
           </>

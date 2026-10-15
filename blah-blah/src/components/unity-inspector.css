@@ -3,7 +3,7 @@
    alone; generic modifier classes (.active/.danger/.disabled) travel with the
    component that owns the rest of the selector.
    App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
-
+ 
 .inspector-sidebar {
   background-color: var(--unity-panel);
   display: flex;
@@ -55,7 +55,7 @@
 }
  
 .field-label-sm {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--unity-text-muted);
 }
@@ -68,7 +68,7 @@
   border: 1px solid var(--unity-border-light);
   border-radius: 3px;
   color: var(--unity-text-dim);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.3px;
@@ -90,6 +90,9 @@
 }
  
 .inspector-name-input, .inspector-track-select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   background: var(--unity-dark);
   border: 1px solid var(--unity-border);
   color: #fff;
@@ -126,41 +129,59 @@
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 5px 8px;
+  padding: 6px 8px;
   border-radius: 4px;
   font-size: 11px;
   font-weight: 600;
-  color: var(--unity-text-muted);
+  color: var(--unity-text);
   background: var(--unity-dark);
-  border: 1px solid var(--unity-border);
+  border: 1px solid var(--unity-border-light);
   cursor: pointer;
   transition: all 0.15s ease;
 }
  
-.inspector-auto-key-btn:hover {
-  background: var(--unity-subtle);
-  color: var(--unity-text);
+.inspector-auto-key-btn svg {
+  color: var(--unity-text-dim);
 }
  
+.inspector-auto-key-btn:hover {
+  background: var(--unity-subtle);
+  border-color: var(--unity-text-dim);
+}
+ 
+.inspector-auto-key-btn:focus-visible {
+  outline: 1px solid var(--unity-accent-blue);
+  outline-offset: 1px;
+}
+ 
+/* ON reads like a record button (red), so it can't be mistaken for a
+   disabled field the way the old dim-blue state was. */
 .inspector-auto-key-btn.active {
-  background: rgba(var(--unity-accent-rgb), 0.12);
-  border-color: rgba(var(--unity-accent-rgb), 0.4);
-  color: var(--unity-accent-blue);
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(239, 68, 68, 0.6);
+  color: #fecaca;
+}
+ 
+.inspector-auto-key-btn.active svg {
+  color: #f87171;
 }
  
 .auto-key-state {
   margin-left: auto;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
-  padding: 1px 5px;
+  letter-spacing: 0.4px;
+  padding: 1px 6px;
   border-radius: 3px;
-  background: var(--unity-subtle);
-  color: var(--unity-text-dim);
+  border: 1px solid var(--unity-border-light);
+  background: transparent;
+  color: var(--unity-text-muted);
 }
  
 .inspector-auto-key-btn.active .auto-key-state {
-  background: rgba(var(--unity-accent-rgb), 0.2);
-  color: var(--unity-accent-blue);
+  background: #ef4444;
+  border-color: #ef4444;
+  color: #fff;
 }
  
 .inspector-scroll-area::-webkit-scrollbar {
@@ -212,10 +233,13 @@
  
 .popover-kind-tag {
   margin-left: auto;
-  font-size: 8px;
+  flex-shrink: 0;
+  padding-left: 6px;
+  font-size: 10px;
+  color: var(--unity-text-dim);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  opacity: 0.55;
+  letter-spacing: 0.03em;
+  opacity: 0.8;
 }
  
 .popover-item:hover .popover-kind-tag {
@@ -229,12 +253,12 @@
 }
  
 .unity-btn-prefab {
-  background: #1e3a5f;
-  border: 1px solid #2d5588;
-  color: #93c5fd;
+  background: rgba(var(--unity-accent-rgb), 0.16);
+  border: 1px solid rgba(var(--unity-accent-rgb), 0.4);
+  color: var(--unity-accent-blue);
 }
  
-.unity-btn-prefab:hover { background: #254877; }
+.unity-btn-prefab:hover { background: rgba(var(--unity-accent-rgb), 0.26); }
  
 .add-component-popover {
   width: 240px;
@@ -269,7 +293,7 @@
   padding: 6px 8px;
   background: none;
   border: none;
-  color: #cbd5e1;
+  color: var(--unity-text);
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
@@ -295,7 +319,7 @@
   align-items: center;
   gap: 5px;
   padding: 3px 8px 2px 14px;
-  font-size: 9px;
+  font-size: 10px;
   color: var(--unity-text-dim);
   text-transform: uppercase;
   letter-spacing: 0.3px;
@@ -308,20 +332,12 @@
   white-space: nowrap;
 }
  
-.popover-kind-tag {
-  font-size: 8px;
-  color: var(--unity-text-dim);
-  margin-left: auto;
-  flex-shrink: 0;
-  padding-left: 6px;
-}
- 
 .inspector-sidebar.script-drop-zone {
   outline: 2px solid #34d399;
   outline-offset: -2px;
   box-shadow: inset 0 0 0 3px rgba(52, 211, 153, 0.15);
 }
-
+ 
 /* Unity-style Prefab Instance Header Bar */
 .inspector-prefab-bar {
   background: rgba(var(--unity-accent-rgb), 0.08);
@@ -333,7 +349,7 @@
   flex-direction: column;
   gap: 6px;
 }
-
+ 
 .inspector-prefab-info {
   display: flex;
   align-items: center;
@@ -341,7 +357,7 @@
   flex-wrap: wrap;
   gap: 6px;
 }
-
+ 
 .inspector-prefab-title {
   display: flex;
   align-items: center;
@@ -353,7 +369,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
+ 
 .inspector-prefab-name {
   color: var(--unity-accent-blue);
   max-width: 110px;
@@ -361,9 +377,9 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
+ 
 .inspector-prefab-pill {
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -373,13 +389,13 @@
   color: var(--unity-accent-blue);
   border: 1px solid rgba(var(--unity-accent-rgb), 0.35);
 }
-
+ 
 .inspector-prefab-actions {
   display: flex;
   align-items: center;
   gap: 4px;
 }
-
+ 
 .prefab-action-btn {
   display: inline-flex;
   align-items: center;
@@ -395,21 +411,38 @@
   transition: all 0.12s ease;
   user-select: none;
 }
-
+ 
 .prefab-action-btn:hover {
   color: var(--unity-text);
   background: var(--unity-btn-hover);
   border-color: rgba(255, 255, 255, 0.2);
 }
-
+ 
 .prefab-action-btn.detach:hover {
   color: #f87171;
   border-color: rgba(248, 113, 113, 0.4);
   background: rgba(248, 113, 113, 0.1);
 }
-
+ 
 .prefab-action-btn.success {
   color: #34d399;
   border-color: rgba(52, 211, 153, 0.4);
   background: rgba(52, 211, 153, 0.1);
+}
+ 
+ 
+/* Track + Parent share one row (the header used to stack three full-width
+   fields before the first component). */
+.inspector-header-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+ 
+.inspector-header-row .inspector-header-field {
+  min-width: 0;
+}
+ 
+.inspector-header-row select {
+  text-overflow: ellipsis;
 }

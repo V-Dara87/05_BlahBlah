@@ -15,9 +15,10 @@ import {
 import { useMemo, useState, useRef } from 'react';
 import { ChevronRight } from 'lucide-react';
 import './inspector-attributes.css';
-
+import './inspector-polish.css';
+ 
 // ─── Struct helpers ──────────────────────────────────────────────────────────
-
+ 
 /**
  * StructFieldGroup — renders a single `type:'struct'` prop as a
  * collapsible section whose sub-rows are ordinary Inspector rows.
@@ -31,7 +32,7 @@ function StructFieldGroup({ field, value, onChange, entities, mediaAssets, track
   const [open, setOpen] = useState(true);
   const subVal = value && typeof value === 'object' ? value : buildStructDefault(field.fields);
   const subfields = useMemo(() => subfieldSchema(field.fields), [field.fields]);
-
+ 
   return (
     <div className="struct-group">
       <button className="struct-group-toggle" onClick={() => setOpen((o) => !o)}>
@@ -57,7 +58,7 @@ function StructFieldGroup({ field, value, onChange, entities, mediaAssets, track
     </div>
   );
 }
-
+ 
 /**
  * StructArrayEditor — renders a `type:'struct[]'` prop using ArrayFieldEditor.
  * Each row expands to show all subfields as standard Inspector rows, from the
@@ -70,7 +71,7 @@ function StructArrayEditor({ field, value, onChange, entities, mediaAssets, trac
   const validList = useMemo(() => {
     return rawList.filter((it) => it != null && typeof it === 'object');
   }, [rawList]);
-
+ 
   const subfields = useMemo(() => {
     if (field.fields && Object.keys(field.fields).length > 0) {
       return subfieldSchema(field.fields);
@@ -91,7 +92,7 @@ function StructArrayEditor({ field, value, onChange, entities, mediaAssets, trac
     }
     return [];
   }, [field.fields, validList]);
-
+ 
   const idsRef = useRef([]);
   if (idsRef.current.length !== validList.length) {
     const nextIds = [];
@@ -100,14 +101,14 @@ function StructArrayEditor({ field, value, onChange, entities, mediaAssets, trac
     }
     idsRef.current = nextIds;
   }
-
+ 
   const items = useMemo(() => {
     return validList.map((it, idx) => ({
       ...it,
       _id: it?._id || idsRef.current[idx] || `struct-${idx}`,
     }));
   }, [validList]);
-
+ 
   return (
     <div className="struct-array-editor">
       <ArrayFieldEditor
@@ -157,7 +158,7 @@ function StructArrayEditor({ field, value, onChange, entities, mediaAssets, trac
     </div>
   );
 }
-
+ 
 /**
  * PrimitiveArrayEditor — renders primitive or reference array props
  * (e.g. `string[]`, `number[]`, `color[]`, `boolean[]`, `select[]`, `asset[]`, `entity[]`, `font[]`)
@@ -166,7 +167,7 @@ function StructArrayEditor({ field, value, onChange, entities, mediaAssets, trac
 function PrimitiveArrayEditor({ field, value, onChange, entities, mediaAssets, tracks = [], disabled }) {
   const itemType = field.itemType || (typeof field.type === 'string' && field.type.endsWith('[]') ? field.type.slice(0, -2) : 'string');
   const rawList = Array.isArray(value) ? value : [];
-
+ 
   const idsRef = useRef([]);
   if (idsRef.current.length !== rawList.length) {
     const nextIds = [];
@@ -175,7 +176,7 @@ function PrimitiveArrayEditor({ field, value, onChange, entities, mediaAssets, t
     }
     idsRef.current = nextIds;
   }
-
+ 
   const items = useMemo(() => {
     return rawList.map((val, i) => ({
       _id: idsRef.current[i] || `item-${i}`,
@@ -183,7 +184,7 @@ function PrimitiveArrayEditor({ field, value, onChange, entities, mediaAssets, t
       index: i,
     }));
   }, [rawList]);
-
+ 
   const getDefaultItemValue = () => {
     if (itemType === 'number') return 0;
     if (itemType === 'boolean') return false;
@@ -192,7 +193,7 @@ function PrimitiveArrayEditor({ field, value, onChange, entities, mediaAssets, t
     if (itemType === 'select') return field.options?.[0] ?? '';
     return '';
   };
-
+ 
   const renderItemControl = (val, onValChange) => {
     switch (itemType) {
       case 'number':
@@ -298,7 +299,7 @@ function PrimitiveArrayEditor({ field, value, onChange, entities, mediaAssets, t
         );
     }
   };
-
+ 
   return (
     <div className="primitive-array-editor" style={{ width: '100%' }}>
       <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary, #aaa)', marginBottom: 4 }}>
@@ -356,7 +357,7 @@ function PrimitiveArrayEditor({ field, value, onChange, entities, mediaAssets, t
     </div>
   );
 }
-
+ 
 /**
  * FieldWithAction — a field control plus the small button declared by the
  * `button: { label, action }` attribute (Odin's `[Button]` next to a field).
@@ -377,7 +378,7 @@ function FieldWithAction({ button, disabled, onAction, children }) {
     </div>
   );
 }
-
+ 
 /**
  * P0 #3 — Unified Inspector field rendering.
  *
@@ -414,18 +415,18 @@ export function InspectorField({
   onAction,
 }) {
   const currentVal = value !== undefined ? value : field.defaultVal;
-
+ 
   // Keyframe handling
   const handleKeyframeToggle = () => {
     if (!selectedEntity || !trackKey || !fieldName) return;
-
+ 
     const localTime = Math.max(0, currentTime - selectedEntity.startTime);
     const snapToFrame = (t) => Math.round(t * 30) / 30;
     const snappedTime = snapToFrame(localTime);
-
+ 
     const kfs = getFieldKeyframes(selectedEntity, trackKey, fieldName);
     const existing = kfs.find((k) => Math.abs(k.time - snappedTime) < 1 / 60);
-
+ 
     if (existing) {
       const keyframes = removeKeyframe(selectedEntity, trackKey, fieldName, existing.id);
       onUpdateEntity(selectedEntity.id, { keyframes });
@@ -435,7 +436,7 @@ export function InspectorField({
       onUpdateEntity(selectedEntity.id, { keyframes });
     }
   };
-
+ 
   const hasKeyframes = selectedEntity && trackKey && fieldName
     ? getFieldKeyframes(selectedEntity, trackKey, fieldName).length > 0
     : false;
@@ -444,7 +445,7 @@ export function InspectorField({
         (k) => Math.abs(k.time - Math.max(0, currentTime - selectedEntity.startTime)) < 1 / 60
       )
     : false;
-
+ 
   const fieldInput = (() => {
     switch (field.type) {
       case 'entity':
@@ -469,18 +470,42 @@ export function InspectorField({
             emptyLabel={field.emptyLabel}
           />
         );
-      case 'number':
-        return (
+      case 'number': {
+        const numVal = typeof currentVal === 'number' ? currentVal : parseFloat(currentVal) || 0;
+        const handleNum = (v) => onChange(field.step === 1 ? Math.round(v) : v);
+        const dragNumber = (
           <DragNumber
             label={field.dragLabel || '#'}
             labelColor={field.labelColor}
-            value={typeof currentVal === 'number' ? currentVal : parseFloat(currentVal) || 0}
+            value={numVal}
             step={field.step || 0.1}
             min={field.min ?? -Infinity}
             max={field.max ?? Infinity}
-            onChange={(v) => onChange(field.step === 1 ? Math.round(v) : v)}
+            onChange={handleNum}
           />
         );
+        // `slider: true` (only meaningful with a finite min and max) adds a
+        // range slider beside the number, for bounded values like Opacity.
+        if (field.slider && Number.isFinite(field.min) && Number.isFinite(field.max)) {
+          return (
+            <div className="inspector-number-slider">
+              {dragNumber}
+              <input
+                type="range"
+                className="inspector-range"
+                min={field.min}
+                max={field.max}
+                step={field.step || 0.01}
+                value={Math.min(field.max, Math.max(field.min, numVal))}
+                disabled={disabled}
+                aria-label={field.label || field.name}
+                onChange={(e) => handleNum(parseFloat(e.target.value))}
+              />
+            </div>
+          );
+        }
+        return dragNumber;
+      }
       case 'color':
         return (
           <input
@@ -653,20 +678,20 @@ export function InspectorField({
         );
     }
   })();
-
+ 
   const control = field.button ? (
     <FieldWithAction button={field.button} disabled={disabled} onAction={onAction}>
       {fieldInput}
     </FieldWithAction>
   ) : fieldInput;
-
+ 
   // A disabled field (attribute, or its group's controller is off) keeps its
   // position and value but cannot be edited. The wrapper covers controls with
   // no native `disabled` (DragNumber, ref slots, pickers) uniformly.
   const body = disabled && field.type !== 'button'
     ? <div className="inspector-field-disabled">{control}</div>
     : control;
-
+ 
   // Only show keyframe button if keyframing props are provided
   // (exclude reference types, struct types, array types, font and action buttons — none are
   // keyframeable; a font family name can't be interpolated between keyframes,
@@ -680,19 +705,22 @@ export function InspectorField({
       <div className="inspector-field-keyframed">
         {body}
         <button
+          type="button"
           className={`keyframe-btn ${hasKeyframes ? 'has-keys' : ''} ${hasKeyframeAtCurrentTime ? 'at-current-time' : ''}`}
           onClick={handleKeyframeToggle}
+          aria-pressed={hasKeyframeAtCurrentTime}
+          aria-label={hasKeyframeAtCurrentTime ? 'Remove keyframe at current time' : 'Add keyframe at current time'}
           title={hasKeyframeAtCurrentTime ? 'Remove keyframe at current time' : 'Add keyframe at current time'}
         />
       </div>
     );
   }
-
+ 
   return body;
 }
-
-// ─── Layout ──────────────────────────────────────────────────────────────────
-
+ 
+// ─── Layout ──────────────────────────────────────────────────────────���───────
+ 
 /**
  * One grouped section: a `box` / `foldout`, or `plain` for ungrouped fields.
  *
@@ -715,13 +743,13 @@ function InspectorSection({
   onAction,
 }) {
   const [open, setOpen] = useState(true);
-
+ 
   const isMember = (fieldName) => section.entries.some((entry) => (
     entry.kind === 'row'
       ? entry.fields.some((f) => f.name === fieldName)
       : entry.field?.name === fieldName
   ));
-
+ 
   // The switch stays in the header even when the controlling boolean lives
   // outside the group — otherwise the members would dim with nothing on screen
   // able to turn them back on. Only the boolean's own row is dropped, and only
@@ -732,7 +760,7 @@ function InspectorSection({
     : null;
   const dropOwnRow = !!controllerName && isMember(controllerName);
   const groupEnabled = section.controller ? values?.[controllerName] !== false : true;
-
+ 
   const renderField = (field) => (
     <InspectorField
       key={field.name}
@@ -751,7 +779,7 @@ function InspectorSection({
       onAction={onAction}
     />
   );
-
+ 
   const renderEntry = (entry) => {
     if (entry.kind === 'title') {
       return <div key={entry.key} className="inspector-group-title">{entry.label}</div>;
@@ -759,7 +787,7 @@ function InspectorSection({
     if (entry.kind === 'space') {
       return <div key={entry.key} className="inspector-space" style={{ height: entry.size }} />;
     }
-
+ 
     // The controller boolean is drawn as the group's own checkbox.
     if (dropOwnRow && entry.kind === 'field' && entry.field.name === controllerName) {
       return null;
@@ -769,21 +797,21 @@ function InspectorSection({
       if (rest.length === 0) return null;
       return (
         <div key={entry.key} className="inspector-row">
-          <span className="row-label">{entryLabel({ kind: 'row', fields: rest })}</span>
+          <span className="row-label" title={entryLabel({ kind: 'row', fields: rest })}>{entryLabel({ kind: 'row', fields: rest })}</span>
           <div className="inspector-inline-group">{rest.map(renderField)}</div>
         </div>
       );
     }
-
+ 
     if (entry.kind === 'row') {
       return (
         <div key={entry.key} className="inspector-row">
-          <span className="row-label">{entryLabel(entry)}</span>
+          <span className="row-label" title={entryLabel(entry)}>{entryLabel(entry)}</span>
           <div className="inspector-inline-group">{entry.fields.map(renderField)}</div>
         </div>
       );
     }
-
+ 
     const { field } = entry;
     if (isFullWidthType(field.type)) {
       // Structs, struct lists, primitive arrays and action buttons own the whole row: they draw
@@ -799,24 +827,24 @@ function InspectorSection({
       return (
         <div key={entry.key} className="inspector-row is-toggle-left">
           {renderField(field)}
-          <span className="row-label">{field.label || field.name}</span>
+          <span className="row-label" title={field.label || field.name}>{field.label || field.name}</span>
         </div>
       );
     }
     return (
       <div key={entry.key} className="inspector-row">
-        <span className="row-label">{field.label || field.name}</span>
+        <span className="row-label" title={field.label || field.name}>{field.label || field.name}</span>
         {renderField(field)}
       </div>
     );
   };
-
+ 
   const body = section.entries.map(renderEntry);
-
+ 
   if (section.kind === 'plain') {
     return <>{body}</>;
   }
-
+ 
   const isFoldout = section.kind === 'foldout';
   return (
     <div className={`inspector-group ${isFoldout ? 'is-foldout' : 'is-box'}`}>
@@ -848,7 +876,7 @@ function InspectorSection({
     </div>
   );
 }
-
+ 
 /**
  * Renders a full list of schema fields as `.inspector-row`s, with the
  * standard "no exposed props" hint when the schema is empty. Used for the
@@ -889,7 +917,7 @@ export function InspectorFieldList({
 }) {
   const layout = useMemo(() => buildInspectorLayout(fields, values), [fields, values]);
   const [activeTab, setActiveTab] = useState(0);
-
+ 
   if (bare) {
     // Hand-laid-out rows keep their own arrangement, but still respect the
     // conditions (a hidden field must not be drawn).
@@ -912,14 +940,14 @@ export function InspectorFieldList({
       />
     ));
   }
-
+ 
   if (layout.isEmpty) {
     return emptyHint ? <p className="hint-text-sm">{emptyHint}</p> : null;
   }
-
+ 
   const tabIndex = Math.min(activeTab, layout.tabs.length - 1);
   const tab = layout.tabs[tabIndex];
-
+ 
   return (
     <div className="inspector-layout">
       {layout.tabs.length > 1 && (
@@ -957,7 +985,7 @@ export function InspectorFieldList({
     </div>
   );
 }
-
+ 
 /**
  * Inspector / Dopesheet schema for the built-in TextRenderer. Presentation
  * (size, color) lives here; timed copy lives on a SubtitleTrack referenced
@@ -971,7 +999,7 @@ export const TEXT_RENDERER_FIELDS = [
   { name: 'fontSize', type: 'number', label: 'Font Size', dragLabel: 'px', step: 1, min: 4, defaultVal: 36, title: 'Typography' },
   { name: 'fontColor', type: 'color', label: 'Color', defaultVal: '#ffffff' },
 ];
-
+ 
 /**
  * Static field schema for the Transform component — the one component
  * type whose fields aren't script-derived. Expressed in the same shape as
@@ -1012,7 +1040,7 @@ export const TRANSFORM_FIELD_GROUPS = [
   {
     label: 'Opacity',
     fields: [
-      { name: 'opacity', type: 'number', dragLabel: 'α', labelColor: '#a78bfa', step: 0.01, min: 0, max: 1, defaultVal: 1 },
+      { name: 'opacity', type: 'number', slider: true, dragLabel: 'α', labelColor: '#a78bfa', step: 0.01, min: 0, max: 1, defaultVal: 1 },
     ],
   },
   {
@@ -1027,7 +1055,8 @@ export const TRANSFORM_FIELD_GROUPS = [
       // Missing on older saved Transforms reads as the 1 default here and in
       // the engine (?? 1 / fallback), so old projects behave exactly as
       // before — no migration needed.
-      { name: 'speed', type: 'number', dragLabel: '×', labelColor: '#22d3ee', step: 0.1, min: 0.1, max: 4, defaultVal: 1 },
+      { name: 'speed', type: 'number', slider: true, dragLabel: '×', labelColor: '#22d3ee', step: 0.1, min: 0.1, max: 4, defaultVal: 1 },
     ],
   },
 ];
+ 

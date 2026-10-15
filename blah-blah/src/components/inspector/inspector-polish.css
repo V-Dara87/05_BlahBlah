@@ -1,0 +1,192 @@
+/* Inspector polish layer.
+ *
+ * Overrides for rules that live in styles/shared.css and index.css (row
+ * labels, keyframe diamonds), scoped under `.inspector-sidebar` so they win
+ * regardless of CSS load order and cannot leak into other panels. The new
+ * classes at the bottom (slider, scale link, anchor grid) are unscoped.
+ */
+ 
+/* ---- Row labels: readable size, flexible column, ellipsis ---------------- */
+.inspector-sidebar .inspector-row {
+  grid-template-columns: clamp(72px, 28%, 112px) 1fr;
+}
+ 
+.inspector-sidebar .inspector-row.is-toggle-left {
+  grid-template-columns: auto 1fr;
+}
+ 
+.inspector-sidebar .row-label {
+  font-size: 11px;
+  color: var(--unity-text);
+  opacity: 0.78;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+ 
+.inspector-sidebar .hint-text-sm {
+  font-size: 10px;
+}
+ 
+/* ---- Keyframe diamond: hollow = none, tinted = has keys, solid = key here -- */
+.inspector-sidebar .keyframe-btn {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: 3px;
+}
+ 
+.inspector-sidebar .keyframe-btn::before {
+  width: 9px;
+  height: 9px;
+  box-sizing: border-box;
+  background: transparent;
+  border: 1.5px solid var(--unity-text-muted);
+  box-shadow: none;
+}
+ 
+.inspector-sidebar .keyframe-btn:hover {
+  background: rgba(var(--unity-accent-rgb), 0.12);
+}
+ 
+.inspector-sidebar .keyframe-btn:hover::before {
+  border-color: var(--unity-text);
+}
+ 
+.inspector-sidebar .keyframe-btn:focus-visible {
+  outline: 1px solid var(--unity-accent-blue);
+  outline-offset: 1px;
+}
+ 
+.inspector-sidebar .keyframe-btn.has-keys::before {
+  background: rgba(var(--unity-accent-rgb), 0.35);
+  border-color: var(--unity-accent-blue);
+  box-shadow: none;
+}
+ 
+.inspector-sidebar .keyframe-btn.at-current-time::before {
+  background: var(--unity-accent-blue);
+  border-color: var(--unity-accent-blue);
+  box-shadow: 0 0 6px rgba(var(--unity-accent-rgb), 0.8);
+}
+ 
+/* ---- Number field with a slider next to it (Opacity / Speed) ------------- */
+.inspector-number-slider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+ 
+.inspector-number-slider .drag-number-field {
+  flex: 0 0 76px;
+  width: 76px;
+}
+ 
+.inspector-range {
+  flex: 1;
+  min-width: 0;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--unity-accent-blue);
+  cursor: pointer;
+}
+ 
+.inspector-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+ 
+/* ---- Transform: scale link ------------------------------------------------ */
+.row-label-with-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+ 
+.row-label-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+ 
+.scale-link-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--unity-text-dim);
+  cursor: pointer;
+}
+ 
+.scale-link-btn:hover {
+  background: rgba(var(--unity-accent-rgb), 0.12);
+  color: var(--unity-text);
+}
+ 
+.scale-link-btn:focus-visible {
+  outline: 1px solid var(--unity-accent-blue);
+  outline-offset: 1px;
+}
+ 
+.scale-link-btn.is-linked {
+  background: rgba(var(--unity-accent-rgb), 0.18);
+  color: var(--unity-accent-blue);
+}
+ 
+/* ---- Transform: 3x3 pivot anchor picker ------------------------------------ */
+.anchor-grid {
+  display: inline-grid;
+  grid-template-columns: repeat(3, 16px);
+  grid-auto-rows: 16px;
+  gap: 2px;
+  padding: 3px;
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 3px;
+}
+ 
+.anchor-cell {
+  position: relative;
+  padding: 0;
+  border: none;
+  border-radius: 2px;
+  background: transparent;
+  cursor: pointer;
+}
+ 
+.anchor-cell::after {
+  content: '';
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  background: var(--unity-text-dim);
+  transition: all 0.12s ease;
+}
+ 
+.anchor-cell:hover {
+  background: rgba(var(--unity-accent-rgb), 0.12);
+}
+ 
+.anchor-cell:hover::after {
+  background: var(--unity-text);
+}
+ 
+.anchor-cell:focus-visible {
+  outline: 1px solid var(--unity-accent-blue);
+  outline-offset: 1px;
+}
+ 
+.anchor-cell.is-active::after {
+  inset: 3px;
+  background: var(--unity-accent-blue);
+}

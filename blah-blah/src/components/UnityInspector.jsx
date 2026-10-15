@@ -1,4 +1,4 @@
-import { useState, memo, useMemo } from 'react';
+import { useState, memo, useMemo, useRef } from 'react';
 import {
   Sliders,
   Plus,
@@ -118,6 +118,11 @@ export const UnityInspector = memo(function UnityInspector({
   const [savedPrefab, setSavedPrefab] = useState(false);
   const [appliedPrefab, setAppliedPrefab] = useState(false);
   const [revertedPrefab, setRevertedPrefab] = useState(false);
+  // Add Component opens upward inside an overflow:hidden sidebar; its height is
+  // measured on open so the list is never taller than the room above the footer.
+  const sidebarRef = useRef(null);
+  const footerRef = useRef(null);
+  const [popoverMaxHeight, setPopoverMaxHeight] = useState(340);
  
   const {
     showAddComponent,
@@ -347,7 +352,7 @@ export const UnityInspector = memo(function UnityInspector({
     );
     onUpdateEntity(selectedEntity.id, { components: updatedComponents });
   };
-
+ 
   /**
    * Static prop writes for script *actions* (an inspector button, see
    * engine/scriptActions.js).
@@ -398,6 +403,7 @@ export const UnityInspector = memo(function UnityInspector({
  
   return (
     <aside
+      ref={sidebarRef}
       className={`inspector-sidebar${isScriptDragOver ? ' script-drop-zone' : ''}`}
       onDragOver={handleInspectorDragOver}
       onDragLeave={(e) => {
@@ -473,7 +479,7 @@ export const UnityInspector = memo(function UnityInspector({
  
         <div className="inspector-header-field">
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '2px' }}>
-            <label className="field-label-sm">GameObject Name</label>
+            <label className="field-label-sm">Name</label>
             {onToggleLock && (
               <button
                 type="button"
@@ -494,33 +500,35 @@ export const UnityInspector = memo(function UnityInspector({
           />
         </div>
  
-        <div className="inspector-header-field">
-          <label className="field-label-sm">Timeline Track (Layer)</label>
-          <select
-            className="inspector-track-select"
-            value={selectedEntity.trackId || 'track-1'}
-            onChange={(e) => onUpdateEntity(selectedEntity.id, { trackId: e.target.value })}
-          >
-            {tracks.map((t) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
-          </select>
-        </div>
+        <div className="inspector-header-row">
+          <div className="inspector-header-field">
+            <label className="field-label-sm">Track</label>
+            <select
+              className="inspector-track-select"
+              value={selectedEntity.trackId || 'track-1'}
+              onChange={(e) => onUpdateEntity(selectedEntity.id, { trackId: e.target.value })}
+            >
+              {tracks.map((t) => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+          </div>
  
-        <div className="inspector-header-field">
-          <label className="field-label-sm">Parent (Hierarchy)</label>
-          <select
-            className="inspector-track-select"
-            value={selectedEntity.parentId || ''}
-            onChange={(e) => onUpdateEntity(selectedEntity.id, { parentId: e.target.value || null })}
-          >
-            <option value="">None (Root)</option>
-            {eligibleParentEntities.map((ent) => (
-              <option key={ent.id} value={ent.id}>
-                {ent.indent ? `${ent.indent}└─ ` : ''}{ent.name}
-              </option>
-            ))}
-          </select>
+          <div className="inspector-header-field">
+            <label className="field-label-sm">Parent</label>
+            <select
+              className="inspector-track-select"
+              value={selectedEntity.parentId || ''}
+              onChange={(e) => onUpdateEntity(selectedEntity.id, { parentId: e.target.value || null })}
+            >
+              <option value="">None (Root)</option>
+              {eligibleParentEntities.map((ent) => (
+                <option key={ent.id} value={ent.id}>
+                  {ent.indent ? `${ent.indent}└─ ` : ''}{ent.name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
  
       </div>
@@ -546,6 +554,7 @@ export const UnityInspector = memo(function UnityInspector({
         <div className="inspector-auto-key-bar">
           <button
             className={`inspector-auto-key-btn${autoKeyEnabled ? ' active' : ''}`}
+            aria-pressed={!!autoKeyEnabled}
             onClick={() => setAutoKeyEnabled && setAutoKeyEnabled(!autoKeyEnabled)}
             title={autoKeyEnabled ? 'Auto Key: ON — property changes create keyframes automatically' : 'Auto Key: OFF — click to enable automatic keyframing'}
           >
@@ -716,19 +725,25 @@ export const UnityInspector = memo(function UnityInspector({
       </div>
  
       {/* Footer Actions */}
-      <div className="inspector-footer">
+      <div className="inspector-footer" ref={footerRef}>
         {!isTransitionClip && (
         <div className="add-comp-wrapper">
           <button
             className="unity-btn unity-btn-secondary full-width"
-            onClick={() => setShowAddComponent(!showAddComponent)}
+            onClick={() => {
+              if (!showAddComponent && sidebarRef.current && footerRef.current) {
+                const room = sidebarRef.current.clientHeight - footerRef.current.offsetHeight - 12;
+                setPopoverMaxHeight(Math.max(160, Math.min(340, room)));
+              }
+              setShowAddComponent(!showAddComponent);
+            }}
           >
             <Plus size={13} />
             <span>Add Component</span>
           </button>
  
           {showAddComponent && (
-            <div className="comp-dropdown-popover add-component-popover">
+            <div className="comp-dropdown-popover add-component-popover" style={{ maxHeight: popoverMaxHeight }}>
               {/* Live search across built-in components + scripts */}
               <div className="search-bar-sm add-comp-search">
                 <Search size={11} className="search-icon" />

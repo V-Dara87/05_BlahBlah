@@ -3,10 +3,11 @@
    alone; generic modifier classes (.active/.danger/.disabled) travel with the
    component that owns the rest of the selector.
    App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
-
+ 
 .inspector-card-header {
-  height: 26px;
-  background: #383838;
+  height: 28px;
+  background: var(--unity-subtle);
+  border-bottom: 1px solid var(--unity-border);
   padding: 0 8px;
   display: flex;
   align-items: center;
@@ -16,7 +17,7 @@
  
 .inspector-card-header.drag-over {
   box-shadow: inset 0 0 0 1px var(--unity-accent-blue);
-  background: #40474f;
+  background: rgba(var(--unity-accent-rgb), 0.15);
 }
  
 .card-title-group {
@@ -26,13 +27,45 @@
 }
  
 .card-title-text {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  color: #fff;
+  color: var(--unity-text);
 }
  
 .card-actions-group {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+ 
+ 
+/* Small icon button for a card's header actions (Transform: copy / paste /
+   reset). Text-less, so every use must set title + aria-label. */
+.card-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--unity-text-muted);
+  cursor: pointer;
+}
+ 
+.card-icon-btn:hover:not(:disabled) {
+  background: rgba(var(--unity-accent-rgb), 0.15);
+  color: var(--unity-text);
+}
+ 
+.card-icon-btn:focus-visible {
+  outline: 1px solid var(--unity-accent-blue);
+  outline-offset: 1px;
+}
+ 
+.card-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
