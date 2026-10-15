@@ -1,0 +1,110 @@
+/* Viewport transform gizmo: selection outline, rotate / scale handles, and the
+   drag feedback (cursor lock, readout, snap guides) added by hooks/useGizmoDrag.js.
+ 
+   Loaded from useGizmoDrag.js. The base rules still live in styles/shared.css;
+   the selectors here are one step more specific (element + class, or a
+   descendant selector) so they win no matter which stylesheet loads first.
+   Colours come from the theme accent variables, so the gizmo follows
+   Settings -> Appearance. */
+ 
+/* One on-screen pixel, in project px: the gizmo is drawn inside the scaled
+   entity layer, so every size is divided by --view-scale to stay constant. */
+div.preview-selection-gizmo {
+  --gizmo-px: calc(1px / var(--view-scale, 1));
+  outline: calc(1.5 * var(--gizmo-px)) solid var(--unity-accent-blue);
+  outline-offset: calc(4 * var(--gizmo-px));
+}
+ 
+div.preview-selection-gizmo .gizmo-rotate-stem {
+  background: var(--unity-accent-blue);
+  opacity: 0.8;
+}
+ 
+/* ── Handles: light fill + accent ring reads on both dark and bright video ── */
+div.preview-selection-gizmo .gizmo-scale-handle,
+div.preview-selection-gizmo .gizmo-rotate-handle {
+  background: #fff;
+  border: calc(2 * var(--gizmo-px)) solid var(--unity-accent-blue);
+  box-shadow: 0 1px calc(3 * var(--gizmo-px)) rgba(0, 0, 0, 0.5);
+  transition: transform 0.08s ease-out, background 0.08s ease-out;
+}
+ 
+div.preview-selection-gizmo .gizmo-scale-handle {
+  width: calc(11 * var(--gizmo-px));
+  height: calc(11 * var(--gizmo-px));
+  margin-left: calc(-5.5 * var(--gizmo-px));
+  margin-top: calc(-5.5 * var(--gizmo-px));
+  border-radius: calc(2 * var(--gizmo-px));
+}
+ 
+div.preview-selection-gizmo .gizmo-rotate-handle {
+  width: calc(13 * var(--gizmo-px));
+  height: calc(13 * var(--gizmo-px));
+  margin-left: calc(-6.5 * var(--gizmo-px));
+  margin-bottom: calc(-6.5 * var(--gizmo-px));
+  border-radius: 50%;
+}
+ 
+/* Invisible, larger hit area: the visible handle stays small but is easy to grab. */
+div.preview-selection-gizmo .gizmo-scale-handle::after,
+div.preview-selection-gizmo .gizmo-rotate-handle::after {
+  content: '';
+  position: absolute;
+  inset: calc(-8 * var(--gizmo-px));
+}
+ 
+div.preview-selection-gizmo .gizmo-scale-handle:hover,
+div.preview-selection-gizmo .gizmo-rotate-handle:hover {
+  transform: scale(1.25);
+}
+ 
+div.preview-selection-gizmo .gizmo-scale-handle:active,
+div.preview-selection-gizmo .gizmo-rotate-handle:active {
+  background: var(--unity-accent-blue);
+  transform: scale(1.1);
+  filter: none;
+}
+ 
+/* ── While dragging: keep one cursor for the whole drag ── */
+body.gizmo-dragging,
+body.gizmo-dragging * {
+  cursor: var(--gizmo-cursor, move) !important;
+}
+ 
+/* ── Cursor-following readout ── */
+.gizmo-readout {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 100000;
+  pointer-events: none;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--unity-panel);
+  border: 1px solid var(--unity-border-light);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  color: var(--unity-text);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  white-space: pre;
+}
+ 
+/* ── Snap guides ── */
+.gizmo-guide {
+  position: fixed;
+  z-index: 99999;
+  pointer-events: none;
+  background: var(--unity-accent-soft);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+ 
+.gizmo-guide--v {
+  width: 1px;
+}
+ 
+.gizmo-guide--h {
+  height: 1px;
+}
