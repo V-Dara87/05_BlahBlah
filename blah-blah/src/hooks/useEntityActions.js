@@ -9,6 +9,31 @@ import {
 import { planTransitionPlacement, buildMediaDurationsFromAssets, TRANSITION_DEFAULT_DURATION } from '../engine/renderPipeline';
 import { detectScriptKind, extractScriptProps } from '../engine/scriptRunner';
 import { computeTrimmedOffset } from '../utils/mediaOffset';
+
+/**
+ * Build a fresh ScriptComponent for a script, with every declared prop seeded
+ * to its default. Shared by "attach script to clip" and "drop script on the
+ * timeline" so the two can never drift apart again.
+ */
+function buildScriptComponent(scriptDef) {
+  let fields = [];
+  try {
+    fields = extractScriptProps(scriptDef.code || '') || [];
+  } catch {
+    fields = []; // half-written script: attach it anyway, runtime reports the real error
+  }
+  const initialProps = {};
+  // Action buttons (`{ type: 'button' }`) hold no value — they are methods to
+  // call, not props to store (see engine/scriptActions.js).
+  fields.forEach(f => { if (f.type !== 'button') initialProps[f.name] = f.defaultVal; });
+  return {
+    type: 'ScriptComponent',
+    scriptId: scriptDef.id,
+    scriptName: scriptDef.name,
+    enabled: true,
+    props: initialProps,
+  };
+}
 import {
   copyToClipboard,
   getClipboardClips,
@@ -711,18 +736,7 @@ export function useEntityActions({
     const scriptDef = scripts.find(s => s.id === scriptId);
     const target = entities.find(e => e.id === entityId);
     if (!scriptDef || !target) return;
-    const fields = extractScriptProps(scriptDef.code);
-    const initialProps = {};
-    // Action buttons (`{ type: 'button' }`) hold no value — they are methods to
-    // call, not props to store (see engine/scriptActions.js).
-    fields.forEach(f => { if (f.type !== 'button') initialProps[f.name] = f.defaultVal; });
-    const newComp = {
-      type: 'ScriptComponent',
-      scriptId: scriptDef.id,
-      scriptName: scriptDef.name,
-      enabled: true,
-      props: initialProps,
-    };
+    const newComp = buildScriptComponent(scriptDef);
     setEntities(prev => prev.map(e => e.id === entityId
       ? { ...e, components: [...(e.components || []), newComp] }
       : e
@@ -1142,22 +1156,24 @@ export function useEntityActions({
       const asset = mediaAssets.find(m => m.id === itemId) || itemData;
       if (asset) handleAddMediaToTimeline(asset, targetTrackId, startTime);
     } else if (itemType === 'script') {
-      const script = scripts.find(s => s.id === itemId);
+      // Prefer the live script (current code) over the drag payload's
+      // snapshot; fall back to the payload for scripts that aren't in this
+      // project's list yet (e.g. dragged in from the shared library).
+      const live = scripts.find(s => s.id === itemId);
+      const script = live || (itemData && itemData.id && typeof itemData.code === 'string' ? itemData : null);
       if (script) {
         // ONE script component type — the runtime dispatches per the
         // script's detected kind (motion / react / canvas). Motion scripts
         // get a shape fallback to animate; react/canvas scripts render
         // their own visual output.
         const kind = detectScriptKind(script.code || '');
+        // IMPORTANT: build the component exactly like Add Component does
+        // (buildScriptComponent seeds every prop with its declared default).
+        // A bare `props: {}` made scripts read undefined props -> runtime
+        // errors, or silently render nothing.
         const components = [
           createDefaultTransform({ x: 0, y: 0 }),
-          {
-            type: 'ScriptComponent',
-            scriptId: script.id,
-            scriptName: script.name,
-            enabled: true,
-            props: {}
-          }
+          buildScriptComponent(script),
         ];
         if (kind === 'motion') {
           components.push({
@@ -1172,11 +1188,13 @@ export function useEntityActions({
           });
         }
         const newGO = createGameObject({
-          name: `${script.name.replace(/\.[^.]+$/, '')} Clip`,
+          name: `${(script.name || 'Script').replace(/\.[^.]+$/, '')} Clip`,
           trackId: targetTrackId || 'track-1',
           startTime: startTime ?? getPlaybackTime(),
           duration: 5,
-          type: 'shape',
+          // Same clip type as the manual flow (empty clip + Add Component)
+          // for react/canvas scripts; motion keeps its shape clip.
+          type: kind === 'motion' ? 'shape' : 'empty',
           components
         });
         setEntities(prev => [...prev, newGO]);
