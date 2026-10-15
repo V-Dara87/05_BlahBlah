@@ -1,12 +1,12 @@
 /* Viewport transform gizmo: selection outline, rotate / scale handles, and the
    drag feedback (cursor lock, readout, snap guides) added by hooks/useGizmoDrag.js.
- 
+
    Loaded from useGizmoDrag.js. The base rules still live in styles/shared.css;
    the selectors here are one step more specific (element + class, or a
    descendant selector) so they win no matter which stylesheet loads first.
    Colours come from the theme accent variables, so the gizmo follows
    Settings -> Appearance. */
- 
+
 /* One on-screen pixel, in project px: the gizmo is drawn inside the scaled
    entity layer, so every size is divided by --view-scale to stay constant. */
 div.preview-selection-gizmo {
@@ -14,12 +14,12 @@ div.preview-selection-gizmo {
   outline: calc(1.5 * var(--gizmo-px)) solid var(--unity-accent-blue);
   outline-offset: calc(4 * var(--gizmo-px));
 }
- 
+
 div.preview-selection-gizmo .gizmo-rotate-stem {
   background: var(--unity-accent-blue);
   opacity: 0.8;
 }
- 
+
 /* ── Handles: light fill + accent ring reads on both dark and bright video ── */
 div.preview-selection-gizmo .gizmo-scale-handle,
 div.preview-selection-gizmo .gizmo-rotate-handle {
@@ -28,7 +28,7 @@ div.preview-selection-gizmo .gizmo-rotate-handle {
   box-shadow: 0 1px calc(3 * var(--gizmo-px)) rgba(0, 0, 0, 0.5);
   transition: transform 0.08s ease-out, background 0.08s ease-out;
 }
- 
+
 div.preview-selection-gizmo .gizmo-scale-handle {
   width: calc(11 * var(--gizmo-px));
   height: calc(11 * var(--gizmo-px));
@@ -36,7 +36,7 @@ div.preview-selection-gizmo .gizmo-scale-handle {
   margin-top: calc(-5.5 * var(--gizmo-px));
   border-radius: calc(2 * var(--gizmo-px));
 }
- 
+
 div.preview-selection-gizmo .gizmo-rotate-handle {
   width: calc(13 * var(--gizmo-px));
   height: calc(13 * var(--gizmo-px));
@@ -44,7 +44,7 @@ div.preview-selection-gizmo .gizmo-rotate-handle {
   margin-bottom: calc(-6.5 * var(--gizmo-px));
   border-radius: 50%;
 }
- 
+
 /* Invisible, larger hit area: the visible handle stays small but is easy to grab. */
 div.preview-selection-gizmo .gizmo-scale-handle::after,
 div.preview-selection-gizmo .gizmo-rotate-handle::after {
@@ -52,25 +52,25 @@ div.preview-selection-gizmo .gizmo-rotate-handle::after {
   position: absolute;
   inset: calc(-8 * var(--gizmo-px));
 }
- 
+
 div.preview-selection-gizmo .gizmo-scale-handle:hover,
 div.preview-selection-gizmo .gizmo-rotate-handle:hover {
   transform: scale(1.25);
 }
- 
+
 div.preview-selection-gizmo .gizmo-scale-handle:active,
 div.preview-selection-gizmo .gizmo-rotate-handle:active {
   background: var(--unity-accent-blue);
   transform: scale(1.1);
   filter: none;
 }
- 
+
 /* ── While dragging: keep one cursor for the whole drag ── */
 body.gizmo-dragging,
 body.gizmo-dragging * {
   cursor: var(--gizmo-cursor, move) !important;
 }
- 
+
 /* ── Cursor-following readout ── */
 .gizmo-readout {
   position: fixed;
@@ -91,7 +91,7 @@ body.gizmo-dragging * {
   font-variant-numeric: tabular-nums;
   white-space: pre;
 }
- 
+
 /* ── Snap guides ── */
 .gizmo-guide {
   position: fixed;
@@ -100,11 +100,49 @@ body.gizmo-dragging * {
   background: var(--unity-accent-soft);
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
 }
- 
+
 .gizmo-guide--v {
   width: 1px;
 }
- 
+
 .gizmo-guide--h {
   height: 1px;
+}
+
+/* ── Gizmo box that IS the whole frame (canvas-kind script clips) ──
+   Everything is drawn inside the frame so nothing is cut off at its edge, and
+   the handles are pulled in from the corners so they are easy to grab. The drag
+   math only uses pointer deltas, so moving a handle does not change it. */
+div.preview-selection-gizmo.is-full-frame {
+  outline-offset: calc(-2 * var(--gizmo-px));
+}
+
+div.preview-selection-gizmo.is-full-frame .gizmo-scale-handle-tl {
+  left: calc(20 * var(--gizmo-px));
+  top: calc(20 * var(--gizmo-px));
+}
+
+div.preview-selection-gizmo.is-full-frame .gizmo-scale-handle-tr {
+  left: calc(100% - 20 * var(--gizmo-px));
+  top: calc(20 * var(--gizmo-px));
+}
+
+div.preview-selection-gizmo.is-full-frame .gizmo-scale-handle-bl {
+  left: calc(20 * var(--gizmo-px));
+  top: calc(100% - 20 * var(--gizmo-px));
+}
+
+div.preview-selection-gizmo.is-full-frame .gizmo-scale-handle-br {
+  left: calc(100% - 20 * var(--gizmo-px));
+  top: calc(100% - 20 * var(--gizmo-px));
+}
+
+/* The rotate handle normally floats above the box, which is off-frame here. */
+div.preview-selection-gizmo.is-full-frame .gizmo-rotate-stem {
+  display: none;
+}
+
+div.preview-selection-gizmo.is-full-frame .gizmo-rotate-handle {
+  bottom: auto;
+  top: calc(34 * var(--gizmo-px));
 }

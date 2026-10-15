@@ -1,6 +1,6 @@
 import { trackKeyFor, getFieldKeyframes, setKeyframe } from '../engine/keyframes';
 import '../components/preview/gizmo.css';
- 
+
 /**
  * useGizmoDrag — the three preview-canvas gizmo drag handlers (move /
  * rotate / scale) plus the keyframe-aware transform writer they all funnel
@@ -49,10 +49,10 @@ import '../components/preview/gizmo.css';
  *   ref instance used for both move/rotate/scale so only one drag mode can
  *   be active at a time)
  */
- 
+
 /** How close (in SCREEN px) a dragged clip has to get before it snaps. */
 const SNAP_PX = 6;
- 
+
 /**
  * Snap one axis. `pos` is the clip centre as an offset from the canvas centre
  * (the same space as Transform.x / y). Candidates: the canvas centre line, and,
@@ -78,7 +78,7 @@ export function snapAxis(pos, size, half, tol) {
   }
   return best ? { value: best.value, guide: best.guide } : { value: pos, guide: null };
 }
- 
+
 /**
  * Cursor lock + cursor-following readout + snap guides for one drag. Everything
  * it creates is removed by end(). Safe to call with no document (tests / SSR):
@@ -140,9 +140,9 @@ function createDragFeedback(doc, cursor) {
     },
   };
 }
- 
+
 const fmt1 = (n) => String(Math.round(n * 10) / 10);
- 
+
 export function useGizmoDrag({
   entities,
   onUpdateEntity,
@@ -197,7 +197,7 @@ export function useGizmoDrag({
     }
     if (Object.keys(patch).length > 0) onUpdateEntity(entityId, patch);
   };
- 
+
   // Shared drag plumbing: window-level move/up/cancel listeners for one drag
   // `mode`, with the feedback UI torn down however the drag ends (pointerup OR
   // pointercancel, which the old per-handler code never listened for).
@@ -218,7 +218,7 @@ export function useGizmoDrag({
     window.addEventListener('pointerup', end);
     window.addEventListener('pointercancel', end);
   };
- 
+
   // Canvas-space point (offset from canvas centre, project px) -> screen px,
   // plus the preview frame's screen rect (for sizing the guide lines). Same
   // mapping the rotate handler uses for its pivot.
@@ -291,7 +291,7 @@ export function useGizmoDrag({
         });
       }
     }
- 
+
     // Snapping only when x/y really are offsets from the canvas centre: no
     // parent (local space) and no pivot offset (a pivot shifts where a scaled /
     // rotated clip's visual centre lands relative to x/y).
@@ -310,7 +310,7 @@ export function useGizmoDrag({
       boxW = 0;
       boxH = 0;
     }
- 
+
     const feedback = createDragFeedback(canvasFrameRef.current?.ownerDocument || (typeof document !== 'undefined' ? document : null), 'move');
  
     gizmoDragRef.current = {
@@ -335,7 +335,7 @@ export function useGizmoDrag({
       const local = drag.toLocal(dx, dy);
       let nextX = drag.startX + local.x;
       let nextY = drag.startY + local.y;
- 
+
       let guideX = null;
       let guideY = null;
       if (canSnap && !(moveEvent.ctrlKey || moveEvent.metaKey)) {
@@ -347,9 +347,9 @@ export function useGizmoDrag({
         guideX = sx.guide;
         guideY = sy.guide;
       }
- 
+
       updateSelectedTransform(drag.entityId, { x: nextX, y: nextY });
- 
+
       const at = (guideX != null || guideY != null) ? canvasToScreen(guideX ?? 0, guideY ?? 0) : null;
       feedback.guide('v', guideX != null && at ? at.x : null, at?.rect);
       feedback.guide('h', guideY != null && at ? at.y : null, at?.rect);
@@ -469,7 +469,7 @@ export function useGizmoDrag({
     // scaleY moving toward positive local Y.
     const signX = corner === 'tl' || corner === 'bl' ? -1 : 1;
     const signY = corner === 'tl' || corner === 'tr' ? -1 : 1;
- 
+
     const cursor = corner === 'tl' || corner === 'br' ? 'nwse-resize' : 'nesw-resize';
     const feedback = createDragFeedback(canvasFrameRef.current?.ownerDocument || (typeof document !== 'undefined' ? document : null), cursor);
  

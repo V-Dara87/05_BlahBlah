@@ -7,6 +7,17 @@ import { EntityErrorBoundary } from '../entity/EntityErrorBoundary';
 import { ScriptGizmoOverlay } from './ScriptGizmoOverlay';
 import './overlay-layer.css';
  
+/** The script a ScriptComponent points at (same lookup the rest of this file uses). */
+function findScriptDef(scripts, comp) {
+  return scripts.find(
+    (s) =>
+      s.id === comp.scriptId ||
+      s.name === comp.scriptName ||
+      s.name === `${comp.scriptName}.jsx` ||
+      s.id === `script-${comp.scriptName}`
+  );
+}
+
 /**
  * Foreground overlay layer — every non-video, non-audio active entity:
  * Script (react/canvas-kind), Text, and Shape components, plus each
@@ -51,8 +62,26 @@ export function OverlayLayer({
     // entity, the selection-gizmo overlay below, so both agree on
     // what "the clip's own size" means. Same lookup both places
     // previously duplicated separately.
-    const baseWidth = (entity.components.find((c) => c.width))?.width || 180;
-    const baseHeight = (entity.components.find((c) => c.height))?.height || 180;
+    //
+    // A canvas-kind script has no authored width/height, but its container is
+    // sized to the full project frame (see .canvas-render-container below). It
+    // used to fall through to the 180x180 fallback, so its gizmo was a small
+    // box in the middle of a frame-sized clip, the scale handles computed
+    // against the wrong base, and a non-zero pivot landed in the wrong place.
+    // Such a clip now uses the project resolution, like video clips do.
+    const authoredWidth = (entity.components.find((c) => c.width))?.width;
+    const authoredHeight = (entity.components.find((c) => c.height))?.height;
+    const isCanvasClip = (entity.components || []).some((c) => {
+      if (!isScriptComponent(c) || c.enabled === false) return false;
+      const def = findScriptDef(scripts, c);
+      return !!def?.code && detectScriptKind(def.code) === 'canvas';
+    });
+    const baseWidth = authoredWidth || (isCanvasClip ? safeResWidth : 180);
+    const baseHeight = authoredHeight || (isCanvasClip ? safeResHeight : 180);
+    // The gizmo box IS the whole frame: its handles/outline are drawn inside it
+    // (see .is-full-frame in preview/gizmo.css) so they are not cut off at the
+    // frame edge.
+    const isFullFrameGizmo = isCanvasClip && !authoredWidth && !authoredHeight;
  
     // Script-driven visuals — every ScriptComponent renders by its
     // detected kind: 'react' components mount as inline React
@@ -270,7 +299,7 @@ export function OverlayLayer({
       {isSelected && onUpdateEntity && (
         <div
           key={`${entity.id}-gizmo`}
-          className="preview-selection-gizmo"
+          className={`preview-selection-gizmo${isFullFrameGizmo ? ' is-full-frame' : ''}`}
           style={{
             transform: `translate(calc(-50% + ${transform.x}px), calc(-50% + ${transform.y}px)) rotate(${transform.rotation}deg)`,
             // Same pivot origin as the content layer above so the
@@ -302,22 +331,22 @@ export function OverlayLayer({
           <div
             className="gizmo-scale-handle gizmo-scale-handle-tl"
             title="Drag to scale (hold Shift to keep aspect ratio)"
-            onPointerDown={(e) => handleScaleGizmoPointerDown(e, entity, transform, localTransform, 'tl')}
+            onPointerDown={(e) => handleScaleGizmoPointerDown(e, entity, transform, localTransform, 'tl', { baseWidth, baseHeight })}
           />
           <div
             className="gizmo-scale-handle gizmo-scale-handle-tr"
             title="Drag to scale (hold Shift to keep aspect ratio)"
-            onPointerDown={(e) => handleScaleGizmoPointerDown(e, entity, transform, localTransform, 'tr')}
+            onPointerDown={(e) => handleScaleGizmoPointerDown(e, entity, transform, localTransform, 'tr', { baseWidth, baseHeight })}
           />
           <div
             className="gizmo-scale-handle gizmo-scale-handle-bl"
             title="Drag to scale (hold Shift to keep aspect ratio)"
-            onPointerDown={(e) => handleScaleGizmoPointerDown(e, entity, transform, localTransform, 'bl')}
+            onPointerDown={(e) => handleScaleGizmoPointerDown(e, entity, transform, localTransform, 'bl', { baseWidth, baseHeight })}
           />
           <div
             className="gizmo-scale-handle gizmo-scale-handle-br"
             title="Drag to scale (hold Shift to keep aspect ratio)"
-            onPointerDown={(e) => handleScaleGizmoPointerDown(e, entity, transform, localTransform, 'br')}
+            onPointerDown={(e) => handleScaleGizmoPointerDown(e, entity, transform, localTransform, 'br', { baseWidth, baseHeight })}
           />
         </div>
       )}
