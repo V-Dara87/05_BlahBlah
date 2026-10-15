@@ -349,6 +349,39 @@ export function useSharedLibraryActions({
     [sharedLibrary, installDeps, handleSaveScript, handleSetScriptOrigin]
   );
 
+  /**
+   * Make sure a Shared Library SCRIPT exists in THIS project and resolve the
+   * project's script object. Unlike handleImportSharedItem it never opens the
+   * editor and never alerts about duplicates, so it can back a drag-and-drop
+   * of a shared script straight onto the timeline: a ScriptComponent can only
+   * run a script that lives in the project, so the drop imports it first.
+   * A project script with the same name is reused (never a second copy).
+   */
+  const ensureSharedScriptInProject = useCallback(
+    async (sharedItem) => {
+      if (!sharedItem || sharedItem.type !== 'script') return null;
+      const data = sharedItem.data || {};
+      const name = data.name || sharedItem.name || 'ImportedScript.jsx';
+      const existing = (scripts || []).find((s) => baseName(s.name) === baseName(name));
+      if (existing) return existing;
+      const kept = await installDeps(data.deps, name);
+      const newScript = {
+        id: uid('script'),
+        name,
+        description: data.description || 'Imported from Shared Library',
+        code: data.code || '',
+        origin: {
+          sharedName: baseName(sharedItem.name || name),
+          hash: sharedItem.hash || hashText(data.code || ''),
+        },
+      };
+      await handleCreateScript(newScript);
+      warnKept(kept);
+      return newScript;
+    },
+    [scripts, installDeps, handleCreateScript]
+  );
+
   /** Whole library -> one .json file. */
   const handleExportSharedLibrary = useCallback(async () => {
     const items = sharedLibrary.items || [];
@@ -401,6 +434,7 @@ export function useSharedLibraryActions({
     handleRemoveSharedItem,
     handleMoveSharedItem,
     handleImportSharedItem,
+    ensureSharedScriptInProject,
     handleUpdateScriptFromLibrary,
     handleExportSharedLibrary,
     handleImportSharedLibrary,

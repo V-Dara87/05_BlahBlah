@@ -358,6 +358,7 @@ export function App() {
     handleRemoveSharedItem,
     handleMoveSharedItem,
     handleImportSharedItem,
+    ensureSharedScriptInProject,
     handleUpdateScriptFromLibrary,
     handleExportSharedLibrary,
     handleImportSharedLibrary,
@@ -398,6 +399,34 @@ export function App() {
     setSelectedIds,
     getPlaybackTime,
   });
+ 
+  // Timeline drop entry point. Project-panel cards drag as media / prefab /
+  // script, but a Shared Library card drags as itemType 'shared' (with the
+  // library item as itemData) — which the placement handlers don't know, so
+  // dropping a shared script on the timeline silently did nothing. A shared
+  // script is imported into the project first (reusing a same-named one),
+  // then placed like any project script. Scripts only: shared prefabs/media
+  // still need "Import to project" first.
+  const handleDropItemOnTrackAnySource = useCallback(async (drop) => {
+    const place = isPrefabMode
+      ? prefabEntityActions.handleDropItemOnTrack
+      : handleDropItemOnTrack;
+    if (drop?.itemType !== 'shared') {
+      place(drop);
+      return;
+    }
+    const sharedItem = drop.itemData;
+    if (sharedItem?.type !== 'script') return;
+    try {
+      const script = await ensureSharedScriptInProject(sharedItem);
+      // Hand the script object itself over: the project's `scripts` state may
+      // not have flushed yet, and the placement handler falls back to it.
+      if (script) place({ ...drop, itemType: 'script', itemId: script.id, itemData: script });
+    } catch (err) {
+      console.error('Could not add the shared script to the timeline:', err);
+      window.alert(`Could not add the shared script: ${err?.message || err}`);
+    }
+  }, [isPrefabMode, prefabEntityActions, handleDropItemOnTrack, ensureSharedScriptInProject]);
  
   // Calculate timeline duration based on entity placements
   // BUG FIX -- this used to return a fabricated `30` when there were no
@@ -667,7 +696,7 @@ export function App() {
           handleUpdateTrack, handleDeleteTrack, handleAddTrack,
           handleAddEmptyClip: isPrefabMode ? prefabEntityActions.handleAddEmptyClip : handleAddEmptyClip,
           handleAddTransitionClip: isPrefabMode ? prefabEntityActions.handleAddTransitionClip : handleAddTransitionClip,
-          handleDropItemOnTrack: isPrefabMode ? prefabEntityActions.handleDropItemOnTrack : handleDropItemOnTrack,
+          handleDropItemOnTrack: handleDropItemOnTrackAnySource,
           handleAttachScriptToEntity: isPrefabMode ? prefabEntityActions.handleAttachScriptToEntity : handleAttachScriptToEntity,
           onEnterPrefabMode: handleEnterPrefabMode,
           onExitPrefabMode: handleExitPrefabMode,
