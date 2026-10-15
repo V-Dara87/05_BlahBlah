@@ -5,6 +5,7 @@ const CUSTOM_PACKAGES_KEY = 'blahblah-custom-packages-v1';
 const INSTALLED_PACKAGES_KEY = 'blahblah-installed-packages-v1';
 
 let cachedAppDataDir = null;
+const activeDownloadSessions = new Map();
 
 /**
  * Returns the application data directory path (in Tauri).
@@ -164,6 +165,15 @@ export async function isPackageInstalled(packageId) {
 }
 
 /**
+ * Gets the total storage size in bytes consumed by installed packages.
+ * @returns {Promise<number>}
+ */
+export async function getTotalInstalledSize() {
+  const registry = await getInstalledPackagesRegistry();
+  return Object.values(registry).reduce((sum, item) => sum + (Number(item?.sizeBytes) || 0), 0);
+}
+
+/**
  * Gets the absolute path of an installed package on disk.
  * Returns null if not installed or running in browser.
  * @param {string} packageId
@@ -181,6 +191,166 @@ export async function getPackagePath(packageId) {
     }
   }
   return info.installPath;
+}
+
+/**
+ * Cancels an ongoing package download session.
+ * @param {string} packageId
+ * @returns {Promise<boolean>}
+ */
+export async function cancelDownload(packageId) {
+  const sessionId = activeDownloadSessions.get(packageId);
+  if (!sessionId) return false;
+
+  if (isTauri()) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('cancel_download', { sessionId });
+      activeDownloadSessions.delete(packageId);
+      return true;
+    } catch (err) {
+      console.warn('[packageManager] Failed to cancel download:', err);
+    }
+  }
+  activeDownloadSessions.delete(packageId);
+  return true;
+}
+
+/**
+ * Opens the application models storage directory in the OS file explorer.
+ * @returns {Promise<boolean>}
+ */
+export async function openModelsDirectory() {
+  if (!isTauri()) return false;
+  const appDir = await getAppDataDirectory();
+  if (!appDir) return false;
+  const modelsDir = joinPath(appDir, 'models');
+  await ensureDir(modelsDir);
+
+  try {
+    const { openPath } = await import('@tauri-apps/plugin-opener');
+    await openPath(modelsDir);
+    return true;
+  } catch (err) {
+    console.warn('[packageManager] Failed to open models directory:', err);
+    return false;
+  }
+}
+
+/**
+ * Reveals an installed package file in the OS file explorer.
+ * @param {string} packageId
+ * @returns {Promise<boolean>}
+ */
+export async function revealPackageInExplorer(packageId) {
+  if (!isTauri()) return false;
+  const fullPath = await getPackagePath(packageId);
+  if (!fullPath || fullPath.startsWith('indexeddb:') || fullPath.startsWith('sharedLibrary:')) {
+    return false;
+  }
+
+  try {
+    const { revealItemInDir } = await import('@tauri-apps/plugin-opener');
+    await revealItemInDir(fullPath);
+    return true;
+  } catch (err) {
+    console.warn('[packageManager] Failed to reveal package in explorer:', err);
+    return false;
+  }
+}
+
+/**
+ * Imports a local model file directly from disk into the package registry.
+ * Eliminates the need to re-download multi-gigabyte models if already present.
+ *
+ * @param {object} params
+ * @param {string} params.filePath - Absolute path to local .bin file
+ * @param {string} [params.displayName]
+ * @param {string} [params.category='custom-model']
+ * @param {string[]} [params.tags=['custom', 'local']]
+ * @param {string} [params.description]
+ * @returns {Promise<object>}
+ */
+export async function importLocalModelFile({
+  filePath,
+  displayName,
+  category = 'custom-model',
+  tags = ['custom', 'local'],
+  description = 'Local imported model',
+}) {
+  if (!filePath) {
+    throw new Error('Local file path is required.');
+  }
+
+  const fileName = filePath.split(/[/\\]/).pop() || 'model.bin';
+  const name = displayName?.trim() || fileName.replace(/\.bin$/i, '');
+  const id = `custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+  let sizeBytes = 0;
+  if (isTauri()) {
+    try {
+      const fs = await import('@tauri-apps/plugin-fs');
+      const stat = await fs.stat(filePath);
+      sizeBytes = stat.size || 0;
+    } catch {
+      // ignore
+    }
+  }
+
+  const custom = await getCustomPackages();
+  const newPkg = {
+    id,
+    displayName: name,
+    category,
+    version: '1.0.0',
+    installPath: filePath,
+    tags: Array.isArray(tags) ? tags : [String(tags)],
+    description,
+    attribution: 'Local Disk Import',
+    sizeBytes,
+    isCustom: true,
+    isLocalImport: true,
+  };
+  custom.push(newPkg);
+  await saveCustomPackages(custom);
+
+  const registry = await getInstalledPackagesRegistry();
+  registry[id] = {
+    id,
+    displayName: name,
+    category,
+    version: '1.0.0',
+    installPath: filePath,
+    sizeBytes,
+    installedAt: Date.now(),
+    attribution: 'Local Disk Import',
+    isLocalImport: true,
+  };
+  await saveInstalledPackagesRegistry(registry);
+
+  return newPkg;
+}
+
+/**
+ * Directly installs a preset component into the active project scripts folder.
+ * @param {string} packageId
+ * @param {Function} onCreateScript - (name: string, code: string, type: string) => Promise<any>
+ * @returns {Promise<string>} Created script name
+ */
+export async function installPresetToProject(packageId, onCreateScript) {
+  const manifest = await loadManifest();
+  const pkg = manifest.find((p) => p.id === packageId);
+  if (!pkg) throw new Error(`Package ${packageId} not found in manifest.`);
+  if (!pkg.sampleCode) throw new Error('Package does not contain preset script code.');
+
+  const componentName = pkg.componentName || `${pkg.displayName.replace(/\s+/g, '')}.jsx`;
+  const cleanName = componentName.replace(/\.jsx$/, '');
+
+  if (typeof onCreateScript === 'function') {
+    await onCreateScript(cleanName, pkg.sampleCode, 'canvas');
+    return cleanName;
+  }
+  return cleanName;
 }
 
 /**
@@ -232,7 +402,7 @@ export async function downloadPackage(packageId, { onProgress } = {}) {
     const { saveSharedItem } = await import('./sharedLibraryStorage.js');
     const componentName = pkg.componentName || `${pkg.displayName.replace(/\s+/g, '')}.jsx`;
     const cleanName = componentName.replace(/\.jsx$/, '');
-    
+
     await saveSharedItem({
       name: cleanName,
       type: 'script',
@@ -274,6 +444,7 @@ export async function downloadPackage(packageId, { onProgress } = {}) {
   const fullDestPath = joinPath(appDir, targetRelPath);
 
   const sessionId = `pkg-dl-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  activeDownloadSessions.set(pkg.id, sessionId);
   let unlisten = null;
 
   try {
@@ -337,6 +508,7 @@ export async function downloadPackage(packageId, { onProgress } = {}) {
       sizeBytes: downloadedBytes || pkg.sizeBytes,
     };
   } finally {
+    activeDownloadSessions.delete(pkg.id);
     if (unlisten) {
       try {
         unlisten();
@@ -372,8 +544,8 @@ export async function deletePackage(packageId) {
     }
   }
 
-  // Case 2: On-disk file removal (Tauri)
-  if (isTauri() && info.installPath && !info.installPath.startsWith('indexeddb:') && !info.installPath.startsWith('sharedLibrary:')) {
+  // Case 2: On-disk file removal (Tauri) - only delete if not a local import outside app data
+  if (isTauri() && info.installPath && !info.installPath.startsWith('indexeddb:') && !info.installPath.startsWith('sharedLibrary:') && !info.isLocalImport) {
     const appDir = await getAppDataDirectory();
     const fullPath = appDir ? joinPath(appDir, info.installPath) : info.installPath;
     await removeFileIfExists(fullPath);

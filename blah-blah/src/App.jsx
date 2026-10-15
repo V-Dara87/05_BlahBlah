@@ -770,6 +770,11 @@ export function App() {
         isOpen={isPackageManagerOpen}
         onClose={() => setIsPackageManagerOpen(false)}
         initialCategory={packageManagerCategory}
+        onCreateScript={handleCreateScript}
+        onOpenScriptEditor={(script) => {
+          setEditingScript(script);
+          setIsScriptEditorOpen(true);
+        }}
       />
     </div>
       </TimelineViewProvider>

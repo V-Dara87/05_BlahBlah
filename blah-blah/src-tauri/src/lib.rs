@@ -244,6 +244,28 @@ pub struct PackageDownloadProgressEvent {
     pub percent: Option<f64>,
 }
 
+static CANCELLED_DOWNLOADS: std::sync::Mutex<Option<std::collections::HashSet<String>>> =
+    std::sync::Mutex::new(None);
+
+fn is_download_cancelled(sess_id: &str) -> bool {
+    if sess_id.is_empty() {
+        return false;
+    }
+    let lock = CANCELLED_DOWNLOADS.lock().unwrap();
+    lock.as_ref().map_or(false, |set| set.contains(sess_id))
+}
+
+#[tauri::command]
+fn cancel_download(session_id: String) {
+    let mut lock = CANCELLED_DOWNLOADS.lock().unwrap();
+    if lock.is_none() {
+        *lock = Some(std::collections::HashSet::new());
+    }
+    if let Some(set) = lock.as_mut() {
+        set.insert(session_id);
+    }
+}
+
 #[tauri::command]
 async fn download_package(
     app: tauri::AppHandle,
@@ -294,6 +316,16 @@ async fn download_package(
     let mut last_emit = std::time::Instant::now();
 
     while let Some(chunk_result) = stream.next().await {
+        if is_download_cancelled(&sess_id) {
+            drop(file);
+            let _ = tokio::fs::remove_file(&tmp_dest).await;
+            let mut lock = CANCELLED_DOWNLOADS.lock().unwrap();
+            if let Some(set) = lock.as_mut() {
+                set.remove(&sess_id);
+            }
+            return Err("Download cancelled by user".to_string());
+        }
+
         let chunk = chunk_result.map_err(|e| format!("Error reading download stream: {e}"))?;
         file.write_all(&chunk)
             .await
@@ -325,6 +357,13 @@ async fn download_package(
         .await
         .map_err(|e| format!("Error flushing downloaded file: {e}"))?;
     drop(file);
+
+    if !sess_id.is_empty() {
+        let mut lock = CANCELLED_DOWNLOADS.lock().unwrap();
+        if let Some(set) = lock.as_mut() {
+            set.remove(&sess_id);
+        }
+    }
 
     if dest.exists() {
         let _ = tokio::fs::remove_file(&dest).await;
@@ -534,6 +573,7 @@ pub fn run() {
       whisper_version,
       run_whisper,
       download_package,
+      cancel_download,
       verify_sha256,
       get_app_data_dir
     ])

@@ -19,6 +19,10 @@ import {
   getInstalledPackagesRegistry,
   saveInstalledPackagesRegistry,
   getPackagePath,
+  importLocalModelFile,
+  getTotalInstalledSize,
+  installPresetToProject,
+  cancelDownload,
 } from '../src/services/packageManager.js';
 import { WHISPER_LANGUAGES, getRecommendedPackageFilterForLanguage } from '../src/data/whisperLanguages.js';
 import { resolveClipSourcePath } from '../src/engine/subtitleAutoGenerate.js';
@@ -138,3 +142,59 @@ test('SubtitleAutoGenerate - resolveClipSourcePath', () => {
   };
   assert.equal(resolveClipSourcePath(entity3), 'C:\\recordings\\voiceover.wav');
 });
+
+test('PackageManager - importLocalModelFile registers directly', async () => {
+  const localModel = await importLocalModelFile({
+    filePath: 'C:/custom_models/my-custom-whisper.bin',
+    displayName: 'My Local Model',
+    tags: ['custom', 'local'],
+    description: 'Imported from local disk',
+  });
+
+  assert.ok(localModel.id.startsWith('custom-'));
+  assert.equal(localModel.displayName, 'My Local Model');
+  assert.equal(localModel.isLocalImport, true);
+
+  const isInstalled = await isPackageInstalled(localModel.id);
+  assert.equal(isInstalled, true);
+
+  const path = await getPackagePath(localModel.id);
+  assert.equal(path, 'C:/custom_models/my-custom-whisper.bin');
+
+  await removeCustomPackage(localModel.id);
+  assert.equal(await isPackageInstalled(localModel.id), false);
+});
+
+test('PackageManager - getTotalInstalledSize calculates correctly', async () => {
+  const reg = await getInstalledPackagesRegistry();
+  reg['test-pkg-1'] = { id: 'test-pkg-1', sizeBytes: 1000 };
+  reg['test-pkg-2'] = { id: 'test-pkg-2', sizeBytes: 2500 };
+  await saveInstalledPackagesRegistry(reg);
+
+  const total = await getTotalInstalledSize();
+  assert.equal(total, 3500);
+
+  delete reg['test-pkg-1'];
+  delete reg['test-pkg-2'];
+  await saveInstalledPackagesRegistry(reg);
+});
+
+test('PackageManager - installPresetToProject delegates to onCreateScript', async () => {
+  let createdPayload = null;
+  const mockCreateScript = async (name, code, type) => {
+    createdPayload = { name, code, type };
+  };
+
+  const name = await installPresetToProject('pack-title-card', mockCreateScript);
+  assert.equal(name, 'TitleCard');
+  assert.ok(createdPayload);
+  assert.equal(createdPayload.name, 'TitleCard');
+  assert.equal(createdPayload.type, 'canvas');
+  assert.ok(createdPayload.code.includes('TitleCard extends CanvasComponent'));
+});
+
+test('PackageManager - cancelDownload handles unstarted session gracefully', async () => {
+  const res = await cancelDownload('non-existent-pkg');
+  assert.equal(res, false);
+});
+
