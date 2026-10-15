@@ -399,18 +399,16 @@ export async function downloadPackage(packageId, { onProgress } = {}) {
   // Case 2: component-pack (Preset script added to Shared Library)
   if (pkg.category === 'component-pack' || pkg.packageType === 'component-pack') {
     onProgress?.({ bytesDownloaded: 0, totalBytes: pkg.sizeBytes, percent: 20 });
-    const { saveSharedItem } = await import('./sharedLibraryStorage.js');
+    const { addSharedItem, makeSharedScriptItem } = await import('./sharedLibraryStorage.js');
     const componentName = pkg.componentName || `${pkg.displayName.replace(/\s+/g, '')}.jsx`;
     const cleanName = componentName.replace(/\.jsx$/, '');
 
-    await saveSharedItem({
-      name: cleanName,
-      type: 'script',
-      data: {
+    await addSharedItem({
+      ...makeSharedScriptItem({
         name: cleanName,
         code: pkg.sampleCode || '',
         description: pkg.description || 'Pre-installed component preset',
-      },
+      }),
       folder: 'Presets',
     });
     onProgress?.({ bytesDownloaded: pkg.sizeBytes, totalBytes: pkg.sizeBytes, percent: 100 });
