@@ -3,7 +3,7 @@
    alone; generic modifier classes (.active/.danger/.disabled) travel with the
    component that owns the rest of the selector.
    App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
-
+ 
 .entity-error-fallback {
   display: flex;
   align-items: center;
@@ -21,4 +21,39 @@
  
 .entity-error-fallback svg {
   flex-shrink: 0;
+}
+ 
+.entity-error-fallback-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+ 
+/* One plain-language line under the title, when we recognise the error */
+.entity-error-fallback-hint {
+  max-width: 240px;
+  font-weight: 400;
+  font-size: 10px;
+  white-space: normal;
+  color: #fca5a5;
+}
+ 
+/* The fallback itself ignores the pointer (so it never blocks clip
+   dragging); only the Details button takes clicks. */
+.entity-error-fallback-btn {
+  pointer-events: auto;
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(239, 68, 68, 0.35);
+  border: 1px solid rgba(239, 68, 68, 0.7);
+  border-radius: 4px;
+  cursor: pointer;
+}
+ 
+.entity-error-fallback-btn:hover {
+  background: rgba(239, 68, 68, 0.6);
 }

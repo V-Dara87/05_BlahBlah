@@ -3,7 +3,7 @@
    alone; generic modifier classes (.active/.danger/.disabled) travel with the
    component that owns the rest of the selector.
    App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
-
+ 
 .inspector-card.script-highlight {
   border-color: rgba(16, 185, 129, 0.4);
 }
@@ -21,6 +21,52 @@
   gap: 4px;
 }
  
+/* One-line summary: the card is narrow, so title and meta each stay on a
+   single line (ellipsis) and the full text lives in the Console. */
+.script-error-badge-icon {
+  flex-shrink: 0;
+}
+ 
+.script-error-badge-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+ 
+.script-error-badge-title,
+.script-error-badge-meta {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+ 
+.script-error-badge-title {
+  font-weight: 600;
+}
+ 
+.script-error-badge-meta {
+  font-size: 9px;
+  opacity: 0.75;
+}
+ 
+.script-error-badge-btn {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(239, 68, 68, 0.25);
+  color: #fecaca;
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  cursor: pointer;
+}
+ 
+.script-error-badge-btn:hover {
+  background: rgba(239, 68, 68, 0.45);
+}
+ 
 /* The freeze guard paused this script (two over-budget callbacks in a row) —
    red, because nothing in the script runs until it is re-enabled. */
 .script-paused-badge {
@@ -35,11 +81,11 @@
   align-items: center;
   gap: 4px;
 }
-
+ 
 .script-paused-badge span {
   flex: 1;
 }
-
+ 
 .script-reenable-btn {
   font-size: 9px;
   font-weight: 700;
@@ -50,7 +96,7 @@
   border: 1px solid rgba(239, 68, 68, 0.5);
   cursor: pointer;
 }
-
+ 
 .script-pending-badge {
   background: rgba(245, 158, 11, 0.12);
   border: 1px solid rgba(245, 158, 11, 0.35);
@@ -79,7 +125,7 @@
   align-items: flex-start;
   gap: 4px;
 }
-
+ 
 .script-warning-badge ul {
   margin: 0;
   padding-left: 14px;
@@ -87,7 +133,7 @@
   flex-direction: column;
   gap: 2px;
 }
-
+ 
 /* Result line for a script action (an inspector [Button] calling a script
    method): success, failure, or still running. */
 .script-action-feedback {
@@ -98,19 +144,19 @@
   padding: 3px 6px;
   border-radius: 4px;
 }
-
+ 
 .script-action-feedback.is-ok {
   background: rgba(16, 185, 129, 0.12);
   border: 1px solid rgba(16, 185, 129, 0.32);
   color: #34d399;
 }
-
+ 
 .script-action-feedback.is-error {
   background: rgba(239, 68, 68, 0.12);
   border: 1px solid rgba(239, 68, 68, 0.32);
   color: #f87171;
 }
-
+ 
 .edit-cs-btn {
   font-size: 9px;
   font-weight: 700;
@@ -120,3 +166,4 @@
   color: #34d399;
   border: 1px solid rgba(16, 185, 129, 0.4);
 }
+ 

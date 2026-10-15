@@ -10,6 +10,8 @@ import {
   resetScriptDisabled,
 } from '../../engine/scriptRunner';
 import { invokeScriptAction } from '../../engine/scriptActions';
+import { requestConsoleFocus } from '../../engine/scriptConsole';
+import { summarizeScriptError } from '../../engine/scriptErrorInfo';
 import { InspectorFieldList } from './InspectorField';
 import { InspectorCardHeader } from './InspectorCardHeader';
 import './script-card.css';
@@ -24,7 +26,7 @@ const SCRIPT_KIND_META = {
   shader: { icon: Sparkles, className: 'text-amber', label: 'GL Transition' },
 };
 export const scriptKindMeta = (kind) => SCRIPT_KIND_META[kind] || SCRIPT_KIND_META.motion;
-
+ 
 /** How long a button's result / error stays on screen, in ms. */
 const ACTION_FEEDBACK_MS = 2500;
  
@@ -77,7 +79,7 @@ export function ScriptCard({
       s.id === `script-${scriptComp.scriptName}`
   );
   const dragKey = `script:${scriptComp.scriptId}`;
-
+ 
   // A background compile finishing does NOT change the `scripts` array, so
   // without this the "Compiling…" badge (and a fresh error) could linger
   // until some unrelated re-render. Tick on the engine's recompiled event and
@@ -88,7 +90,7 @@ export function ScriptCard({
     window.addEventListener('blahblah:scripts-recompiled', handler);
     return () => window.removeEventListener('blahblah:scripts-recompiled', handler);
   }, []);
-
+ 
   const { kind, fields, scriptError, bundlePending, propsWarnings, paused } = useMemo(() => ({
     kind: scriptDef ? detectScriptKind(scriptDef.code) : 'unknown',
     fields: scriptDef ? extractScriptProps(scriptDef.code) : [],
@@ -100,7 +102,18 @@ export function ScriptCard({
     paused: scriptDef ? isScriptDisabled(scriptDef.code) : false,
   }), [scriptDef, recompiledTick]);
   const Meta = scriptKindMeta(kind);
-
+ 
+  // The raw error can be many lines of compiler output — far too much for a
+  // narrow Inspector. The badge shows a one-line summary and leaves the full
+  // text to the Console.
+  const errorSummary = useMemo(
+    () => (scriptError ? summarizeScriptError(scriptError) : null),
+    [scriptError],
+  );
+  const handleViewError = useCallback(() => {
+    requestConsoleFocus({ scriptName: scriptDef?.name || scriptComp.scriptName });
+  }, [scriptDef, scriptComp.scriptName]);
+ 
   // Re-enable = clear the disabled flag and its strike counters, then re-render
   // through the same event the engine uses when a compile lands.
   const handleReenable = useCallback(() => {
@@ -108,24 +121,24 @@ export function ScriptCard({
     resetScriptDisabled(scriptDef.code);
     window.dispatchEvent(new CustomEvent('blahblah:scripts-recompiled'));
   }, [scriptDef]);
-
+ 
   // Resolved once, for the fields and for the action context: a button must see
   // exactly the values the fields show (refs resolved, defaults applied).
   const values = resolveComponentValues(`script:${scriptComp.scriptId}`, scriptComp.props);
-
+ 
   const [feedback, setFeedback] = useState(null);
   const feedbackTimer = useRef(null);
-
+ 
   const showFeedback = useCallback((next) => {
     setFeedback(next);
     if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
     if (next) feedbackTimer.current = setTimeout(() => setFeedback(null), ACTION_FEEDBACK_MS);
   }, []);
-
+ 
   useEffect(() => () => {
     if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
   }, []);
-
+ 
   /**
    * Run one script action. Props written by the action go through
    * `setScriptProps` (a static write), not `updateScriptProps` — a click is not
@@ -136,10 +149,10 @@ export function ScriptCard({
       showFeedback({ action, ok: false, error: scriptError || 'script is not available' });
       return;
     }
-
+ 
     const localTime = Math.max(0, currentTime - (selectedEntity?.startTime || 0));
     showFeedback({ action, ok: true, pending: true });
-
+ 
     invokeScriptAction({
       scriptCode: scriptDef.code,
       action,
@@ -194,10 +207,19 @@ export function ScriptCard({
  
       {isOpen && (
         <div className="inspector-card-body">
-          {scriptError && (
-            <div className="script-error-badge">
-              <AlertCircle size={12} />
-              <span>{scriptError}</span>
+          {scriptError && errorSummary && (
+            <div className="script-error-badge" title={scriptError}>
+              <AlertCircle size={12} className="script-error-badge-icon" />
+              <div className="script-error-badge-text">
+                <span className="script-error-badge-title">{errorSummary.hint || errorSummary.headline}</span>
+                <span className="script-error-badge-meta">
+                  {errorSummary.count > 1 ? `${errorSummary.count} errors` : 'Error'}
+                  {errorSummary.location ? ` · ${errorSummary.location}` : ''}
+                </span>
+              </div>
+              <button type="button" className="script-error-badge-btn" onClick={handleViewError}>
+                Details
+              </button>
             </div>
           )}
           {paused && (
@@ -268,7 +290,7 @@ export function ScriptCard({
             tracks={tracks}
             onAction={handleAction}
           />
-
+ 
           {feedback && (
             <div className={`script-action-feedback ${feedback.ok ? 'is-ok' : 'is-error'}`}>
               {feedback.ok ? <Check size={11} /> : <AlertCircle size={11} />}

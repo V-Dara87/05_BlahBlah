@@ -1,319 +1,452 @@
+/* Console panel.
+   Every colour resolves to a theme variable (index.css / themeSettings.js), so
+   the console follows Settings -> Appearance like the rest of the editor:
+     surface  --unity-darkest / dark / panel / subtle / hover / border*
+     text     --unity-text / text-muted / text-dim
+     accent   --unity-accent-blue / accent-soft / accent-rgb  (links, hints, focus)
+     status   --unity-accent-red / amber (NOT themed on purpose: they carry meaning)
+   Status tints use color-mix() so they stay tied to the variable instead of
+   freezing a hex inside an rgba(). */
+ 
 .console-panel {
+  --console-red: var(--unity-accent-red, #ef4444);
+  --console-amber: var(--unity-accent-amber, #f59e0b);
+  --console-red-bg: color-mix(in srgb, var(--console-red) 9%, transparent);
+  --console-red-bg-strong: color-mix(in srgb, var(--console-red) 16%, transparent);
+  --console-amber-bg: color-mix(in srgb, var(--console-amber) 8%, transparent);
+ 
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #0d0d0f;
-  font-family: var(--font-mono, 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace);
+  background: var(--unity-dark);
+  font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 11px;
-  color: #c9d1d9;
+  color: var(--unity-text);
   overflow: hidden;
 }
-
+ 
 /* ── Toolbar ── */
 .console-toolbar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  background: #161618;
-  border-bottom: 1px solid #2a2a2e;
+  gap: 8px;
+  padding: 0 8px;
+  background: var(--unity-panel);
+  border-bottom: 1px solid var(--unity-border);
   flex-shrink: 0;
-  min-height: 28px;
+  min-height: 30px;
+  font-family: var(--font-sans, system-ui, sans-serif);
 }
-
+ 
 .console-icon {
-  color: #7c8592;
+  color: var(--unity-text-dim);
   flex-shrink: 0;
 }
-
+ 
 .console-title {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
-  color: #8b949e;
+  color: var(--unity-text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   flex-shrink: 0;
 }
-
+ 
 .console-badge {
   font-size: 10px;
-  font-weight: 700;
-  padding: 1px 5px;
-  border-radius: 3px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 999px;
   flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
-
+ 
 .console-badge--error {
-  background: rgba(248, 81, 73, 0.2);
-  color: #f85149;
-  border: 1px solid rgba(248, 81, 73, 0.35);
+  background: var(--console-red-bg-strong);
+  color: var(--console-red);
 }
-
+ 
 .console-badge--warn {
-  background: rgba(210, 153, 34, 0.2);
-  color: #d29922;
-  border: 1px solid rgba(210, 153, 34, 0.35);
+  background: color-mix(in srgb, var(--console-amber) 16%, transparent);
+  color: var(--console-amber);
 }
-
+ 
+/* Segmented filter control */
 .console-filters {
   display: flex;
-  gap: 2px;
+  gap: 1px;
   margin-left: 4px;
+  padding: 2px;
+  background: var(--unity-darkest);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 6px;
 }
-
+ 
 .console-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   background: transparent;
-  border: 1px solid transparent;
-  color: #6e7681;
+  border: none;
+  color: var(--unity-text-dim);
+  font-family: inherit;
   font-size: 10px;
   font-weight: 500;
-  padding: 1px 7px;
-  border-radius: 3px;
+  line-height: 1;
+  padding: 4px 9px;
+  border-radius: 4px;
   cursor: pointer;
-  transition: color 0.1s, border-color 0.1s, background 0.1s;
-  font-family: inherit;
+  transition: color 0.12s, background 0.12s;
 }
-
+ 
 .console-filter-btn:hover {
-  color: #c9d1d9;
-  border-color: #30363d;
-  background: #21262d;
+  color: var(--unity-text);
+  background: var(--unity-subtle);
 }
-
+ 
 .console-filter-btn.is-active {
-  color: #e6edf3;
-  background: #21262d;
-  border-color: #444c56;
+  color: var(--unity-text);
+  background: var(--unity-hover);
+  box-shadow: inset 0 -2px 0 var(--unity-accent-blue);
 }
-
-.console-clear-btn {
-  background: transparent;
-  border: none;
-  color: #6e7681;
-  cursor: pointer;
-  padding: 2px 4px;
-  border-radius: 3px;
-  display: flex;
-  align-items: center;
-  transition: color 0.1s, background 0.1s;
-}
-
-.console-clear-btn:hover {
-  color: #c9d1d9;
-  background: #21262d;
-}
-
-/* ── Entries ── */
-.console-entries {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: auto;
-  padding: 2px 0;
-  scrollbar-width: thin;
-  scrollbar-color: #30363d transparent;
-}
-
-.console-entries::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-.console-entries::-webkit-scrollbar-thumb {
-  background: #30363d;
-  border-radius: 3px;
-}
-
-.console-empty {
-  padding: 20px 16px;
-  color: #484f58;
-  font-size: 11px;
-  font-style: italic;
-}
-
-/* ── Entry row ── */
-.console-entry {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 3px 10px;
-  border-bottom: 1px solid transparent;
-  line-height: 1.5;
-  border-left: 3px solid transparent;
-}
-
-.console-entry:hover {
-  background: rgba(255, 255, 255, 0.03);
-}
-
-/* Compile error — most prominent, red left border + tinted bg */
-.console-entry--compile-error {
-  background: rgba(248, 81, 73, 0.07);
-  border-left-color: #f85149;
-  border-bottom-color: rgba(248, 81, 73, 0.15);
-}
-
-/* Runtime error */
-.console-entry--error {
-  background: rgba(248, 81, 73, 0.04);
-  border-left-color: rgba(248, 81, 73, 0.6);
-}
-
-/* Warn */
-.console-entry--warn {
-  background: rgba(210, 153, 34, 0.04);
-  border-left-color: rgba(210, 153, 34, 0.55);
-}
-
-/* Log / info */
-.console-entry--log,
-.console-entry--info {
-  border-left-color: transparent;
-}
-
-/* Metadata chips */
-.console-entry-time {
-  color: #484f58;
-  font-size: 10px;
-  flex-shrink: 0;
-  margin-top: 2px;
-  min-width: 56px;
-}
-
-.console-entry-level {
+ 
+.console-filter-count {
   font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  padding: 1px 4px;
-  border-radius: 2px;
-  flex-shrink: 0;
-  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+  color: var(--unity-text-dim);
 }
-
-.console-entry-level--compile-error,
-.console-entry-level--error {
-  background: rgba(248, 81, 73, 0.18);
-  color: #f85149;
+ 
+.console-filter-btn.is-active .console-filter-count {
+  color: var(--unity-accent-soft);
 }
-
-.console-entry-level--warn {
-  background: rgba(210, 153, 34, 0.18);
-  color: #d29922;
-}
-
-.console-entry-level--log {
-  background: rgba(99, 110, 123, 0.18);
-  color: #6e7681;
-}
-
-.console-entry-level--info {
-  background: rgba(31, 111, 235, 0.18);
-  color: #58a6ff;
-}
-
-.console-entry-script {
-  color: #79c0ff;
-  font-size: 10px;
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-
-/* Script name as a link — only when the panel can open the script editor */
-.console-entry-script--link {
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  text-decoration: underline dotted;
-  text-underline-offset: 2px;
-}
-
-.console-entry-script--link:hover {
-  color: #a5d6ff;
-  text-decoration: underline;
-}
-
-/* "×N" for an entry collapsed from repeated identical pushes */
-.console-entry-count {
-  flex-shrink: 0;
-  margin-top: 2px;
-  padding: 0 4px;
-  border-radius: 999px;
-  font-size: 9px;
-  font-weight: 700;
-  color: #d29922;
-  background: rgba(210, 153, 34, 0.16);
-  border: 1px solid rgba(210, 153, 34, 0.35);
-}
-
-/* The message itself — monospaced pre so Rust-style caret lines render */
-.console-entry-msg {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: inherit;
-  font-size: 11px;
-  color: #c9d1d9;
-  flex: 1;
-  min-width: 0;
-  line-height: 1.55;
-}
-
-.console-entry--compile-error .console-entry-msg {
-  color: #ffa198;
-}
-
-.console-entry--error .console-entry-msg {
-  color: #ffa198;
-}
-
-.console-entry--warn .console-entry-msg {
-  color: #e3b341;
-}
-
-/* ── Copy buttons ── */
+ 
+/* ── Toolbar buttons (clear / copy all) ── */
 .console-toolbar-actions {
   display: flex;
   align-items: center;
   gap: 2px;
   margin-left: auto;
 }
-
+ 
+.console-clear-btn,
 .console-copy-btn {
   background: transparent;
   border: none;
-  color: #6e7681;
+  color: var(--unity-text-dim);
   cursor: pointer;
-  padding: 2px 4px;
-  border-radius: 3px;
+  padding: 4px 5px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: color 0.1s, background 0.1s;
   flex-shrink: 0;
+  transition: color 0.12s, background 0.12s;
 }
-
+ 
+.console-clear-btn:hover,
 .console-copy-btn:hover {
-  color: #c9d1d9;
-  background: #21262d;
+  color: var(--unity-text);
+  background: var(--unity-subtle);
 }
-
-/* Per-entry copy button — hidden until the row is hovered */
+ 
+.console-copy-all-btn:hover {
+  color: var(--unity-accent-blue);
+}
+ 
+.console-clear-btn:hover {
+  color: var(--console-red);
+}
+ 
+.console-clear-btn:focus-visible,
+.console-copy-btn:focus-visible,
+.console-filter-btn:focus-visible,
+.console-entry-script--link:focus-visible {
+  outline: 1px solid var(--unity-accent-blue);
+  outline-offset: 1px;
+}
+ 
+/* ── Entries ── */
+.console-entries {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+  padding: 0;
+  background: var(--unity-darkest);
+  scrollbar-width: thin;
+  scrollbar-color: var(--unity-border-light) transparent;
+}
+ 
+.console-entries::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.console-entries::-webkit-scrollbar-track {
+  background: transparent;
+}
+.console-entries::-webkit-scrollbar-thumb {
+  background: var(--unity-border-light);
+  border-radius: 3px;
+}
+.console-entries::-webkit-scrollbar-thumb:hover {
+  background: var(--unity-hover);
+}
+ 
+.console-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 36px 20px;
+  color: var(--unity-text-dim);
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 11px;
+  text-align: center;
+  line-height: 1.5;
+}
+ 
+.console-empty svg {
+  opacity: 0.55;
+}
+ 
+.console-empty code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--unity-panel);
+  color: var(--unity-text-muted);
+}
+ 
+/* ── Entry row ── */
+.console-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 10px 5px 8px;
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid color-mix(in srgb, var(--unity-border-light) 35%, transparent);
+  line-height: 1.5;
+  transition: background 0.1s;
+}
+ 
+.console-entry:hover {
+  background: color-mix(in srgb, var(--unity-text) 4%, transparent);
+}
+ 
+/* Compile error: most prominent */
+.console-entry--compile-error {
+  background: var(--console-red-bg);
+  border-left-color: var(--console-red);
+}
+ 
+/* Runtime error */
+.console-entry--error {
+  background: color-mix(in srgb, var(--console-red) 5%, transparent);
+  border-left-color: color-mix(in srgb, var(--console-red) 65%, transparent);
+}
+ 
+/* Warn */
+.console-entry--warn {
+  background: var(--console-amber-bg);
+  border-left-color: color-mix(in srgb, var(--console-amber) 60%, transparent);
+}
+ 
+.console-entry--log,
+.console-entry--info {
+  border-left-color: transparent;
+}
+ 
+.console-entry--compile-error:hover,
+.console-entry--error:hover {
+  background: var(--console-red-bg-strong);
+}
+ 
+/* ── Metadata chips ── */
+.console-entry-time {
+  color: var(--unity-text-dim);
+  font-size: 10px;
+  flex-shrink: 0;
+  margin-top: 2px;
+  min-width: 54px;
+  font-variant-numeric: tabular-nums;
+}
+ 
+.console-entry-level {
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  margin-top: 2px;
+  min-width: 38px;
+  text-align: center;
+}
+ 
+.console-entry-level--compile-error,
+.console-entry-level--error {
+  background: var(--console-red-bg-strong);
+  color: var(--console-red);
+}
+ 
+.console-entry-level--warn {
+  background: color-mix(in srgb, var(--console-amber) 18%, transparent);
+  color: var(--console-amber);
+}
+ 
+.console-entry-level--log {
+  background: var(--unity-subtle);
+  color: var(--unity-text-muted);
+}
+ 
+.console-entry-level--info {
+  background: rgba(var(--unity-accent-rgb), 0.16);
+  color: var(--unity-accent-blue);
+}
+ 
+/* Script name chip */
+.console-entry-script {
+  color: var(--unity-accent-blue);
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 3px;
+  background: rgba(var(--unity-accent-rgb), 0.1);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+ 
+/* Script name as a link: only when the panel can open the script editor */
+.console-entry-script--link {
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+ 
+.console-entry-script--link:hover {
+  color: var(--unity-accent-soft);
+  background: rgba(var(--unity-accent-rgb), 0.2);
+}
+ 
+/* "xN" for an entry collapsed from repeated identical pushes */
+.console-entry-count {
+  flex-shrink: 0;
+  margin-top: 2px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--unity-text-muted);
+  background: var(--unity-subtle);
+  border: 1px solid var(--unity-border-light);
+}
+ 
+/* ── Message ── */
+.console-entry-body {
+  flex: 1;
+  min-width: 0;
+}
+ 
+/* The message is the one thing in the editor you actually want to select. */
+.console-entry-msg,
+.console-entry-hint {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+ 
+/* Monospaced pre so Rust-style caret lines render */
+.console-entry-msg {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--unity-text);
+  line-height: 1.55;
+}
+ 
+.console-entry--compile-error .console-entry-msg,
+.console-entry--error .console-entry-msg {
+  color: color-mix(in srgb, var(--console-red) 45%, var(--unity-text));
+}
+ 
+.console-entry--warn .console-entry-msg {
+  color: color-mix(in srgb, var(--console-amber) 55%, var(--unity-text));
+}
+ 
+/* Plain-language hint: helpful info, so it uses the theme accent, not a status colour */
+.console-entry-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 4px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgba(var(--unity-accent-rgb), 0.09);
+  border-left: 2px solid var(--unity-accent-blue);
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--unity-accent-soft);
+}
+ 
+.console-entry-hint svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+ 
+/* ── Per-entry copy: hidden until the row is hovered ── */
 .console-entry-copy {
   opacity: 0;
-  transition: opacity 0.12s;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
   align-self: flex-start;
-  margin-top: 1px;
+  margin-top: 0;
 }
-
-.console-entry:hover .console-entry-copy {
+ 
+.console-entry:hover .console-entry-copy,
+.console-entry-copy:focus-visible {
   opacity: 1;
 }
-
-/* "Copy all" toolbar button — always visible when there are entries */
-.console-copy-all-btn {
-  color: #6e7681;
+ 
+/* ── "Copy for AI" buttons (error + script, and all broken scripts) ── */
+.console-ai-btn {
+  color: var(--unity-accent-blue);
 }
-
-.console-copy-all-btn:hover {
-  color: #79c0ff;
+ 
+.console-ai-btn:hover {
+  color: var(--unity-accent-soft);
+  background: rgba(var(--unity-accent-rgb), 0.14);
 }
-
+ 
+.console-broken-btn {
+  gap: 4px;
+  padding: 4px 7px;
+}
+ 
+.console-copy-badge {
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+ 
+/* The entry a toast / Inspector badge pointed at */
+.console-entry.is-focused {
+  background: var(--console-red-bg-strong);
+  outline: 1px solid color-mix(in srgb, var(--console-red) 70%, transparent);
+  outline-offset: -1px;
+  animation: console-entry-flash 1.1s ease-out 1;
+}
+ 
+@keyframes console-entry-flash {
+  0%   { background: color-mix(in srgb, var(--console-red) 45%, transparent); }
+  100% { background: var(--console-red-bg-strong); }
+}

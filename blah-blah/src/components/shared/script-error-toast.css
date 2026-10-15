@@ -1,0 +1,116 @@
+/* Corner notice for script errors (see ScriptErrorToast.jsx). Sits above
+   modals, so an error that appears while the script editor is open is still
+   visible. */
+.script-error-toast-stack {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 20000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+ 
+.script-error-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 10px 10px 12px;
+  background: #1c1214;
+  border: 1px solid rgba(248, 81, 73, 0.55);
+  border-left: 3px solid #f85149;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+  color: #f0d4d2;
+  font-size: 12px;
+  animation: script-error-toast-in 0.18s ease-out 1;
+}
+ 
+@keyframes script-error-toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+ 
+.script-error-toast-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: #f85149;
+}
+ 
+.script-error-toast-body {
+  flex: 1;
+  min-width: 0;
+}
+ 
+.script-error-toast-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  color: #ffa198;
+  word-break: break-word;
+}
+ 
+.script-error-toast-count {
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #d29922;
+  background: rgba(210, 153, 34, 0.16);
+  border: 1px solid rgba(210, 153, 34, 0.35);
+}
+ 
+.script-error-toast-msg {
+  margin-top: 3px;
+  line-height: 1.45;
+  color: #e6d3d1;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+ 
+.script-error-toast-loc {
+  margin-top: 3px;
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  color: #8b949e;
+}
+ 
+.script-error-toast-btn {
+  margin-top: 8px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(248, 81, 73, 0.3);
+  border: 1px solid rgba(248, 81, 73, 0.65);
+  border-radius: 4px;
+  cursor: pointer;
+}
+ 
+.script-error-toast-btn:hover {
+  background: rgba(248, 81, 73, 0.5);
+}
+ 
+.script-error-toast-close {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 3px;
+  color: #8b949e;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+ 
+.script-error-toast-close:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}

@@ -28,30 +28,30 @@
  *     clear (see scriptRunner.compileScriptModule), so clearing the console
  *     does not permanently hide a real error.
  */
-
+ 
 const MAX_ENTRIES = 500;
-
+ 
 /** @type {Array<ConsoleEntry>} */
 const entries = [];
-
+ 
 /**
  * @typedef {{ id: number, severity: 'log'|'warn'|'error'|'compile-error'|'info', message: string, scriptName?: string, ts: number, count: number, generation: number }} ConsoleEntry
  */
-
+ 
 let nextId = 1;
 const listeners = new Set();
-
+ 
 /**
  * Incremented by clearConsole(). Errors remember the generation at which
  * they were last pushed; when a script runs under a newer generation its
  * error is pushed again (once), so a clear is not a permanent loss.
  */
 let consoleGeneration = 0;
-
+ 
 function notify(entry) {
   listeners.forEach((fn) => fn(entry, [...entries]));
 }
-
+ 
 function addEntry(entry) {
   // Collapse an identical consecutive entry into the previous one. The
   // ConsolePanel renders the resulting `count` as "×N". Only the LAST entry
@@ -70,39 +70,106 @@ function addEntry(entry) {
     notify(last);
     return last;
   }
-
+ 
   entry.count = 1;
   entries.push(entry);
   if (entries.length > MAX_ENTRIES) entries.shift();
   notify(entry);
   return entry;
 }
-
+ 
 /** Subscribe to new entries. Returns an unsubscribe function. */
 export function subscribeConsole(fn) {
   listeners.add(fn);
   return () => listeners.delete(fn);
 }
-
+ 
 /** Get a snapshot of all current entries. */
 export function getConsoleEntries() {
   return [...entries];
 }
-
+ 
 /** The generation a still-broken script compares against to re-emit once. */
 export function getConsoleGeneration() {
   return consoleGeneration;
 }
-
+ 
 /** Clear all entries. */
 export function clearConsole() {
   entries.length = 0;
+  focusedEntryId = null;
   // Bump the generation so a later execution of a still-broken script knows
   // its compile error was cleared and re-surfaces it exactly once.
   consoleGeneration += 1;
   listeners.forEach((fn) => fn(null, []));
 }
-
+ 
+// ─── "show me this error" requests ───────────────────────────────────────────
+//
+// The toast, the Inspector badge and the clip fallback all need to say "open
+// the Console and point at that error". The Console panel may not be mounted
+// yet (it could be closed, or just be created by the request), so the target
+// lives here as module state: the panel reads it on mount and subscribes for
+// later changes. The window event asks the app shell to open/focus the panel.
+ 
+export const OPEN_CONSOLE_EVENT = 'blahblah:open-console';
+ 
+let focusedEntryId = null;
+const focusListeners = new Set();
+ 
+const isErrorSeverity = (s) => s === 'error' || s === 'compile-error';
+const stripExt = (name) => String(name || '').replace(/\.[A-Za-z0-9]+$/, '');
+ 
+/** Same script, ignoring a ".jsx" suffix on either side. */
+export function sameScriptName(a, b) {
+  return !!a && !!b && stripExt(a) === stripExt(b);
+}
+ 
+/** Most recent error / compile-error entry, optionally for one script. */
+export function findLatestErrorEntry(scriptName) {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const e = entries[i];
+    if (!isErrorSeverity(e.severity)) continue;
+    if (scriptName && !sameScriptName(e.scriptName, scriptName)) continue;
+    return e;
+  }
+  return null;
+}
+ 
+/** The entry the Console should scroll to and highlight, or null. */
+export function getConsoleFocus() {
+  return focusedEntryId;
+}
+ 
+/** Subscribe to focus changes. Returns an unsubscribe function. */
+export function subscribeConsoleFocus(fn) {
+  focusListeners.add(fn);
+  return () => focusListeners.delete(fn);
+}
+ 
+/** Clear the highlight (the user clicked elsewhere / dismissed it). */
+export function clearConsoleFocus() {
+  if (focusedEntryId === null) return;
+  focusedEntryId = null;
+  focusListeners.forEach((fn) => fn(null));
+}
+ 
+/**
+ * Ask the app to open the Console and highlight an error. Pass an `entryId`,
+ * or a `scriptName` to target that script's latest error (falling back to the
+ * latest error of any script).
+ */
+export function requestConsoleFocus({ entryId, scriptName } = {}) {
+  const target = entryId != null
+    ? entryId
+    : (findLatestErrorEntry(scriptName) || findLatestErrorEntry())?.id ?? null;
+  focusedEntryId = target;
+  focusListeners.forEach((fn) => fn(target));
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new CustomEvent(OPEN_CONSOLE_EVENT, { detail: { entryId: target, scriptName } }));
+  }
+}
+ 
 /**
  * Push a structured compile error — called by scriptRunner before even
  * attempting execution, so the panel shows "COMPILE ERROR" in red with
@@ -118,7 +185,7 @@ export function pushCompileError(message, scriptName) {
     generation: consoleGeneration,
   });
 }
-
+ 
 /**
  * Push a runtime error (thrown inside onMount/onUpdate/etc). Separate from
  * compile errors so the panel can display them differently.
@@ -133,7 +200,7 @@ export function pushRuntimeError(message, scriptName) {
     generation: consoleGeneration,
   });
 }
-
+ 
 /**
  * Push an info message (e.g. "Script loaded OK").
  */
@@ -147,7 +214,7 @@ export function pushInfo(message, scriptName) {
     generation: consoleGeneration,
   });
 }
-
+ 
 /**
  * Format arbitrary console.log arguments into a single string, matching
  * what a browser devtools console would show.
@@ -168,7 +235,7 @@ function formatArgs(args) {
     })
     .join(' ');
 }
-
+ 
 // ─── console capture (shared by the sync + async wrappers) ───────────────────
 //
 // Both withScriptConsole and withScriptConsoleAsync need the exact same
@@ -177,16 +244,16 @@ function formatArgs(args) {
 // makes nested captures safe: the true originals are saved only at depth 0
 // and restored only when the outermost capture releases, so an inner capture
 // finishing first cannot restore the console out from under an outer one.
-
+ 
 let captureDepth = 0;
 let savedConsole = null;
-
+ 
 function captureConsole(scriptName) {
   if (captureDepth === 0) {
     savedConsole = { log: console.log, warn: console.warn, error: console.error };
   }
   captureDepth += 1;
-
+ 
   const record = (severity, args) => {
     addEntry({
       id: nextId++,
@@ -197,13 +264,13 @@ function captureConsole(scriptName) {
       generation: consoleGeneration,
     });
   };
-
+ 
   // Forward to the saved originals (not the current console.* — that may
   // already be an outer wrapper, and calling it would double-log).
   console.log = (...args) => { savedConsole.log(...args); record('log', args); };
   console.warn = (...args) => { savedConsole.warn(...args); record('warn', args); };
   console.error = (...args) => { savedConsole.error(...args); record('error', args); };
-
+ 
   return function release() {
     captureDepth = Math.max(0, captureDepth - 1);
     if (captureDepth === 0) {
@@ -214,7 +281,7 @@ function captureConsole(scriptName) {
     }
   };
 }
-
+ 
 /**
  * Execute `fn` with console.log/warn/error temporarily redirected to the
  * script console bus. The real methods are still called so browser devtools
@@ -231,7 +298,7 @@ export function withScriptConsole(scriptName, fn) {
     release();
   }
 }
-
+ 
 /**
  * Async variant of withScriptConsole — wraps an async fn and restores
  * console after the promise settles.
@@ -244,7 +311,7 @@ export async function withScriptConsoleAsync(scriptName, fn) {
     release();
   }
 }
-
+ 
 // ─── global (async + uncaught) error forwarding ──────────────────────────────
 //
 // Errors thrown by a user script OUTSIDE our try/catch — most commonly a
@@ -261,12 +328,12 @@ export async function withScriptConsoleAsync(scriptName, fn) {
 // rule — blamed unrelated browser, worker, Tauri and dockview errors on
 // scripts, because those frames appear in plenty of stacks that have nothing to
 // do with a script.
-
+ 
 const SCRIPT_MARKER_RE = /blahblah-script:([A-Za-z0-9_.-]+)/;
 // Legacy fallback only: esbuild's sourcefile name for a script bundle, kept so
 // scripts compiled before the marker existed are not silently lost.
 const LEGACY_FRAME_RE = /entry\.jsx/;
-
+ 
 /**
  * The script a stack belongs to, or null when it is not a script's stack.
  * @returns {string|null}
@@ -276,12 +343,12 @@ function scriptNameFromStack(text) {
   if (marker) return marker[1];
   return LEGACY_FRAME_RE.test(text) ? 'script' : null;
 }
-
+ 
 export function installGlobalScriptErrorHandlers() {
   if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') {
     return () => {};
   }
-
+ 
   const onUnhandledRejection = (event) => {
     const reason = event?.reason;
     const text = String(reason?.stack || reason?.message || reason || '');
@@ -292,7 +359,7 @@ export function installGlobalScriptErrorHandlers() {
       reason?.scriptName || scriptName,
     );
   };
-
+ 
   const onError = (event) => {
     const err = event?.error;
     const text = String(err?.stack || event?.message || '');
@@ -300,10 +367,10 @@ export function installGlobalScriptErrorHandlers() {
     if (!scriptName) return;
     pushRuntimeError(`Uncaught error in a script:\n${text}`, err?.scriptName || scriptName);
   };
-
+ 
   window.addEventListener('unhandledrejection', onUnhandledRejection);
   window.addEventListener('error', onError);
-
+ 
   // Returning a disposer lets main.jsx / HMR remove the listeners on reload
   // instead of stacking a new pair on every module evaluation.
   return () => {
@@ -311,3 +378,4 @@ export function installGlobalScriptErrorHandlers() {
     window.removeEventListener('error', onError);
   };
 }
+ 

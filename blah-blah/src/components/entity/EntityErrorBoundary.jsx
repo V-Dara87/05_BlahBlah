@@ -1,7 +1,8 @@
  
 import { Component } from 'react';
 import { AlertTriangle } from 'lucide-react';
-import { pushRuntimeError } from '../../engine/scriptConsole.js';
+import { pushRuntimeError, requestConsoleFocus } from '../../engine/scriptConsole.js';
+import { explainErrorText } from '../../engine/scriptErrorInfo.js';
 import './entity-error-boundary.css';
  
 /**
@@ -34,10 +35,12 @@ export class EntityErrorBoundary extends Component {
     // needs to see without opening devtools.
     const scriptName = this.props.scriptName || this.props.entityName || 'entity';
     const stack = error?.stack || String(error);
-    pushRuntimeError(
+    // Remember which console entry belongs to this failure so the fallback's
+    // "Details" button can open the Console right on it.
+    this.consoleEntryId = pushRuntimeError(
       `"${this.props.entityName || scriptName}" crashed during render: ${error?.message || error}\n${stack}`,
       scriptName,
-    );
+    )?.id ?? null;
     console.warn(`[EntityErrorBoundary] "${this.props.entityName || 'entity'}" crashed during render:`, error, info);
   }
  
@@ -49,16 +52,36 @@ export class EntityErrorBoundary extends Component {
     // change (not on every update), so it doesn't loop.
     // eslint-disable-next-line react/no-did-update-set-state -- guarded by resetKey comparison, does not loop
     if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+      this.consoleEntryId = null;
       this.setState({ hasError: false, error: null });
     }
   }
  
   render() {
     if (this.state.hasError) {
+      const message = this.state.error?.message || 'Render error';
+      const hint = explainErrorText(message);
       return (
-        <div className="entity-error-fallback" title={this.state.error?.message || 'Render error'}>
+        <div className="entity-error-fallback" title={hint || message}>
           <AlertTriangle size={16} />
-          <span>{this.props.entityName || 'Clip'} failed to render</span>
+          <span className="entity-error-fallback-text">
+            <span>{this.props.entityName || 'Clip'} failed to render</span>
+            {hint && <span className="entity-error-fallback-hint">{hint}</span>}
+          </span>
+          <button
+            type="button"
+            className="entity-error-fallback-btn"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              requestConsoleFocus({
+                entryId: this.consoleEntryId ?? undefined,
+                scriptName: this.props.scriptName || this.props.entityName,
+              });
+            }}
+          >
+            Details
+          </button>
         </div>
       );
     }

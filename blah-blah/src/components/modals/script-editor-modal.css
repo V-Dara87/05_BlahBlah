@@ -3,7 +3,7 @@
    alone; generic modifier classes (.active/.danger/.disabled) travel with the
    component that owns the rest of the selector.
    App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
-
+ 
 .script-modal-card {
   width: 90%;
   max-width: 680px;
@@ -71,14 +71,14 @@
   padding: 2px 5px;
   border-radius: 3px;
 }
-
+ 
 /* Small dot next to the badge while there are unsaved edits. */
 .script-dirty-dot {
   color: #fbbf24;
   font-size: 10px;
   line-height: 1;
 }
-
+ 
 /* Editor = a fixed line-number gutter beside the (non-resizable) textarea,
    so the two always stay in step. The gutter is scrolled by JS. */
 .script-editor-wrap {
@@ -89,7 +89,7 @@
   overflow: hidden;
   background: var(--unity-darkest);
 }
-
+ 
 .script-editor-wrap .script-code-textarea {
   border: none;
   border-radius: 0;
@@ -97,7 +97,7 @@
   min-width: 0;
   resize: none;
 }
-
+ 
 .script-gutter {
   flex-shrink: 0;
   width: 44px;
@@ -112,11 +112,34 @@
   background: rgba(255, 255, 255, 0.03);
   user-select: none;
 }
-
+ 
 .script-gutter-line {
   height: 18px;
 }
-
+ 
+/* A line the last compile / runtime error points at: red bar + dot, clickable
+   (jumps the caret there). The dot is positioned so the number does not move. */
+.script-gutter-line.has-error {
+  position: relative;
+  color: #fecaca;
+  font-weight: 700;
+  background: rgba(239, 68, 68, 0.35);
+  box-shadow: inset 3px 0 0 #ef4444;
+  cursor: pointer;
+}
+ 
+.script-gutter-line.has-error::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 50%;
+  background: #ef4444;
+}
+ 
 /* Compile errors reported after a save — the first thing a user needs. */
 .script-compile-error {
   display: flex;
@@ -131,14 +154,14 @@
   color: #f87171;
   font-size: 11px;
 }
-
+ 
 .script-compile-error pre {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
   font-family: var(--font-mono);
 }
-
+ 
 /* Inline "Discard unsaved changes?" confirmation. */
 .script-discard-bar {
   display: flex;
@@ -152,8 +175,21 @@
   color: #fbbf24;
   font-size: 11px;
 }
-
+ 
 .script-discard-actions {
   display: flex;
   gap: 6px;
+}
+ 
+.script-compile-error-body {
+  flex: 1;
+  min-width: 0;
+}
+ 
+/* Plain-language line above the raw compiler output */
+.script-compile-error-hint {
+  margin-bottom: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #fbbf24;
 }

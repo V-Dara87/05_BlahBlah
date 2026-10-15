@@ -40,6 +40,8 @@ import { isTauri } from './services/tauriFsAdapter';
 import { WindowControls } from './components/shell/WindowControls';
 import { toggleWindowMaximize } from './services/windowChrome';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
+import { ScriptErrorToast } from './components/shared/ScriptErrorToast';
+import { OPEN_CONSOLE_EVENT } from './engine/scriptConsole';
 import './App.css';
 import './app-shell.css';
 import './styles/shared.css';
@@ -156,6 +158,16 @@ export function App() {
     floatActivePanel,
     focusDockPanel,
   } = useDockPanels();
+ 
+  // Anything that wants the user to look at a script error (the error toast,
+  // the Inspector's error badge, a failed clip in the preview) fires
+  // OPEN_CONSOLE_EVENT; the Console panel itself picks up which entry to
+  // highlight from engine/scriptConsole.
+  useEffect(() => {
+    const onOpenConsole = () => openOrFocusPanel('console', 'Console');
+    window.addEventListener(OPEN_CONSOLE_EVENT, onOpenConsole);
+    return () => window.removeEventListener(OPEN_CONSOLE_EVENT, onOpenConsole);
+  }, [openOrFocusPanel]);
  
   // Modals
   const [isNewProjectOpen, setIsNewProjectOpen] = useState(false);
@@ -715,6 +727,10 @@ export function App() {
         <DockLayout />
       </EditorContext.Provider>
  
+      {/* Corner notice when a script throws, so errors don't go unnoticed
+          while the Console panel is closed. */}
+      <ScriptErrorToast />
+ 
       {/* Modals */}
       <NewProjectModal
         isOpen={isNewProjectOpen}
@@ -775,7 +791,7 @@ export function App() {
         themeSettings={themeSettings}
         onThemeSettingsChange={updateThemeSettings}
       />
-
+ 
       <PackageManagerModal
         isOpen={isPackageManagerOpen}
         onClose={() => setIsPackageManagerOpen(false)}
