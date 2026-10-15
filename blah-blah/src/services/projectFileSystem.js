@@ -525,6 +525,10 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
           // panel-level fields can persist).
           folder: indexed?.folder ?? null,
           createdAt: indexed?.createdAt ?? undefined,
+          // Shared Library baseline ({ sharedName, hash }) — see
+          // hooks/useSharedLibraryActions.js. Undefined for scripts that never
+          // touched the library.
+          origin: indexed?.origin ?? undefined,
           code: code,
           lastModified: file.lastModified,
         });
@@ -807,6 +811,7 @@ export async function saveProjectToDirectory(dirHandle, projectStateOrGetter, op
         description: s.description,
         folder: s.folder || null,
         createdAt: s.createdAt || null,
+        origin: s.origin || undefined,
       })),
     });
  

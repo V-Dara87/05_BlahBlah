@@ -22,6 +22,7 @@ export const ProjectDockPanel = memo(function ProjectDockPanel() {
     projectFolderHandle,
     sharedLibraryItems,
     onSharePrefab, onShareScript, onShareMedia, onRemoveSharedItem, onMoveSharedItem, onImportSharedItem,
+    onUpdateScriptFromLibrary, onExportSharedLibrary, onImportSharedLibrary,
     onAddMediaAsset, onRemoveMediaAsset, onRemovePrefab, onRemoveScript,
     onRenameMediaAsset, onRenamePrefab, onRenameScript,
     onCreateScript, onOpenScriptEditor,
@@ -44,6 +45,9 @@ export const ProjectDockPanel = memo(function ProjectDockPanel() {
       onShareScript={onShareScript}
       onShareMedia={onShareMedia}
       onImportSharedItem={onImportSharedItem}
+      onUpdateScriptFromLibrary={onUpdateScriptFromLibrary}
+      onExportSharedLibrary={onExportSharedLibrary}
+      onImportSharedLibrary={onImportSharedLibrary}
       onAddMediaAsset={onAddMediaAsset}
       onRemoveMediaAsset={onRemoveMediaAsset}
       onRemovePrefab={onRemovePrefab}
@@ -490,4 +494,4 @@ export const ConsoleDockPanel = memo(function ConsoleDockPanel() {
       }
     : undefined;
   return <ConsolePanel onOpenScript={handleOpenScript} />;
-});
+});

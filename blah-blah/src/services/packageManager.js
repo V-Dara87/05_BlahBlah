@@ -530,9 +530,9 @@ export async function deletePackage(packageId) {
   // Case 1: component-pack in shared library
   if (info.category === 'component-pack' && info.componentName) {
     try {
-      const { loadSharedLibrary, removeSharedItem } = await import('./sharedLibraryStorage.js');
+      const { listSharedItems, removeSharedItem } = await import('./sharedLibraryStorage.js');
       const cleanName = info.componentName.replace(/\.jsx$/, '');
-      const items = await loadSharedLibrary();
+      const items = await listSharedItems();
       const match = items.find((it) => it.type === 'script' && it.name === cleanName);
       if (match) {
         await removeSharedItem(match.id);

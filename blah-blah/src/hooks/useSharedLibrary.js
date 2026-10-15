@@ -5,6 +5,7 @@ import {
   removeSharedItem,
   moveSharedItem,
   moveAllSharedItemsInFolder,
+  addSharedItems,
   makeSharedPrefabItem,
   makeSharedScriptItem,
   makeSharedMediaItem,
@@ -46,17 +47,30 @@ export function useSharedLibrary() {
     return item;
   }, []);
  
-  /** Store a project prefab (any shape) into the shared library. */
+  /**
+   * Store a project prefab (any shape) into the shared library.
+   * `overrides` ({ id, folder, createdAt }) lets a "replace" keep the old
+   * item's id and folder instead of creating a new item.
+   */
   const addPrefab = useCallback(
-    (prefab) => addItem({ ...makeSharedPrefabItem(prefab), createdAt: Date.now() }),
+    (prefab, overrides) =>
+      addItem({ ...makeSharedPrefabItem(prefab), createdAt: Date.now(), ...overrides }),
     [addItem]
   );
  
-  /** Store a project script into the shared library. */
+  /** Store a project script (with its `deps`) into the shared library. */
   const addScript = useCallback(
-    (script) => addItem({ ...makeSharedScriptItem(script), createdAt: Date.now() }),
+    (script, overrides) =>
+      addItem({ ...makeSharedScriptItem(script), createdAt: Date.now(), ...overrides }),
     [addItem]
   );
+ 
+  /** Store several ready-made items at once (used by backup import). */
+  const addMany = useCallback(async (list) => {
+    const next = await addSharedItems(list);
+    setItems(next);
+    return next;
+  }, []);
  
   /**
    * Store a media asset into the shared library. Uses `asset.file` when the
@@ -136,6 +150,7 @@ export function useSharedLibrary() {
     addPrefab,
     addScript,
     addMedia,
+    addMany,
     removeSharedItem: remove,
     moveItem,
     moveFolderContents,

@@ -10,6 +10,7 @@ import {
   Pencil,
   Plus,
   FolderOpen,
+  Download,
 } from 'lucide-react';
 import { isTauri } from '../services/tauriFsAdapter';
 import { openProjectInVsCode } from '../services/ideLauncher';
@@ -17,6 +18,7 @@ import { ContextMenu } from './shared/ContextMenu';
 import { AssetPreviewPopover } from './project/AssetPreviewPopover';
 import { useSectionFolders } from './project/useSectionFolders';
 import { KIND_REGISTRY } from './project/kindRegistry';
+import { getScriptSyncStatus } from '../services/sharedLibraryDeps';
 import {
   ROOT_LOCATION,
 } from './project/projectPanelConstants';
@@ -63,6 +65,9 @@ export const ProjectPanel = memo(function ProjectPanel({
   onShareScript,
   onShareMedia,
   onImportSharedItem,
+  onUpdateScriptFromLibrary,
+  onExportSharedLibrary,
+  onImportSharedLibrary,
   onAddMediaAsset,
   onRemoveMediaAsset,
   onMoveMediaAsset,
@@ -649,6 +654,28 @@ export const ProjectPanel = memo(function ProjectPanel({
               >
                 <Layers size={13} className="text-cyan" /> New Empty Clip
               </button>
+              {(currentLocation.section === 'shared' || !currentLocation.section) && (
+                <>
+                  <button
+                    className="ctx-menu-item"
+                    onClick={() => {
+                      setCtxMenu(null);
+                      onExportSharedLibrary?.();
+                    }}
+                  >
+                    <Download size={13} /> Export Shared Library…
+                  </button>
+                  <button
+                    className="ctx-menu-item"
+                    onClick={() => {
+                      setCtxMenu(null);
+                      onImportSharedLibrary?.();
+                    }}
+                  >
+                    <Upload size={13} /> Import Shared Library…
+                  </button>
+                </>
+              )}
               {openInExplorerItem}
             </>
           )}
@@ -766,6 +793,25 @@ export const ProjectPanel = memo(function ProjectPanel({
                     <Share2 size={13} /> Save to Shared Library
                   </button>
                 )}
+                {ctxMenu.target.kind === 'script' &&
+                  (() => {
+                    const { status } = getScriptSyncStatus(ctxMenu.target.item, sharedItems);
+                    if (status !== 'update-available' && status !== 'conflict') return null;
+                    return (
+                      <button
+                        className="ctx-menu-item"
+                        onClick={() => {
+                          setCtxMenu(null);
+                          onUpdateScriptFromLibrary?.(ctxMenu.target.item);
+                        }}
+                      >
+                        <Download size={13} />{' '}
+                        {status === 'conflict'
+                          ? 'Update from Shared Library (replaces your edits)'
+                          : 'Update from Shared Library'}
+                      </button>
+                    );
+                  })()}
                 {openInExplorerItem}
                 <button
                   className="ctx-menu-item danger"

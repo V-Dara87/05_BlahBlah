@@ -240,6 +240,13 @@ export function usePrefabScriptActions({
     return precompileWithBundler(nextCode, projectFolderHandle, nextName);
   };
 
+  // Remember which Shared Library content a script was imported from / shared
+  // as (`origin = { sharedName, hash }`). Pure metadata: no disk write of the
+  // script file, no recompile — it persists through project.json's scriptIndex.
+  const handleSetScriptOrigin = (scriptId, origin) => {
+    setScripts((prev) => prev.map((s) => (s.id === scriptId ? { ...s, origin } : s)));
+  };
+
   return {
     handleSaveAsPrefab,
     handleUpdatePrefab,
@@ -250,5 +257,6 @@ export function usePrefabScriptActions({
     handleRenameScript,
     handleCreateScript,
     handleSaveScript,
+    handleSetScriptOrigin,
   };
 }
