@@ -25,7 +25,7 @@
  * in-memory path there — see ExportModal.jsx.
  */
 import { joinPath, removeFileIfExists } from './tauriFsAdapter.js';
-
+ 
 /**
  * Open `filePath` for streamed writing and return an mp4-muxer-compatible
  * `onData` sink plus a `close`/`abort` pair.
@@ -41,16 +41,16 @@ import { joinPath, removeFileIfExists } from './tauriFsAdapter.js';
  */
 export async function openExportFileStream(filePath) {
   if (!filePath) throw new Error('openExportFileStream requires a destination path.');
-
+ 
   const fs = await import('@tauri-apps/plugin-fs');
   // NOT `append: true`: appending would ignore the muxer's positions. `truncate`
   // makes a re-export over an existing file deterministic.
   const handle = await fs.open(filePath, { write: true, create: true, truncate: true });
-
+ 
   /** Serializes writes; a rejection here poisons the chain so later writes are skipped. */
   let chain = Promise.resolve();
   let written = 0;
-
+ 
   const enqueue = (operation) => {
     const next = chain.then(operation);
     // Keep the chain rejecting for close() while making sure the rejection is
@@ -60,27 +60,30 @@ export async function openExportFileStream(filePath) {
     chain = next;
     return next;
   };
-
+ 
   return {
     filePath,
-
+ 
     onData: (data, position) => {
       // `data` is a subarray of a chunk buffer the muxer has already dropped
       // references to, so it is safe to hold across the await without copying.
       enqueue(async () => {
-        await handle.seek(position);
+        // Tauri's FileHandle.seek(offset, whence) REQUIRES `whence` — without it
+        // the call fails with "missing required key whence" and the whole
+        // export aborts. Start = `position` is an absolute offset in the file.
+        await handle.seek(position, fs.SeekMode.Start);
         await handle.write(data);
         written += data.byteLength;
       });
     },
-
+ 
     /** Flush every pending write, close the file and report the byte count. */
     async close() {
       await chain;
       await handle.close();
       return written;
     },
-
+ 
     /** Stop early (abort/error): flush what we can, close, and delete the partial file. */
     async abort() {
       try {
@@ -95,11 +98,11 @@ export async function openExportFileStream(filePath) {
       }
       await removeFileIfExists(filePath);
     },
-
+ 
     bytesWritten: () => written,
   };
 }
-
+ 
 /**
  * Default name for a temp PCM file used by the windowed audio decode
  * (exportRunner.js decodeAudioWindow) — kept here so both the encoder-side
@@ -110,7 +113,7 @@ export function exportTempFileName(prefix, sourcePath) {
   const safe = base.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 64);
   return `${prefix}-${safe}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.raw`;
 }
-
+ 
 /** Join a directory with a generated temp file name (see exportTempFileName). */
 export function exportTempPath(dirPath, prefix, sourcePath) {
   return joinPath(dirPath, exportTempFileName(prefix, sourcePath));

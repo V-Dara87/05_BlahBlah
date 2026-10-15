@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Clock, Trash2, Sparkles, Boxes, FileCode, Check } from 'lucide-react';
+import { AlertCircle, Clock, Trash2, Sparkles, Boxes, FileCode, Check, Copy, ClipboardPaste, RotateCcw } from 'lucide-react';
 import {
   extractScriptProps,
   getScriptError,
@@ -12,7 +12,7 @@ import {
 import { invokeScriptAction } from '../../engine/scriptActions';
 import { requestConsoleFocus } from '../../engine/scriptConsole';
 import { summarizeScriptError } from '../../engine/scriptErrorInfo';
-import { InspectorFieldList } from './InspectorField';
+import { InspectorFieldList, getFieldDefault } from './InspectorField';
 import { InspectorCardHeader } from './InspectorCardHeader';
 import './script-card.css';
  
@@ -26,6 +26,12 @@ const SCRIPT_KIND_META = {
   shader: { icon: Sparkles, className: 'text-amber', label: 'GL Transition' },
 };
 export const scriptKindMeta = (kind) => SCRIPT_KIND_META[kind] || SCRIPT_KIND_META.motion;
+ 
+const cloneValue = (v) => (v !== null && typeof v === 'object' ? JSON.parse(JSON.stringify(v)) : v);
+ 
+// Module-level so a copy survives selecting another clip / another script card.
+// Holds { props, types } for the last "Copy properties".
+let scriptPropsClipboard = null;
  
 /** How long a button's result / error stays on screen, in ms. */
 const ACTION_FEEDBACK_MS = 2500;
@@ -102,6 +108,9 @@ export function ScriptCard({
     paused: scriptDef ? isScriptDisabled(scriptDef.code) : false,
   }), [scriptDef, recompiledTick]);
   const Meta = scriptKindMeta(kind);
+  const isEnabled = scriptComp.enabled !== false;
+  // Buttons are actions, not values, so they don't count as "properties".
+  const propCount = fields.filter((f) => f.type !== 'button').length;
  
   // The raw error can be many lines of compiler output — far too much for a
   // narrow Inspector. The badge shows a one-line summary and leaves the full
@@ -125,6 +134,45 @@ export function ScriptCard({
   // Resolved once, for the fields and for the action context: a button must see
   // exactly the values the fields show (refs resolved, defaults applied).
   const values = resolveComponentValues(`script:${scriptComp.scriptId}`, scriptComp.props);
+ 
+  // Copy / Paste / Reset for the script's whole prop set (header buttons, same
+  // idea as the Transform card). Buttons are actions, not values, so they are
+  // never copied or reset. Writes go through setScriptProps (a static write,
+  // like a button action): pasting or resetting is not an edit at the playhead,
+  // so it must not author keyframes.
+  const valueFields = useMemo(() => fields.filter((f) => f.type !== 'button'), [fields]);
+ 
+  const handleCopyProps = () => {
+    const props = {};
+    const types = {};
+    valueFields.forEach((f) => {
+      props[f.name] = cloneValue(values?.[f.name] ?? getFieldDefault(f));
+      types[f.name] = f.type;
+    });
+    scriptPropsClipboard = { props, types };
+    navigator.clipboard?.writeText(JSON.stringify(props, null, 2)).catch(() => {});
+  };
+ 
+  // Only props that exist here with the SAME type are applied, so pasting
+  // from a different script copies the overlap instead of corrupting values.
+  const handlePasteProps = () => {
+    if (!scriptPropsClipboard) return;
+    const patch = {};
+    valueFields.forEach((f) => {
+      const { props, types } = scriptPropsClipboard;
+      if (f.name in props && types[f.name] === f.type) patch[f.name] = cloneValue(props[f.name]);
+    });
+    if (Object.keys(patch).length > 0) setScriptProps?.(scriptComp.scriptId, patch);
+  };
+ 
+  const handleResetProps = () => {
+    if (valueFields.length === 0) return;
+    const label = scriptComp.scriptName || 'this script';
+    if (!window.confirm(`Reset all properties of "${label}" to their defaults?`)) return;
+    const patch = {};
+    valueFields.forEach((f) => { patch[f.name] = getFieldDefault(f); });
+    setScriptProps?.(scriptComp.scriptId, patch);
+  };
  
   const [feedback, setFeedback] = useState(null);
   const feedbackTimer = useRef(null);
@@ -197,6 +245,36 @@ export function ScriptCard({
           <>
             <button
               type="button"
+              className="card-icon-btn"
+              title="Copy property values"
+              aria-label="Copy property values"
+              disabled={valueFields.length === 0}
+              onClick={handleCopyProps}
+            >
+              <Copy size={12} />
+            </button>
+            <button
+              type="button"
+              className="card-icon-btn"
+              title="Paste property values (matching names and types)"
+              aria-label="Paste property values"
+              disabled={valueFields.length === 0}
+              onClick={handlePasteProps}
+            >
+              <ClipboardPaste size={12} />
+            </button>
+            <button
+              type="button"
+              className="card-icon-btn"
+              title="Reset all properties to defaults"
+              aria-label="Reset all properties to defaults"
+              disabled={valueFields.length === 0}
+              onClick={handleResetProps}
+            >
+              <RotateCcw size={12} />
+            </button>
+            <button
+              type="button"
               className="edit-cs-btn"
               title="Open this script in the editor"
               onClick={() => scriptDef && onOpenScriptEditor(scriptDef)}
@@ -222,7 +300,7 @@ export function ScriptCard({
       />
  
       {isOpen && (
-        <div className="inspector-card-body">
+        <div className="inspector-card-body script-card-body">
           {scriptError && errorSummary && (
             <div className="script-error-badge" title={scriptError}>
               <AlertCircle size={12} className="script-error-badge-icon" />
@@ -264,48 +342,68 @@ export function ScriptCard({
             </div>
           )}
  
-          <div className="inspector-row">
-            <span className="row-label">Enabled</span>
-            <input
-              type="checkbox"
-              checked={scriptComp.enabled !== false}
-              onChange={(e) => updateScriptComp(scriptComp.scriptId, { enabled: e.target.checked })}
-            />
+          {/* Script-level settings: kind + the two ScriptComponent fields
+              (not script props), kept apart from the props below. */}
+          <div className="script-settings">
+            <div className="script-setting">
+              <span className={`script-kind-pill ${Meta.className}`}>{Meta.label}</span>
+              <label className="script-switch-label" title="Run this script on the clip">
+                <span>Enabled</span>
+                <input
+                  type="checkbox"
+                  className="inspector-switch"
+                  checked={isEnabled}
+                  onChange={(e) => updateScriptComp(scriptComp.scriptId, { enabled: e.target.checked })}
+                />
+              </label>
+            </div>
+ 
+            {/* Motion-kind scripts follow the Transform's Speed (clip-level
+                rate) by default. ignoreParentSpeed is the per-script opt-out:
+                when checked, this script's localTime stays on raw timeline
+                time while media and sibling scripts run sped up. A
+                ScriptComponent-level field (like Enabled), NOT a script prop
+                — saved with the component, no migration needed (absent =
+                false). Only meaningful for motion kind; react/canvas kinds
+                are visual outputs driven by the caller and unaffected. */}
+            {kind === 'motion' && (
+              <label
+                className="script-setting script-switch-label"
+                title="Keep this script on raw timeline time instead of the clip's Speed"
+              >
+                <span>Ignore Parent Speed</span>
+                <input
+                  type="checkbox"
+                  className="inspector-switch"
+                  checked={scriptComp.ignoreParentSpeed === true}
+                  onChange={(e) => updateScriptComp(scriptComp.scriptId, { ignoreParentSpeed: e.target.checked })}
+                />
+              </label>
+            )}
           </div>
  
-          {/* Motion-kind scripts follow the Transform's Speed (clip-level
-              rate) by default. ignoreParentSpeed is the per-script opt-out:
-              when checked, this script's localTime stays on raw timeline
-              time while media and sibling scripts run sped up. A
-              ScriptComponent-level field (like Enabled), NOT a script prop
-              — saved with the component, no migration needed (absent =
-              false). Only meaningful for motion kind; react/canvas kinds
-              are visual outputs driven by the caller and unaffected. */}
-          {kind === 'motion' && (
-            <div className="inspector-row">
-              <span className="row-label">Ignore Parent Speed</span>
-              <input
-                type="checkbox"
-                checked={scriptComp.ignoreParentSpeed === true}
-                onChange={(e) => updateScriptComp(scriptComp.scriptId, { ignoreParentSpeed: e.target.checked })}
-              />
-            </div>
-          )}
- 
-          <InspectorFieldList
-            fields={fields}
-            values={values}
-            onFieldChange={(name, v) => updateScriptProps(scriptComp.scriptId, name, v)}
-            emptyHint={<>Expose props with <code>static props = &#123; ... &#125;</code></>}
-            trackKey={`script:${scriptComp.scriptId}`}
-            selectedEntity={selectedEntity}
-            currentTime={currentTime}
-            onUpdateEntity={onUpdateEntity}
-            entities={entities}
-            mediaAssets={mediaAssets}
-            tracks={tracks}
-            onAction={handleAction}
-          />
+          <div className={`script-props${isEnabled ? '' : ' is-off'}`}>
+            {fields.length > 0 && (
+              <div className="script-props-header">
+                <span className="script-props-title">Properties</span>
+                {propCount > 0 && <span className="script-props-count">{propCount}</span>}
+              </div>
+            )}
+            <InspectorFieldList
+              fields={fields}
+              values={values}
+              onFieldChange={(name, v) => updateScriptProps(scriptComp.scriptId, name, v)}
+              emptyHint={<>No exposed props. Add <code>static props = &#123; ... &#125;</code> to the script.</>}
+              trackKey={`script:${scriptComp.scriptId}`}
+              selectedEntity={selectedEntity}
+              currentTime={currentTime}
+              onUpdateEntity={onUpdateEntity}
+              entities={entities}
+              mediaAssets={mediaAssets}
+              tracks={tracks}
+              onAction={handleAction}
+            />
+          </div>
  
           {feedback && (
             <div className={`script-action-feedback ${feedback.ok ? 'is-ok' : 'is-error'}`}>

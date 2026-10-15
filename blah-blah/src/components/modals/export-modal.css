@@ -7,15 +7,15 @@
 .export-hub-modal {
   width: 94%;
   max-width: 880px;
-  background: #181a22;
+  background: var(--unity-panel);
   border: 1px solid var(--unity-border-light);
   border-radius: 10px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(var(--unity-accent-rgb), 0.18);
   overflow: hidden;
 }
  
 .export-header {
-  background: #14151c;
+  background: var(--unity-dark);
   padding: 14px 18px;
   border-bottom: 1px solid var(--unity-border);
 }
@@ -24,7 +24,7 @@
   width: 32px;
   height: 32px;
   border-radius: 8px;
-  background: linear-gradient(135deg, #0284c7, #6366f1);
+  background: linear-gradient(135deg, var(--unity-accent-blue-strong), var(--unity-accent-secondary));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -82,8 +82,8 @@
 }
  
 .preset-card {
-  background: #1f222e;
-  border: 1px solid var(--unity-border);
+  background: var(--unity-subtle);
+  border: 1px solid var(--unity-border-light);
   border-radius: 8px;
   padding: 10px;
   display: flex;
@@ -95,12 +95,12 @@
 }
  
 .preset-card:hover {
-  background: #272b3a;
-  border-color: #4f5882;
+  background: var(--unity-hover);
+  border-color: rgba(var(--unity-accent-rgb), 0.5);
 }
  
 .preset-card.active {
-  background: #1e293b;
+  background: rgba(var(--unity-accent-rgb), 0.1);
   border: 2px solid var(--unity-accent-blue);
   box-shadow: 0 0 12px rgba(var(--unity-accent-rgb), 0.25);
 }
@@ -109,8 +109,8 @@
   font-size: 8px;
   font-weight: 800;
   text-transform: uppercase;
-  color: #94a3b8;
-  background: rgba(255, 255, 255, 0.06);
+  color: var(--unity-text-muted);
+  background: rgba(255, 255, 255, 0.08);
   padding: 1px 4px;
   border-radius: 3px;
   align-self: flex-start;
@@ -160,9 +160,9 @@
 }
  
 .unity-select {
-  background: #13141a;
+  background: var(--unity-dark);
   border: 1px solid var(--unity-border-light);
-  color: #fff;
+  color: var(--unity-text);
   font-size: 11px;
   font-weight: 500;
   padding: 6px 8px;
@@ -186,12 +186,25 @@
   font-size: 13px;
   font-weight: 700;
   border-radius: 6px;
-  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);
+  box-shadow: 0 4px 14px rgba(var(--unity-accent-rgb), 0.3);
+}
+ 
+/* Primary buttons in this modal (Start Export, Download) follow the theme
+   accent instead of the app-wide fixed blue. Mixed toward black so white text
+   keeps its contrast whichever accent the theme picks. */
+.export-hub-modal .unity-btn-primary {
+  background: color-mix(in srgb, var(--unity-accent-blue-strong) 62%, #000);
+  border: 1px solid var(--unity-accent-blue);
+  color: #fff;
+}
+ 
+.export-hub-modal .unity-btn-primary:hover {
+  background: color-mix(in srgb, var(--unity-accent-blue-strong) 76%, #000);
 }
  
 .export-summary-col {
-  background: #13141a;
-  border: 1px solid var(--unity-border);
+  background: var(--unity-darkest);
+  border: 1px solid var(--unity-border-light);
   border-radius: 8px;
   padding: 12px;
   display: flex;
@@ -203,7 +216,7 @@
 .summary-title {
   font-size: 11px;
   font-weight: 700;
-  color: #fff;
+  color: var(--unity-text);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -215,8 +228,8 @@
 }
  
 .stat-tile {
-  background: #1c1e28;
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border-light);
   border-radius: 6px;
   padding: 8px 10px;
   display: flex;
@@ -248,7 +261,7 @@
   display: flex;
   gap: 6px;
   font-size: 10px;
-  color: #94a3b8;
+  color: var(--unity-text-muted);
   line-height: 1.4;
 }
  
@@ -299,8 +312,8 @@
   width: 100%;
   max-width: 480px;
   height: 8px;
-  background: #111218;
-  border: 1px solid var(--unity-border);
+  background: var(--unity-darkest);
+  border: 1px solid var(--unity-border-light);
   border-radius: 4px;
   overflow: hidden;
   margin: 4px 0;
@@ -308,7 +321,7 @@
  
 .render-bar-progress {
   height: 100%;
-  background: linear-gradient(90deg, #2563eb, var(--unity-accent-blue));
+  background: linear-gradient(90deg, var(--unity-accent-blue-strong), var(--unity-accent-blue));
   box-shadow: 0 0 10px rgba(var(--unity-accent-rgb), 0.6);
   transition: width 0.1s ease;
 }
@@ -355,9 +368,9 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  background: #1e212d;
-  border: 1px solid var(--unity-border);
-  color: #e2e8f0;
+  background: var(--unity-subtle);
+  border: 1px solid var(--unity-border-light);
+  color: var(--unity-text);
   padding: 4px 10px;
   border-radius: 20px;
   font-size: 11px;

@@ -1,87 +1,120 @@
 /**
  * Styles for the attribute-driven inspector layout: tabs, boxes / foldouts,
- * inline rows, action buttons, toggle strips and toggle-left rows.
+ * inline rows, action buttons, toggle strips, switches, colour fields and
+ * toggle-left rows.
  *
  * Colours come from the same custom properties the rest of the inspector uses
- * (see shared.css) so a boxed field looks like a field, not like a separate
- * widget.
+ * (see index.css / shared.css), so a boxed field follows the theme instead of
+ * looking like a separate widget. Control chrome that must not leak into the
+ * Subtitle / Transition inspectors is scoped under `.inspector-layout`.
  */
-
+ 
 .inspector-layout {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
-
+ 
 /* ── Tabs (attribute: tab) ───────────────────────────────────────────────── */
-
+ 
 .inspector-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 2px;
-  padding-bottom: 2px;
-  border-bottom: 1px solid var(--unity-border);
+  gap: 0;
+  border-bottom: 1px solid var(--unity-border-light);
 }
-
+ 
 .inspector-tab {
+  position: relative;
+  margin-bottom: -1px;
+  padding: 5px 10px;
   background: transparent;
-  border: 1px solid transparent;
-  border-bottom: none;
-  border-radius: 3px 3px 0 0;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
   color: var(--unity-text-muted);
-  font-size: 10px;
-  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
   cursor: pointer;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
 }
-
+ 
 .inspector-tab:hover {
-  color: #fff;
+  color: var(--unity-text);
   background: rgba(255, 255, 255, 0.04);
 }
-
+ 
+.inspector-tab:focus-visible {
+  outline: 1px solid var(--unity-accent-blue);
+  outline-offset: -1px;
+}
+ 
 .inspector-tab.is-active {
   color: #fff;
-  background: var(--unity-dark);
-  border-color: var(--unity-border);
+  border-bottom-color: var(--unity-accent-blue);
 }
-
+ 
 /* ── Boxes and foldouts (attribute: box / foldout) ───────────────────────── */
-
+ 
 .inspector-group {
-  border: 1px solid var(--unity-border);
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.12);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.14);
   min-width: 0;
+  overflow: hidden;
 }
-
+ 
 .inspector-group.is-foldout {
   background: transparent;
+  border-color: transparent;
+  overflow: visible;
 }
-
+ 
 .inspector-group-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 4px;
-  padding: 3px 6px;
-  border-bottom: 1px solid var(--unity-border);
-  min-height: 20px;
+  gap: 6px;
+  padding: 4px 8px;
+  min-height: 24px;
+  background: rgba(255, 255, 255, 0.035);
+  border-bottom: 1px solid var(--unity-border-light);
 }
-
+ 
 .inspector-group.is-foldout .inspector-group-header {
+  padding: 2px 0;
+  min-height: 22px;
+  background: transparent;
   border-bottom: none;
 }
-
+ 
 .inspector-group-name,
 .inspector-group-toggle {
   font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--unity-text-muted);
-  text-transform: none;
 }
-
+ 
+.inspector-group-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+ 
+/* Accent tick: the quickest cue that this is a titled box, not a loose row. */
+.inspector-group-name::before {
+  content: '';
+  flex-shrink: 0;
+  width: 3px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--unity-accent-blue);
+}
+ 
 .inspector-group-toggle {
   display: flex;
   align-items: center;
@@ -90,77 +123,112 @@
   border: none;
   padding: 0;
   cursor: pointer;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   text-align: left;
 }
-
+ 
 .inspector-group-toggle:hover {
   color: #fff;
 }
-
+ 
+.inspector-group-toggle:focus-visible {
+  outline: 1px solid var(--unity-accent-blue);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+ 
 .inspector-group-chevron {
   transition: transform 0.15s;
   flex-shrink: 0;
 }
-
+ 
 .inspector-group-chevron.is-open {
   transform: rotate(90deg);
 }
-
+ 
 .inspector-group-switch {
   flex-shrink: 0;
 }
-
+ 
 .inspector-group-body {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 6px;
+  padding: 8px;
 }
-
+ 
 .inspector-group.is-foldout .inspector-group-body {
-  padding: 2px 0 0 12px;
-  border-left: 2px solid var(--unity-border);
-  margin-left: 4px;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid var(--unity-border-light);
+  margin-left: 5px;
 }
-
+ 
+/* [Title]: small caps heading with a rule running out to the right edge. */
 .inspector-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
   font-size: 10px;
-  font-weight: 600;
-  color: var(--unity-text-muted);
-  padding-top: 2px;
-  border-top: 1px solid var(--unity-border);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--unity-text-dim);
 }
-
+ 
+.inspector-group-title::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--unity-border-light);
+}
+ 
 .inspector-space {
   flex-shrink: 0;
 }
-
+ 
 /* ── Rows ────────────────────────────────────────────────────────────────── */
-
+ 
 /* Struct fields, struct lists and action buttons span the whole row. */
 .inspector-row.is-full-width {
   display: block;
-  padding: 4px 0;
+  padding: 2px 0;
 }
-
-/* [ToggleLeft]: the checkbox comes before its label. */
+ 
+/* [ToggleLeft]: the switch comes before its label. */
 .inspector-row.is-toggle-left {
   grid-template-columns: auto 1fr;
+  gap: 8px;
 }
-
+ 
+.inspector-layout .inspector-row:not(.array-field-item) {
+  min-height: 22px;
+}
+ 
+.inspector-layout .inspector-row:hover > .row-label {
+  opacity: 1;
+}
+ 
 .inspector-inline-group {
   display: flex;
   align-items: center;
   gap: 4px;
   min-width: 0;
 }
-
-.inspector-inline-group > * {
+ 
+.inspector-inline-group > *,
+.inspector-inline-group > .inspector-field-ctx > * {
   min-width: 0;
   flex: 1;
 }
-
+ 
+/* Right-click wrapper around one inline control: adds no box of its own, so
+   the control keeps laying out as a direct child of the row. */
+.inspector-field-ctx {
+  display: contents;
+}
+ 
 .inspector-field-keyframed,
 .inspector-field-with-action {
   display: flex;
@@ -169,7 +237,7 @@
   flex: 1;
   min-width: 0;
 }
-
+ 
 /* Dims and freezes controls that have no native `disabled` (drag numbers,
    ref slots, font pickers) the same way a disabled input reads. */
 .inspector-field-disabled {
@@ -178,92 +246,269 @@
   opacity: 0.45;
   pointer-events: none;
 }
-
-/* ── Action buttons ([Button]) ───────────────────────────────────────────── */
-
-.inspector-action-btn {
-  background: var(--unity-dark);
-  border: 1px solid var(--unity-border);
-  border-radius: 3px;
-  color: #fff;
-  font-size: 10px;
-  padding: 4px 8px;
-  cursor: pointer;
+ 
+/* ── Text-like controls: one height, one border, one focus ring ──────────── */
+ 
+.inspector-layout .inspector-select,
+.inspector-layout .inspector-num-input,
+.inspector-layout .inspector-textarea,
+.inspector-color-hex {
+  box-sizing: border-box;
   width: 100%;
+  min-width: 0;
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 3px;
+  color: var(--unity-text);
+  font-size: 11px;
+  outline: none;
+  transition: border-color 0.12s, box-shadow 0.12s;
 }
-
+ 
+.inspector-layout .inspector-select,
+.inspector-layout .inspector-num-input,
+.inspector-color-hex {
+  height: 22px;
+  padding: 0 6px;
+}
+ 
+.inspector-layout .inspector-textarea {
+  padding: 4px 6px;
+  min-height: 40px;
+  line-height: 1.4;
+  font-family: inherit;
+  resize: vertical;
+}
+ 
+.inspector-layout .inspector-select:hover:not(:disabled),
+.inspector-layout .inspector-num-input:hover:not(:disabled),
+.inspector-layout .inspector-textarea:hover:not(:disabled),
+.inspector-color-hex:hover:not(:disabled) {
+  border-color: var(--unity-text-dim);
+}
+ 
+.inspector-layout .inspector-select:focus,
+.inspector-layout .inspector-num-input:focus,
+.inspector-layout .inspector-textarea:focus,
+.inspector-color-hex:focus {
+  border-color: var(--unity-accent-blue);
+  box-shadow: 0 0 0 1px rgba(var(--unity-accent-rgb), 0.3);
+}
+ 
+.inspector-layout .inspector-select:disabled,
+.inspector-layout .inspector-num-input:disabled,
+.inspector-layout .inspector-textarea:disabled,
+.inspector-color-hex:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+ 
+/* Native dropdown arrow replaced so every select reads the same on every OS. */
+.inspector-layout .inspector-select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 22px;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 7px center;
+}
+ 
+/* ── Checkbox (boolean) ──────────────────────────────────────────────────── */
+ 
+/* index.css styles every `input[type="checkbox"]` (size, tick, and a fixed
+   blue when checked). The tick and size are kept from there; only the colour
+   is overridden, with matching specificity, so it follows the theme accent. */
+input[type="checkbox"].inspector-switch {
+  justify-self: start;
+}
+ 
+input[type="checkbox"].inspector-switch:hover:not(:disabled) {
+  border-color: var(--unity-accent-blue);
+}
+ 
+input[type="checkbox"].inspector-switch:checked {
+  background: var(--unity-accent-blue-strong, var(--unity-accent-blue));
+  border-color: var(--unity-accent-blue);
+}
+ 
+input[type="checkbox"].inspector-switch:focus-visible {
+  outline: 1px solid var(--unity-accent-blue);
+  outline-offset: 2px;
+}
+ 
+input[type="checkbox"].inspector-switch:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+ 
+/* ── Colour field: swatch + hex ──────────────────────────────────────────── */
+ 
+.inspector-color-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+ 
+.inspector-color-swatch {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 28px;
+  height: 22px;
+  padding: 2px;
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 3px;
+  cursor: pointer;
+}
+ 
+.inspector-color-swatch:hover:not(:disabled) {
+  border-color: var(--unity-text-dim);
+}
+ 
+.inspector-color-swatch::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+ 
+.inspector-color-swatch::-webkit-color-swatch {
+  border: none;
+  border-radius: 2px;
+}
+ 
+.inspector-color-hex {
+  flex: 1;
+  font-family: var(--font-mono, monospace);
+  text-transform: uppercase;
+}
+ 
+/* ── Action buttons ([Button]) ───────────────────────────────────────────── */
+ 
+.inspector-action-btn {
+  box-sizing: border-box;
+  width: 100%;
+  height: 24px;
+  padding: 0 10px;
+  background: var(--unity-subtle);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 4px;
+  color: var(--unity-text);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+ 
 .inspector-action-btn:hover:not(:disabled) {
-  border-color: var(--unity-text-muted);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--unity-hover);
+  border-color: var(--unity-text-dim);
+  color: #fff;
 }
-
+ 
+.inspector-action-btn:focus-visible {
+  outline: 1px solid var(--unity-accent-blue);
+  outline-offset: 1px;
+}
+ 
 .inspector-action-btn:disabled {
   opacity: 0.45;
   cursor: default;
 }
-
+ 
 .inspector-action-btn:active:not(:disabled) {
   transform: translateY(1px);
 }
-
+ 
 .inspector-action-btn.is-inline {
   width: auto;
   flex-shrink: 0;
-  padding: 3px 6px;
+  height: 22px;
+  padding: 0 8px;
 }
-
+ 
 .inspector-action-btn.is-primary {
-  border-color: #22d3ee;
-  color: #67e8f9;
+  background: rgba(var(--unity-accent-rgb), 0.16);
+  border-color: var(--unity-accent-blue);
+  color: var(--unity-accent-soft, #75d2fa);
 }
-
+ 
+.inspector-action-btn.is-primary:hover:not(:disabled) {
+  background: rgba(var(--unity-accent-rgb), 0.28);
+  color: #fff;
+}
+ 
 .inspector-action-btn.is-danger {
-  border-color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.6);
   color: #f87171;
 }
-
+ 
+.inspector-action-btn.is-danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.22);
+  color: #fecaca;
+}
+ 
 /* ── Enum button strip (attribute: selectButton) ─────────────────────────── */
-
+ 
 .inspector-button-strip {
   display: flex;
+  flex-wrap: wrap;
   gap: 2px;
   min-width: 0;
-  flex-wrap: wrap;
+  padding: 2px;
+  background: var(--unity-darkest);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 5px;
 }
-
+ 
 .inspector-strip-btn {
   flex: 1;
   min-width: 0;
-  background: var(--unity-dark);
-  border: 1px solid var(--unity-border);
+  height: 18px;
+  padding: 0 6px;
+  background: transparent;
+  border: none;
   border-radius: 3px;
   color: var(--unity-text-muted);
   font-size: 10px;
-  padding: 3px 6px;
+  font-weight: 600;
   cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
 }
-
-.inspector-strip-btn:hover:not(:disabled) {
-  color: #fff;
+ 
+.inspector-strip-btn:hover:not(:disabled):not(.is-active) {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--unity-text);
 }
-
+ 
+.inspector-strip-btn:focus-visible {
+  outline: 1px solid var(--unity-accent-blue);
+  outline-offset: 1px;
+}
+ 
+.inspector-strip-btn:disabled {
+  cursor: not-allowed;
+}
+ 
 .inspector-strip-btn.is-active {
-  background: rgba(34, 211, 238, 0.16);
-  border-color: #22d3ee;
+  background: rgba(var(--unity-accent-rgb), 0.22);
+  box-shadow: inset 0 0 0 1px var(--unity-accent-blue);
   color: #fff;
 }
-
+ 
 /* ── Struct groups ───────────────────────────────────────────────────────── */
-
+ 
 .struct-group,
-.struct-array-editor {
+.struct-array-editor,
+.primitive-array-editor {
   width: 100%;
   min-width: 0;
 }
-
+ 
 .struct-group-toggle {
   display: flex;
   align-items: center;
@@ -271,41 +516,155 @@
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--text-secondary, #aaa);
+  color: var(--unity-text-muted);
   font-size: 11px;
+  font-weight: 600;
   padding: 2px 0;
   width: 100%;
   text-align: left;
 }
-
+ 
+.struct-group-toggle:hover {
+  color: #fff;
+}
+ 
+.struct-group-toggle:focus-visible {
+  outline: 1px solid var(--unity-accent-blue);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+ 
 .struct-group-chevron {
   transition: transform 0.15s;
   flex-shrink: 0;
 }
-
+ 
 .struct-group-chevron.is-open {
   transform: rotate(90deg);
 }
-
+ 
 .struct-group-body {
-  padding-left: 12px;
-  border-left: 2px solid var(--border-subtle, #333);
+  margin-left: 5px;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid var(--unity-border-light);
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
-
+ 
 .struct-array-item-title {
   font-size: 11px;
-  color: var(--text-secondary, #aaa);
+  color: var(--unity-text-muted);
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
+ 
 .struct-array-item-body {
   padding-left: 20px;
   padding-bottom: 4px;
+}
+ 
+/* ── Array lists (string[] / struct[] / …) ───────────────────────────────── */
+ 
+.inspector-array-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--unity-text-muted);
+}
+ 
+.inspector-array-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+ 
+.inspector-array-count {
+  flex-shrink: 0;
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--unity-text-muted);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+}
+ 
+/* ArrayFieldEditor styles itself inline (it is shared with the Subtitle
+   Track), so the overrides that retheme it inside a script card need
+   !important. Scoped to .inspector-layout so no other list is touched. */
+.inspector-layout .array-field-editor {
+  border-color: var(--unity-border-light) !important;
+  background: rgba(0, 0, 0, 0.12);
+}
+ 
+.inspector-layout .array-field-item {
+  border-color: var(--unity-border-light) !important;
+  background: rgba(255, 255, 255, 0.03) !important;
+}
+ 
+.inspector-layout .array-field-index {
+  font-size: 10px !important;
+  min-width: 14px !important;
+  color: var(--unity-text-dim) !important;
+}
+ 
+/* ── Value menu (right-click: Copy / Paste / Reset) ──────────────────────── */
+ 
+.inspector-ctx-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px;
+  background: var(--unity-panel);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 5px;
+}
+ 
+.inspector-ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  color: var(--unity-text);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+ 
+.inspector-ctx-item:hover:not(:disabled) {
+  background: rgba(var(--unity-accent-rgb), 0.2);
+  color: #fff;
+}
+ 
+.inspector-ctx-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+ 
+.inspector-ctx-sep {
+  height: 1px;
+  margin: 3px 2px;
+  background: var(--unity-border-light);
+}
+ 
+/* A value that differs from its default: bold label, like a Unity prefab
+   override. Wins over the polish layer's dimmed label (higher specificity). */
+.inspector-row.is-modified > .row-label {
+  opacity: 1;
+  font-weight: 600;
+  color: #fff;
 }

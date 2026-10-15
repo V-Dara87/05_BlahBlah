@@ -13,7 +13,8 @@ import {
   subfieldSchema,
 } from '../../engine/inspectorAttributes';
 import { useMemo, useState, useRef } from 'react';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Copy, ClipboardPaste, RotateCcw } from 'lucide-react';
+import { ContextMenu } from '../shared/ContextMenu';
 import './inspector-attributes.css';
 import './inspector-polish.css';
  
@@ -210,29 +211,12 @@ function PrimitiveArrayEditor({ field, value, onChange, entities, mediaAssets, t
           />
         );
       case 'color':
-        return (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
-            <input
-              type="color"
-              className="inspector-color-input"
-              value={val || '#ffffff'}
-              disabled={disabled}
-              onChange={(e) => onValChange(e.target.value)}
-            />
-            <input
-              type="text"
-              className="inspector-num-input"
-              value={val || '#ffffff'}
-              disabled={disabled}
-              style={{ width: 80 }}
-              onChange={(e) => onValChange(e.target.value)}
-            />
-          </div>
-        );
+        return <ColorField value={val} onChange={onValChange} disabled={disabled} />;
       case 'boolean':
         return (
           <input
             type="checkbox"
+            className="inspector-switch"
             checked={!!val}
             disabled={disabled}
             onChange={(e) => onValChange(e.target.checked)}
@@ -301,9 +285,10 @@ function PrimitiveArrayEditor({ field, value, onChange, entities, mediaAssets, t
   };
  
   return (
-    <div className="primitive-array-editor" style={{ width: '100%' }}>
-      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary, #aaa)', marginBottom: 4 }}>
-        {field.label || field.name}
+    <div className="primitive-array-editor">
+      <div className="inspector-array-title">
+        <span className="inspector-array-title-text">{field.label || field.name}</span>
+        <span className="inspector-array-count">{rawList.length}</span>
       </div>
       <ArrayFieldEditor
         items={items}
@@ -354,6 +339,224 @@ function PrimitiveArrayEditor({ field, value, onChange, entities, mediaAssets, t
           </div>
         )}
       />
+    </div>
+  );
+}
+ 
+/**
+ * ColorField — swatch + editable hex readout. The native color input only
+ * accepts #rrggbb, so a saved `#fff` (or any odd value) is expanded for the
+ * swatch, and the hex box commits only when what was typed is a real colour.
+ */
+function expandHex(value) {
+  if (typeof value !== 'string') return null;
+  const m = value.trim().match(/^#?([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (!m) return null;
+  let hex = m[1].toLowerCase();
+  if (hex.length === 3) hex = hex.split('').map((c) => c + c).join('');
+  return `#${hex}`;
+}
+ 
+function ColorField({ value, onChange, disabled }) {
+  const hex = expandHex(value) || '#ffffff';
+  const [draft, setDraft] = useState(null); // null = not typing
+  const commit = () => {
+    const next = expandHex(draft);
+    if (next && next !== hex) onChange(next);
+    setDraft(null);
+  };
+  return (
+    <div className="inspector-color-field">
+      <input
+        type="color"
+        className="inspector-color-swatch"
+        value={hex}
+        disabled={disabled}
+        aria-label="Pick color"
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <input
+        type="text"
+        className="inspector-color-hex"
+        value={draft ?? hex}
+        disabled={disabled}
+        maxLength={7}
+        spellCheck={false}
+        aria-label="Hex color"
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          if (e.key === 'Escape') { setDraft(null); e.currentTarget.blur(); }
+        }}
+      />
+    </div>
+  );
+}
+ 
+// ─── Copy / paste / reset (right-click on a field row) ───────────────────────
+ 
+const clone = (v) => (v !== null && typeof v === 'object' ? JSON.parse(JSON.stringify(v)) : v);
+ 
+const isArrayType = (t) => t === 'array' || (typeof t === 'string' && t.endsWith('[]'));
+ 
+/**
+ * The value a field resets to: its declared default, else a sensible one for
+ * its type (so a script prop with no `default` still resets to something).
+ */
+export function getFieldDefault(field) {
+  if (field.defaultVal !== undefined) return clone(field.defaultVal);
+  const t = field.type;
+  if (t === 'number') return 0;
+  if (t === 'boolean') return false;
+  if (t === 'color') return '#ffffff';
+  if (t === 'select') return field.options?.[0] ?? '';
+  if (t === 'struct') return buildStructDefault(field.fields);
+  if (t === 'object') return {};
+  if (isArrayType(t)) return [];
+  if (t === 'entity' || t === 'asset') return null;
+  return '';
+}
+ 
+function sameValue(a, b) {
+  if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) < 1e-9;
+  if (typeof a === 'string' && typeof b === 'string') return a.toLowerCase() === b.toLowerCase();
+  if ((a ?? null) === (b ?? null)) return true;
+  try { return JSON.stringify(a) === JSON.stringify(b); } catch { return false; }
+}
+ 
+const serializeValue = (v) => {
+  if (v === null || v === undefined) return '';
+  return typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v);
+};
+ 
+// Fallback for when the system clipboard cannot be read (permission prompt
+// denied, no focus): the last value copied inside the app.
+let lastCopied = null;
+ 
+/** Turn clipboard text into a value this field accepts, or { ok: false }. */
+function coerceClipboard(field, text) {
+  const raw = typeof text === 'string' ? text : '';
+  const t = field.type;
+  const trimmed = raw.trim();
+  if (t === 'number') {
+    let n = parseFloat(trimmed);
+    if (!Number.isFinite(n)) return { ok: false };
+    if (Number.isFinite(field.min)) n = Math.max(field.min, n);
+    if (Number.isFinite(field.max)) n = Math.min(field.max, n);
+    return { ok: true, value: field.step === 1 ? Math.round(n) : n };
+  }
+  if (t === 'boolean') {
+    if (/^(true|1|on|yes)$/i.test(trimmed)) return { ok: true, value: true };
+    if (/^(false|0|off|no)$/i.test(trimmed)) return { ok: true, value: false };
+    return { ok: false };
+  }
+  if (t === 'color') {
+    const hex = expandHex(trimmed);
+    return hex ? { ok: true, value: hex } : { ok: false };
+  }
+  if (t === 'select') {
+    return Array.isArray(field.options) && field.options.includes(trimmed)
+      ? { ok: true, value: trimmed }
+      : { ok: false };
+  }
+  if (t === 'struct' || t === 'object' || isArrayType(t)) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      const wantArray = isArrayType(t);
+      if (wantArray ? Array.isArray(parsed) : (parsed && typeof parsed === 'object' && !Array.isArray(parsed))) {
+        return { ok: true, value: parsed };
+      }
+    } catch { /* not JSON */ }
+    return { ok: false };
+  }
+  if (t === 'entity' || t === 'asset') return trimmed ? { ok: true, value: trimmed } : { ok: false };
+  return { ok: true, value: raw };
+}
+ 
+function FieldContextMenu({ x, y, field, value, onChange, disabled, onClose }) {
+  const isDefault = sameValue(value, getFieldDefault(field));
+ 
+  const handleCopy = () => {
+    const text = serializeValue(value);
+    lastCopied = text;
+    navigator.clipboard?.writeText(text).catch(() => {});
+    onClose();
+  };
+ 
+  const handlePaste = async () => {
+    let text = null;
+    try { text = await navigator.clipboard.readText(); } catch { text = lastCopied; }
+    const result = coerceClipboard(field, text);
+    if (result.ok) onChange(result.value);
+    onClose();
+  };
+ 
+  const handleReset = () => {
+    onChange(getFieldDefault(field));
+    onClose();
+  };
+ 
+  return (
+    <ContextMenu x={x} y={y} onClose={onClose} className="inspector-ctx-menu" minWidth={150}>
+      <button type="button" className="inspector-ctx-item" onClick={handleCopy}>
+        <Copy size={12} /> Copy Value
+      </button>
+      <button type="button" className="inspector-ctx-item" disabled={disabled} onClick={handlePaste}>
+        <ClipboardPaste size={12} /> Paste Value
+      </button>
+      <div className="inspector-ctx-sep" />
+      <button type="button" className="inspector-ctx-item" disabled={disabled || isDefault} onClick={handleReset}>
+        <RotateCcw size={12} /> Reset Value
+      </button>
+    </ContextMenu>
+  );
+}
+ 
+function useFieldMenu({ field, value, onChange, disabled }) {
+  const [menu, setMenu] = useState(null);
+ 
+  const open = (e) => {
+    if (!field || field.type === 'button') return;
+    // Typing controls keep the native cut / copy / paste menu.
+    if (e.target?.closest?.('textarea, input[type="text"], input:not([type])')) return;
+    e.preventDefault();
+    e.stopPropagation(); // a nested field's menu must not also open its parent's
+    setMenu({ x: e.clientX, y: e.clientY });
+  };
+ 
+  const node = menu ? (
+    <FieldContextMenu
+      x={menu.x}
+      y={menu.y}
+      field={field}
+      value={value}
+      onChange={onChange}
+      disabled={disabled}
+      onClose={() => setMenu(null)}
+    />
+  ) : null;
+ 
+  return { open, node };
+}
+ 
+/**
+ * A row (or, with className `inspector-field-ctx`, a layout-neutral wrapper)
+ * that gives its field a right-click menu: Copy Value / Paste Value / Reset
+ * Value. A value that differs from its default marks the row `is-modified`
+ * (label turns bold, like a Unity prefab override).
+ *
+ * `field` only needs { name, type, defaultVal } (+ options / min / max / step
+ * for pasting), so hand-written rows in the built-in cards use it too.
+ */
+export function FieldContextRow({ field, value, onChange, disabled = false, className = 'inspector-row', children }) {
+  const current = value !== undefined ? value : getFieldDefault(field);
+  const { open, node } = useFieldMenu({ field, value: current, onChange, disabled });
+  const modified = !sameValue(current, getFieldDefault(field));
+  return (
+    <div className={`${className}${modified ? ' is-modified' : ''}`} onContextMenu={open}>
+      {children}
+      {node}
     </div>
   );
 }
@@ -507,19 +710,12 @@ export function InspectorField({
         return dragNumber;
       }
       case 'color':
-        return (
-          <input
-            type="color"
-            className="inspector-color-input"
-            value={currentVal || '#ffffff'}
-            disabled={disabled}
-            onChange={(e) => onChange(e.target.value)}
-          />
-        );
+        return <ColorField value={currentVal} onChange={onChange} disabled={disabled} />;
       case 'boolean':
         return (
           <input
             type="checkbox"
+            className="inspector-switch"
             checked={!!currentVal}
             disabled={disabled}
             onChange={(e) => onChange(e.target.checked)}
@@ -719,7 +915,7 @@ export function InspectorField({
   return body;
 }
  
-// ─── Layout ──────────────────────────────────────────────────────────���───────
+// ─── Layout ─────────────────────────────────────────────────────────────────
  
 /**
  * One grouped section: a `box` / `foldout`, or `plain` for ungrouped fields.
@@ -780,6 +976,29 @@ function InspectorSection({
     />
   );
  
+  // Inline (HorizontalGroup) fields share one row, so each control carries its
+  // own menu via a layout-neutral wrapper (display: contents).
+  const renderInlineField = (field) => (
+    <FieldContextRow
+      key={field.name}
+      className="inspector-field-ctx"
+      field={field}
+      value={values?.[field.name]}
+      onChange={(v) => onFieldChange(field.name, v)}
+      disabled={!groupEnabled || !isFieldEnabled(field, values)}
+    >
+      {renderField(field)}
+    </FieldContextRow>
+  );
+ 
+  // Single-field rows: the whole row (label included) is the right-click target.
+  const fieldRowProps = (field) => ({
+    field,
+    value: values?.[field.name],
+    onChange: (v) => onFieldChange(field.name, v),
+    disabled: !groupEnabled || !isFieldEnabled(field, values),
+  });
+ 
   const renderEntry = (entry) => {
     if (entry.kind === 'title') {
       return <div key={entry.key} className="inspector-group-title">{entry.label}</div>;
@@ -798,7 +1017,7 @@ function InspectorSection({
       return (
         <div key={entry.key} className="inspector-row">
           <span className="row-label" title={entryLabel({ kind: 'row', fields: rest })}>{entryLabel({ kind: 'row', fields: rest })}</span>
-          <div className="inspector-inline-group">{rest.map(renderField)}</div>
+          <div className="inspector-inline-group">{rest.map(renderInlineField)}</div>
         </div>
       );
     }
@@ -807,7 +1026,7 @@ function InspectorSection({
       return (
         <div key={entry.key} className="inspector-row">
           <span className="row-label" title={entryLabel(entry)}>{entryLabel(entry)}</span>
-          <div className="inspector-inline-group">{entry.fields.map(renderField)}</div>
+          <div className="inspector-inline-group">{entry.fields.map(renderInlineField)}</div>
         </div>
       );
     }
@@ -817,25 +1036,25 @@ function InspectorSection({
       // Structs, struct lists, primitive arrays and action buttons own the whole row: they draw
       // their own heading (or are labelled by their own text).
       return (
-        <div key={entry.key} className="inspector-row is-full-width">
+        <FieldContextRow key={entry.key} className="inspector-row is-full-width" {...fieldRowProps(field)}>
           {renderField(field)}
-        </div>
+        </FieldContextRow>
       );
     }
     if (field.toggleLeft && field.type === 'boolean') {
       // Odin's [ToggleLeft]: checkbox first, label after it, one row.
       return (
-        <div key={entry.key} className="inspector-row is-toggle-left">
+        <FieldContextRow key={entry.key} className="inspector-row is-toggle-left" {...fieldRowProps(field)}>
           {renderField(field)}
           <span className="row-label" title={field.label || field.name}>{field.label || field.name}</span>
-        </div>
+        </FieldContextRow>
       );
     }
     return (
-      <div key={entry.key} className="inspector-row">
+      <FieldContextRow key={entry.key} className="inspector-row" {...fieldRowProps(field)}>
         <span className="row-label" title={field.label || field.name}>{field.label || field.name}</span>
         {renderField(field)}
-      </div>
+      </FieldContextRow>
     );
   };
  
@@ -865,7 +1084,7 @@ function InspectorSection({
         {headerSwitch && (
           <input
             type="checkbox"
-            className="inspector-group-switch"
+            className="inspector-group-switch inspector-switch"
             checked={groupEnabled}
             title={headerSwitch.label}
             onChange={(e) => onFieldChange(headerSwitch.name, e.target.checked)}

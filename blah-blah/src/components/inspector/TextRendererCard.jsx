@@ -1,5 +1,5 @@
 import { Type, Trash2 } from 'lucide-react';
-import { InspectorFieldList, TEXT_RENDERER_FIELDS } from './InspectorField';
+import { InspectorFieldList, FieldContextRow, TEXT_RENDERER_FIELDS } from './InspectorField';
 import { FontFamilyPicker } from './FontFamilyPicker';
 import { EntityRefSlot } from './RefSlot';
 import { InspectorCardHeader } from './InspectorCardHeader';
@@ -69,7 +69,11 @@ export function TextRendererCard({
             onChange={(e) => updateComponent('TextRenderer', { text: e.target.value })}
           />
  
-          <div className="inspector-row">
+          <FieldContextRow
+            field={{ name: 'subtitleSourceId', type: 'entity', defaultVal: null }}
+            value={textComp.subtitleSourceId || null}
+            onChange={(id) => updateComponent('TextRenderer', { subtitleSourceId: id || null })}
+          >
             <span className="row-label">Subtitle Source</span>
             <EntityRefSlot
               value={textComp.subtitleSourceId || null}
@@ -77,7 +81,7 @@ export function TextRendererCard({
               entities={subtitleEntities}
               emptyLabel="None"
             />
-          </div>
+          </FieldContextRow>
           {subtitleComp && !textComp.subtitleSourceId && (
             <p className="hint-text-sm">Using this clip&apos;s Subtitle Track.</p>
           )}
@@ -92,13 +96,17 @@ export function TextRendererCard({
             onUpdateEntity={onUpdateEntity}
           />
  
-          <div className="inspector-row">
+          <FieldContextRow
+            field={{ name: 'fontFamily', type: 'font', defaultVal: 'Inter' }}
+            value={textComp.fontFamily || 'Inter'}
+            onChange={(family) => updateComponent('TextRenderer', { fontFamily: family })}
+          >
             <span className="row-label">Font</span>
             <FontFamilyPicker
               value={textComp.fontFamily || 'Inter'}
               onChange={(family) => updateComponent('TextRenderer', { fontFamily: family })}
             />
-          </div>
+          </FieldContextRow>
         </div>
       )}
     </div>

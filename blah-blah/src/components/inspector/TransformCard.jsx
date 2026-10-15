@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react';
 import { Link, Unlink, Copy, ClipboardPaste, RotateCcw } from 'lucide-react';
-import { InspectorFieldList, TRANSFORM_FIELD_GROUPS } from './InspectorField';
+import { InspectorFieldList, FieldContextRow, TRANSFORM_FIELD_GROUPS } from './InspectorField';
 import { InspectorCardHeader } from './InspectorCardHeader';
 import { getFieldKeyframes, setKeyframe, removeKeyframe } from '../../engine/keyframes';
 import './inspector-polish.css';
@@ -195,9 +195,30 @@ export function TransformCard({
             const isScale = group.label === 'Scale';
             const isPivot = group.label === 'Pivot';
             const isVector = group.fields.length > 1;
+            // One menu per row (Position, Scale, …): Copy / Paste / Reset act on
+            // every axis of the row at once, as one value.
+            const groupField = {
+              name: group.label,
+              type: 'object',
+              defaultVal: Object.fromEntries(group.fields.map((f) => [f.name, f.defaultVal])),
+            };
+            const groupValue = Object.fromEntries(
+              group.fields.map((f) => [f.name, values?.[f.name] ?? f.defaultVal])
+            );
+            const handleGroupChange = (patch) => {
+              const next = {};
+              group.fields.forEach((f) => {
+                let n = Number(patch?.[f.name]);
+                if (!Number.isFinite(n)) return;
+                if (Number.isFinite(f.min)) n = Math.max(f.min, n);
+                if (Number.isFinite(f.max)) n = Math.min(f.max, n);
+                next[f.name] = n;
+              });
+              if (Object.keys(next).length > 0) updateTransform(next);
+            };
             return (
               <Fragment key={group.label}>
-                <div className="inspector-row">
+                <FieldContextRow field={groupField} value={groupValue} onChange={handleGroupChange}>
                   <span
                     className={`row-label${isScale ? ' row-label-with-action' : ''}`}
                     title={group.label}
@@ -242,7 +263,7 @@ export function TransformCard({
                       />
                     )}
                   </div>
-                </div>
+                </FieldContextRow>
                 {isPivot && (
                   <div className="inspector-row">
                     <span className="row-label" title="Anchor">Anchor</span>

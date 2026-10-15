@@ -1,6 +1,7 @@
 import { Volume2 } from 'lucide-react';
 import { DragNumber } from '../shared/DragNumber';
 import { InspectorCardHeader } from './InspectorCardHeader';
+import { FieldContextRow } from './InspectorField';
  
 /**
  * Volume-only settings card, rendered once for VideoRenderer and once for
@@ -37,7 +38,11 @@ export function MediaSettingsCard({
       />
       {isOpen && (
         <div className="inspector-card-body">
-          <div className="inspector-row">
+          <FieldContextRow
+            field={{ name: 'volume', type: 'number', min: 0, max: 100, defaultVal: compType === 'AudioSource' ? 1 : 0 }}
+            value={parseFloat((comp.volume ?? (compType === 'AudioSource' ? 1 : 0)).toFixed(2))}
+            onChange={(v) => updateComponent(compType, { volume: v })}
+          >
             <span className="row-label">Volume</span>
             <DragNumber
               label="vol"
@@ -49,7 +54,7 @@ export function MediaSettingsCard({
                 updateComponent(compType, { volume: v });
               }}
             />
-          </div>
+          </FieldContextRow>
         </div>
       )}
     </div>
