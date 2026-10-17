@@ -397,6 +397,8 @@ export function drawShape3D(ctx, shapeComp, transform = {}) {
     strokeColor: shapeComp.strokeColor || '#0284c7',
     strokeWidth: shapeComp.strokeWidth ?? 1,
     shading: shapeComp.shading || 'lit',
+    focalLength: tf.focalLength || shapeComp.focalLength || 500,
+    lightDir: tf.lightDir || shapeComp.lightDir,
     width,
     height,
     depth,

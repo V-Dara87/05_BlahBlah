@@ -625,7 +625,7 @@ export async function drawExportFrame({
         }
  
         if (shapeComp) {
-          drawShape(ctx, shapeComp, overlayTransform, W, H, pivotBase);
+          drawShape(ctx, shapeComp, overlayTransform, W, H, pivotBase, projectedTransform?.focalLength);
         } else if (textComp) {
           drawText(ctx, textComp, entity, overlayTransform, W, H, entities, time, pivotBase, fit);
         }
@@ -796,11 +796,11 @@ function drawTransformedMedia(ctx, mediaEl, transform, width, height, { backdrop
  * the background fills the whole box including under the border. A
  * `shapeType: 'circle'` is `border-radius: 50%` — an ellipse when w ≠ h.
  */
-function drawShape(ctx, shapeComp, transform, width, height, pivotBase) {
+function drawShape(ctx, shapeComp, transform, width, height, pivotBase, focalLength = null) {
   if (is3DShape(shapeComp.shapeType)) {
     ctx.save();
     applyTransform(ctx, transform, width, height, pivotBase.w, pivotBase.h);
-    drawShape3D(ctx, shapeComp, null);
+    drawShape3D(ctx, shapeComp, { focalLength });
     ctx.restore();
     return;
   }

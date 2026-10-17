@@ -19,7 +19,7 @@ function findScriptDef(scripts, comp) {
   );
 }
 
-function Shape3DCanvas({ shapeComp, transform }) {
+function Shape3DCanvas({ shapeComp, proj }) {
   const canvasRef = useRef(null);
   const width = shapeComp.width || 140;
   const height = shapeComp.height || 140;
@@ -36,7 +36,7 @@ function Shape3DCanvas({ shapeComp, transform }) {
     ctx.clearRect(0, 0, cvs.width, cvs.height);
     ctx.save();
     ctx.translate(cvs.width / 2, cvs.height / 2);
-    drawShape3D(ctx, shapeComp, transform);
+    drawShape3D(ctx, shapeComp, { focalLength: proj?.focalLength });
     ctx.restore();
   });
 
@@ -299,7 +299,7 @@ export function OverlayLayer({
               // The parent div already handles position/rotateZ via CSS transform; 3D
               // camera projection handles rotateX/Y/Z via CSS too. Passing transform
               // here would double-apply those rotations.
-              <Shape3DCanvas shapeComp={shapeComp} transform={null} />
+              <Shape3DCanvas shapeComp={shapeComp} proj={proj} />
             ) : (
               <div
                 className="rendered-shape-node"
