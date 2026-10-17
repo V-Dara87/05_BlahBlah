@@ -38,6 +38,7 @@ import {
   resolveTransitionAudioForEntity,
 } from './renderPipeline.js';
 import { isScriptComponent, isVideoEntity, isAudioEntity } from './ecs.js';
+import { is3DShape, drawShape3D } from './geometry3d.js';
 import { getSharedGLTransitionRenderer } from './glTransitions.js';
 import { resolveEffectiveVolume, findEntityTrack } from '../utils/trackAudio.js';
 import { timeStretchChannels } from '../utils/timeStretch.js';
@@ -778,6 +779,14 @@ function drawTransformedMedia(ctx, mediaEl, transform, width, height, { backdrop
  * `shapeType: 'circle'` is `border-radius: 50%` — an ellipse when w ≠ h.
  */
 function drawShape(ctx, shapeComp, transform, width, height, pivotBase) {
+  if (is3DShape(shapeComp.shapeType)) {
+    ctx.save();
+    applyTransform(ctx, transform, width, height, pivotBase.w, pivotBase.h);
+    drawShape3D(ctx, shapeComp, null);
+    ctx.restore();
+    return;
+  }
+
   const w = shapeComp.width || 180;
   const h = shapeComp.height || 180;
   const isCircle = shapeComp.shapeType === 'circle';

@@ -315,6 +315,12 @@ export function canvasScript(def) {
     createRandom: MathUtils.createRandom,
     noise1D: MathUtils.noise1D,
     noise2D: MathUtils.noise2D,
+    wiggle: MathUtils.wiggle,
+    wiggle2D: MathUtils.wiggle2D,
+    drawCube3D: (opts) => drawCube3D(self.ctx, opts),
+    drawPyramid3D: (opts) => drawPyramid3D(self.ctx, opts),
+    drawCylinder3D: (opts) => drawCylinder3D(self.ctx, opts),
+    drawSphere3D: (opts) => drawSphere3D(self.ctx, opts),
   });
 
   class DefinedCanvasScript extends CanvasComponent {
@@ -1311,6 +1317,299 @@ export class AssetRef {
   exists() { return false; }
 }
 
+// ─── 3D Geometry & Procedural Mesh Helpers ────────────────────────────────────
+
+const DEG2RAD = Math.PI / 180;
+
+export function shadeColor(hex, factor) {
+  let c = hex ? String(hex).replace('#', '') : 'ffffff';
+  if (c.length === 3) c = c.split('').map((x) => x + x).join('');
+  const num = parseInt(c, 16);
+  if (Number.isNaN(num)) return hex;
+
+  const r = Math.min(255, Math.max(0, Math.round(((num >> 16) & 255) * factor)));
+  const g = Math.min(255, Math.max(0, Math.round(((num >> 8) & 255) * factor)));
+  const b = Math.min(255, Math.max(0, Math.round((num & 255) * factor)));
+
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+export function rotateVertex([x, y, z], rxDeg = 0, ryDeg = 0, rzDeg = 0) {
+  const rx = rxDeg * DEG2RAD;
+  const ry = ryDeg * DEG2RAD;
+  const rz = rzDeg * DEG2RAD;
+
+  let y1 = y * Math.cos(rx) - z * Math.sin(rx);
+  let z1 = y * Math.sin(rx) + z * Math.cos(rx);
+  let x1 = x;
+
+  let x2 = x1 * Math.cos(ry) + z1 * Math.sin(ry);
+  let z2 = -x1 * Math.sin(ry) + z1 * Math.cos(ry);
+  let y2 = y1;
+
+  let x3 = x2 * Math.cos(rz) - y2 * Math.sin(rz);
+  let y3 = x2 * Math.sin(rz) + y2 * Math.cos(rz);
+  let z3 = z2;
+
+  return [x3, y3, z3];
+}
+
+export function calculateNormal(v0, v1, v2) {
+  const ax = v1[0] - v0[0];
+  const ay = v1[1] - v0[1];
+  const az = v1[2] - v0[2];
+
+  const bx = v2[0] - v0[0];
+  const by = v2[1] - v0[1];
+  const bz = v2[2] - v0[2];
+
+  const nx = ay * bz - az * by;
+  const ny = az * bx - ax * bz;
+  const nz = ax * by - ay * bx;
+
+  const len = Math.hypot(nx, ny, nz) || 1e-6;
+  return [nx / len, ny / len, nz / len];
+}
+
+export function createCubeMesh(w = 140, h = 140, d = 140) {
+  const hw = w / 2;
+  const hh = h / 2;
+  const hd = d / 2;
+
+  const vertices = [
+    [-hw, -hh, -hd],
+    [hw, -hh, -hd],
+    [hw, hh, -hd],
+    [-hw, hh, -hd],
+    [-hw, -hh, hd],
+    [hw, -hh, hd],
+    [hw, hh, hd],
+    [-hw, hh, hd],
+  ];
+
+  const faces = [
+    [0, 1, 2, 3],
+    [5, 4, 7, 6],
+    [4, 5, 1, 0],
+    [3, 2, 6, 7],
+    [4, 0, 3, 7],
+    [1, 5, 6, 2],
+  ];
+
+  return { vertices, faces };
+}
+
+export function createPyramidMesh(w = 140, h = 140, d = 140) {
+  const hw = w / 2;
+  const hh = h / 2;
+  const hd = d / 2;
+
+  const vertices = [
+    [0, -hh, 0],
+    [-hw, hh, -hd],
+    [hw, hh, -hd],
+    [hw, hh, hd],
+    [-hw, hh, hd],
+  ];
+
+  const faces = [
+    [0, 2, 1],
+    [0, 3, 2],
+    [0, 4, 3],
+    [0, 1, 4],
+    [1, 2, 3, 4],
+  ];
+
+  return { vertices, faces };
+}
+
+export function createCylinderMesh(radius = 70, height = 140, segments = 16) {
+  const vertices = [];
+  const hh = height / 2;
+  const step = (Math.PI * 2) / segments;
+
+  for (let i = 0; i < segments; i++) {
+    const angle = i * step;
+    vertices.push([Math.cos(angle) * radius, -hh, Math.sin(angle) * radius]);
+  }
+
+  for (let i = 0; i < segments; i++) {
+    const angle = i * step;
+    vertices.push([Math.cos(angle) * radius, hh, Math.sin(angle) * radius]);
+  }
+
+  const faces = [];
+
+  for (let i = 0; i < segments; i++) {
+    const next = (i + 1) % segments;
+    faces.push([i, next, next + segments, i + segments]);
+  }
+
+  const topCap = [];
+  for (let i = segments - 1; i >= 0; i--) topCap.push(i);
+  faces.push(topCap);
+
+  const bottomCap = [];
+  for (let i = 0; i < segments; i++) bottomCap.push(i + segments);
+  faces.push(bottomCap);
+
+  return { vertices, faces };
+}
+
+export function createSphereMesh(radius = 70, rings = 10, segments = 14) {
+  const vertices = [];
+  const faces = [];
+
+  for (let r = 0; r <= rings; r++) {
+    const theta = (r * Math.PI) / rings;
+    const sinTheta = Math.sin(theta);
+    const cosTheta = Math.cos(theta);
+
+    for (let s = 0; s <= segments; s++) {
+      const phi = (s * 2 * Math.PI) / segments;
+      const x = Math.cos(phi) * sinTheta * radius;
+      const y = -cosTheta * radius;
+      const z = Math.sin(phi) * sinTheta * radius;
+      vertices.push([x, y, z]);
+    }
+  }
+
+  const stride = segments + 1;
+  for (let r = 0; r < rings; r++) {
+    for (let s = 0; s < segments; s++) {
+      const first = r * stride + s;
+      const second = first + stride;
+
+      if (r === 0) {
+        faces.push([first, second, second + 1]);
+      } else if (r === rings - 1) {
+        faces.push([first, second, first + 1]);
+      } else {
+        faces.push([first, second, second + 1, first + 1]);
+      }
+    }
+  }
+
+  return { vertices, faces };
+}
+
+export function renderMesh3D(ctx, mesh, {
+  x = 0,
+  y = 0,
+  rotationX = 0,
+  rotationY = 0,
+  rotationZ = 0,
+  scaleX = 1,
+  scaleY = 1,
+  scaleZ = 1,
+  color = '#38bdf8',
+  strokeColor = '#0284c7',
+  strokeWidth = 1,
+  shading = 'lit',
+  lightDir = [0.4, -0.6, -0.7],
+  ambient = 0.35,
+  diffuse = 0.65,
+  focalLength = 1000,
+} = {}) {
+  if (!mesh || !mesh.vertices || !mesh.faces || !ctx) return;
+
+  const lightLen = Math.hypot(...lightDir) || 1;
+  const lx = lightDir[0] / lightLen;
+  const ly = lightDir[1] / lightLen;
+  const lz = lightDir[2] / lightLen;
+
+  const transformed = mesh.vertices.map((v) => {
+    const sx = v[0] * scaleX;
+    const sy = v[1] * scaleY;
+    const sz = v[2] * scaleZ;
+    const [rx, ry, rz] = rotateVertex([sx, sy, sz], rotationX, rotationY, rotationZ);
+    return [rx + x, ry + y, rz];
+  });
+
+  const projected = transformed.map(([vx, vy, vz]) => {
+    const dist = focalLength + vz;
+    const factor = dist > 1 ? focalLength / dist : 1;
+    return [vx * factor, vy * factor, vz];
+  });
+
+  const sortedFaces = mesh.faces.map((indices) => {
+    let avgZ = 0;
+    for (const idx of indices) {
+      avgZ += transformed[idx][2];
+    }
+    avgZ /= indices.length;
+
+    const v0 = transformed[indices[0]];
+    const v1 = transformed[indices[1]];
+    const v2 = transformed[indices[2]];
+    const normal = calculateNormal(v0, v1, v2);
+
+    return { indices, avgZ, normal };
+  });
+
+  sortedFaces.sort((a, b) => b.avgZ - a.avgZ);
+
+  ctx.save();
+
+  for (const { indices, normal } of sortedFaces) {
+    if (indices.length < 3) continue;
+
+    const dot = Math.max(0, normal[0] * lx + normal[1] * ly + normal[2] * lz);
+    const intensity = shading === 'lit' ? Math.min(1.0, ambient + diffuse * dot) : 1.0;
+    const faceFill = shading === 'lit' ? shadeColor(color, intensity) : color;
+
+    ctx.beginPath();
+    const first = projected[indices[0]];
+    ctx.moveTo(first[0], first[1]);
+
+    for (let i = 1; i < indices.length; i++) {
+      const pt = projected[indices[i]];
+      ctx.lineTo(pt[0], pt[1]);
+    }
+    ctx.closePath();
+
+    if (shading !== 'wireframe') {
+      ctx.fillStyle = faceFill;
+      ctx.fill();
+    }
+
+    if (strokeWidth > 0 || shading === 'wireframe') {
+      ctx.strokeStyle = strokeColor || shadeColor(color, 0.7);
+      ctx.lineWidth = strokeWidth || 1;
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+    }
+  }
+
+  ctx.restore();
+}
+
+export function drawCube3D(ctx, options = {}) {
+  const { width = 140, height = 140, depth = 140 } = options;
+  const mesh = createCubeMesh(width, height, depth);
+  renderMesh3D(ctx, mesh, options);
+}
+
+export function drawPyramid3D(ctx, options = {}) {
+  const { width = 140, height = 140, depth = 140 } = options;
+  const mesh = createPyramidMesh(width, height, depth);
+  renderMesh3D(ctx, mesh, options);
+}
+
+export function drawCylinder3D(ctx, options = {}) {
+  const { width = 140, height = 140, segments = 16 } = options;
+  const radius = width / 2;
+  const mesh = createCylinderMesh(radius, height, segments);
+  renderMesh3D(ctx, mesh, options);
+}
+
+export function drawSphere3D(ctx, options = {}) {
+  const { width = 140, rings = 10, segments = 14 } = options;
+  const radius = width / 2;
+  const mesh = createSphereMesh(radius, rings, segments);
+  renderMesh3D(ctx, mesh, options);
+}
+
 export default {
   MotionScript,
   CanvasComponent,
@@ -1341,5 +1640,16 @@ export default {
   mergeManualOverrides,
   wiggle,
   wiggle2D,
+  createCubeMesh,
+  createPyramidMesh,
+  createCylinderMesh,
+  createSphereMesh,
+  rotateVertex,
+  shadeColor,
+  renderMesh3D,
+  drawCube3D,
+  drawPyramid3D,
+  drawCylinder3D,
+  drawSphere3D,
 };
 

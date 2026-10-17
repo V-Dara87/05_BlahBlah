@@ -1,8 +1,9 @@
-import { Fragment } from 'react';
+import { Fragment, useRef, useLayoutEffect } from 'react';
 import { getCompiledReactComponent, detectScriptKind, extractScriptProps } from '../../engine/scriptRunner';
 import { resolveScriptProps } from '../../engine/referenceTypes';
 import { resolveTextRendererText, cssFontFamily, DEFAULT_TEXT_FONT_SIZE, DEFAULT_TEXT_FONT_COLOR, DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_WEIGHT } from '../../engine/textRenderer';
 import { isScriptComponent } from '../../engine/ecs';
+import { is3DShape, drawShape3D } from '../../engine/geometry3d';
 import { EntityErrorBoundary } from '../entity/EntityErrorBoundary';
 import { ScriptGizmoOverlay } from './ScriptGizmoOverlay';
 import './overlay-layer.css';
@@ -15,6 +16,44 @@ function findScriptDef(scripts, comp) {
       s.name === comp.scriptName ||
       s.name === `${comp.scriptName}.jsx` ||
       s.id === `script-${comp.scriptName}`
+  );
+}
+
+function Shape3DCanvas({ shapeComp, transform }) {
+  const canvasRef = useRef(null);
+  const width = shapeComp.width || 140;
+  const height = shapeComp.height || 140;
+  const depth = shapeComp.depth || width || 140;
+  const maxDim = Math.max(width, height, depth);
+  const cvsSize = Math.ceil(maxDim * 2.2);
+
+  useLayoutEffect(() => {
+    const cvs = canvasRef.current;
+    if (!cvs) return;
+    const ctx = cvs.getContext('2d');
+    if (!ctx) return;
+
+    ctx.clearRect(0, 0, cvs.width, cvs.height);
+    ctx.save();
+    ctx.translate(cvs.width / 2, cvs.height / 2);
+    drawShape3D(ctx, shapeComp, transform);
+    ctx.restore();
+  });
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="rendered-shape-3d-canvas"
+      width={cvsSize}
+      height={cvsSize}
+      style={{
+        width: `${cvsSize}px`,
+        height: `${cvsSize}px`,
+        marginLeft: `${(width - cvsSize) / 2}px`,
+        marginTop: `${(height - cvsSize) / 2}px`,
+        pointerEvents: 'none',
+      }}
+    />
   );
 }
 
@@ -255,28 +294,36 @@ export function OverlayLayer({
  
           {/* Shape Component */}
           {shapeComp && (
-            <div
-              className="rendered-shape-node"
-              style={{
-                width: `${shapeComp.width || 180}px`,
-                height: `${shapeComp.height || 180}px`,
-                backgroundColor: shapeComp.color || '#ffffff',
-                borderColor: shapeComp.strokeColor || '#38bdf8',
-                borderWidth: `${shapeComp.strokeWidth || 0}px`,
-                borderStyle: shapeComp.strokeWidth ? 'solid' : 'none',
-                // Roundness — `?? 0` (not `||`) so an explicit 0 is
-                // respected instead of silently falling back to a
-                // default radius. Previously `shapeComp.borderRadius
-                // ? ... : '12px'` meant a shape could never actually
-                // render with sharp corners: 0 is falsy in JS, so it
-                // always fell through to the 12px default regardless
-                // of what the Inspector's Roundness field was set to.
-                borderRadius:
-                  shapeComp.shapeType === 'circle'
-                    ? '50%'
-                    : `${shapeComp.borderRadius ?? 0}px`,
-              }}
-            />
+            is3DShape(shapeComp.shapeType) ? (
+              // Pass transform=null so drawShape3D only reads shapeComp.rotationX/Y/Z.
+              // The parent div already handles position/rotateZ via CSS transform; 3D
+              // camera projection handles rotateX/Y/Z via CSS too. Passing transform
+              // here would double-apply those rotations.
+              <Shape3DCanvas shapeComp={shapeComp} transform={null} />
+            ) : (
+              <div
+                className="rendered-shape-node"
+                style={{
+                  width: `${shapeComp.width || 180}px`,
+                  height: `${shapeComp.height || 180}px`,
+                  backgroundColor: shapeComp.color || '#ffffff',
+                  borderColor: shapeComp.strokeColor || '#38bdf8',
+                  borderWidth: `${shapeComp.strokeWidth || 0}px`,
+                  borderStyle: shapeComp.strokeWidth ? 'solid' : 'none',
+                  // Roundness — `?? 0` (not `||`) so an explicit 0 is
+                  // respected instead of silently falling back to a
+                  // default radius. Previously `shapeComp.borderRadius
+                  // ? ... : '12px'` meant a shape could never actually
+                  // render with sharp corners: 0 is falsy in JS, so it
+                  // always fell through to the 12px default regardless
+                  // of what the Inspector's Roundness field was set to.
+                  borderRadius:
+                    shapeComp.shapeType === 'circle'
+                      ? '50%'
+                      : `${shapeComp.borderRadius ?? 0}px`,
+                }}
+              />
+            )
           )}
  
           {/* Text Component */}

@@ -204,6 +204,62 @@ export class ThreeComponent extends MotionScript {
   aspect: number;
 }
 
+// ─── 3D Geometry & Mesh Rendering ────────────────────────────────────────────
+
+/** Options accepted by `drawCube3D`, `drawPyramid3D`, `drawCylinder3D`, `drawSphere3D`. */
+export interface Draw3DOptions {
+  /** Center X in the canvas coordinate space (default: 0). */
+  x?: number;
+  /** Center Y in the canvas coordinate space (default: 0). */
+  y?: number;
+  /** Width of the shape (default: 100). */
+  width?: number;
+  /** Height of the shape (default: 100). */
+  height?: number;
+  /** Depth of the shape — ignored for sphere (default: width). */
+  depth?: number;
+  /** Rotation around the X axis in degrees. */
+  rotationX?: number;
+  /** Rotation around the Y axis in degrees. */
+  rotationY?: number;
+  /** Rotation around the Z axis in degrees. */
+  rotationZ?: number;
+  /** Non-uniform X scale multiplier (default: 1). */
+  scaleX?: number;
+  /** Non-uniform Y scale multiplier (default: 1). */
+  scaleY?: number;
+  /** Non-uniform Z scale multiplier (default: 1). */
+  scaleZ?: number;
+  /** Fill colour as a CSS colour string (default: '#4a9eff'). */
+  color?: string;
+  /** Stroke/edge colour (default: '#1a3a5c'). */
+  strokeColor?: string;
+  /** Stroke width in pixels (default: 1). */
+  strokeWidth?: number;
+  /**
+   * Shading model:
+   * - `'lit'`       — Lambert diffuse + ambient (default)
+   * - `'flat'`      — flat colour, no lighting
+   * - `'wireframe'` — edges only, no fill
+   */
+  shading?: 'lit' | 'flat' | 'wireframe';
+  /** Number of radial segments for cylinder/sphere (default: 16). */
+  segments?: number;
+  /** Number of latitude rings for sphere (default: 10). */
+  rings?: number;
+  /** Perspective focal length in pixels (default: 500). */
+  focalLength?: number;
+  /** Normalised light direction vector `[x, y, z]` (default: `[0.5, -1, 0.8]`). */
+  lightDir?: [number, number, number];
+  /** Ambient light intensity in [0, 1] (default: 0.3). */
+  ambient?: number;
+  /** Diffuse light intensity in [0, 1] (default: 0.7). */
+  diffuse?: number;
+}
+
+/** 3D primitive shape type identifiers. */
+export type ShapeType3D = 'cube' | 'cylinder' | 'pyramid' | 'sphere';
+
 // ─── Function-style scripts: canvasScript / motionScript ─────────────────────
 
 /** What a prop helper (`num`, `color`, …) returns. `T` is the value the script receives. */
@@ -236,6 +292,18 @@ export interface CanvasScriptFrame<P = Record<string, any>> extends MotionScript
   noise1D: (x: number, seed?: number | string) => number;
   /** Deterministic 2D Smooth Noise in [-1, 1]. */
   noise2D: (x: number, y: number, seed?: number | string) => number;
+  /** After Effects-style natural wiggle fluctuation. */
+  wiggle: (time: number, freq?: number, amp?: number, octaves?: number, seed?: number | string) => number;
+  /** After Effects-style 2D natural wiggle fluctuation [x, y]. */
+  wiggle2D: (time: number, freq?: number, amp?: number, octaves?: number, seed?: number | string) => [number, number];
+  /** Draw a 3D Cube / Box. */
+  drawCube3D: (options?: Draw3DOptions) => void;
+  /** Draw a 3D Pyramid. */
+  drawPyramid3D: (options?: Draw3DOptions) => void;
+  /** Draw a 3D Cylinder. */
+  drawCylinder3D: (options?: Draw3DOptions) => void;
+  /** Draw a 3D Sphere. */
+  drawSphere3D: (options?: Draw3DOptions) => void;
 }
 
 /** `this` inside canvasScript functions: the script instance; add your own state freely. */
