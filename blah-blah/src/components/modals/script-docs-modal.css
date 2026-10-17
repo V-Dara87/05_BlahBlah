@@ -16,7 +16,7 @@
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
   overflow: hidden;
 }
- 
+
 /* Scoped under the card so it beats `.modal-body` in styles/shared.css, which
    sets `flex-direction: column` + its own padding and — because shared.css is
    bundled AFTER this file — was winning the tie. That stacked the table of
@@ -36,7 +36,7 @@
   flex: 1 1 auto;
   overflow: hidden;
 }
- 
+
 .docs-toc {
   flex-shrink: 0;
   width: 170px;
@@ -81,7 +81,7 @@
   border-left-color: var(--unity-accent-blue);
   color: var(--unity-accent-blue);
 }
- 
+
 .docs-content {
   flex: 1;
   min-width: 0;
@@ -95,31 +95,32 @@
   line-height: 1.6;
   color: var(--unity-text);
 }
- 
+
 .docs-heading {
   color: #fff;
   font-weight: 600;
   margin: 18px 0 8px;
   line-height: 1.3;
 }
- 
+
 .docs-heading:first-child {
   margin-top: 0;
 }
- 
+
 .docs-content h2.docs-heading { font-size: 16px; }
- 
+
 .docs-content h3.docs-heading { font-size: 13px; }
- 
+
 .docs-content h4.docs-heading { font-size: 12px; color: var(--unity-text); }
- 
+
 .docs-paragraph {
   margin: 0 0 10px;
   color: var(--unity-text-muted);
 }
- 
+
 .docs-paragraph code,
-.docs-list code {
+.docs-list code,
+.docs-list-ordered code {
   background: var(--unity-dark);
   border: 1px solid var(--unity-border);
   border-radius: 3px;
@@ -128,23 +129,23 @@
   color: var(--unity-accent-soft);
   font-family: 'JetBrains Mono', ui-monospace, monospace;
 }
- 
+
 .docs-list {
   margin: 0 0 12px;
   padding-left: 18px;
   color: var(--unity-text-muted);
 }
- 
+
 .docs-list li {
   margin-bottom: 4px;
 }
- 
+
 .docs-hr {
   border: none;
   border-top: 1px solid var(--unity-border);
   margin: 18px 0;
 }
- 
+
 .docs-code-block {
   background: var(--unity-darkest);
   border: 1px solid var(--unity-border);
@@ -153,7 +154,7 @@
   margin: 0 0 12px;
   overflow-x: auto;
 }
- 
+
 .docs-code-block code {
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: 11px;
@@ -161,14 +162,14 @@
   color: #d4d4d8;
   white-space: pre;
 }
- 
+
 .docs-table {
   width: 100%;
   border-collapse: collapse;
   margin: 0 0 14px;
   font-size: 11px;
 }
- 
+
 .docs-table th,
 .docs-table td {
   border: 1px solid var(--unity-border);
@@ -176,17 +177,89 @@
   text-align: left;
   vertical-align: top;
 }
- 
+
 .docs-table th {
   background: var(--unity-dark);
   color: #fff;
   font-weight: 600;
 }
- 
+
 .docs-table td {
   color: var(--unity-text-muted);
 }
- 
+
+.docs-table code {
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 10px;
+  color: var(--unity-accent-soft);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+/* Callout block for alerts / critical guidelines */
+.docs-callout {
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.28);
+  border-left: 4px solid #10b981;
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin: 14px 0 18px;
+}
+
+.docs-callout .docs-paragraph {
+  color: #e4e4e7;
+  margin-bottom: 8px;
+}
+
+.docs-callout .docs-paragraph:last-child,
+.docs-callout .docs-list:last-child,
+.docs-callout .docs-list-ordered:last-child {
+  margin-bottom: 0;
+}
+
+.docs-callout strong {
+  color: #6ee7b7;
+}
+
+.docs-callout code {
+  background: rgba(0, 0, 0, 0.35);
+  border-color: rgba(16, 185, 129, 0.3);
+  color: #a7f3d0;
+}
+
+/* Ordered list styling */
+.docs-list-ordered {
+  list-style-type: decimal;
+  padding-left: 22px;
+  margin: 0 0 12px;
+  color: var(--unity-text-muted);
+}
+
+.docs-list-ordered li {
+  margin-bottom: 6px;
+  padding-left: 4px;
+}
+
+.docs-list-ordered li strong,
+.docs-list li strong {
+  color: #fff;
+}
+
+/* Links */
+.docs-link {
+  color: var(--unity-accent-blue);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Emphasis */
+.docs-content em {
+  font-style: italic;
+  color: #cbd5e1;
+}
+
 /* Scoped for the same cascade reason as the body above: `.script-footer`
    (shared.css) sets `justify-content: flex-end` and would otherwise win. */
 .docs-modal-card .docs-modal-footer {
@@ -195,7 +268,7 @@
   align-items: center;
   justify-content: space-between;
 }
- 
+
 .docs-copy-hint {
   flex: 1;
 }
