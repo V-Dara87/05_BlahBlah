@@ -1610,6 +1610,85 @@ export function drawSphere3D(ctx, options = {}) {
   renderMesh3D(ctx, mesh, options);
 }
 
+// ─── 3D Camera & Matrix Utilities ─────────────────────────────────────────────
+
+export function createDefaultCamera(overrides = {}) {
+  return {
+    type: 'Camera',
+    position: { x: 0, y: 0, z: -1000, ...(overrides.position || {}) },
+    target: { x: 0, y: 0, z: 0, ...(overrides.target || {}) },
+    roll: overrides.roll ?? 0,
+    fov: overrides.fov ?? 50,
+    zoom: overrides.zoom ?? 1.0,
+    enabled: overrides.enabled !== false,
+  };
+}
+
+export function getFocalLength(viewportHeight, fovDegrees = 50) {
+  const fovRad = (Math.max(1, Math.min(170, fovDegrees)) * Math.PI) / 180;
+  return (viewportHeight / 2) / Math.tan(fovRad / 2);
+}
+
+export function orbitCamera(target, distance, azimuthDeg, elevationDeg) {
+  const azRad = (azimuthDeg * Math.PI) / 180;
+  const elRad = (elevationDeg * Math.PI) / 180;
+  return {
+    x: target.x + distance * Math.cos(elRad) * Math.sin(azRad),
+    y: target.y - distance * Math.sin(elRad),
+    z: target.z - distance * Math.cos(elRad) * Math.cos(azRad),
+  };
+}
+
+export function mat4Identity() {
+  return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+}
+
+export function mat4Multiply(a, b) {
+  const out = new Array(16);
+  for (let c = 0; c < 4; c++) {
+    const b0 = b[c * 4 + 0], b1 = b[c * 4 + 1], b2 = b[c * 4 + 2], b3 = b[c * 4 + 3];
+    out[c * 4 + 0] = a[0] * b0 + a[4] * b1 + a[8] * b2 + a[12] * b3;
+    out[c * 4 + 1] = a[1] * b0 + a[5] * b1 + a[9] * b2 + a[13] * b3;
+    out[c * 4 + 2] = a[2] * b0 + a[6] * b1 + a[10] * b2 + a[14] * b3;
+    out[c * 4 + 3] = a[3] * b0 + a[7] * b1 + a[11] * b2 + a[15] * b3;
+  }
+  return out;
+}
+
+export function mat4LookAt(eye, target, rollRad = 0) {
+  const ex = eye?.x ?? 0, ey = eye?.y ?? 0, ez = eye?.z ?? -1000;
+  const tx = target?.x ?? 0, ty = target?.y ?? 0, tz = target?.z ?? 0;
+  let fx = tx - ex, fy = ty - ey, fz = tz - ez;
+  let len = Math.hypot(fx, fy, fz);
+  if (len < 1e-6) { fx = 0; fy = 0; fz = 1; } else { fx /= len; fy /= len; fz /= len; }
+  let refDx = 0, refDy = 1, refDz = 0;
+  if (Math.abs(fy) > 0.9999) { refDx = 0; refDy = 0; refDz = fy > 0 ? -1 : 1; }
+  let rx = refDy * fz - refDz * fy, ry = refDz * fx - refDx * fz, rz = refDx * fy - refDy * fx;
+  let rlen = Math.hypot(rx, ry, rz);
+  if (rlen < 1e-6) { rx = 1; ry = 0; rz = 0; } else { rx /= rlen; ry /= rlen; rz /= rlen; }
+  let dx = fy * rz - fz * ry, dy = fz * rx - fx * rz, dz = fx * ry - fy * rx;
+  if (rollRad !== 0) {
+    const cosR = Math.cos(rollRad), sinR = Math.sin(rollRad);
+    const nrx = rx * cosR + dx * sinR, nry = ry * cosR + dy * sinR, nrz = rz * cosR + dz * sinR;
+    const ndx = -rx * sinR + dx * cosR, ndy = -ry * sinR + dy * cosR, ndz = -rz * sinR + dz * cosR;
+    rx = nrx; ry = nry; rz = nrz; dx = ndx; dy = ndy; dz = ndz;
+  }
+  return [
+    rx, dx, fx, 0,
+    ry, dy, fy, 0,
+    rz, dz, fz, 0,
+    -(rx * ex + ry * ey + rz * ez),
+    -(dx * ex + dy * ey + dz * ez),
+    -(fx * ex + fy * ey + fz * ez),
+    1,
+  ];
+}
+
+export function mat4ToCSS(m) {
+  const formatted = m.map((v) => (Math.abs(v) < 1e-7 ? 0 : Number(v.toFixed(6))));
+  return `matrix3d(${formatted.join(',')})`;
+}
+
 export default {
   MotionScript,
   CanvasComponent,
@@ -1651,5 +1730,12 @@ export default {
   drawPyramid3D,
   drawCylinder3D,
   drawSphere3D,
+  createDefaultCamera,
+  getFocalLength,
+  orbitCamera,
+  mat4Identity,
+  mat4Multiply,
+  mat4LookAt,
+  mat4ToCSS,
 };
 

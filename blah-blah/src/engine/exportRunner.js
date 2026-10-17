@@ -399,6 +399,7 @@ export async function drawExportFrame({
     // Same as EntityRenderer.jsx: motion scripts resolve asset-typed props
     // against the real media library, not an empty list.
     allAssets: mediaAssets,
+    viewport: { width: W, height: H },
   });
  
   const trackZIndexOf = (trackId) => {
@@ -465,7 +466,8 @@ export async function drawExportFrame({
     ctx.rect(0, 0, W, H);
     ctx.clip();
  
-    for (const { entity, transform, localTime, transitionState, transitionBlend } of drawOrder) {
+    for (const item of drawOrder) {
+      const { entity, transform, localTime, transitionState, transitionBlend, is3D, projectedTransform } = item;
       if (transitionBlend) {
         try {
           drawTransitionBlend(ctx, transitionBlend, transform, W, H, videoFrameProvider);
@@ -475,6 +477,22 @@ export async function drawExportFrame({
         continue;
       }
       if (isAudioEntity(entity)) continue;
+
+      // 3D Near plane clipping: cull layers behind camera
+      if (is3D && projectedTransform && !projectedTransform.inFrontOfCamera) {
+        continue;
+      }
+
+      const activeTransform = (is3D && projectedTransform)
+        ? {
+            ...transform,
+            x: projectedTransform.screenX - W / 2,
+            y: projectedTransform.screenY - H / 2,
+            scaleX: projectedTransform.scaleX,
+            scaleY: projectedTransform.scaleY,
+            rotation: projectedTransform.rotationZ,
+          }
+        : transform;
  
       try {
         if (isVideoEntity(entity)) {
@@ -509,7 +527,7 @@ export async function drawExportFrame({
           // whole frame-sized box (video-layer.css), so letterbox bars are
           // opaque black. While a GL transition runs the video is hidden and
           // the (transparent) transition canvas shows instead — no backdrop.
-          drawTransformedMedia(ctx, mediaToDraw, transform, W, H, { backdrop: mediaToDraw === video });
+          drawTransformedMedia(ctx, mediaToDraw, activeTransform, W, H, { backdrop: mediaToDraw === video });
           continue;
         }
  
@@ -523,8 +541,8 @@ export async function drawExportFrame({
           : 1;
         const overlayTransform =
           transitionFactor === 1
-            ? transform
-            : { ...transform, opacity: (transform.opacity ?? 1) * transitionFactor };
+            ? activeTransform
+            : { ...activeTransform, opacity: (activeTransform.opacity ?? 1) * transitionFactor };
  
         // Preview pivots around `pivot × (the entity's own box size)` — for
         // overlays that is the first component's width/height (180 fallback),

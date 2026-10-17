@@ -182,7 +182,7 @@ export function OverlayLayer({
     const renderRotZ = is3D ? proj.rotationZ : (transform.rotation || 0);
 
     const cssTransform = is3D
-      ? `translate(calc(-50% + ${renderX}px), calc(-50% + ${renderY}px)) rotateX(${renderRotX}deg) rotateY(${renderRotY}deg) rotateZ(${renderRotZ}deg) scale(${renderScaleX}, ${renderScaleY})`
+      ? (proj.cssTransform || `translate(calc(-50% + ${renderX}px), calc(-50% + ${renderY}px)) rotateX(${renderRotX}deg) rotateY(${renderRotY}deg) rotateZ(${renderRotZ}deg) scale(${renderScaleX}, ${renderScaleY})`)
       : `translate(calc(-50% + ${transform.x}px), calc(-50% + ${transform.y}px)) rotate(${transform.rotation}deg) scale(${transform.scaleX}, ${transform.scaleY})`;
 
     const computedZIndex = is3D ? proj.zIndex : ((isSelected ? 1000 : 0) + 100 + layerZIndexOf(item));

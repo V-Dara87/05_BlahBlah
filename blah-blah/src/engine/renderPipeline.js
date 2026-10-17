@@ -75,7 +75,7 @@ import {
   isCameraEntity,
   getCameraComponent,
 } from './ecs.js';
-import { project3DLayer } from './camera3d.js';
+import { project3DLayer, findActiveCamera, buildLayerMatrix } from './camera3d.js';
  
 const IDENTITY = { x: 0, y: 0, z: 0, rotation: 0, rotationX: 0, rotationY: 0, scaleX: 1, scaleY: 1, scaleZ: 1, opacity: 1, is3D: false };
  
@@ -396,7 +396,16 @@ export function buildActiveEntityIndex({ entities, tracks = [] }) {
  *   per-frame calls, every test) one is built — and memoized — internally, so
  *   both routes share one visibility implementation. See buildActiveEntityIndex.
  */
-export function computeActiveEntitiesAtTime({ entities, tracks = [], scripts = [], time, fps = 30, allAssets = [], index = null }) {
+export function computeActiveEntitiesAtTime({
+  entities,
+  tracks = [],
+  scripts = [],
+  time,
+  fps = 30,
+  allAssets = [],
+  index = null,
+  viewport = { width: 1920, height: 1080 },
+}) {
   // The visibility rule lives in ONE place: the index. Callers that already
   // hold an index for this exact entities/tracks pair (the live preview, which
   // rebuilds it only when the project changes — see EntityRenderer.jsx) skip
@@ -429,7 +438,8 @@ export function computeActiveEntitiesAtTime({ entities, tracks = [], scripts = [
   // Compose world transforms hierarchically
   const worldMap = new Map();
   const depthMap = new Map();
- 
+  const worldMatrixMap = new Map();
+
   function resolveWorld(entityId, visited = new Set()) {
     if (worldMap.has(entityId)) return worldMap.get(entityId);
     const local = localMap.get(entityId);
@@ -438,54 +448,32 @@ export function computeActiveEntitiesAtTime({ entities, tracks = [], scripts = [
       // Break circular cycle
       worldMap.set(entityId, local.localTransform);
       depthMap.set(entityId, 0);
+      worldMatrixMap.set(entityId, buildLayerMatrix(local.localTransform));
       return local.localTransform;
     }
     visited.add(entityId);
- 
+
     const parentId = local.entity.parentId;
     if (!parentId || !localMap.has(parentId)) {
       worldMap.set(entityId, local.localTransform);
       depthMap.set(entityId, 0);
+      worldMatrixMap.set(entityId, buildLayerMatrix(local.localTransform));
       return local.localTransform;
     }
- 
+
     const parentWorld = resolveWorld(parentId, visited);
     const worldTransform = composeTransform2D(parentWorld, local.localTransform);
     const parentDepth = depthMap.get(parentId) || 0;
     worldMap.set(entityId, worldTransform);
     depthMap.set(entityId, parentDepth + 1);
+
+    const parentMat = worldMatrixMap.get(parentId);
+    worldMatrixMap.set(entityId, buildLayerMatrix(local.localTransform, parentMat));
     return worldTransform;
   }
 
-  // Find active 3D Camera (if any is active on timeline)
-  let activeCamera = null;
-  for (const entity of activeEntities) {
-    if (isCameraEntity(entity)) {
-      const camComp = getCameraComponent(entity);
-      if (camComp && camComp.enabled !== false) {
-        const camWorld = worldMap.get(entity.id) || localMap.get(entity.id)?.localTransform;
-        const posX = camComp.positionX ?? camComp.position?.x ?? 0;
-        const posY = camComp.positionY ?? camComp.position?.y ?? 0;
-        const posZ = camComp.positionZ ?? camComp.position?.z ?? -1000;
-        const tgtX = camComp.targetX ?? camComp.target?.x ?? 0;
-        const tgtY = camComp.targetY ?? camComp.target?.y ?? 0;
-        const tgtZ = camComp.targetZ ?? camComp.target?.z ?? 0;
-
-        activeCamera = {
-          ...camComp,
-          position: {
-            x: (camWorld?.x ?? 0) + posX,
-            y: (camWorld?.y ?? 0) + posY,
-            z: (camWorld?.z ?? 0) + posZ,
-          },
-          target: { x: tgtX, y: tgtY, z: tgtZ },
-          fov: camComp.fov ?? 50,
-          zoom: camComp.zoom ?? 1.0,
-        };
-        break;
-      }
-    }
-  }
+  // Find active 3D Camera on the top-most track (After Effects rule: top-most active camera controls view)
+  const activeCamera = findActiveCamera(activeEntities, tracks, worldMap, localMap);
 
   const output = [];
   for (const entity of activeEntities) {
@@ -528,7 +516,9 @@ export function computeActiveEntitiesAtTime({ entities, tracks = [], scripts = [
     }
  
     const is3D = Boolean(worldTransform?.is3D);
-    const projectedTransform = is3D ? project3DLayer(worldTransform, activeCamera) : null;
+    const parentId = local.entity.parentId;
+    const parentMat = (parentId && worldMatrixMap.has(parentId)) ? worldMatrixMap.get(parentId) : null;
+    const projectedTransform = is3D ? project3DLayer(worldTransform, activeCamera, viewport, parentMat) : null;
 
     output.push({
       entity: local.entity,

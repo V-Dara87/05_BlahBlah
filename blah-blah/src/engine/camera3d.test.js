@@ -95,3 +95,112 @@ test('Camera3D - Inspector field groups provide 3D axes when is3D is enabled', a
   assert.equal(rot3d.fields[1].name, 'rotationY');
   assert.equal(rot3d.fields[2].name, 'rotation');
 });
+
+test('Camera3D - mat4LookAt transforms target to camera axis and supports pan', async () => {
+  const { mat4LookAt, mat4TransformPoint } = await import('./camera3d.js');
+  
+  // Camera at (500, 200, -1000) looking at target (0, 0, 0)
+  const eye = { x: 500, y: 200, z: -1000 };
+  const target = { x: 0, y: 0, z: 0 };
+  const view = mat4LookAt(eye, target, 0);
+
+  // Target in camera space must be on the optical axis (X=0, Y=0) at positive Z distance
+  const targetCam = mat4TransformPoint(view, [0, 0, 0]);
+  assert.ok(Math.abs(targetCam[0]) < 1e-4, `Target X in camera view must be 0, got ${targetCam[0]}`);
+  assert.ok(Math.abs(targetCam[1]) < 1e-4, `Target Y in camera view must be 0, got ${targetCam[1]}`);
+  assert.ok(targetCam[2] > 1000, `Target Z must equal distance to eye (>1000), got ${targetCam[2]}`);
+});
+
+test('Camera3D - camera roll rotates view around line of sight', async () => {
+  const { mat4LookAt, mat4TransformPoint } = await import('./camera3d.js');
+  
+  const eye = { x: 0, y: 0, z: -1000 };
+  const target = { x: 0, y: 0, z: 0 };
+  
+  // No roll: point at (100, 0, 0) stays at X=100, Y=0
+  const view0 = mat4LookAt(eye, target, 0);
+  const pt0 = mat4TransformPoint(view0, [100, 0, 0]);
+  assert.ok(Math.abs(pt0[0] - 100) < 1e-4);
+  assert.ok(Math.abs(pt0[1]) < 1e-4);
+
+  // 90 degree roll clockwise: point at (100, 0, 0) rotates by 90 deg (X -> -Y in view coords)
+  const view90 = mat4LookAt(eye, target, (90 * Math.PI) / 180);
+  const pt90 = mat4TransformPoint(view90, [100, 0, 0]);
+  assert.ok(Math.abs(pt90[0]) < 1e-4, `After 90 deg roll, X should be ~0, got ${pt90[0]}`);
+  assert.ok(Math.abs(pt90[1] - (-100)) < 1e-4, `After 90 deg roll, Y should be -100, got ${pt90[1]}`);
+});
+
+test('Camera3D - project3DLayer produces valid matrix3d with perspective foreshortening', () => {
+  const camera = createDefaultCamera({ position: { x: 0, y: 0, z: -1000 }, target: { x: 0, y: 0, z: 0 } });
+  const viewport = { width: 1920, height: 1080 };
+  const tiltedLayer = { x: 0, y: 0, z: 0, rotationY: 45, is3D: true };
+  const proj = project3DLayer(tiltedLayer, camera, viewport);
+
+  assert.ok(proj.matrix3d.startsWith('matrix3d('), 'Must output CSS matrix3d');
+  assert.ok(proj.cssTransform.includes('translate(-50%, -50%) matrix3d('));
+  assert.ok(proj.matrix.length === 16);
+  // Row 3 column 0 (proj.matrix[3]) should be non-zero because rotationY creates perspective Z slope along X
+  assert.ok(Math.abs(proj.matrix[3]) > 1e-5, 'Perspective coefficient m[3] must be non-zero for tilted layer');
+});
+
+test('Camera3D - autoOrient towardsPOI points layer normal toward camera target', () => {
+  const camera = createDefaultCamera({ position: { x: 0, y: 0, z: -1000 }, target: { x: 500, y: 0, z: 0 } });
+  const viewport = { width: 1920, height: 1080 };
+  const layer = { x: 0, y: 0, z: 0, autoOrient: 'towardsPOI', is3D: true };
+  const proj = project3DLayer(layer, camera, viewport);
+
+  // Layer at (0, 0, 0) looking toward target (500, 0, 0) must have non-zero yaw
+  assert.ok(Math.abs(proj.rotationY) > 0, 'AutoOrient towardsPOI must rotate layer toward target');
+});
+
+test('Camera3D - 3D hierarchical parent-child composition', async () => {
+  const { buildLayerMatrix } = await import('./camera3d.js');
+  const parentTransform = { x: 200, y: 100, z: -300, rotationZ: 90, scaleX: 1, scaleY: 1, scaleZ: 1 };
+  const parentMat = buildLayerMatrix(parentTransform);
+
+  const childTransform = { x: 50, y: 0, z: 0, scaleX: 1, scaleY: 1, scaleZ: 1 };
+  const childMat = buildLayerMatrix(childTransform, parentMat);
+
+  // Child at local x=50, rotated 90 deg by parent, should have world y offset: 100 + 50 = 150
+  assert.ok(Math.abs(childMat[12] - 200) < 1e-4, `Child X world should stay ~200, got ${childMat[12]}`);
+  assert.ok(Math.abs(childMat[13] - 150) < 1e-4, `Child Y world should be ~150, got ${childMat[13]}`);
+  assert.ok(Math.abs(childMat[14] - (-300)) < 1e-4, `Child Z world should be ~-300, got ${childMat[14]}`);
+});
+
+test('Camera3D - findActiveCamera selects top-most track and supports camera cuts', async () => {
+  const { findActiveCamera } = await import('./camera3d.js');
+
+  const tracks = [
+    { id: 'track-1', name: 'Track 1' }, // Top-most
+    { id: 'track-2', name: 'Track 2' }, // Second
+  ];
+
+  // Camera A on Track 2 (fov: 40)
+  const camA = {
+    id: 'cam-a',
+    type: 'camera',
+    trackId: 'track-2',
+    startTime: 0,
+    duration: 10,
+    components: [{ type: 'Camera', fov: 40, enabled: true }],
+  };
+
+  // Camera B on Track 1 (fov: 70)
+  const camB = {
+    id: 'cam-b',
+    type: 'camera',
+    trackId: 'track-1',
+    startTime: 0,
+    duration: 5,
+    components: [{ type: 'Camera', fov: 70, enabled: true }],
+  };
+
+  // When both are active, Camera B on Track 1 (top-most track) takes precedence
+  const activeTop = findActiveCamera([camA, camB], tracks);
+  assert.equal(activeTop.fov, 70, 'Top-most track camera must control view when multiple are active');
+
+  // When Camera B finishes and only Camera A is active, Camera A controls view (instant cut)
+  const activeCut = findActiveCamera([camA], tracks);
+  assert.equal(activeCut.fov, 40, 'After camera B ends, camera A takes over view');
+});
+

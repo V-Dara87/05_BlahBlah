@@ -260,6 +260,34 @@ export interface Draw3DOptions {
 /** 3D primitive shape type identifiers. */
 export type ShapeType3D = 'cube' | 'cylinder' | 'pyramid' | 'sphere';
 
+export interface Camera3DConfig {
+  type?: 'Camera';
+  position?: { x?: number; y?: number; z?: number };
+  target?: { x?: number; y?: number; z?: number };
+  roll?: number;
+  fov?: number;
+  zoom?: number;
+  enabled?: boolean;
+}
+
+export function createDefaultCamera(overrides?: Partial<Camera3DConfig>): Camera3DConfig;
+export function getFocalLength(viewportHeight: number, fovDegrees?: number): number;
+export function orbitCamera(target: { x: number; y: number; z: number }, distance: number, azimuthDeg: number, elevationDeg: number): { x: number; y: number; z: number };
+export function mat4Identity(): number[];
+export function mat4Multiply(a: number[], b: number[]): number[];
+export function mat4LookAt(eye: { x?: number; y?: number; z?: number }, target: { x?: number; y?: number; z?: number }, rollRad?: number): number[];
+export function mat4ToCSS(m: number[]): string;
+
+export function createCubeMesh(w?: number, h?: number, d?: number): { vertices: [number, number, number][]; faces: number[][] };
+export function createPyramidMesh(w?: number, h?: number, d?: number): { vertices: [number, number, number][]; faces: number[][] };
+export function createCylinderMesh(radius?: number, height?: number, segments?: number): { vertices: [number, number, number][]; faces: number[][] };
+export function createSphereMesh(radius?: number, rings?: number, segments?: number): { vertices: [number, number, number][]; faces: number[][] };
+export function renderMesh3D(ctx: CanvasRenderingContext2D, mesh: { vertices: [number, number, number][]; faces: number[][] }, options?: Draw3DOptions): void;
+export function drawCube3D(ctx: CanvasRenderingContext2D, options?: Draw3DOptions): void;
+export function drawPyramid3D(ctx: CanvasRenderingContext2D, options?: Draw3DOptions): void;
+export function drawCylinder3D(ctx: CanvasRenderingContext2D, options?: Draw3DOptions): void;
+export function drawSphere3D(ctx: CanvasRenderingContext2D, options?: Draw3DOptions): void;
+
 // ─── Function-style scripts: canvasScript / motionScript ─────────────────────
 
 /** What a prop helper (`num`, `color`, …) returns. `T` is the value the script receives. */

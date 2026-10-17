@@ -93,7 +93,7 @@ export function VideoLayer({
     const renderRotZ = is3D ? proj.rotationZ : (transform.rotation || 0);
 
     const cssTransform = is3D
-      ? `translate(${renderX}px, ${renderY}px) rotateX(${renderRotX}deg) rotateY(${renderRotY}deg) rotateZ(${renderRotZ}deg) scale(${renderScaleX}, ${renderScaleY})`
+      ? (proj.cssTransformZeroOrigin || proj.matrix3d || `translate(${renderX}px, ${renderY}px) rotateX(${renderRotX}deg) rotateY(${renderRotY}deg) rotateZ(${renderRotZ}deg) scale(${renderScaleX}, ${renderScaleY})`)
       : `translate(${transform.x}px, ${transform.y}px) rotate(${transform.rotation}deg) scale(${transform.scaleX}, ${transform.scaleY})`;
 
     const computedZIndex = is3D ? proj.zIndex : ((isSelected ? 1000 : 0) + 100 + layerZIndexOf(item));
