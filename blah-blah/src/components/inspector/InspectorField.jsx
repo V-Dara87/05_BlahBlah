@@ -1226,56 +1226,5 @@ export const TEXT_RENDERER_FIELDS = [
  * InspectorField renderer instead of Transform's own hand-written
  * DragNumber rows.
  */
-export const TRANSFORM_FIELD_GROUPS = [
-  {
-    label: 'Position',
-    fields: [
-      { name: 'x', type: 'number', dragLabel: 'X', labelColor: '#f87171', step: 1, defaultVal: 0 },
-      { name: 'y', type: 'number', dragLabel: 'Y', labelColor: '#4ade80', step: 1, defaultVal: 0 },
-    ],
-  },
-  {
-    label: 'Rotation',
-    fields: [
-      { name: 'rotation', type: 'number', dragLabel: '°', labelColor: '#60a5fa', step: 1, defaultVal: 0 },
-    ],
-  },
-  {
-    label: 'Scale',
-    fields: [
-      { name: 'scaleX', type: 'number', dragLabel: 'X', labelColor: '#f87171', step: 0.01, defaultVal: 1 },
-      { name: 'scaleY', type: 'number', dragLabel: 'Y', labelColor: '#4ade80', step: 0.01, defaultVal: 1 },
-    ],
-  },
-  {
-    label: 'Pivot',
-    fields: [
-      // Normalized pivot: 0 = center, -0.5 = left/top edge, +0.5 = right/bottom edge.
-      // Rotation and scale both happen around this point. Matches Unity convention.
-      { name: 'pivotX', type: 'number', dragLabel: 'X', labelColor: '#f87171', step: 0.01, min: -0.5, max: 0.5, defaultVal: 0 },
-      { name: 'pivotY', type: 'number', dragLabel: 'Y', labelColor: '#4ade80', step: 0.01, min: -0.5, max: 0.5, defaultVal: 0 },
-    ],
-  },
-  {
-    label: 'Opacity',
-    fields: [
-      { name: 'opacity', type: 'number', slider: true, dragLabel: 'α', labelColor: '#a78bfa', step: 0.01, min: 0, max: 1, defaultVal: 1 },
-    ],
-  },
-  {
-    label: 'Speed',
-    fields: [
-      // Clip-level rate multiplier: media elements play at speed × their
-      // own AudioSource/VideoRenderer.speed, and motion-kind scripts run at
-      // localTime × speed unless a script sets ignoreParentSpeed (see
-      // engine/renderPipeline.js). Editing it also resizes the timeline
-      // clip (content amount duration × speed is preserved — faster = shorter
-      // clip, slower = longer; see updateTransform in UnityInspector.jsx).
-      // Missing on older saved Transforms reads as the 1 default here and in
-      // the engine (?? 1 / fallback), so old projects behave exactly as
-      // before — no migration needed.
-      { name: 'speed', type: 'number', slider: true, dragLabel: '×', labelColor: '#22d3ee', step: 0.1, min: 0.1, max: 4, defaultVal: 1 },
-    ],
-  },
-];
+export { TRANSFORM_FIELD_GROUPS, getTransformFieldGroups } from '../../engine/transformSchema';
  

@@ -91,6 +91,98 @@ export const MathUtils = {
   radToDeg: (rad) => (rad * 180) / Math.PI,
   vec2: (x, y) => ({ x, y }),
   vec3: (x, y, z = 0) => ({ x, y, z }),
+
+  /**
+   * Creates a deterministic pseudorandom number generator (Mulberry32).
+   * Given the same seed, returns the identical sequence of numbers in [0, 1).
+   * @param {number|string} seed
+   * @returns {() => number} Generator returning floats in [0, 1)
+   */
+  createRandom: (seed = 1) => {
+    let s = 0;
+    if (typeof seed === 'string') {
+      for (let i = 0; i < seed.length; i++) {
+        s = (Math.imul(31, s) + seed.charCodeAt(i)) >>> 0;
+      }
+    } else {
+      s = (Number(seed) || 1) >>> 0;
+    }
+    if (s === 0) s = 1;
+
+    return function next() {
+      s = (s + 0x6d2b79f5) >>> 0;
+      let t = Math.imul(s ^ (s >>> 15), 1 | s);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  },
+
+  /**
+   * Deterministic random float in [0, 1) for a specific seed or (time, index).
+   * @param {number|string} seed
+   * @returns {number} Float in [0, 1)
+   */
+  random: (seed = 0) => {
+    return MathUtils.createRandom(seed)();
+  },
+
+  /**
+   * Deterministic random float between min and max for a specific seed.
+   * @param {number} min
+   * @param {number} max
+   * @param {number|string} seed
+   * @returns {number}
+   */
+  randomRange: (min, max, seed = 0) => {
+    return min + (max - min) * MathUtils.random(seed);
+  },
+
+  /**
+   * Deterministic 1D Smooth Noise in [-1, 1].
+   * @param {number} x
+   * @param {number|string} seed
+   * @returns {number}
+   */
+  noise1D: (x, seed = 0) => {
+    const s = typeof seed === 'number' ? seed : 0;
+    const x0 = Math.floor(x);
+    const x1 = x0 + 1;
+    const f = x - x0;
+    // Smoothstep interpolation curve: 3f^2 - 2f^3
+    const u = f * f * (3 - 2 * f);
+    const v0 = MathUtils.createRandom(x0 * 374761393 + s * 668265263)() * 2 - 1;
+    const v1 = MathUtils.createRandom(x1 * 374761393 + s * 668265263)() * 2 - 1;
+    return v0 + (v1 - v0) * u;
+  },
+
+  /**
+   * Deterministic 2D Smooth Noise in [-1, 1].
+   * @param {number} x
+   * @param {number} y
+   * @param {number|string} seed
+   * @returns {number}
+   */
+  noise2D: (x, y, seed = 0) => {
+    const s = typeof seed === 'number' ? seed : 0;
+    const x0 = Math.floor(x);
+    const x1 = x0 + 1;
+    const y0 = Math.floor(y);
+    const y1 = y0 + 1;
+    const fx = x - x0;
+    const fy = y - y0;
+    const ux = fx * fx * (3 - 2 * fx);
+    const uy = fy * fy * (3 - 2 * fy);
+
+    const hash = (ix, iy) => (ix * 374761393 + iy * 668265263 + s * 1274126177) >>> 0;
+    const v00 = MathUtils.createRandom(hash(x0, y0))() * 2 - 1;
+    const v10 = MathUtils.createRandom(hash(x1, y0))() * 2 - 1;
+    const v01 = MathUtils.createRandom(hash(x0, y1))() * 2 - 1;
+    const v11 = MathUtils.createRandom(hash(x1, y1))() * 2 - 1;
+
+    const top = v00 + (v10 - v00) * ux;
+    const btm = v01 + (v11 - v01) * ux;
+    return top + (btm - top) * uy;
+  },
 };
 
 /**
@@ -149,7 +241,47 @@ export const Tween = Object.freeze({
   stagger(index, each = 0.1) {
     return Math.max(0, index) * each;
   },
+
+  /**
+   * After Effects-style organic jitter / wiggle function.
+   * Deterministic, continuous, and seedable.
+   * @param {number} time - Current timeline/local time in seconds
+   * @param {number} [freq=2] - Frequency in wiggles per second (Hz)
+   * @param {number} [amp=20] - Amplitude / magnitude of wiggle
+   * @param {number} [octaves=1] - Noise octaves for fine detail
+   * @param {number|string} [seed=0] - Random seed
+   * @returns {number} Offset value in [-amp, amp]
+   */
+  wiggle(time, freq = 2, amp = 20, octaves = 1, seed = 0) {
+    if (amp === 0 || freq === 0) return 0;
+    let sum = 0;
+    let max = 0;
+    let currentFreq = freq;
+    let currentAmp = amp;
+    const s = typeof seed === 'number' ? seed : 0;
+    for (let i = 0; i < octaves; i++) {
+      sum += MathUtils.noise1D(time * currentFreq, s + i * 31) * currentAmp;
+      max += currentAmp;
+      currentFreq *= 2;
+      currentAmp *= 0.5;
+    }
+    return max > 0 ? (sum / max) * amp : 0;
+  },
+
+  /**
+   * After Effects-style 2D vector wiggle (returns `{ x, y }`).
+   */
+  wiggle2D(time, freq = 2, amp = 20, octaves = 1, seed = 0) {
+    const s = typeof seed === 'number' ? seed : 0;
+    return {
+      x: Tween.wiggle(time, freq, amp, octaves, s),
+      y: Tween.wiggle(time, freq, amp, octaves, s + 1000),
+    };
+  },
 });
+
+export const wiggle = Tween.wiggle;
+export const wiggle2D = Tween.wiggle2D;
 
 /**
  * Remotion-style interpolate() helper

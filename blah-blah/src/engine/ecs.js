@@ -222,6 +222,60 @@ export const isTransitionClipEntity = (entity) =>
 /** The TransitionClipComponent of a TransitionClip entity, or null. */
 export const getTransitionClipComponent = (entity) =>
   entity?.components?.find((c) => c.type === TRANSITION_CLIP_COMPONENT) || null;
+
+// ─── Camera (After Effects-style 3D Viewport Camera) ─────────────────────────
+
+export const CAMERA_COMPONENT = 'Camera';
+export const CAMERA_ENTITY_TYPE = 'camera';
+
+export function createCameraComponent(config = {}) {
+  return {
+    type: CAMERA_COMPONENT,
+    enabled: config.enabled ?? true,
+    position: { x: 0, y: 0, z: -1000, ...(config.position || {}) },
+    target: { x: 0, y: 0, z: 0, ...(config.target || {}) },
+    fov: config.fov ?? 50,
+    zoom: config.zoom ?? 1.0,
+  };
+}
+
+export function createCameraEntity({
+  name = 'Camera 1',
+  trackId = 'track-1',
+  startTime = 0,
+  duration = 6,
+  position = { x: 0, y: 0, z: -1000 },
+  target = { x: 0, y: 0, z: 0 },
+  fov = 50,
+  zoom = 1.0,
+  color = '#8b5cf6',
+} = {}) {
+  return {
+    id: `go-${crypto.randomUUID()}`,
+    name,
+    tag: 'Untagged',
+    layer: 'Default',
+    active: true,
+    parentId: null,
+    trackId,
+    startTime,
+    duration,
+    type: CAMERA_ENTITY_TYPE,
+    src: '',
+    color,
+    components: [
+      createDefaultTransform({ is3D: true }),
+      createCameraComponent({ position, target, fov, zoom }),
+    ],
+  };
+}
+
+export const isCameraEntity = (entity) =>
+  entity?.type === CAMERA_ENTITY_TYPE ||
+  Boolean(entity?.components?.some((c) => c.type === CAMERA_COMPONENT));
+
+export const getCameraComponent = (entity) =>
+  entity?.components?.find((c) => c.type === CAMERA_COMPONENT) || null;
  
 /**
  * Migrate a saved project's entities (and prefab component lists) to the
@@ -291,10 +345,17 @@ export function createDefaultTransform(overrides = {}) {
     type: 'Transform',
     x: 0,
     y: 0,
+    z: 0,
     rotation: 0,
+    rotationX: 0,
+    rotationY: 0,
     scaleX: 1,
     scaleY: 1,
+    scaleZ: 1,
     opacity: 1,
+    // 3D Layer switch (After Effects-style)
+    is3D: false,
+    autoOrient: false,
     // Pivot point in normalized space: 0 = center (default), -0.5 = left/top
     // edge, +0.5 = right/bottom edge — the same convention Unity uses.
     // Rotation and scale both happen around this point. Default (0, 0) is

@@ -40,7 +40,8 @@ export interface ClipTimingArgs {
   endTime?: number;
   /** Remaining time in this clip in seconds (`duration - time`), clamped at 0. */
   timeLeft?: number;
-  [key: string]: any;
+  /** Canvas width / height. */
+  aspect?: number;
 }
 
 export interface MotionScriptMountArgs extends ClipTimingArgs {
@@ -99,7 +100,6 @@ export interface MotionScriptSeekArgs extends ClipTimingArgs {
 export interface MotionScriptUnmountArgs {
   /** The same host element passed to onMount. */
   container?: HTMLElement;
-  [key: string]: any;
 }
 
 // ─── Script Gizmo Definitions ───────────────────────────────────────────────
@@ -203,6 +203,85 @@ export class ThreeComponent extends MotionScript {
   canvasHeight: number;
   aspect: number;
 }
+
+// ─── Function-style scripts: canvasScript / motionScript ─────────────────────
+
+/** What a prop helper (`num`, `color`, …) returns. `T` is the value the script receives. */
+export interface PropDef<T = unknown> {
+  readonly __propType?: T;
+  [key: string]: any;
+}
+
+/** `{ size: num(40), tint: color('#fff') }` → `{ size: number; tint: string }`. */
+export type PropValues<P> = {
+  [K in keyof P]: P[K] extends PropDef<infer T> ? T : P[K] extends number | boolean | string ? P[K] : any;
+};
+
+/** What `setup` / `draw` / `seek` receive in a `canvasScript`. */
+export interface CanvasScriptFrame<P = Record<string, any>> extends MotionScriptUpdateArgs {
+  ctx: CanvasRenderingContext2D;
+  canvas: HTMLCanvasElement;
+  /** Canvas width in pixels. */
+  width: number;
+  /** Canvas height in pixels. */
+  height: number;
+  /** Local clip time in seconds. */
+  time: number;
+  props: PropValues<P>;
+  /** Deterministic random float in [0, 1) for a given seed. */
+  random: (seed?: number | string) => number;
+  /** Creates a seeded PRNG generator returning floats in [0, 1). */
+  createRandom: (seed?: number | string) => () => number;
+  /** Deterministic 1D Smooth Noise in [-1, 1]. */
+  noise1D: (x: number, seed?: number | string) => number;
+  /** Deterministic 2D Smooth Noise in [-1, 1]. */
+  noise2D: (x: number, y: number, seed?: number | string) => number;
+}
+
+/** `this` inside canvasScript functions: the script instance; add your own state freely. */
+export type CanvasScriptThis = CanvasComponent & Record<string, any>;
+
+export interface CanvasScriptDefinition<P extends Record<string, any> = Record<string, any>> {
+  /** Inspector fields: `{ speed: num(1), tint: color('#fff') }`. */
+  props?: P;
+  /** Once, after the canvas exists. */
+  setup?(this: CanvasScriptThis, frame: CanvasScriptFrame<P>): void;
+  /** Every frame. (0, 0) is the canvas center unless `origin: 'top-left'`. */
+  draw(this: CanvasScriptThis, frame: CanvasScriptFrame<P>): void;
+  /** When the playhead jumps (scrub/seek): reset accumulated state here. */
+  seek?(this: CanvasScriptThis, frame: CanvasScriptFrame<P>): void;
+  /** When the script is removed. */
+  cleanup?(this: CanvasScriptThis, args: MotionScriptUnmountArgs): void;
+  /** Where (0, 0) is. Default `'center'`. */
+  origin?: 'center' | 'top-left';
+  /** Clear the canvas before every draw. Default `true`. */
+  clear?: boolean;
+}
+
+/**
+ * A 2D canvas script as one object — no class, no canvas plumbing.
+ *
+ * @example
+ * export default canvasScript({
+ *   props: { size: num(40, { min: 10, max: 200 }), tint: color('#38bdf8') },
+ *   draw({ ctx, time, props }) {
+ *     ctx.fillStyle = props.tint;
+ *     ctx.fillRect(-props.size / 2, Math.sin(time) * 50, props.size, props.size);
+ *   },
+ * });
+ */
+export function canvasScript<P extends Record<string, any> = {}>(def: CanvasScriptDefinition<P>): typeof CanvasComponent;
+
+export interface MotionScriptDefinition<P extends Record<string, any> = Record<string, any>> {
+  props?: P;
+  /** Once: set up tweens. */
+  start?(this: Record<string, any>, args: Omit<TransformStartArgs, 'props'> & { props: PropValues<P> }): void;
+  /** Every frame. */
+  update?(this: Record<string, any>, args: Omit<TransformUpdateArgs, 'props'> & { props: PropValues<P> }): void;
+}
+
+/** A transform (motion) script as one object. Needs `start` and/or `update`. */
+export function motionScript<P extends Record<string, any> = {}>(def: MotionScriptDefinition<P>): typeof MotionScript;
 
 // ─── Transform Motion Scripts (ScriptComponent / onStart / onUpdate) ──────────
 
@@ -324,6 +403,16 @@ export const MathUtils: {
   bezierPointAt(p0: Vector2, p1: Vector2, p2: Vector2, p3: Vector2, t: number): Vector2;
   /** Tangent (velocity direction) of a cubic Bézier at `t`. */
   bezierTangentAt(p0: Vector2, p1: Vector2, p2: Vector2, p3: Vector2, t: number): Vector2;
+  /** Creates a seeded PRNG generator returning floats in [0, 1). */
+  createRandom(seed?: number | string): () => number;
+  /** Deterministic random float in [0, 1) for a given seed. */
+  random(seed?: number | string): number;
+  /** Deterministic random float in [min, max] for a given seed. */
+  randomRange(min: number, max: number, seed?: number | string): number;
+  /** Deterministic 1D Smooth Noise in [-1, 1]. */
+  noise1D(x: number, seed?: number | string): number;
+  /** Deterministic 2D Smooth Noise in [-1, 1]. */
+  noise2D(x: number, y: number, seed?: number | string): number;
 };
 
 export interface TweenWindowOptions {
@@ -347,7 +436,14 @@ export const Tween: {
   stagger(index: number, each?: number): number;
   /** Multi-target form: a sequence of per-item nodes, each delayed by `i * each`. */
   stagger<T>(items: T[], factory: (item: T, index: number, delay: number) => SequenceNode<any> | number, options?: StaggerOptions): SequenceNode<any[]>;
+  /** After Effects-style organic jitter / wiggle function (scalar). */
+  wiggle(time: number, freq?: number, amp?: number, octaves?: number, seed?: number | string): number;
+  /** After Effects-style 2D vector wiggle ({ x, y }). */
+  wiggle2D(time: number, freq?: number, amp?: number, octaves?: number, seed?: number | string): Vector2;
 };
+
+export const wiggle: typeof Tween.wiggle;
+export const wiggle2D: typeof Tween.wiggle2D;
 
 // ─── Seekable sequence API ───────────────────────────────────────────────────
 

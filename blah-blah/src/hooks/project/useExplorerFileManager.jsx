@@ -379,56 +379,31 @@ export function useExplorerFileManager({
       name,
       folder: targetFolder,
       description: 'Blank JavaScript Motion script',
-      // The starter declares its props with the prop helpers, which are
-      // globals in every script (engine/scriptProps.js) — no import line. They
-      // return the same plain objects the long-hand form does, so the two can
-      // be mixed freely, e.g. `tint: { type: 'color', default: '#ffffff' }`
-      // instead of `tint: color('#ffffff')`. `...Presets.colors`,
-      // `...Presets.timing`, `...Presets.typography`, `...Presets.audioFx` and
-      // `...Presets.fitTransform` drop in a whole ready-made Inspector block.
-      code: `import { CanvasComponent } from '@blahblah/sdk';
- 
-export default class NewScript extends CanvasComponent {
-  static props = {
+      // The starter uses the "easy mode" API: one object, no class, no canvas
+      // plumbing (see canvasScript in packages/blahblah-sdk/index.js). The prop
+      // helpers (num/color/…) are globals in every script — no import line.
+      // `...Presets.colors`, `...Presets.timing`, `...Presets.typography`,
+      // `...Presets.audioFx` and `...Presets.fitTransform` drop in a whole
+      // ready-made Inspector block. The long-hand class form
+      // (`class X extends CanvasComponent`) still works.
+      code: `import { canvasScript } from '@blahblah/sdk';
+
+export default canvasScript({
+  props: {
     speed: num(2, { min: 0, max: 10, step: 0.1, label: 'Wobble Speed' }),
     radius: num(8, { min: 1, max: 60, unit: 'px' }),
     tint: color('#ffffff'),
-  };
- 
-  onMount({ container, canvasWidth, canvasHeight }) {
-    this.canvas = document.createElement('canvas');
-    this.canvas.width = canvasWidth || 800;
-    this.canvas.height = canvasHeight || 600;
-    this.canvas.style.width = '100%';
-    this.canvas.style.height = '100%';
-    this.canvas.style.display = 'block';
-    container.appendChild(this.canvas);
-    this.ctx = this.canvas.getContext('2d');
-  }
- 
-  onUpdate({ time, canvasWidth, canvasHeight, props }) {
-    if (!this.ctx) return;
-    if (this.canvas.width !== canvasWidth || this.canvas.height !== canvasHeight) {
-      this.canvas.width = canvasWidth;
-      this.canvas.height = canvasHeight;
-    }
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    // (0, 0) is canvas center; toScreen() converts to pixel coordinates
-    const { x, y } = this.toScreen(Math.sin(time * (props?.speed ?? 2)) * 50, 0);
-    this.ctx.fillStyle = props?.tint || '#ffffff';
-    this.ctx.beginPath();
-    this.ctx.arc(x, y, props?.radius ?? 8, 0, Math.PI * 2);
-    this.ctx.fill();
-  }
- 
-  onUnmount({ container }) {
-    if (this.canvas?.parentNode === container) {
-      container.removeChild(this.canvas);
-    }
-    this.canvas = null;
-    this.ctx = null;
-  }
-}`,
+  },
+
+  // Runs every frame. (0, 0) is the center of the canvas.
+  draw({ ctx, time, props }) {
+    ctx.fillStyle = props.tint;
+    ctx.beginPath();
+    ctx.arc(Math.sin(time * props.speed) * 50, 0, props.radius, 0, Math.PI * 2);
+    ctx.fill();
+  },
+});
+`,
     };
     try {
       await onCreateScript?.(newScript);

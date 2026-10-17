@@ -67,9 +67,17 @@
 
 import { executeScriptComponent, detectScriptKind } from './scriptRunner.js';
 import { resolveKeyframedComponents } from './keyframes.js';
-import { isScriptComponent, isVideoEntity, isTransitionClipEntity, getTransitionClipComponent } from './ecs.js';
+import {
+  isScriptComponent,
+  isVideoEntity,
+  isTransitionClipEntity,
+  getTransitionClipComponent,
+  isCameraEntity,
+  getCameraComponent,
+} from './ecs.js';
+import { project3DLayer } from './camera3d.js';
  
-const IDENTITY = { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1 };
+const IDENTITY = { x: 0, y: 0, z: 0, rotation: 0, rotationX: 0, rotationY: 0, scaleX: 1, scaleY: 1, scaleZ: 1, opacity: 1, is3D: false };
  
 /** The Transform component values of an entity, or an identity default. */
 function transformFromComponents(components) {
@@ -77,8 +85,8 @@ function transformFromComponents(components) {
 }
  
 /**
- * 2D affine composition of a parent world transform and a child local transform.
- * Composes translation (scaled and rotated by parent), rotation, scale, and opacity.
+ * 2D / 3D affine composition of a parent world transform and a child local transform.
+ * Composes translation (scaled and rotated by parent), rotation, scale, opacity, and Z depth.
  */
 export function composeTransform2D(parentWorld, childLocal) {
   const rad = ((parentWorld.rotation || 0) * Math.PI) / 180;
@@ -86,6 +94,7 @@ export function composeTransform2D(parentWorld, childLocal) {
   const sin = Math.sin(rad);
   const pScaleX = parentWorld.scaleX ?? 1;
   const pScaleY = parentWorld.scaleY ?? 1;
+  const pScaleZ = parentWorld.scaleZ ?? 1;
   const cX = childLocal.x || 0;
   const cY = childLocal.y || 0;
   const sx = cX * pScaleX;
@@ -95,11 +104,18 @@ export function composeTransform2D(parentWorld, childLocal) {
     ...childLocal,
     x: (parentWorld.x || 0) + (sx * cos - sy * sin),
     y: (parentWorld.y || 0) + (sx * sin + sy * cos),
+    z: (parentWorld.z || 0) + (childLocal.z || 0),
     rotation: (parentWorld.rotation || 0) + (childLocal.rotation || 0),
+    rotationX: (parentWorld.rotationX || 0) + (childLocal.rotationX || 0),
+    rotationY: (parentWorld.rotationY || 0) + (childLocal.rotationY || 0),
+    rotationZ: (parentWorld.rotationZ || parentWorld.rotation || 0) + (childLocal.rotationZ || childLocal.rotation || 0),
     scaleX: pScaleX * (childLocal.scaleX ?? 1),
     scaleY: pScaleY * (childLocal.scaleY ?? 1),
+    scaleZ: pScaleZ * (childLocal.scaleZ ?? 1),
     opacity: (parentWorld.opacity ?? 1) * (childLocal.opacity ?? 1),
     speed: childLocal.speed !== undefined ? childLocal.speed : (parentWorld.speed ?? 1),
+    is3D: Boolean(childLocal.is3D || parentWorld.is3D),
+    autoOrient: childLocal.autoOrient ?? parentWorld.autoOrient,
   };
 }
  
@@ -440,7 +456,37 @@ export function computeActiveEntitiesAtTime({ entities, tracks = [], scripts = [
     depthMap.set(entityId, parentDepth + 1);
     return worldTransform;
   }
- 
+
+  // Find active 3D Camera (if any is active on timeline)
+  let activeCamera = null;
+  for (const entity of activeEntities) {
+    if (isCameraEntity(entity)) {
+      const camComp = getCameraComponent(entity);
+      if (camComp && camComp.enabled !== false) {
+        const camWorld = worldMap.get(entity.id) || localMap.get(entity.id)?.localTransform;
+        const posX = camComp.positionX ?? camComp.position?.x ?? 0;
+        const posY = camComp.positionY ?? camComp.position?.y ?? 0;
+        const posZ = camComp.positionZ ?? camComp.position?.z ?? -1000;
+        const tgtX = camComp.targetX ?? camComp.target?.x ?? 0;
+        const tgtY = camComp.targetY ?? camComp.target?.y ?? 0;
+        const tgtZ = camComp.targetZ ?? camComp.target?.z ?? 0;
+
+        activeCamera = {
+          ...camComp,
+          position: {
+            x: (camWorld?.x ?? 0) + posX,
+            y: (camWorld?.y ?? 0) + posY,
+            z: (camWorld?.z ?? 0) + posZ,
+          },
+          target: { x: tgtX, y: tgtY, z: tgtZ },
+          fov: camComp.fov ?? 50,
+          zoom: camComp.zoom ?? 1.0,
+        };
+        break;
+      }
+    }
+  }
+
   const output = [];
   for (const entity of activeEntities) {
     const local = localMap.get(entity.id);
@@ -481,6 +527,9 @@ export function computeActiveEntitiesAtTime({ entities, tracks = [], scripts = [
       }
     }
  
+    const is3D = Boolean(worldTransform?.is3D);
+    const projectedTransform = is3D ? project3DLayer(worldTransform, activeCamera) : null;
+
     output.push({
       entity: local.entity,
       transform: worldTransform,
@@ -488,6 +537,8 @@ export function computeActiveEntitiesAtTime({ entities, tracks = [], scripts = [
       localTime: local.localTime,
       depth,
       transitionState,
+      is3D,
+      projectedTransform,
     });
   }
   return output;

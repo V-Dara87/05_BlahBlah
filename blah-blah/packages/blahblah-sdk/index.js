@@ -180,6 +180,209 @@ export class ThreeComponent extends MotionScript {
   }
 }
 
+// ─── Function-style scripts (the easy way) ───────────────────────────────────
+//
+//   export default canvasScript({
+//     props: { size: num(40, { min: 10, max: 200 }), tint: color('#38bdf8') },
+//     draw({ ctx, width, height, time, props }) {
+//       ctx.fillStyle = props.tint;                     // (0, 0) is the center
+//       ctx.fillRect(-props.size / 2, -props.size / 2, props.size, props.size);
+//     },
+//   });
+//
+// One object, no class, no canvas plumbing. Under the hood it builds a normal
+// CanvasComponent / MotionScript subclass, so everything the class style can do
+// (props, gizmos, the Inspector, keyframes, export) works the same way.
+//
+// STRICT: an unknown key (`drwa`, `update` in a canvasScript) or a missing
+// `draw` is an error that names the fix, instead of a script that quietly does
+// nothing.
+
+function oneEditApart(a, b) {
+  if (a === b) return false;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  if (a.length === b.length) {
+    // one substitution, or two adjacent letters swapped ("drwa" -> "draw")
+    if (a.slice(i + 1) === b.slice(i + 1)) return true;
+    return a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2);
+  }
+  return a.length > b.length ? a.slice(i + 1) === b.slice(i) : b.slice(i + 1) === a.slice(i);
+}
+
+function suggestKey(name, allowed) {
+  const lower = String(name).toLowerCase();
+  for (const key of allowed) {
+    if (key.toLowerCase() === lower) return key;
+  }
+  for (const key of allowed) {
+    if (oneEditApart(String(name), key)) return key;
+  }
+  return null;
+}
+
+function checkDefinition(fnName, def, allowed) {
+  if (!def || typeof def !== 'object' || Array.isArray(def)) {
+    throw new TypeError(`${fnName}(...) expects one object, e.g. ${fnName}({ props: {…}, ${allowed.includes('draw') ? 'draw' : 'update'}() {…} }).`);
+  }
+  for (const key of Object.keys(def)) {
+    if (allowed.includes(key)) continue;
+    const hint = suggestKey(key, allowed);
+    throw new TypeError(
+      `${fnName}: unknown key '${key}'${hint ? ` — did you mean '${hint}'?` : '.'} Allowed keys: ${allowed.join(', ')}.`,
+    );
+  }
+  for (const key of allowed) {
+    if (key === 'props' || key === 'origin' || key === 'clear') continue;
+    if (def[key] !== undefined && typeof def[key] !== 'function') {
+      throw new TypeError(`${fnName}: '${key}' must be a function, got ${typeof def[key]}.`);
+    }
+  }
+  if (def.props !== undefined && (def.props === null || typeof def.props !== 'object' || Array.isArray(def.props))) {
+    throw new TypeError(`${fnName}: 'props' must be an object, e.g. props: { speed: num(1) }.`);
+  }
+}
+
+/**
+ * The plain default value of every simple prop in `props` (`num(2)` -> 2,
+ * `color('#fff')` -> '#fff', a bare `5` -> 5). Reference props (entity/asset)
+ * and structs have no simple default and are left out.
+ */
+function propDefaults(propsDef) {
+  const out = {};
+  for (const [key, def] of Object.entries(propsDef || {})) {
+    if (def && typeof def === 'object' && !Array.isArray(def)) {
+      if ('default' in def && def.type !== 'struct' && def.type !== 'struct[]') out[key] = def.default;
+    } else if (typeof def === 'number' || typeof def === 'boolean' || typeof def === 'string') {
+      out[key] = def;
+    }
+  }
+  return out;
+}
+
+/** `props` as the script sees it: the declared defaults, overridden by whatever the Inspector supplied. */
+function withDefaults(defaults, given) {
+  const out = { ...defaults };
+  if (given && typeof given === 'object') {
+    for (const [key, value] of Object.entries(given)) {
+      if (value !== undefined) out[key] = value;
+    }
+  }
+  return out;
+}
+
+const CANVAS_SCRIPT_KEYS = ['props', 'setup', 'draw', 'seek', 'cleanup', 'origin', 'clear'];
+const MOTION_SCRIPT_KEYS = ['props', 'start', 'update'];
+
+/**
+ * A 2D canvas script as one object.
+ *
+ *   props    Inspector fields (`num`, `color`, `text`, … or long-hand objects).
+ *            Inside the functions, `props` always has every declared default
+ *            filled in, so `props.size` is never undefined.
+ *   setup    optional, once, after the canvas exists.   setup({ ctx, width, height, props })
+ *   draw     required, every frame.                     draw({ ctx, width, height, time, props, … })
+ *   seek     optional, when the playhead jumps.         seek({ time, props })
+ *   cleanup  optional, when the script is removed.
+ *   origin   'center' (default: 0,0 is the middle) or 'top-left'.
+ *   clear    true (default): the canvas is cleared before every draw.
+ *
+ * Inside every function `this` is the script instance, so state set in
+ * `setup` (`this.particles = []`) is available in `draw`. Use method syntax
+ * (not arrow functions) if you want `this`.
+ */
+export function canvasScript(def) {
+  checkDefinition('canvasScript', def, CANVAS_SCRIPT_KEYS);
+  if (typeof def.draw !== 'function') {
+    throw new TypeError('canvasScript: missing `draw`. Add draw({ ctx, width, height, time, props }) { … }.');
+  }
+  if (def.origin !== undefined && def.origin !== 'center' && def.origin !== 'top-left') {
+    throw new TypeError(`canvasScript: origin must be 'center' or 'top-left', got '${def.origin}'.`);
+  }
+  const centered = def.origin !== 'top-left';
+  const clear = def.clear !== false;
+
+  const defaults = propDefaults(def.props);
+  const frameArgs = (self, args) => ({
+    ...args,
+    ctx: self.ctx,
+    canvas: self.canvas,
+    width: self.canvasWidth,
+    height: self.canvasHeight,
+    props: withDefaults(defaults, args && args.props),
+    random: MathUtils.random,
+    createRandom: MathUtils.createRandom,
+    noise1D: MathUtils.noise1D,
+    noise2D: MathUtils.noise2D,
+  });
+
+  class DefinedCanvasScript extends CanvasComponent {
+    static props = def.props || {};
+
+    onMount(args) {
+      super.onMount(args);
+      if (def.setup) def.setup.call(this, frameArgs(this, args));
+    }
+
+    onUpdate(args) {
+      super.onUpdate(args);
+      const { ctx } = this;
+      if (!ctx) return;
+      if (clear) ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
+      ctx.save();
+      try {
+        if (centered) ctx.translate(this.canvasWidth / 2, this.canvasHeight / 2);
+        def.draw.call(this, frameArgs(this, args));
+      } finally {
+        ctx.restore();
+      }
+    }
+
+    onSeek(args) {
+      if (def.seek) def.seek.call(this, frameArgs(this, args));
+    }
+
+    onUnmount(args) {
+      try {
+        if (def.cleanup) def.cleanup.call(this, args);
+      } finally {
+        super.onUnmount(args);
+      }
+    }
+  }
+  return DefinedCanvasScript;
+}
+
+/**
+ * A transform (motion) script as one object.
+ *
+ *   props   Inspector fields.
+ *   start   optional, once: set up tweens.  start({ transform, tween, props, … })
+ *   update  optional, every frame.          update({ transform, props, time, … })
+ *
+ * At least one of `start` / `update` is required.
+ */
+export function motionScript(def) {
+  checkDefinition('motionScript', def, MOTION_SCRIPT_KEYS);
+  if (typeof def.start !== 'function' && typeof def.update !== 'function') {
+    throw new TypeError('motionScript: add `update({ transform, props, time }) { … }` and/or `start({ transform, tween }) { … }`.');
+  }
+  const defaults = propDefaults(def.props);
+  class DefinedMotionScript extends MotionScript {
+    static props = def.props || {};
+
+    onStart(args) {
+      if (def.start) def.start.call(this, { ...args, props: withDefaults(defaults, args && args.props) });
+    }
+
+    onUpdate(args) {
+      if (def.update) def.update.call(this, { ...args, props: withDefaults(defaults, args && args.props) });
+    }
+  }
+  return DefinedMotionScript;
+}
+
 // ─── Easing & Interpolation helpers ──────────────────────────────────────────
 
 export const Easing = {
@@ -266,6 +469,59 @@ export const MathUtils = {
   radToDeg: (rad) => (rad * 180) / Math.PI,
   vec2: (x, y) => ({ x, y }),
   vec3: (x, y, z = 0) => ({ x, y, z }),
+  createRandom: (seed = 1) => {
+    let s = 0;
+    if (typeof seed === 'string') {
+      for (let i = 0; i < seed.length; i++) {
+        s = (Math.imul(31, s) + seed.charCodeAt(i)) >>> 0;
+      }
+    } else {
+      s = (Number(seed) || 1) >>> 0;
+    }
+    if (s === 0) s = 1;
+
+    return function next() {
+      s = (s + 0x6d2b79f5) >>> 0;
+      let t = Math.imul(s ^ (s >>> 15), 1 | s);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  },
+  random: (seed = 0) => {
+    return MathUtils.createRandom(seed)();
+  },
+  randomRange: (min, max, seed = 0) => {
+    return min + (max - min) * MathUtils.random(seed);
+  },
+  noise1D: (x, seed = 0) => {
+    const s = typeof seed === 'number' ? seed : 0;
+    const x0 = Math.floor(x);
+    const x1 = x0 + 1;
+    const f = x - x0;
+    const u = f * f * (3 - 2 * f);
+    const v0 = MathUtils.createRandom(x0 * 374761393 + s * 668265263)() * 2 - 1;
+    const v1 = MathUtils.createRandom(x1 * 374761393 + s * 668265263)() * 2 - 1;
+    return v0 + (v1 - v0) * u;
+  },
+  noise2D: (x, y, seed = 0) => {
+    const s = typeof seed === 'number' ? seed : 0;
+    const x0 = Math.floor(x);
+    const x1 = x0 + 1;
+    const y0 = Math.floor(y);
+    const y1 = y0 + 1;
+    const fx = x - x0;
+    const fy = y - y0;
+    const ux = fx * fx * (3 - 2 * fx);
+    const uy = fy * fy * (3 - 2 * fy);
+    const hash = (ix, iy) => (ix * 374761393 + iy * 668265263 + s * 1274126177) >>> 0;
+    const v00 = MathUtils.createRandom(hash(x0, y0))() * 2 - 1;
+    const v10 = MathUtils.createRandom(hash(x1, y0))() * 2 - 1;
+    const v01 = MathUtils.createRandom(hash(x0, y1))() * 2 - 1;
+    const v11 = MathUtils.createRandom(hash(x1, y1))() * 2 - 1;
+    const top = v00 + (v10 - v00) * ux;
+    const btm = v01 + (v11 - v01) * ux;
+    return top + (btm - top) * uy;
+  },
   /**
    * Point on a cubic Bézier at `t` (0..1), given four control points `{x,y}`.
    * Pure math — unlike SVG's `getPointAtLength()`, this never forces a reflow,
@@ -345,7 +601,32 @@ export const Tween = Object.freeze({
     const each = typeof eachOrFactory === 'number' ? eachOrFactory : 0.1;
     return Math.max(0, indexOrItems) * each;
   },
+  wiggle(time, freq = 2, amp = 20, octaves = 1, seed = 0) {
+    if (amp === 0 || freq === 0) return 0;
+    let sum = 0;
+    let max = 0;
+    let currentFreq = freq;
+    let currentAmp = amp;
+    const s = typeof seed === 'number' ? seed : 0;
+    for (let i = 0; i < octaves; i++) {
+      sum += MathUtils.noise1D(time * currentFreq, s + i * 31) * currentAmp;
+      max += currentAmp;
+      currentFreq *= 2;
+      currentAmp *= 0.5;
+    }
+    return max > 0 ? (sum / max) * amp : 0;
+  },
+  wiggle2D(time, freq = 2, amp = 20, octaves = 1, seed = 0) {
+    const s = typeof seed === 'number' ? seed : 0;
+    return {
+      x: Tween.wiggle(time, freq, amp, octaves, s),
+      y: Tween.wiggle(time, freq, amp, octaves, s + 1000),
+    };
+  },
 });
+
+export const wiggle = Tween.wiggle;
+export const wiggle2D = Tween.wiggle2D;
 
 // ─── interpolate & spring ────────────────────────────────────────────────────
 
@@ -1033,6 +1314,8 @@ export class AssetRef {
 export default {
   MotionScript,
   CanvasComponent,
+  canvasScript,
+  motionScript,
   Easing,
   Ease,
   LoopType,
@@ -1056,5 +1339,7 @@ export default {
   shapes,
   svgList,
   mergeManualOverrides,
+  wiggle,
+  wiggle2D,
 };
 

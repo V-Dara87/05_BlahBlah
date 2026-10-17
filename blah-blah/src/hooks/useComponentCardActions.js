@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { extractScriptProps, detectScriptKind } from '../engine/scriptRunner';
-import { isScriptComponent, createTransitionComponent } from '../engine/ecs';
+import { isScriptComponent, createTransitionComponent, createCameraComponent } from '../engine/ecs';
 import { readDragPayload, dragHasItemKind, ITEM_KIND_SCRIPT } from '../utils/dragData';
 import { createSubtitleTrackComponent } from '../engine/subtitleTrack';
  
@@ -101,6 +101,8 @@ export function useComponentCardActions({ selectedEntity, onUpdateEntity, script
       newComp = createTransitionComponent();
     } else if (type === 'SubtitleTrack') {
       newComp = createSubtitleTrackComponent();
+    } else if (type === 'Camera') {
+      newComp = createCameraComponent();
     } else if (type === 'ScriptComponent' && scriptId) {
       // ONE script component type — the runtime dispatches per the
       // script's detected kind (motion / react / canvas).

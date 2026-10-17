@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react';
-import { Link, Unlink, Copy, ClipboardPaste, RotateCcw } from 'lucide-react';
-import { InspectorFieldList, FieldContextRow, TRANSFORM_FIELD_GROUPS } from './InspectorField';
+import { Link, Unlink, Copy, ClipboardPaste, RotateCcw, Box } from 'lucide-react';
+import { InspectorFieldList, FieldContextRow, TRANSFORM_FIELD_GROUPS, getTransformFieldGroups } from './InspectorField';
 import { InspectorCardHeader } from './InspectorCardHeader';
 import { getFieldKeyframes, setKeyframe, removeKeyframe } from '../../engine/keyframes';
 import './inspector-polish.css';
@@ -26,9 +26,11 @@ const round4 = (n) => Math.round(n * 10000) / 10000;
 // alone on purpose: writing it also resizes the clip on the timeline
 // (see updateTransform in UnityInspector.jsx), which nobody expects from a
 // "paste" or a "reset".
-const COPYABLE_FIELDS = TRANSFORM_FIELD_GROUPS
-  .flatMap((group) => group.fields)
-  .filter((field) => field.name !== 'speed');
+const COPYABLE_FIELDS = [
+  ...getTransformFieldGroups(true).flatMap((group) => group.fields),
+  { name: 'is3D', defaultVal: false },
+  { name: 'autoOrient', defaultVal: false },
+].filter((field) => field.name !== 'speed');
  
 // Module-level so a copy survives selecting another clip (the card stays
 // mounted, but a different entity feeds it).
@@ -108,17 +110,26 @@ export function TransformCard({
   const [hasClipboard, setHasClipboard] = useState(transformClipboard !== null);
  
   const values = resolveComponentValues('Transform', transformComp);
+  const is3D = Boolean(values?.is3D);
+  const fieldGroups = getTransformFieldGroups(is3D);
  
   const handleFieldChange = (name, v) => {
-    if (scaleLinked && (name === 'scaleX' || name === 'scaleY')) {
-      const other = name === 'scaleX' ? 'scaleY' : 'scaleX';
+    if (scaleLinked && (name === 'scaleX' || name === 'scaleY' || name === 'scaleZ')) {
       const oldVal = Number(values?.[name]);
-      const otherVal = Number(values?.[other]);
-      let next = v;
-      if (Number.isFinite(oldVal) && oldVal !== 0 && Number.isFinite(otherVal)) {
-        next = round4(otherVal * (v / oldVal));
+      const axes = is3D ? ['scaleX', 'scaleY', 'scaleZ'] : ['scaleX', 'scaleY'];
+      const patch = { [name]: v };
+      if (Number.isFinite(oldVal) && oldVal !== 0) {
+        const factor = v / oldVal;
+        axes.forEach((axis) => {
+          if (axis !== name) {
+            const otherVal = Number(values?.[axis]);
+            if (Number.isFinite(otherVal)) {
+              patch[axis] = round4(otherVal * factor);
+            }
+          }
+        });
       }
-      updateTransform({ [name]: v, [other]: Number.isFinite(next) ? next : v });
+      updateTransform(patch);
       return;
     }
     updateTransform({ [name]: v });
@@ -159,6 +170,17 @@ export function TransformCard({
           <>
             <button
               type="button"
+              className={`card-icon-btn${is3D ? ' is-active' : ''}`}
+              style={is3D ? { color: '#38bdf8', borderColor: '#38bdf8' } : undefined}
+              title={is3D ? '3D Layer (Active) — Click to switch to 2D' : 'Enable 3D Layer (After Effects 3D Switch)'}
+              aria-label="Toggle 3D Layer"
+              aria-pressed={is3D}
+              onClick={() => updateTransform({ is3D: !is3D })}
+            >
+              <Box size={12} />
+            </button>
+            <button
+              type="button"
               className="card-icon-btn"
               title="Copy transform values"
               aria-label="Copy transform values"
@@ -188,10 +210,10 @@ export function TransformCard({
           </>
         }
       />
- 
+
       {isOpen && (
         <div className="inspector-card-body">
-          {TRANSFORM_FIELD_GROUPS.map((group) => {
+          {fieldGroups.map((group) => {
             const isScale = group.label === 'Scale';
             const isPivot = group.label === 'Pivot';
             const isVector = group.fields.length > 1;
@@ -286,6 +308,20 @@ export function TransformCard({
                         })
                       )}
                     </div>
+                  </div>
+                )}
+                {isPivot && is3D && (
+                  <div className="inspector-row">
+                    <span className="row-label" title="Auto-Orient">Auto-Orient</span>
+                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#94a3b8', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        className="inspector-switch"
+                        checked={Boolean(values?.autoOrient)}
+                        onChange={(e) => updateTransform({ autoOrient: e.target.checked })}
+                      />
+                      <span>Face Camera</span>
+                    </label>
                   </div>
                 )}
               </Fragment>

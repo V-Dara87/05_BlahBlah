@@ -12,6 +12,7 @@ import { X, Copy, Check, BookOpen } from 'lucide-react';
 const SECTIONS = [
   { id: 'ai-rules', label: 'AI Rules & Guidelines', match: 'Rules for AI Code Generators' },
   { id: 'overview', label: 'Overview', match: 'Overview' },
+  { id: 'easy', label: 'Easy mode (canvasScript)', match: 'Easy mode' },
   { id: 'props', label: 'static props', match: 'Declaring props' },
   { id: 'attributes', label: 'Field attributes', match: 'Field attributes' },
   { id: 'motion', label: 'Motion scripts', match: 'animating a clip' },
@@ -24,6 +25,7 @@ const SECTIONS = [
   { id: 'react', label: 'React scripts', match: 'custom React clip content' },
   { id: 'shader', label: 'Shader transitions', match: 'custom transitions' },
   { id: 'imports', label: 'npm imports', match: 'npm packages' },
+  { id: 'safety', label: 'Safety & strict mode', match: 'Safety and strict mode' },
   { id: 'three', label: 'Three.js 3D scripts', match: 'Three.js 3D' },
   { id: 'examples', label: 'Full Working Examples', match: 'Full Working Examples' },
   { id: 'cheatsheet', label: 'Cheat sheet', match: 'cheat sheet' },
@@ -81,12 +83,15 @@ This document is the authoritative reference for writing user scripts (\`ScriptC
 Before writing any script code, review this checklist:
 
 - **Compiled with esbuild:** Every script — with or without \`import\` — is compiled by esbuild, so JSX, TypeScript, and npm imports all work the same way.
+- **Prefer Easy mode:** for a 2D canvas script write \`export default canvasScript({ props, draw })\`; for a transform script write \`motionScript({ props, update })\`. Both are checked strictly: a misspelled key (\`drwa\`) or a missing \`draw\` is an error that names the fix.
+- **Scripts are strict:** they run in JavaScript strict mode (an undeclared variable like \`speeed = 3\` throws instead of silently creating a global), a misspelled hook (\`onupdate\`) is a compile error, and storage, sockets and the desktop bridge are blocked (see "Safety and strict mode").
 - **Errors show in the Console:** A compile or runtime error appears in the Console panel tagged with the script name and line/column, so nothing fails silently.
 - **Props are validated:** \`static props\` types, min/max ranges, select options, struct fields, and button methods are checked, and warnings appear as a yellow badge in the Inspector.
 
 | Task | Correct Pattern | Incorrect Pattern (Do NOT do this) |
 |---|---|---|
-| **2D Canvas script** | \`class MyScript extends CanvasComponent\` | Hand-rolling raw \`<canvas>\` without handling resize or container cleanup |
+| **2D Canvas script (easy)** | \`export default canvasScript({ props: {…}, draw({ ctx, width, height, time, props }) {…} })\` | Writing a class and canvas plumbing when \`canvasScript\` is enough |
+| **2D Canvas script (class)** | \`class MyScript extends CanvasComponent\` | Hand-rolling raw \`<canvas>\` without handling resize or container cleanup |
 | **Canvas Center Origin** | \`this.centerOrigin(); /* draw at (0,0) */; this.restoreOrigin();\` | Hardcoding \`canvasWidth / 2\` on every single coordinate call |
 | **3D Three.js script** | \`class MyScene extends ThreeComponent\` | Creating \`WebGLRenderer\` manually without resizing or cleanup on unmount |
 | **Motion script** | Class with \`onStart({ transform, tween })\` / \`onUpdate({ transform, time })\` | Extending \`CanvasComponent\` for transform animation, or returning JSX |
@@ -118,6 +123,61 @@ All script kinds support:
 - \`static props = { ... }\` — declares Inspector controls and keyframe tracks.
 - Real ES \`import\` statements for npm packages (resolved via esm.sh, cached offline in IndexedDB).
 - JSX and TypeScript syntax (transpiled automatically in-browser with esbuild).
+
+---
+
+## Easy mode — one object, no class (\`canvasScript\` / \`motionScript\`)
+
+The shortest way to write a script. No class, no canvas creation, no resize handling, no \`centerOrigin()\` calls.
+
+\`\`\`js
+import { canvasScript } from '@blahblah/sdk';
+
+export default canvasScript({
+  props: {
+    size: num(40, { min: 10, max: 200 }),
+    tint: color('#38bdf8'),
+  },
+
+  // Runs every frame. (0, 0) is the center of the canvas.
+  draw({ ctx, width, height, time, props }) {
+    ctx.fillStyle = props.tint;
+    ctx.fillRect(-props.size / 2, Math.sin(time * 3) * 50, props.size, props.size);
+  },
+});
+\`\`\`
+
+| Key | Required | When it runs | Receives |
+|---|---|---|---|
+| \`props\` | no | — | Inspector fields (\`num\`, \`color\`, \`text\`, …) |
+| \`draw\` | **yes** | every frame | \`{ ctx, canvas, width, height, time, props, … }\` |
+| \`setup\` | no | once, after the canvas exists | same as \`draw\` |
+| \`seek\` | no | when the playhead jumps (scrub) | same as \`draw\` |
+| \`cleanup\` | no | when the script is removed | \`{ container }\` |
+| \`origin\` | no | — | \`'center'\` (default) or \`'top-left'\` |
+| \`clear\` | no | — | \`true\` (default): clear the canvas before each \`draw\` |
+
+- Use method syntax (\`draw() {}\`), not arrow functions, if you want \`this\`: it is the script instance, so \`setup() { this.particles = []; }\` is visible in \`draw\`.
+- The context is saved and restored around every \`draw\`, even if it throws.
+- Drawing is still a pure function of \`time\`, so scrubbing and export stay exact.
+- \`canvasScript\` is still a normal \`CanvasComponent\` underneath: gizmos, entity/asset props and keyframes all work.
+
+**Strict:** \`canvasScript({ drwa() {} })\` fails with *unknown key 'drwa' — did you mean 'draw'?*, and a script without \`draw\` fails with the fix in the message.
+
+Transform scripts have the same shape:
+
+\`\`\`js
+import { motionScript } from '@blahblah/sdk';
+
+export default motionScript({
+  props: { speed: num(2), reach: num(120) },
+  update({ transform, props, time }) {
+    transform.position.x = Math.sin(time * props.speed) * props.reach;
+  },
+});
+\`\`\`
+
+\`motionScript\` takes \`props\`, \`start\` (once, to set up tweens) and \`update\` (every frame); at least one of \`start\` / \`update\` is required.
 
 ---
 
@@ -741,6 +801,29 @@ import { helper } from './localHelper.js';
 \`\`\`
 
 Packages resolve automatically via esm.sh and are cached in IndexedDB for 100% offline usage.
+
+---
+
+## Safety and strict mode
+
+Scripts run inside the editor, so they are guarded. These rules apply to every script kind.
+
+**Strict mode.** Every script runs in JavaScript strict mode:
+- Assigning to an undeclared variable (\`speeed = 3\`) throws a \`ReferenceError\` instead of silently creating a global. Declare it with \`const\` / \`let\`.
+- \`with\` statements and legacy octal numbers are syntax errors.
+
+**Misspelled hooks are errors.** A method such as \`onupdate\`, \`OnMount\` or \`onUpdat\` would never be called, so the script would silently do nothing. It is now a compile error: *Unknown method 'onupdate' — did you mean 'onUpdate'?* The hooks are \`onMount\`, \`onUpdate\`, \`onSeek\`, \`onUnmount\`, \`onStart\`, \`onContainerReattach\`, \`onGizmoDrag\` and \`getGizmos\`.
+
+**Blocked APIs.** Using these throws *"<name> is blocked in scripts"*:
+- Storage: \`localStorage\`, \`sessionStorage\`, \`indexedDB\`, \`caches\`.
+- Raw network channels: \`XMLHttpRequest\`, \`WebSocket\`, \`EventSource\`, \`WebTransport\`, \`RTCPeerConnection\`.
+- The desktop bridge: \`__TAURI__\`, \`__TAURI_INTERNALS__\`, and \`ipc:\` / \`file:\` URLs in \`fetch\`.
+
+\`fetch\` itself still works for fonts, images and libraries. \`window\`, \`globalThis\` and \`self\` apply the same rules. Keep state in plain variables or in Inspector props.
+
+**One compiler.** Every script is compiled by esbuild. If esbuild cannot start, scripts show one clear error and do not run (there is no fallback that could run mangled code).
+
+**What this is not.** Scripts still run on the app's main thread: this stops accidents and the obvious abuse, but it is not a hard security boundary, and a script that loops forever can still freeze the editor until it returns (the "Script paused" guard disables it afterwards). Only open projects you trust.
 
 ---
 

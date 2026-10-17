@@ -11,6 +11,7 @@ import {
 import { resolveScriptProps } from './referenceTypes.js';
 import { Tween } from './motionTween.js';
 import { pushRuntimeError, withScriptConsole } from './scriptConsole.js';
+import { globalFrameCache } from './frameCache.js';
  
 /**
  * P0 #2 — canvas-kind script lifecycle runner.
@@ -199,6 +200,7 @@ export function updateCanvasComponent({
   };
  
   if (needsRemount) {
+    globalFrameCache.invalidateEntity(entityId);
     if (mounted) {
       safeCall(mounted.instance, 'onUnmount', { container: mounted.container }, mounted.scriptName, mounted.scriptCode);
       // Tearing the old instance down means ALL of it, not just onUnmount:
@@ -343,19 +345,40 @@ export function updateCanvasComponent({
     }
   }
 
-  if (!mounted.mountFailed) safeCall(mounted.instance, 'onUpdate', {
-    container,
-    time: localTime,
-    frame,
-    fps,
-    props: effProps,
-    canvasWidth: effWidth,
-    canvasHeight: effHeight,
-    aspect: effHeight > 0 ? effWidth / effHeight : 1,
-    tween: Tween,
-    Tween,
-    ...timingArgs,
-  }, scriptName, scriptCode);
+  // RAM Preview Frame Cache: Check if this exact frame has already been rendered.
+  // Applies to 2D Canvas components with an active 2D rendering context.
+  const has2dCtx = !!mounted.instance?.ctx && !!mounted.instance?.canvas;
+  const cacheKey = has2dCtx
+    ? globalFrameCache.generateKey(entityId, scriptId, scriptCode, effProps, frame, effWidth, effHeight)
+    : null;
+
+  if (has2dCtx && cacheKey) {
+    const cached = globalFrameCache.get(cacheKey);
+    if (cached && globalFrameCache.blit(mounted.instance.ctx, cached)) {
+      return; // Cache HIT: Blitted in microseconds, completely skipping script execution!
+    }
+  }
+
+  if (!mounted.mountFailed) {
+    const threw = safeCall(mounted.instance, 'onUpdate', {
+      container,
+      time: localTime,
+      frame,
+      fps,
+      props: effProps,
+      canvasWidth: effWidth,
+      canvasHeight: effHeight,
+      aspect: effHeight > 0 ? effWidth / effHeight : 1,
+      tween: Tween,
+      Tween,
+      ...timingArgs,
+    }, scriptName, scriptCode);
+
+    // If render succeeded, store snapshot in RAM preview cache
+    if (!threw && has2dCtx && cacheKey && mounted.instance?.canvas) {
+      globalFrameCache.set(entityId, cacheKey, mounted.instance.canvas, effWidth, effHeight);
+    }
+  }
 }
 
  

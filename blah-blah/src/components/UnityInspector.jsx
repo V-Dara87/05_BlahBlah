@@ -22,12 +22,14 @@ import {
   ExternalLink,
   RotateCcw,
   Unlink,
+  Camera,
 } from 'lucide-react';
 import { getFieldKeyframes, setKeyframe, evaluateField } from '../engine/keyframes';
-import { isScriptComponent, isTransitionClipEntity } from '../engine/ecs';
+import { isScriptComponent, isTransitionClipEntity, getCameraComponent } from '../engine/ecs';
 import { useReferencePicker } from './inspector/ReferencePickerHost';
 import { useComponentCardActions, scriptKindLabel, SCRIPT_KINDS } from '../hooks/useComponentCardActions';
 import { TransformCard } from './inspector/TransformCard';
+import { CameraCard } from './inspector/CameraCard';
 import { TextRendererCard } from './inspector/TextRendererCard';
 import { ShapeRendererCard } from './inspector/ShapeRendererCard';
 import { MediaSettingsCard } from './inspector/MediaSettingsCard';
@@ -110,6 +112,7 @@ export const UnityInspector = memo(function UnityInspector({
 }) {
   const [openFoldouts, setOpenFoldouts] = useState({
     Transform: true,
+    Camera: true,
     Scripts: true,
     Text: true,
     Shape: true,
@@ -261,6 +264,7 @@ export const UnityInspector = memo(function UnityInspector({
   const audioComp = selectedEntity.components.find(c => c.type === 'AudioSource');
   const transitionComp = selectedEntity.components.find(c => c.type === 'TransitionComponent');
   const subtitleComp = selectedEntity.components.find(c => c.type === 'SubtitleTrack');
+  const cameraComp = getCameraComponent(selectedEntity);
   const scriptComps = selectedEntity.components.filter(isScriptComponent);
  
   const updateTransform = (updates) => {
@@ -387,6 +391,7 @@ export const UnityInspector = memo(function UnityInspector({
     AudioSource: <Volume2 size={12} className="text-emerald" />,
     TransitionComponent: <Sparkles size={12} className="text-amber" />,
     SubtitleTrack: <Captions size={12} className="text-cyan" />,
+    Camera: <Camera size={12} style={{ color: '#c084fc' }} />,
   };
   const rendererItems = [
     { type: 'TextRenderer', label: 'Text Component', present: !!textComp },
@@ -395,6 +400,7 @@ export const UnityInspector = memo(function UnityInspector({
     { type: 'AudioSource', label: 'Audio Component', present: !!audioComp },
     { type: 'TransitionComponent', label: 'GL Transition', present: !!transitionComp },
     { type: 'SubtitleTrack', label: 'Subtitle Track', present: !!subtitleComp },
+    { type: 'Camera', label: '3D Camera Component', present: !!cameraComp },
   ];
  
   const visibleRendererItems = rendererItems.filter((it) => matchesSearch(it.label) || matchesSearch(it.type));
@@ -684,7 +690,28 @@ export const UnityInspector = memo(function UnityInspector({
             mediaAssets={mediaAssets}
           />
         )}
- 
+
+        {/* ========== 3D CAMERA COMPONENT ========== */}
+        {cameraComp && (
+          <CameraCard
+            cameraComp={cameraComp}
+            isOpen={openFoldouts.Camera !== false}
+            onToggle={() => toggleFoldout('Camera')}
+            dragOverCompType={dragOverCompType}
+            handleCardDragStart={handleCardDragStart}
+            handleCardDragOver={handleCardDragOver}
+            handleCardDrop={handleCardDrop}
+            handleCardDragEnd={handleCardDragEnd}
+            removeComponent={removeComponent}
+            updateComponent={updateComponent}
+            resolveComponentValues={resolveComponentValues}
+            tryWriteKeyframe={tryWriteKeyframe}
+            selectedEntity={selectedEntity}
+            currentTime={currentTime}
+            onUpdateEntity={onUpdateEntity}
+          />
+        )}
+
         {/* ========== SCRIPTS (motion / React / Canvas — one component type) ========== */}
         {scriptComps.map((scriptComp) => {
           const foldoutKey = `Script:${scriptComp.scriptId}`;

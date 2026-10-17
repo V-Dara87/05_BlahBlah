@@ -79,13 +79,31 @@ export function VideoLayer({
       ((entity.components || []).find((c) => c.type === 'Transform')?.speed ?? 1);
     const baseWidth = safeResWidth;
     const baseHeight = safeResHeight;
- 
+
+    const is3D = Boolean(item.is3D && item.projectedTransform);
+    const proj = item.projectedTransform;
+    if (is3D && proj && !proj.inFrontOfCamera) return null;
+
+    const renderX = is3D ? (proj.screenX - safeResWidth / 2) : transform.x;
+    const renderY = is3D ? (proj.screenY - safeResHeight / 2) : transform.y;
+    const renderScaleX = is3D ? proj.scaleX : transform.scaleX;
+    const renderScaleY = is3D ? proj.scaleY : transform.scaleY;
+    const renderRotX = is3D ? proj.rotationX : 0;
+    const renderRotY = is3D ? proj.rotationY : 0;
+    const renderRotZ = is3D ? proj.rotationZ : (transform.rotation || 0);
+
+    const cssTransform = is3D
+      ? `translate(${renderX}px, ${renderY}px) rotateX(${renderRotX}deg) rotateY(${renderRotY}deg) rotateZ(${renderRotZ}deg) scale(${renderScaleX}, ${renderScaleY})`
+      : `translate(${transform.x}px, ${transform.y}px) rotate(${transform.rotation}deg) scale(${transform.scaleX}, ${transform.scaleY})`;
+
+    const computedZIndex = is3D ? proj.zIndex : ((isSelected ? 1000 : 0) + 100 + layerZIndexOf(item));
+
     return (
       <Fragment key={entity.id}>
       <div
         className={`video-layer-container ${isSelected ? 'selected' : ''} ${onUpdateEntity ? 'gizmo-draggable' : ''}`}
         style={{
-          transform: `translate(${transform.x}px, ${transform.y}px) rotate(${transform.rotation}deg) scale(${transform.scaleX}, ${transform.scaleY})`,
+          transform: cssTransform,
           // Shift the CSS rotation/scale origin by the pivot offset so
           // rotate and scale happen around the pivot point, not the
           // element center. pivotX/Y are normalized (0=center, ±0.5=edge)
@@ -100,7 +118,7 @@ export function VideoLayer({
           // type. Selected entity gets a large boost so it's always
           // visible on top while you're actively editing it,
           // regardless of its track.
-          zIndex: (isSelected ? 1000 : 0) + 100 + layerZIndexOf(item),
+          zIndex: computedZIndex,
           // visibility (not display:none) keeps the element decoding so the
           // blend canvas can still draw its frames.
           ...(hidden ? { visibility: 'hidden', pointerEvents: 'none' } : null),

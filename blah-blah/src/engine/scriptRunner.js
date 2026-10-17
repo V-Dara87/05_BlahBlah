@@ -25,6 +25,9 @@ import { decodeSourceMap, originalPosition, formatSourceContext } from './source
 // with no import line; scriptBundler.js also serves this module as the
 // `blahblah` virtual module for scripts that prefer an explicit import.
 import { PROP_HELPER_NAMES, derivePropLabel, propHelperValues } from './scriptProps.js';
+// Guard rails (blocked globals, guarded window/fetch) and the misspelled-hook
+// check. See scriptSandbox.js for exactly what is and is not guaranteed.
+import { getSandboxScope, assertNoLifecycleTypos } from './scriptSandbox.js';
  
 /**
  * Cache for compiled JavaScript/JSX modules to ensure 60fps performance without recompiling.
@@ -142,6 +145,19 @@ export function markScriptSlow(scriptCode, scriptName, elapsedMs, methodName = '
   slowScriptCache.add(scriptCode);
   pushRuntimeError(
     `Script paused: ${methodName}() took ${Math.round(elapsedMs)}ms twice (budget ${getCallBudgetMs(methodName)}ms), which usually means an infinite or very heavy loop. Press Re-enable in the Inspector, or edit the code and save.`,
+    scriptName || 'script',
+  );
+}
+
+/**
+ * Immediately disables a script that froze the worker (watchdog timeout triggered).
+ * Unlike soft slow calls, a watchdog hang is immediately disabled on first occurrence.
+ */
+export function markScriptHang(scriptCode, scriptName, timeoutMs) {
+  if (!scriptCode) return;
+  slowScriptCache.add(scriptCode);
+  pushRuntimeError(
+    `[Watchdog Protection] Script "${scriptName || 'script'}" froze (exceeded ${timeoutMs}ms budget). The execution thread was terminated to prevent the editor from freezing. Edit the script to fix the loop.`,
     scriptName || 'script',
   );
 }
@@ -274,31 +290,21 @@ export function formatRuntimeError(err, context, scriptName) {
  */
 const pendingBundleCache = new Set();
  
-// ─── esbuild-wasm transpiler (background precompile only) ────────────────────
+// ─── esbuild-wasm (the ONLY compiler) ────────────────────────────────────────
 //
 // compileScriptModule is called synchronously from inside React's useMemo
-// (EntityRenderer) and the export render loop, so it can NEVER await
-// anything and can NEVER call esbuild.transform() (which is always
-// async in the browser build — there is no synchronous transformSync
-// here). The previous implementation tried to fake synchronous access
-// to a promise's result by reading a `let result` variable right after
-// firing `.then()` with no `await`; that variable is guaranteed to
-// still be `null` at that point (the `.then` callback only runs once
-// the current synchronous stack unwinds), so esbuild's output was
-// silently discarded on every call and the regex transpiler
-// (`transpileJsxToJs`) ran for 100% of scripts regardless of whether
-// esbuild had initialised.
+// (EntityRenderer) and the export render loop, so it can NEVER await anything
+// and can NEVER call esbuild.transform() (always async in the browser build).
+// Every script is therefore compiled by `precompileWithBundler` — an explicit
+// async function (esbuild transform for import-free scripts, the full bundler
+// for scripts with imports) — which stores the result in `compiledModuleCache`
+// under the exact source string. The sync path only ever READS that cache.
 //
-// Fix: `compileScriptModule` always uses the synchronous regex
-// transpiler directly — no swappable "active" transpiler, no fake-sync
-// trick. Separately, `precompileWithBundler(scriptCode, dirHandle)` is an
-// explicit async function that runs the *real* esbuild bundler for
-// scripts containing `import` statements (resolving npm packages once
-// via esm.sh + persistent cache, local scripts/ files, and React shims),
-// then overwrites the existing `compiledModuleCache` entry for that
-// exact source string in place. Nothing on the render path awaits it, so
-// it never blocks or races the sync path; scripts without imports never
-// touch it.
+// There used to be a second, regex-based JSX/TypeScript transpiler used when
+// esbuild could not start. It silently mis-compiled nested JSX and some type
+// annotations, so a script could run as something other than what its author
+// wrote. It is gone: if esbuild cannot start, scripts fail with one clear
+// error instead of running mangled code.
  
 /**
  * Rewrites an esbuild ESM transform's export syntax into the
@@ -660,6 +666,22 @@ function notifyScriptsRecompiled() {
   }
 }
  
+const NO_COMPILER_MESSAGE =
+  'error: The script compiler (esbuild-wasm) failed to start, so scripts cannot run.\n' +
+  ' note: Restart the app. If this persists, esbuild.wasm is missing from the build (run the copy-esbuild-wasm script).';
+
+/** Record "no compiler" as this script's compile error (once per console clear) and return the message. */
+function failNoCompiler(scriptCode, scriptName) {
+  pendingBundleCache.delete(scriptCode);
+  const already = lastErrorCache.has(scriptCode) && lastErrorGeneration.get(scriptCode) === getConsoleGeneration();
+  cacheSet(lastErrorCache, scriptCode, NO_COMPILER_MESSAGE);
+  if (!already) {
+    cacheSet(lastErrorGeneration, scriptCode, getConsoleGeneration());
+    pushCompileError(NO_COMPILER_MESSAGE, scriptName);
+  }
+  return NO_COMPILER_MESSAGE;
+}
+
 /**
  * Async esbuild compile path for EVERY script — not just ones with imports.
  *
@@ -701,12 +723,8 @@ export async function precompileWithBundler(scriptCode, projectDirHandle, script
   await esbuildInitPromise;
 
   if (!esbuildReady) {
-    // esbuild never initialised (no wasm) — fall back to the regex
-    // transpiler so scripts still run, and report its result.
-    compileWithRegex(scriptCode, scriptName);
-    return lastErrorCache.has(scriptCode)
-      ? { ok: false, error: lastErrorCache.get(scriptCode) }
-      : { ok: true };
+    // esbuild never initialised (no wasm). Strict: do not run anything.
+    return { ok: false, error: failNoCompiler(scriptCode, scriptName) };
   }
 
   try {
@@ -780,212 +798,6 @@ export async function precompileAllProjectScripts(scripts, projectDirHandle) {
   // Pass the script NAME through, so Console entries and esbuild errors are
   // labelled with [ScriptName] instead of a bare "script".
   await Promise.allSettled(toCompile.map((s) => precompileWithBundler(s.code, projectDirHandle, s.name)));
-}
- 
-/**
- * Lightweight JSX & TypeScript to JavaScript Transpiler for in-browser live scripting.
- */
-export function transpileJsxToJs(codeStr) {
-  if (!codeStr) return '';
- 
-  let code = codeStr;
- 
-  // 1. Remove TS type imports / interface / type declarations
-  code = code.replace(/import\s+type\s+[^;]+;/g, '');
-  code = code.replace(/export\s+type\s+[^;]+;/g, '');
-  code = code.replace(/export\s+interface\s+[\s\S]*?\n\}/g, '');
-  code = code.replace(/interface\s+[\s\S]*?\n\}/g, '');
-  code = code.replace(/type\s+[A-Za-z0-9_]+\s*=\s*[^;]+;/g, '');
- 
-  // 2. Remove TS variable / parameter type annotations (e.g., `: number`, `: string`, `: any`)
-  code = code.replace(/:\s*(?:number|string|boolean|any|void|object|Function|React\.[A-Za-z0-9_]+)\b/g, '');
- 
-  // 3. Remove standard ES module import statements (since scope is injected)
-  code = code.replace(/import\s+(?:\{[^}]*\}|\*\s+as\s+[A-Za-z0-9_]+|[A-Za-z0-9_]+)\s+from\s+['"][^'"]+['"];?/g, '');
- 
-  // 4. Handle export default and export declarations for function execution
-  let defaultExportName = null;
- 
-  code = code.replace(/export\s+default\s+class\s+([A-Za-z0-9_]+)/g, (_, name) => {
-    defaultExportName = name;
-    return `class ${name}`;
-  });
- 
-  code = code.replace(/export\s+default\s+function\s+([A-Za-z0-9_]+)/g, (_, name) => {
-    defaultExportName = name;
-    return `function ${name}`;
-  });
- 
-  code = code.replace(/export\s+default\s+/g, 'module.exports.default = ');
- 
-  code = code.replace(/export\s+(const|let|var|function|class)\s+([A-Za-z0-9_]+)/g, (_, decl, name) => {
-    return `${decl} ${name}`;
-  });
- 
-  // 5. Transform standard JSX to React.createElement
-  code = transformJsxElements(code);
- 
-  if (defaultExportName) {
-    code += `\nif (typeof ${defaultExportName} !== 'undefined') { module.exports.default = ${defaultExportName}; }\n`;
-  }
- 
-  return code;
-}
- 
-/**
- * Transforms JSX syntax into React.createElement calls
- */
-function transformJsxElements(code) {
-  // Replace JSX fragments <> ... </>
-  code = code.replace(/<>\s*([\s\S]*?)\s*<\/>/g, (_, children) => {
-    return `React.createElement(React.Fragment, null, ${parseJsxChildren(children)})`;
-  });
- 
-  // 1. Replace self-closing JSX tags: <Tag prop="val" />
-  let prevCode = '';
-  let iters = 0;
-  while (prevCode !== code && iters < 20) {
-    prevCode = code;
-    iters++;
-    code = code.replace(/<([A-Za-z0-9_$.]+)((?:\s+[^=>\s/]+(?:=(?:"[^"]*"|'[^']*'|\{[^{}]*\}))?)*)\s*\/>/g, 
-      (_, tag, rawProps) => {
-        const propsObj = parseJsxProps(rawProps);
-        const tagExpr = /^[A-Z]/.test(tag) || tag.includes('.') ? tag : `"${tag}"`;
-        return `React.createElement(${tagExpr}, ${propsObj})`;
-      }
-    );
-  }
- 
-  // 2. Iteratively replace innermost paired tags (children contain no '<')
-  prevCode = '';
-  iters = 0;
-  while (prevCode !== code && iters < 30) {
-    prevCode = code;
-    iters++;
-    code = code.replace(/<([A-Za-z0-9_$.]+)((?:\s+[^=>\s]+(?:=(?:"[^"]*"|'[^']*'|\{[^{}]*\}))?)*)\s*>([^<]*)<\/\1>/g,
-      (_, tag, rawProps, children) => {
-        const propsObj = parseJsxProps(rawProps);
-        const tagExpr = /^[A-Z]/.test(tag) || tag.includes('.') ? tag : `"${tag}"`;
-        const parsedChildren = parseJsxChildren(children);
-        return parsedChildren 
-          ? `React.createElement(${tagExpr}, ${propsObj}, ${parsedChildren})`
-          : `React.createElement(${tagExpr}, ${propsObj})`;
-      }
-    );
-  }
- 
-  return code;
-}
- 
-function parseJsxProps(rawProps) {
-  if (!rawProps || !rawProps.trim()) return 'null';
-  const propPairs = [];
-  let pos = 0;
-  const str = rawProps.trim();
- 
-  while (pos < str.length) {
-    while (pos < str.length && /\s/.test(str[pos])) pos++;
-    if (pos >= str.length) break;
- 
-    const nameMatch = str.slice(pos).match(/^([A-Za-z0-9_$-]+)/);
-    if (!nameMatch) {
-      pos++;
-      continue;
-    }
- 
-    const propName = nameMatch[1];
-    const key = propName === 'class' ? 'className' : propName;
-    pos += propName.length;
- 
-    while (pos < str.length && /\s/.test(str[pos])) pos++;
- 
-    if (pos < str.length && str[pos] === '=') {
-      pos++;
-      while (pos < str.length && /\s/.test(str[pos])) pos++;
- 
-      if (str[pos] === '"' || str[pos] === "'") {
-        const q = str[pos];
-        pos++;
-        const start = pos;
-        while (pos < str.length && str[pos] !== q) {
-          if (str[pos] === '\\') pos++;
-          pos++;
-        }
-        const val = str.slice(start, pos);
-        pos++;
-        propPairs.push(`"${key}": ${JSON.stringify(val)}`);
-      } else if (str[pos] === '{') {
-        let braceDepth = 1;
-        pos++;
-        const start = pos;
-        while (pos < str.length && braceDepth > 0) {
-          if (str[pos] === '{') braceDepth++;
-          else if (str[pos] === '}') braceDepth--;
-          pos++;
-        }
-        const valExpr = str.slice(start, pos - 1).trim();
-        propPairs.push(`"${key}": ${valExpr}`);
-      }
-    } else {
-      propPairs.push(`"${key}": true`);
-    }
-  }
- 
-  return propPairs.length > 0 ? `{ ${propPairs.join(', ')} }` : 'null';
-}
- 
-function parseJsxChildren(children) {
-  if (!children || !children.trim()) return '';
-  const tokens = [];
-  let pos = 0;
-  const str = children.trim();
- 
-  while (pos < str.length) {
-    while (pos < str.length && /\s/.test(str[pos])) pos++;
-    if (pos >= str.length) break;
- 
-    if (str[pos] === '{') {
-      let braceDepth = 1;
-      pos++;
-      const start = pos;
-      while (pos < str.length && braceDepth > 0) {
-        if (str[pos] === '{') braceDepth++;
-        else if (str[pos] === '}') braceDepth--;
-        pos++;
-      }
-      const expr = str.slice(start, pos - 1).trim();
-      if (expr) tokens.push(expr);
-    } else if (str.slice(pos).startsWith('React.createElement(')) {
-      let parenDepth = 1;
-      const start = pos;
-      pos += 'React.createElement('.length;
-      while (pos < str.length && parenDepth > 0) {
-        if (str[pos] === '(') parenDepth++;
-        else if (str[pos] === ')') parenDepth--;
-        else if (str[pos] === '"' || str[pos] === "'") {
-          const q = str[pos];
-          pos++;
-          while (pos < str.length && str[pos] !== q) {
-            if (str[pos] === '\\') pos++;
-            pos++;
-          }
-        }
-        pos++;
-      }
-      tokens.push(str.slice(start, pos));
-    } else {
-      const start = pos;
-      while (pos < str.length && str[pos] !== '{' && !str.slice(pos).startsWith('React.createElement(')) {
-        pos++;
-      }
-      const text = str.slice(start, pos).trim();
-      if (text) {
-        tokens.push(JSON.stringify(text));
-      }
-    }
-  }
- 
-  return tokens.join(', ');
 }
  
 /**
@@ -1072,10 +884,33 @@ export function buildStructDefault(subfields) {
  *   or null if no `static props`/`props` assignment is found.
  */
 function extractPropsObjectSource(code) {
-  const keywordMatch = code.match(/(?:static\s+props|\bprops)\s*=\s*/);
-  if (!keywordMatch) return null;
+  // Candidate starts, in priority order:
+  //   1. `static props = {` / `props = {`        (class style)
+  //   2. `props: {` inside `canvasScript({…})` / `motionScript({…})`
+  //                                              (function style)
+  // A candidate that is not followed by an object literal is skipped, not
+  // fatal (`props == x` must not hide a real declaration further down).
+  const starts = [];
+  const assign = code.match(/(?:static\s+props|\bprops)\s*=\s*/);
+  if (assign) starts.push(assign.index + assign[0].length);
+  const call = code.match(/\b(?:canvasScript|motionScript)\s*\(/);
+  if (call) {
+    const afterCall = call.index + call[0].length;
+    const colon = code.slice(afterCall).match(/\bprops\s*:\s*/);
+    if (colon) starts.push(afterCall + colon.index + colon[0].length);
+  }
+  for (const searchStart of starts) {
+    const found = scanObjectLiteral(code, searchStart);
+    if (found) return found;
+  }
+  return null;
+}
 
-  const searchStart = keywordMatch.index + keywordMatch[0].length;
+/**
+ * From `searchStart`, skip whitespace; if an object literal starts there,
+ * return its full source text (brace-counted, string/comment aware).
+ */
+function scanObjectLiteral(code, searchStart) {
   let openIdx = searchStart;
   while (openIdx < code.length && /\s/.test(code[openIdx])) openIdx++;
   if (code[openIdx] !== '{') return null;
@@ -1432,9 +1267,18 @@ export function detectScriptKind(code) {
   const isClass = /\bclass\s+[A-Za-z0-9_]+/.test(code);
  
   const isShader = /\bvec4\s+transition\s*\(|\bgl_FragColor\b/.test(code);
+
+  // Function-style scripts (SDK `canvasScript({...})` / `motionScript({...})`)
+  // build their class at runtime, so the source has no `extends`/`onMount`.
+  const usesCanvasScript = /\bcanvasScript\s*\(/.test(code);
+  const usesMotionScript = /\bmotionScript\s*\(/.test(code);
  
   if (isShader) {
     kind = 'shader';
+  } else if (usesCanvasScript) {
+    kind = 'canvas';
+  } else if (usesMotionScript) {
+    kind = 'motion';
   } else if (extendsCanvasClass || hasOnMount || hasOnUnmount || (hasContainerArg && !hasTransformArg)) {
     // CanvasRenderer contract: extends CanvasComponent/ThreeComponent, or
     // explicit onMount({ container, props }) / onUpdate({ container, ... }) / onUnmount(...)
@@ -1456,7 +1300,24 @@ export function detectScriptKind(code) {
 }
  
 /**
- * Compiles a JS/JSX script into an executable module/class
+ * Evaluates compiled (CommonJS-shaped) script code and returns its default
+ * export.
+ *
+ * Layout of the evaluated function:
+ *
+ *   outer function  — parameters: React, the tween helpers, the prop helpers
+ *                     and the sandbox scope (guarded window/fetch, blocked
+ *                     storage/network/desktop-bridge names). Body is
+ *                     `'use strict'` and immediately calls the inner function.
+ *   inner function  — the script itself. Because the injected names are
+ *                     parameters of the OUTER function, a script may freely
+ *                     declare its own `const self = this`, `let window`, or
+ *                     `const React = …` without a "has already been declared"
+ *                     error.
+ *
+ * STRICT MODE: assigning to an undeclared variable (`speeed = 3`) throws a
+ * ReferenceError instead of silently creating a global, `this` is undefined at
+ * the top level, and `with`/octal literals are syntax errors.
  */
 function runCompiledModule(transpiled, sourceName, scriptName = '') {
   // Only the legacy "React Component (no JSX)" authoring style calls a bare
@@ -1473,13 +1334,17 @@ function runCompiledModule(transpiled, sourceName, scriptName = '') {
     /\bimport\s*\{[^}]*\bh\b[^}]*\}/.test(transpiled);
   const needsHHelper = callsH && !declaresOwnH;
 
-  // Module wrapper providing React, MotionTween, Easing, MathUtils, and Remotion hooks.
-  //
   // Built as prefix + user code + suffix (instead of one template literal) so
   // the wrapper's exact line offset is known: the number of newlines in
   // `prefix` is how many lines sit above the user's code once the body is
   // handed to `new Function`. formatRuntimeError needs that number to turn a
   // stack line back into the line the author actually wrote.
+  //
+  // The opening of the inner function is on the SAME line as the strict-mode
+  // directive (OUTER_OPEN), which is why it adds exactly one line.
+  const OUTER_OPEN = `'use strict'; return (function () {`;
+  const OUTER_CLOSE = `\n}).call(undefined);`;
+
   const prefix = `
     let exports = {};
     let module = { exports: {} };
@@ -1531,9 +1396,13 @@ function runCompiledModule(transpiled, sourceName, scriptName = '') {
   //# sourceURL=${scriptSourceURL(scriptName || sourceName)}
 `;
 
-  const moduleWrapper = prefix + transpiled + suffix;
+  const moduleWrapper = OUTER_OPEN + prefix + transpiled + suffix + OUTER_CLOSE;
+  // `prefix` starts right after OUTER_OPEN on the same line, so the user's
+  // first line sits (newlines in prefix) lines below the line OUTER_OPEN is on.
   const wrapperLineOffset = prefix.split('\n').length - 1;
- 
+
+  const sandbox = getSandboxScope();
+
   let compiledFn;
   try {
     compiledFn = new Function(
@@ -1553,6 +1422,8 @@ function runCompiledModule(transpiled, sourceName, scriptName = '') {
     // mechanism as React/MathUtils: parameters of the wrapper, so they are
     // in scope for the whole script and never touch the real global object.
     ...PROP_HELPER_NAMES,
+    // Guarded window/globalThis/self/fetch and the blocked names.
+    ...sandbox.names,
     moduleWrapper
     );
   } catch (err) {
@@ -1575,44 +1446,17 @@ function runCompiledModule(transpiled, sourceName, scriptName = '') {
     MathUtils,
     interpolate,
     spring,
-    ...propHelperValues()
+    ...propHelperValues(),
+    ...sandbox.values
   );
+  // Strict: a misspelled hook (`onupdate`, `onUpdat`) would never be called and
+  // the script would silently do nothing — make it a compile error instead.
+  assertNoLifecycleTypos(result);
   // The offset travels with the result so the caller can register the source
   // map keyed by this exact script code (see registerRuntimeMap).
   return { result, wrapperLineOffset };
 }
  
-/**
- * Last-resort synchronous compile with the REGEX transpiler.
- *
- * Only reached when esbuild failed to initialise (no wasm available): it is
- * the offline escape hatch, not the normal path. It is deliberately broken
- * for some inputs (nested-brace JSX, `a ? b : any`), which is why nothing
- * routes through it while esbuild is available.
- */
-function compileWithRegex(scriptCode, scriptName) {
-  try {
-    const transpiled = transpileJsxToJs(scriptCode);
-    // The regex path has no source map (esbuild is the only compiler that
-    // produces one), so a runtime error here falls back to the raw stack.
-    const { result: exportedResult } = runCompiledModule(transpiled, scriptName, scriptName);
-    lastErrorCache.delete(scriptCode);
-    lastErrorGeneration.delete(scriptCode);
-    pendingBundleCache.delete(scriptCode);
-    return cacheSet(compiledModuleCache, scriptCode, exportedResult);
-  } catch (err) {
-    // ── STRICT GATE ── compile failed → never execute, log structured error
-    const msg = err instanceof SyntaxError
-      ? `error: SyntaxError — ${err.message}\n note: Check for mismatched braces, missing semicolons, or invalid JSX`
-      : `error: ${err.message}`;
-    pendingBundleCache.delete(scriptCode);
-    cacheSet(lastErrorCache, scriptCode, msg);
-    cacheSet(lastErrorGeneration, scriptCode, getConsoleGeneration());
-    pushCompileError(msg, scriptName);
-    return null;
-  }
-}
-
 /**
  * Compiles a JS/JSX script into an executable module/class. Always
  * synchronous — never awaits anything — because this is called from
@@ -1622,10 +1466,9 @@ function compileWithRegex(scriptCode, scriptName) {
  * (precompileWithBundler, triggered on project load / hot-reload / create /
  * save). Until that compile lands, the script is marked "pending" (the same
  * mechanism the import case used to use) and this returns null — the
- * Inspector shows "Compiling…", not an error, and never a regex-mangled
- * result. The regex transpiler runs ONLY if esbuild failed to initialise
- * AND its init promise has settled (esbuildReady === false), so the app
- * still works offline without wasm.
+ * Inspector shows "Compiling…", not an error. If esbuild failed to start
+ * there is no fallback compiler: the script gets a clear compile error and
+ * does not run.
  */
 export function compileScriptModule(scriptCode, scriptName) {
   if (!scriptCode) return null;
@@ -1645,14 +1488,16 @@ export function compileScriptModule(scriptCode, scriptName) {
   }
 
   // Still starting esbuild, or it is ready and this script simply has not
-  // been compiled yet → pending. Never a false error, never the regex path.
+  // been compiled yet → pending. Never a false error.
   if (!esbuildInitSettled || esbuildReady) {
     pendingBundleCache.add(scriptCode);
     return null;
   }
 
-  // esbuild could not initialise — degrade to the regex transpiler.
-  return compileWithRegex(scriptCode, scriptName);
+  // esbuild could not initialise: there is no other compiler, so say so once
+  // and never run the script.
+  failNoCompiler(scriptCode, scriptName);
+  return null;
 }
 
  

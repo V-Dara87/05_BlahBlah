@@ -129,20 +129,38 @@ export function OverlayLayer({
     const transitionFactor = item.transitionState
       ? (item.transitionState.type === 'in' ? item.transitionState.progress : (1 - item.transitionState.progress))
       : 1;
- 
+
+    const is3D = Boolean(item.is3D && item.projectedTransform);
+    const proj = item.projectedTransform;
+    if (is3D && proj && !proj.inFrontOfCamera) return null;
+
+    const renderX = is3D ? (proj.screenX - safeResWidth / 2) : transform.x;
+    const renderY = is3D ? (proj.screenY - safeResHeight / 2) : transform.y;
+    const renderScaleX = is3D ? proj.scaleX : transform.scaleX;
+    const renderScaleY = is3D ? proj.scaleY : transform.scaleY;
+    const renderRotX = is3D ? proj.rotationX : 0;
+    const renderRotY = is3D ? proj.rotationY : 0;
+    const renderRotZ = is3D ? proj.rotationZ : (transform.rotation || 0);
+
+    const cssTransform = is3D
+      ? `translate(calc(-50% + ${renderX}px), calc(-50% + ${renderY}px)) rotateX(${renderRotX}deg) rotateY(${renderRotY}deg) rotateZ(${renderRotZ}deg) scale(${renderScaleX}, ${renderScaleY})`
+      : `translate(calc(-50% + ${transform.x}px), calc(-50% + ${transform.y}px)) rotate(${transform.rotation}deg) scale(${transform.scaleX}, ${transform.scaleY})`;
+
+    const computedZIndex = is3D ? proj.zIndex : ((isSelected ? 1000 : 0) + 100 + layerZIndexOf(item));
+
     return (
       <Fragment key={entity.id}>
       <div
         className={`preview-render-layer ${onUpdateEntity ? 'gizmo-draggable' : ''} ${isSelected && onUpdateEntity ? 'selected' : ''}`}
         style={{
-          transform: `translate(calc(-50% + ${transform.x}px), calc(-50% + ${transform.y}px)) rotate(${transform.rotation}deg) scale(${transform.scaleX}, ${transform.scaleY})`,
+          transform: cssTransform,
           // Shift rotation/scale origin to the pivot point. Same
           // formula as the video layer: pivotX/Y normalized × baseSize
           // gives the pixel offset from element center. Default 0,0 →
           // no offset → identical behavior to before.
           transformOrigin: `calc(50% + ${(transform.pivotX ?? 0) * baseWidth}px) calc(50% + ${(transform.pivotY ?? 0) * baseHeight}px)`,
           opacity: (transform.opacity ?? 1) * transitionFactor,
-          zIndex: (isSelected ? 1000 : 0) + 100 + layerZIndexOf(item),
+          zIndex: computedZIndex,
           willChange: 'transform, opacity',
         }}
         onClick={(e) => {
