@@ -97,6 +97,11 @@ export function CameraCard({
 
   const fov = resolved?.fov ?? 50;
   const zoom = resolved?.zoom ?? 1.0;
+  // Roll rotates the view around the camera's own line of sight. It used to be
+  // readable only by falling back to the camera entity's Transform rotation,
+  // which is also used for parenting/2D layout — so it could not be authored
+  // from here without moving the camera's position semantics too.
+  const roll = resolved?.roll ?? 0;
 
   const updateCameraField = (fieldName, value) => {
     const newKfs = tryWriteKeyframe ? tryWriteKeyframe(selectedEntity, 'Camera', fieldName, value) : null;
@@ -128,6 +133,7 @@ export function CameraCard({
       target: { x: 0, y: 0, z: 0 },
       fov: 50,
       zoom: 1.0,
+      roll: 0,
     });
   };
 
@@ -314,6 +320,31 @@ export function CameraCard({
                 step={0.05}
                 value={zoom}
                 onChange={(e) => updateCameraField('zoom', parseFloat(e.target.value))}
+              />
+            </div>
+          </div>
+
+          {/* Roll */}
+          <div className="inspector-row">
+            <span className="row-label" title="Camera Roll (rotation around the line of sight)">Roll</span>
+            <div className="inspector-number-slider" style={{ flex: 1, display: 'flex', gap: '6px', alignItems: 'center' }}>
+              <DragNumber
+                label="°"
+                labelColor="#f472b6"
+                value={roll}
+                min={-180}
+                max={180}
+                step={1}
+                onChange={(v) => updateCameraField('roll', v)}
+              />
+              <input
+                type="range"
+                className="inspector-range"
+                min={-180}
+                max={180}
+                step={1}
+                value={roll}
+                onChange={(e) => updateCameraField('roll', parseFloat(e.target.value))}
               />
             </div>
           </div>

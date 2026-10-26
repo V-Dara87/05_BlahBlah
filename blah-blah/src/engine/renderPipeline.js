@@ -76,6 +76,7 @@ import {
   getCameraComponent,
 } from './ecs.js';
 import { project3DLayer, findActiveCamera, buildLayerMatrix } from './camera3d.js';
+import { getLayerBox, getPivotBase } from './layerBox.js';
  
 const IDENTITY = { x: 0, y: 0, z: 0, rotation: 0, rotationX: 0, rotationY: 0, scaleX: 1, scaleY: 1, scaleZ: 1, opacity: 1, is3D: false };
  
@@ -440,6 +441,35 @@ export function computeActiveEntitiesAtTime({
   const depthMap = new Map();
   const worldMatrixMap = new Map();
 
+  // The box a 3D layer occupies, shared with the preview and the exporter
+  // (engine/layerBox.js). Pivot X/Y are normalized against it on their way into
+  // the model matrix, so a layer whose box disagrees between renderers would
+  // pivot around a different point in each.
+  // Pivot normalization follows the preview's rule (authored size, else the
+  // frame for canvas scripts, else 180px), so the same pivot value swings a
+  // layer by the same amount in 2D and in 3D.
+  const scriptKindOf = (comp) => {
+    const def = scripts.find(
+      (s) =>
+        s.id === comp.scriptId ||
+        s.name === comp.scriptName ||
+        s.name === `${comp.scriptName}.jsx` ||
+        s.id === `script-${comp.scriptName}`
+    );
+    return def?.code ? detectScriptKind(def.code) : null;
+  };
+  const layerBoxOf = (entity) =>
+    getLayerBox(entity, {
+      frameWidth: viewport?.width || 1920,
+      frameHeight: viewport?.height || 1080,
+    });
+  const pivotBaseOf = (entity) =>
+    getPivotBase(entity, {
+      frameWidth: viewport?.width || 1920,
+      frameHeight: viewport?.height || 1080,
+      scriptKindOf,
+    });
+
   function resolveWorld(entityId, visited = new Set()) {
     if (worldMap.has(entityId)) return worldMap.get(entityId);
     const local = localMap.get(entityId);
@@ -448,7 +478,7 @@ export function computeActiveEntitiesAtTime({
       // Break circular cycle
       worldMap.set(entityId, local.localTransform);
       depthMap.set(entityId, 0);
-      worldMatrixMap.set(entityId, buildLayerMatrix(local.localTransform));
+      worldMatrixMap.set(entityId, buildLayerMatrix(local.localTransform, null, pivotBaseOf(local.entity)));
       return local.localTransform;
     }
     visited.add(entityId);
@@ -457,7 +487,7 @@ export function computeActiveEntitiesAtTime({
     if (!parentId || !localMap.has(parentId)) {
       worldMap.set(entityId, local.localTransform);
       depthMap.set(entityId, 0);
-      worldMatrixMap.set(entityId, buildLayerMatrix(local.localTransform));
+      worldMatrixMap.set(entityId, buildLayerMatrix(local.localTransform, null, pivotBaseOf(local.entity)));
       return local.localTransform;
     }
 
@@ -468,7 +498,7 @@ export function computeActiveEntitiesAtTime({
     depthMap.set(entityId, parentDepth + 1);
 
     const parentMat = worldMatrixMap.get(parentId);
-    worldMatrixMap.set(entityId, buildLayerMatrix(local.localTransform, parentMat));
+    worldMatrixMap.set(entityId, buildLayerMatrix(local.localTransform, parentMat, pivotBaseOf(local.entity)));
     return worldTransform;
   }
 
@@ -518,7 +548,27 @@ export function computeActiveEntitiesAtTime({
     const is3D = Boolean(worldTransform?.is3D);
     const parentId = local.entity.parentId;
     const parentMat = (parentId && worldMatrixMap.has(parentId)) ? worldMatrixMap.get(parentId) : null;
-    const projectedTransform = is3D ? project3DLayer(worldTransform, activeCamera, viewport, parentMat) : null;
+    const layerBox = layerBoxOf(local.entity);
+    // Compose the 3D pose from the LOCAL transform plus the parent's world
+    // matrix — never from `worldTransform`, which already has the parent's
+    // translation and rotation folded in by composeTransform2D. Passing both
+    // moved every 3D child by its parent offset twice.
+    const projectedTransform = is3D
+      ? project3DLayer(
+          {
+            ...local.localTransform,
+            is3D: true,
+            autoOrient: worldTransform?.autoOrient,
+          },
+          activeCamera,
+          viewport,
+          {
+            parentMatrix: parentMat,
+            pivotBase: pivotBaseOf(local.entity),
+            box: layerBox,
+          }
+        )
+      : null;
 
     output.push({
       entity: local.entity,
@@ -528,6 +578,7 @@ export function computeActiveEntitiesAtTime({
       depth,
       transitionState,
       is3D,
+      layerBox,
       projectedTransform,
     });
   }

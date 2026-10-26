@@ -281,7 +281,10 @@ export function findActiveCamera(activeEntities = [], tracks = [], worldMap = ne
       const tgtX = camComp.targetX ?? camComp.target?.x ?? 0;
       const tgtY = camComp.targetY ?? camComp.target?.y ?? 0;
       const tgtZ = camComp.targetZ ?? camComp.target?.z ?? 0;
-      const roll = camComp.roll ?? camWorld?.rotation ?? 0;
+      // Roll is authored on the Camera component only. Falling back to the
+      // entity's Transform rotation meant any camera whose `roll` was never set
+      // silently picked up a value that also drives parenting and 2D layout.
+      const roll = camComp.roll ?? 0;
 
       return {
         ...camComp,
@@ -304,8 +307,16 @@ export function findActiveCamera(activeEntities = [], tracks = [], worldMap = ne
 
 /**
  * Builds the 4x4 Model Matrix for a layer, optionally composed with a 3D parent.
+ *
+ * `pivotBase` is the layer's box size in px. Pivot X/Y are stored normalized
+ * (-0.5..0.5 = a fraction of the layer box, 0 = centre) and are converted to
+ * layer-local pixels here; passing no base (the default for parent world
+ * matrices, which are built from the Transform alone) leaves the pivot at the
+ * layer's centre. Previously the normalized value was used as if it were
+ * pixels, so a pivot of 0.5 moved the layer by half a pixel instead of half its
+ * width.
  */
-export function buildLayerMatrix(layerTransform, parentMatrix = null) {
+export function buildLayerMatrix(layerTransform, parentMatrix = null, pivotBase = null) {
   const lx = layerTransform.x ?? 0;
   const ly = layerTransform.y ?? 0;
   const lz = layerTransform.z ?? 0;
@@ -318,8 +329,9 @@ export function buildLayerMatrix(layerTransform, parentMatrix = null) {
   const sy = layerTransform.scaleY ?? 1;
   const sz = layerTransform.scaleZ ?? 1;
 
-  const px = layerTransform.pivotX ?? 0;
-  const py = layerTransform.pivotY ?? 0;
+  const px = (layerTransform.pivotX ?? 0) * (pivotBase?.width ?? 0);
+  const py = (layerTransform.pivotY ?? 0) * (pivotBase?.height ?? 0);
+  // pivotZ has no box depth to normalize against, so it is already in px.
   const pz = layerTransform.pivotZ ?? 0;
 
   // Local model matrix: Translate(pos + pivot) * RotZ * RotY * RotX * Scale * Translate(-pivot)
@@ -343,16 +355,29 @@ export function buildLayerMatrix(layerTransform, parentMatrix = null) {
 }
 
 /**
- * Projects a 3D layer into screen-space 2D coordinates, depth metrics,
- * and a full 4x4 CSS matrix3d transform with perspective foreshortening.
+ * Projects a 3D layer into screen-space 2D coordinates, depth metrics, a CSS
+ * matrix3d transform, and the four projected corners of the layer's box.
+ *
+ * The corners are the contract between the preview and the exporter: the
+ * preview hands the matrix to CSS 3D, the exporter textures that same box
+ * through the same corners, and both therefore resolve to the same quad. See
+ * engine/warp3d.js for the export side.
  *
  * @param {object} layerTransform - The layer's 3D transform { x, y, z, rotationX, rotationY, rotationZ, scaleX, scaleY, scaleZ, is3D, autoOrient }
  * @param {object} camera - Camera component or default camera
  * @param {{ width: number, height: number }} viewport - Project resolution
- * @param {number[]} [parentMatrix] - Optional 4x4 parent world matrix
- * @returns {object} Projected screen transform, depth metrics, and matrix3d CSS
+ * @param {object|number[]} [options] - { parentMatrix, pivotBase, box, near, far }
+ *   `pivotBase` is the size a normalized pivot is multiplied by; `box` is the
+ *   rectangle the projected quad covers (what the exporter rasterizes into).
+ *   They differ for a text layer, whose pivot has always been normalized
+ *   against 180px while it renders at frame size. A bare 4x4 array is still
+ *   accepted as the legacy `parentMatrix` argument.
+ * @returns {object} Projected screen transform, corners, depth metrics, and matrix3d CSS
  */
-export function project3DLayer(layerTransform, camera, viewport, parentMatrix = null) {
+export function project3DLayer(layerTransform, camera, viewport, options = {}) {
+  const opts = Array.isArray(options) ? { parentMatrix: options } : (options || {});
+  const parentMatrix = opts.parentMatrix || null;
+
   if (!layerTransform?.is3D) {
     // 2D fallback: passthrough
     return {
@@ -379,6 +404,24 @@ export function project3DLayer(layerTransform, camera, viewport, parentMatrix = 
   const vpH = viewport?.height || 1080;
   const focalLength = getFocalLength(vpH, fov) * zoom;
 
+  // Two sizes, both in px, for two different jobs:
+  //   pivotBase - how large a normalized pivot is (see buildLayerMatrix).
+  //   box       - the rectangle the projected quad covers, i.e. what the
+  //               exporter rasterizes the layer into.
+  // A layer with no authored size is treated as frame-sized by both. Callers
+  // that need the preview's 180px pivot default for text pass pivotBase
+  // explicitly so toggling `is3D` does not change how far a pivot swings it.
+  const pivotBase = {
+    width: opts.pivotBase?.width > 0 ? opts.pivotBase.width : vpW,
+    height: opts.pivotBase?.height > 0 ? opts.pivotBase.height : vpH,
+  };
+  const box = {
+    width: opts.box?.width > 0 ? opts.box.width : pivotBase.width,
+    height: opts.box?.height > 0 ? opts.box.height : pivotBase.height,
+  };
+  const nearPlane = opts.near ?? cam.near ?? 1;
+  const farPlane = opts.far ?? cam.far ?? Infinity;
+
   // 1. Build Camera View Matrix (lookAt)
   const mView = mat4LookAt(camPos, camTarget, camRollRad);
 
@@ -391,13 +434,25 @@ export function project3DLayer(layerTransform, camera, viewport, parentMatrix = 
     effectiveTransform.rotationX = 0;
     effectiveTransform.rotationY = 0;
   } else if (layerTransform.autoOrient === 'towardsPOI') {
-    // Orient towards Point of Interest / Target
-    const lx = layerTransform.x ?? 0;
-    const ly = layerTransform.y ?? 0;
-    const lz = layerTransform.z ?? 0;
-    const dx = camTarget.x - lx;
-    const dy = camTarget.y - ly;
-    const dz = camTarget.z - lz;
+    // Orient towards the camera's Point of Interest.
+    //
+    // The camera target is in WORLD space, but `layerTransform` is the layer's
+    // LOCAL transform (the caller passes local + parentMatrix, because the
+    // world transform already has the parent chain folded in). Comparing them
+    // directly aimed every parented layer at the wrong point, so the layer's
+    // world position is taken from the un-rotated model matrix instead.
+    const anchorModel = buildLayerMatrix(
+      { ...effectiveTransform, rotationX: 0, rotationY: 0 },
+      parentMatrix,
+      pivotBase
+    );
+    const wx = anchorModel[12];
+    const wy = anchorModel[13];
+    const wz = anchorModel[14];
+
+    const dx = camTarget.x - wx;
+    const dy = camTarget.y - wy;
+    const dz = camTarget.z - wz;
     const distXZ = Math.hypot(dx, dz);
     if (distXZ > 1e-4) {
       effectiveTransform.rotationY = (Math.atan2(dx, dz) * 180) / Math.PI;
@@ -406,7 +461,7 @@ export function project3DLayer(layerTransform, camera, viewport, parentMatrix = 
   }
 
   // 3. Build Layer World Matrix
-  const mModel = buildLayerMatrix(effectiveTransform, parentMatrix);
+  const mModel = buildLayerMatrix(effectiveTransform, parentMatrix, pivotBase);
 
   // 4. Transform to Camera Space: mCam = mView * mModel
   const mCam = mat4Multiply(mView, mModel);
@@ -416,14 +471,48 @@ export function project3DLayer(layerTransform, camera, viewport, parentMatrix = 
   const centerY = mCam[13];
   const centerZ = mCam[14];
 
-  // Near clipping check: layer must be in front of camera
-  const inFrontOfCamera = centerZ > 1;
-  const safeZ = Math.max(1, centerZ);
+  // Project one camera-space point. Points at or behind the near plane are
+  // projected as if they sat exactly on it; callers that rasterize clip them
+  // properly (engine/warp3d.js, geometry3d.js) using the camera-space corners
+  // below, so a layer that straddles the near plane fades out instead of
+  // popping the instant its centre crosses.
+  const projectCamPoint = (x, y, z) => {
+    const safeZ = z > 1e-6 ? z : 1e-6;
+    const s = focalLength / safeZ;
+    return [x * s + vpW / 2, y * s + vpH / 2];
+  };
+
+  // Layer-box corners in layer-local coordinates (px, centred), and the same
+  // four points in camera space so the exporter can clip them against the
+  // camera planes rather than dropping the whole layer.
+  const halfW = box.width / 2;
+  const halfH = box.height / 2;
+  const localCorners = [
+    [-halfW, -halfH], // top-left
+    [halfW, -halfH], // top-right
+    [halfW, halfH], // bottom-right
+    [-halfW, halfH], // bottom-left
+  ];
+  const camCorners = localCorners.map(([lx, ly]) => ({
+    x: mCam[0] * lx + mCam[4] * ly + mCam[12],
+    y: mCam[1] * lx + mCam[5] * ly + mCam[13],
+    z: mCam[2] * lx + mCam[6] * ly + mCam[14],
+  }));
+  const corners = camCorners.map((c) => projectCamPoint(c.x, c.y, c.z));
+
+  const cornerZ = camCorners.map((c) => c.z);
+  const minCornerZ = Math.min(...cornerZ);
+  const maxCornerZ = Math.max(...cornerZ);
+  // Visible if any part of the box is past the near plane and still inside the
+  // far plane. `fullyInFront` means no clipping is needed.
+  const fullyInFront = minCornerZ > nearPlane;
+  const inFrontOfCamera = maxCornerZ > nearPlane && minCornerZ < farPlane;
+
+  const safeZ = Math.max(nearPlane, centerZ);
   const scaleFactor = focalLength / safeZ;
 
-  // Screen coordinates centered on viewport
-  const screenX = centerX * scaleFactor + (vpW / 2);
-  const screenY = centerY * scaleFactor + (vpH / 2);
+  // Screen coordinates of the layer centre, in frame px.
+  const [screenX, screenY] = projectCamPoint(centerX, centerY, centerZ);
 
   // Decomposed scales and rotations
   const col0Len = Math.hypot(mCam[0], mCam[1], mCam[2]);
@@ -445,6 +534,14 @@ export function project3DLayer(layerTransform, camera, viewport, parentMatrix = 
   ];
 
   const matrix3dStr = mat4ToCSS(mCSS);
+  // `cssTransform` assumes the element is laid out with its top-left at the
+  // frame centre (preview overlay layers: `left/top: 50%`), so the trailing
+  // translate re-centres it. `cssTransformZeroOrigin` assumes a frame-sized
+  // element parked at the frame origin (video layers) where the element centre
+  // already *is* the frame centre. In both cases the element must keep a plain
+  // centre `transform-origin`: the pivot is part of the model matrix now, and
+  // also shifting transform-origin by it (what both preview layers used to do)
+  // applied the pivot twice and left the matrix itself nearly pivot-free.
   const cssTransform = `translate(-50%, -50%) ${matrix3dStr}`;
 
   return {
@@ -460,11 +557,35 @@ export function project3DLayer(layerTransform, camera, viewport, parentMatrix = 
     opacity: layerTransform.opacity ?? 1,
     zIndex: Math.round(100000 - centerZ),
     inFrontOfCamera,
+    fullyInFront,
+    nearPlane,
+    farPlane,
     distanceToCamera: Math.hypot(centerX, centerY, centerZ),
     matrix: mCSS,
     matrix3d: matrix3dStr,
     cssTransform,
     cssTransformZeroOrigin: matrix3dStr,
+    box,
+    pivotBase,
+    pivotPx: {
+      x: (layerTransform.pivotX ?? 0) * pivotBase.width,
+      y: (layerTransform.pivotY ?? 0) * pivotBase.height,
+      z: layerTransform.pivotZ ?? 0,
+    },
+    // Everything the exporter needs to texture the same quad the preview's CSS
+    // transform produces: layer-plane corners in camera space (for clipping),
+    // their projected screen positions (frame px), the box they came from, and
+    // the camera the perspective came from.
+    quad: {
+      width: box.width,
+      height: box.height,
+      camCorners,
+      corners,
+      focalLength,
+      viewport: { width: vpW, height: vpH },
+      near: nearPlane,
+      far: farPlane,
+    },
     modelMatrix: mModel,
     viewMatrix: mView,
     camMatrix: mCam,

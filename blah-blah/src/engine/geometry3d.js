@@ -241,9 +241,21 @@ export function createSphereMesh(radius = 70, rings = 10, segments = 14) {
 /**
  * Renders any 3D mesh into an HTML5 Canvas 2D context.
  *
+ * Two projection modes:
+ *
+ * 1. Standalone (no `matrix`): the mesh is rotated in place and projected with
+ *    a local perspective, then drawn centred on the context origin. This is the
+ *    mode a 3D primitive uses when it is NOT a 3D layer.
+ * 2. Camera (`matrix` given): `matrix` is the layer's camera-space model-view
+ *    matrix (project3DLayer().camMatrix) and the mesh is projected through the
+ *    scene camera into frame pixels. This is what a 3D primitive on a 3D layer
+ *    uses: the layer's own rotation/scale/position, the parent chain and the
+ *    camera are all already in the matrix, so the mesh never races the preview's
+ *    CSS projection (which used to apply perspective a second time on top).
+ *
  * @param {CanvasRenderingContext2D} ctx Target 2D rendering context
  * @param {Object} mesh { vertices: Array<[x,y,z]>, faces: Array<Array<number>> }
- * @param {Object} options Rendering options (rotations, shading, color, focal length)
+ * @param {Object} options Rendering options (rotations, shading, color, focal length, camera matrix)
  */
 export function renderMesh3D(ctx, mesh, {
   x = 0,
@@ -258,40 +270,86 @@ export function renderMesh3D(ctx, mesh, {
   strokeColor = '#0284c7',
   strokeWidth = 1,
   shading = 'lit', // 'lit' | 'flat' | 'wireframe'
-  lightDir = [0.4, -0.6, -0.7],
+  lightDir = null,
   ambient = 0.35,
   diffuse = 0.65,
   focalLength = 1000,
+  matrix = null,
+  viewport = null,
+  near = 1,
+  far = Infinity,
+  viewMatrix = null,
 } = {}) {
   if (!mesh || !mesh.vertices || !mesh.faces || !ctx) return;
 
-  // Normalize light direction vector
-  const lightLen = Math.hypot(...lightDir) || 1;
-  const lx = lightDir[0] / lightLen;
-  const ly = lightDir[1] / lightLen;
-  const lz = lightDir[2] / lightLen;
+  // Default key light, in world space. In camera mode it is rotated into camera
+  // space below so the shading stays identical to the old world-space
+  // calculation as the camera moves — otherwise every orbit would relight the
+  // mesh.
+  const DEFAULT_LIGHT = [0.4, -0.6, -0.7];
+  let worldLight = lightDir || DEFAULT_LIGHT;
+  if (!lightDir && matrix && viewMatrix) {
+    worldLight = [
+      viewMatrix[0] * DEFAULT_LIGHT[0] + viewMatrix[4] * DEFAULT_LIGHT[1] + viewMatrix[8] * DEFAULT_LIGHT[2],
+      viewMatrix[1] * DEFAULT_LIGHT[0] + viewMatrix[5] * DEFAULT_LIGHT[1] + viewMatrix[9] * DEFAULT_LIGHT[2],
+      viewMatrix[2] * DEFAULT_LIGHT[0] + viewMatrix[6] * DEFAULT_LIGHT[1] + viewMatrix[10] * DEFAULT_LIGHT[2],
+    ];
+  }
 
-  // 1. Transform all vertices: Scale -> Rotate -> Translate
-  const transformed = mesh.vertices.map((v) => {
+  // Normalize light direction vector
+  const lightLen = Math.hypot(...worldLight) || 1;
+  const lx = worldLight[0] / lightLen;
+  const ly = worldLight[1] / lightLen;
+  const lz = worldLight[2] / lightLen;
+
+  // 1. Transform all vertices. Scale and the shape's own rotation happen in the
+  // mesh's local space first; then either translate into the standalone view
+  // space or push through the layer's camera-space matrix.
+  const localVerts = mesh.vertices.map((v) => {
     const sx = v[0] * scaleX;
     const sy = v[1] * scaleY;
     const sz = v[2] * scaleZ;
-    const [rx, ry, rz] = rotateVertex([sx, sy, sz], rotationX, rotationY, rotationZ);
-    return [rx + x, ry + y, rz];
+    return rotateVertex([sx, sy, sz], rotationX, rotationY, rotationZ);
   });
 
-  // 2. Project vertices to 2D screen coordinates with perspective
-  const projected = transformed.map(([vx, vy, vz]) => {
+  const transformed = matrix
+    ? localVerts.map(([vx, vy, vz]) => [
+        matrix[0] * vx + matrix[4] * vy + matrix[8] * vz + matrix[12],
+        matrix[1] * vx + matrix[5] * vy + matrix[9] * vz + matrix[13],
+        matrix[2] * vx + matrix[6] * vy + matrix[10] * vz + matrix[14],
+      ])
+    : localVerts.map(([rx, ry, rz]) => [rx + x, ry + y, rz]);
+
+  // 2. Project vertices to 2D screen coordinates with perspective. In camera
+  // mode this is the scene camera's projection, so screen coordinates are frame
+  // pixels; otherwise they are offsets from the context origin.
+  const vpW = viewport?.width || 1920;
+  const vpH = viewport?.height || 1080;
+  const projectVertex = ([vx, vy, vz]) => {
+    if (matrix) {
+      const z = vz > 1e-6 ? vz : 1e-6;
+      const factor = focalLength / z;
+      return [vx * factor + vpW / 2, vy * factor + vpH / 2];
+    }
     const dist = focalLength + vz;
     const factor = dist > 1 ? focalLength / dist : 1;
-    return [vx * factor, vy * factor, vz];
-  });
+    return [vx * factor, vy * factor];
+  };
+  const projected = transformed.map((v) => [...projectVertex(v), v[2]]);
 
-  // 3. Compute face depth and normals for Painter's sorting and lighting
+  // 3. Compute face depth and normals for Painter's sorting and lighting.
+  // In camera mode the depth is camera-space Z, which is what the projection
+  // actually divides by — a face is dropped when any of its vertices is on the
+  // wrong side of a clip plane rather than when the whole shape's centre is.
   const sortedFaces = mesh.faces.map((indices) => {
     let avgZ = 0;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
     for (const idx of indices) {
-      avgZ += transformed[idx][2];
+      const vz = transformed[idx][2];
+      avgZ += vz;
+      if (vz < minZ) minZ = vz;
+      if (vz > maxZ) maxZ = vz;
     }
     avgZ /= indices.length;
 
@@ -301,7 +359,10 @@ export function renderMesh3D(ctx, mesh, {
     const v2 = transformed[indices[2]];
     const normal = calculateNormal(v0, v1, v2);
 
-    return { indices, avgZ, normal };
+    // Fully outside a clip plane: nothing to draw. Faces that only cross one
+    // are clipped per-vertex at draw time instead of vanishing whole.
+    const outside = Boolean(matrix) && (maxZ <= near || minZ >= far);
+    return { indices, avgZ, normal, outside };
   });
 
   // Sort faces from back to front (Painter's algorithm: highest Z rendered first)
@@ -310,7 +371,8 @@ export function renderMesh3D(ctx, mesh, {
   ctx.save();
 
   // 4. Render faces
-  for (const { indices, normal } of sortedFaces) {
+  for (const { indices, normal, outside } of sortedFaces) {
+    if (outside) continue;
     if (indices.length < 3) continue;
 
     // Dot product for diffuse lighting
@@ -318,13 +380,26 @@ export function renderMesh3D(ctx, mesh, {
     const intensity = shading === 'lit' ? Math.min(1.0, ambient + diffuse * dot) : 1.0;
     const faceFill = shading === 'lit' ? shadeColor(color, intensity) : color;
 
-    ctx.beginPath();
-    const first = projected[indices[0]];
-    ctx.moveTo(first[0], first[1]);
+    // In camera mode, clip the face polygon against the camera planes in
+    // camera space and project the survivors, so a face that crosses the near
+    // plane is cut at the plane rather than dropped.
+    let screenPoints;
+    if (matrix) {
+      const camFace = indices.map((idx) => {
+        const [x, y, z] = transformed[idx];
+        return { x, y, z };
+      });
+      const facing = clipFaceToPlanes(camFace, near, far);
+      if (facing.length < 3) continue;
+      screenPoints = facing.map((p) => projectVertex([p.x, p.y, p.z]));
+    } else {
+      screenPoints = indices.map((idx) => projected[idx]);
+    }
 
-    for (let i = 1; i < indices.length; i++) {
-      const pt = projected[indices[i]];
-      ctx.lineTo(pt[0], pt[1]);
+    ctx.beginPath();
+    ctx.moveTo(screenPoints[0][0], screenPoints[0][1]);
+    for (let i = 1; i < screenPoints.length; i++) {
+      ctx.lineTo(screenPoints[i][0], screenPoints[i][1]);
     }
     ctx.closePath();
 
@@ -342,6 +417,41 @@ export function renderMesh3D(ctx, mesh, {
   }
 
   ctx.restore();
+}
+
+/**
+ * Sutherland-Hodgman clip of a face polygon against the near and far planes in
+ * camera space. No texture coordinates to carry — meshes are flat shaded.
+ */
+function clipFaceToPlanes(vertices, near, far) {
+  let poly = vertices;
+  if (Number.isFinite(far)) {
+    poly = clipFaceAgainst(poly, (p) => p.z < far, far);
+  }
+  poly = clipFaceAgainst(poly, (p) => p.z > near, near);
+  return poly;
+}
+
+function clipFaceAgainst(poly, isInside, planeZ) {
+  if (poly.length === 0) return poly;
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    const aIn = isInside(a);
+    const bIn = isInside(b);
+    if (aIn) out.push(a);
+    if (aIn !== bIn) {
+      const dz = b.z - a.z;
+      const t = Math.abs(dz) < 1e-9 ? 0 : (planeZ - a.z) / dz;
+      out.push({
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+        z: planeZ,
+      });
+    }
+  }
+  return out;
 }
 
 // ─── Primitive Convenience Helpers ──────────────────────────────────────────
@@ -399,6 +509,14 @@ export function drawShape3D(ctx, shapeComp, transform = {}) {
     shading: shapeComp.shading || 'lit',
     focalLength: tf.focalLength || shapeComp.focalLength || 500,
     lightDir: tf.lightDir || shapeComp.lightDir,
+    // Camera mode: the layer's camera-space matrix (project3DLayer().camMatrix).
+    // When present the mesh is projected by the scene camera instead of the
+    // local one, which is what keeps the export identical to the preview.
+    matrix: tf.matrix || null,
+    viewport: tf.viewport || null,
+    near: tf.near ?? 1,
+    far: tf.far ?? Infinity,
+    viewMatrix: tf.viewMatrix || null,
     width,
     height,
     depth,

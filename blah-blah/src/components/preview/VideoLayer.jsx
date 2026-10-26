@@ -109,7 +109,13 @@ export function VideoLayer({
           // element center. pivotX/Y are normalized (0=center, ±0.5=edge)
           // so the pixel offset = pivot * baseSize. Default 0,0 →
           // "calc(50% + 0px)" = center = existing behavior unchanged.
-          transformOrigin: `calc(50% + ${(transform.pivotX ?? 0) * baseWidth}px) calc(50% + ${(transform.pivotY ?? 0) * baseHeight}px)`,
+          //
+          // 3D layers keep a plain centre origin: the projected matrix already
+          // rotates about the pivot (in box pixels), so shifting the origin too
+          // would apply it twice.
+          transformOrigin: is3D
+            ? '50% 50%'
+            : `calc(50% + ${(transform.pivotX ?? 0) * baseWidth}px) calc(50% + ${(transform.pivotY ?? 0) * baseHeight}px)`,
           opacity: transform.opacity,
           // Unified with the overlay layer: both use the same
           // 100 + trackZIndexOf(...) base so a video and a shape/

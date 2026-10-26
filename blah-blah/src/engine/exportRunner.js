@@ -39,6 +39,8 @@ import {
 } from './renderPipeline.js';
 import { isScriptComponent, isVideoEntity, isAudioEntity } from './ecs.js';
 import { is3DShape, drawShape3D } from './geometry3d.js';
+import { drawProjectedQuad } from './warp3d.js';
+import { getLayerBox, getPivotBase } from './layerBox.js';
 import { getSharedGLTransitionRenderer } from './glTransitions.js';
 import { resolveEffectiveVolume, findEntityTrack } from '../utils/trackAudio.js';
 import { timeStretchChannels } from '../utils/timeStretch.js';
@@ -466,8 +468,21 @@ export async function drawExportFrame({
     ctx.rect(0, 0, W, H);
     ctx.clip();
  
+    // Script-kind lookup for pivot-base resolution (a canvas-kind script fills
+    // the frame, so its pivot normalizes against the frame, not 180px).
+    const scriptKindOf = (comp) => {
+      const def = scripts.find(
+        (s) =>
+          s.id === comp.scriptId ||
+          s.name === comp.scriptName ||
+          s.name === `${comp.scriptName}.jsx` ||
+          s.id === `script-${comp.scriptName}`
+      );
+      return def?.code ? detectScriptKind(def.code) : null;
+    };
+
     for (const item of drawOrder) {
-      const { entity, transform, localTime, transitionState, transitionBlend, is3D, projectedTransform } = item;
+      const { entity, transform, localTime, transitionState, transitionBlend, is3D, projectedTransform, layerBox } = item;
       if (transitionBlend) {
         try {
           drawTransitionBlend(ctx, transitionBlend, transform, W, H, videoFrameProvider);
@@ -478,12 +493,29 @@ export async function drawExportFrame({
       }
       if (isAudioEntity(entity)) continue;
 
-      // 3D Near plane clipping: cull layers behind camera
-      if (is3D && projectedTransform && !projectedTransform.inFrontOfCamera) {
+      const shapeComp = entity.components.find((c) => c.type === 'ShapeRenderer');
+      const textComp = entity.components.find((c) => c.type === 'TextRenderer');
+      // A 3D primitive on a 3D layer is real geometry, not a card: it is drawn
+      // through the scene camera (which already contains the layer's own
+      // rotation/scale/pivot) rather than warped.
+      const meshComp = shapeComp && is3DShape(shapeComp.shapeType) ? shapeComp : null;
+
+      // 3D Near plane clipping: skip only when no part of the layer's box is in
+      // front of the camera. A layer that straddles the near plane is clipped by
+      // the warper instead of popping as soon as its centre crosses. A mesh is
+      // exempt because its geometry extends in Z beyond the flat box — its faces
+      // are clipped individually.
+      if (is3D && projectedTransform && !projectedTransform.inFrontOfCamera && !meshComp) {
         continue;
       }
 
-      const activeTransform = (is3D && projectedTransform)
+      // The quad the preview's CSS `matrix3d` turns this layer into. Rendering
+      // the layer flat and texturing that quad through the same corners is what
+      // makes export match preview for rotationX/rotationY on any layer, not
+      // only for the four mesh primitives.
+      const quad = is3D ? projectedTransform?.quad || null : null;
+
+      const legacy3DTransform = (is3D && projectedTransform)
         ? {
             ...transform,
             x: projectedTransform.screenX - W / 2,
@@ -493,7 +525,40 @@ export async function drawExportFrame({
             rotation: projectedTransform.rotationZ,
           }
         : transform;
- 
+
+      // On a 3D layer the camera matrix owns position/rotation/scale/pivot, so
+      // the content is drawn with no 2D transform into a box-sized offscreen
+      // canvas and then warped.
+      const box = quad
+        ? layerBox || getLayerBox(entity, { frameWidth: W, frameHeight: H, isVideo: isVideoEntity(entity) })
+        : null;
+      const isLocal = Boolean(box) && !meshComp;
+      const scratch = isLocal ? getLayerScratch(box.width, box.height) : null;
+      const target = isLocal ? scratch.ctx : ctx;
+      const drawTransform = isLocal ? LOCAL_IDENTITY : legacy3DTransform;
+      const drawW = isLocal ? box.width : W;
+      const drawH = isLocal ? box.height : H;
+
+      // Preview (OverlayLayer.jsx) fades non-video entities through their
+      // transition: opacity × (progress when transitioning in, 1 − progress
+      // when out). Video transitions are handled by the GL pass above.
+      const transitionFactor = transitionState
+        ? transitionState.type === 'in'
+          ? transitionState.progress
+          : 1 - transitionState.progress
+        : 1;
+
+      /**
+       * Textures the layer box through the projection (the parity step). The
+       * offscreen raster is always drawn at full opacity, so the layer's own
+       * opacity and any transition fade are applied here, once.
+       */
+      const composite3D = () => {
+        if (!isLocal) return;
+        const opacity = (transform.opacity ?? 1) * transitionFactor;
+        drawProjectedQuad(ctx, scratch.canvas, quad, { opacity });
+      };
+
       try {
         if (isVideoEntity(entity)) {
           const videoComp = entity.components.find((c) => c.type === 'VideoRenderer') || { src: entity.src };
@@ -527,33 +592,34 @@ export async function drawExportFrame({
           // whole frame-sized box (video-layer.css), so letterbox bars are
           // opaque black. While a GL transition runs the video is hidden and
           // the (transparent) transition canvas shows instead — no backdrop.
-          drawTransformedMedia(ctx, mediaToDraw, activeTransform, W, H, { backdrop: mediaToDraw === video });
+          drawTransformedMedia(target, mediaToDraw, drawTransform, drawW, drawH, {
+            backdrop: mediaToDraw === video,
+          });
+          composite3D();
           continue;
         }
  
         // Preview (OverlayLayer.jsx) fades non-video entities through their
         // transition: opacity × (progress when transitioning in, 1 − progress
         // when out). Video transitions are handled by the GL pass above.
-        const transitionFactor = transitionState
-          ? transitionState.type === 'in'
-            ? transitionState.progress
-            : 1 - transitionState.progress
-          : 1;
+        // For a warped layer the fade is applied by composite3D instead (the
+        // offscreen raster is always drawn at full opacity).
         const overlayTransform =
-          transitionFactor === 1
-            ? activeTransform
-            : { ...activeTransform, opacity: (activeTransform.opacity ?? 1) * transitionFactor };
+          isLocal
+            ? drawTransform
+            : transitionFactor === 1
+              ? drawTransform
+              : { ...drawTransform, opacity: (drawTransform.opacity ?? 1) * transitionFactor };
  
         // Preview pivots around `pivot × (the entity's own box size)` — for
         // overlays that is the first component's width/height (180 fallback),
         // NOT the frame size (OverlayLayer.jsx baseWidth/baseHeight).
-        const pivotBase = {
-          w: entity.components.find((c) => c.width)?.width || 180,
-          h: entity.components.find((c) => c.height)?.height || 180,
-        };
- 
-        const shapeComp = entity.components.find((c) => c.type === 'ShapeRenderer');
-        const textComp = entity.components.find((c) => c.type === 'TextRenderer');
+        // Pivot normalization comes from the SAME helper the pipeline uses for
+        // 3D layers, so toggling `is3D` on a text or script layer does not
+        // change how far a given pivot swings it. (Locally-rendered content is
+        // rasterized with no pivot at all — the camera matrix owns it.)
+        const pivotBox = getPivotBase(entity, { frameWidth: W, frameHeight: H, scriptKindOf });
+        const pivotBase = isLocal ? { w: 0, h: 0 } : { w: pivotBox.width, h: pivotBox.height };
  
         // Script-driven visuals — ONE component type (ScriptComponent),
         // dispatched per script kind: 'canvas' mounts the compiled class into
@@ -602,13 +668,13 @@ export async function drawExportFrame({
               allEntities: entities,
               allAssets: mediaAssets,
             });
-            await drawCanvasContainerContents(ctx, container, overlayTransform, W, H, pivotBase);
+            await drawCanvasContainerContents(target, container, overlayTransform, drawW, drawH, pivotBase);
           } else if (kind === 'react') {
             const CompiledComponent = getCompiledReactComponent(scriptDef.code);
             if (typeof CompiledComponent === 'function') {
               const container = canvasContainers.getContainer(entity.id, comp.scriptId);
               await drawReactComponentContents({
-                ctx,
+                ctx: target,
                 container,
                 Component: CompiledComponent,
                 props: comp.props || {},
@@ -616,19 +682,55 @@ export async function drawExportFrame({
                 duration: entity.duration,
                 fps,
                 transform: overlayTransform,
-                width: W,
-                height: H,
+                width: drawW,
+                height: drawH,
                 pivotBase,
               });
             }
           }
         }
  
-        if (shapeComp) {
-          drawShape(ctx, shapeComp, overlayTransform, W, H, pivotBase, projectedTransform?.focalLength);
+        if (meshComp) {
+          // Screen-space mesh: the camera matrix already carries the layer's
+          // position, rotation, scale and pivot, so no 2D transform is applied.
+          ctx.save();
+          ctx.globalAlpha = Math.max(
+            0,
+            Math.min(1, (transform.opacity ?? 1) * transitionFactor)
+          );
+          drawShape3D(ctx, meshComp, {
+            matrix: projectedTransform.camMatrix,
+            viewMatrix: projectedTransform.viewMatrix,
+            focalLength: projectedTransform.focalLength,
+            viewport: { width: W, height: H },
+            near: projectedTransform.nearPlane,
+            far: projectedTransform.farPlane,
+          });
+          ctx.restore();
+        } else if (shapeComp) {
+          drawShape(target, shapeComp, overlayTransform, drawW, drawH, pivotBase);
         } else if (textComp) {
-          drawText(ctx, textComp, entity, overlayTransform, W, H, entities, time, pivotBase, fit);
+          // `fit` compensates for canvas shadow blur/offset being in OUTPUT
+          // pixels. The offscreen raster a 3D layer is drawn into is in PROJECT
+          // pixels, so it must not be pre-scaled by the export fit.
+          drawText(
+            target,
+            textComp,
+            entity,
+            overlayTransform,
+            drawW,
+            drawH,
+            entities,
+            time,
+            pivotBase,
+            isLocal ? 1 : fit
+          );
         }
+
+        // One warp for every overlay kind (shape, text, canvas/react script).
+        // Mesh primitives returned above without a scratch, so this is a no-op
+        // for them.
+        composite3D();
       } catch (err) {
         console.warn(`Export: render error on entity "${entity.name}":`, err);
       }
@@ -669,6 +771,67 @@ export async function drawExportFrame({
  * UNSCALED pivot offset (CSS: translate(O)·T·R·S·translate(−O)).
  * With pivot 0 (the default) this reduces to plain centre-based transforms.
  */
+/**
+ * A transform that draws content centred on a box with no rotation, scale or
+ * pivot — the state a 3D layer's content is rasterized in before the camera
+ * projection warps it. `applyTransform` still centres it on `width/2`.
+ */
+const LOCAL_IDENTITY = {
+  x: 0,
+  y: 0,
+  rotation: 0,
+  rotationX: 0,
+  rotationY: 0,
+  scaleX: 1,
+  scaleY: 1,
+  opacity: 1,
+  pivotX: 0,
+  pivotY: 0,
+};
+
+/**
+ * Offscreen canvas for a 3D layer, keyed by size and reused across frames so a
+ * long export does not allocate (and let GC) one canvas per layer per frame.
+ * The canvas is cleared and returned ready to draw into.
+ */
+const layerScratchPool = new Map();
+/**
+ * Cap on pooled scratch canvases. A project with many differently-sized 3D
+ * layers would otherwise keep one full-frame canvas per distinct size alive for
+ * the whole export. Least-recently-used entries are dropped past the cap.
+ */
+const MAX_SCRATCH_CANVASES = 6;
+
+function getLayerScratch(width, height) {
+  const w = Math.max(1, Math.round(width));
+  const h = Math.max(1, Math.round(height));
+  const key = `${w}x${h}`;
+  let entry = layerScratchPool.get(key);
+  if (!entry) {
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    entry = { canvas, ctx: canvas.getContext('2d') };
+    layerScratchPool.set(key, entry);
+  }
+  // Refresh LRU position.
+  layerScratchPool.delete(key);
+  layerScratchPool.set(key, entry);
+  while (layerScratchPool.size > MAX_SCRATCH_CANVASES) {
+    const oldest = layerScratchPool.keys().next().value;
+    const stale = layerScratchPool.get(oldest);
+    // Zeroing the dimensions releases the backing store immediately.
+    stale.canvas.width = 0;
+    stale.canvas.height = 0;
+    layerScratchPool.delete(oldest);
+  }
+
+  entry.ctx.setTransform(1, 0, 0, 1, 0, 0);
+  entry.ctx.globalAlpha = 1;
+  entry.ctx.clearRect(0, 0, w, h);
+  return entry;
+}
+
 function applyTransform(ctx, transform, width, height, pivotBaseW = width, pivotBaseH = height) {
   const scaleX = transform.scaleX ?? 1;
   const scaleY = transform.scaleY ?? 1;
@@ -796,15 +959,7 @@ function drawTransformedMedia(ctx, mediaEl, transform, width, height, { backdrop
  * the background fills the whole box including under the border. A
  * `shapeType: 'circle'` is `border-radius: 50%` — an ellipse when w ≠ h.
  */
-function drawShape(ctx, shapeComp, transform, width, height, pivotBase, focalLength = null) {
-  if (is3DShape(shapeComp.shapeType)) {
-    ctx.save();
-    applyTransform(ctx, transform, width, height, pivotBase.w, pivotBase.h);
-    drawShape3D(ctx, shapeComp, { focalLength });
-    ctx.restore();
-    return;
-  }
-
+function drawShape(ctx, shapeComp, transform, width, height, pivotBase) {
   const w = shapeComp.width || 180;
   const h = shapeComp.height || 180;
   const isCircle = shapeComp.shapeType === 'circle';

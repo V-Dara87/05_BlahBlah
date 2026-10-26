@@ -204,3 +204,197 @@ test('Camera3D - findActiveCamera selects top-most track and supports camera cut
   assert.equal(activeCut.fov, 40, 'After camera B ends, camera A takes over view');
 });
 
+
+// ─── Preview/export parity: the CSS matrix and the projected quad must agree ──
+
+/** Applies a column-major matrix3d array to a local point, with perspective divide. */
+function applyMatrix3d(m, x, y) {
+  const w = m[3] * x + m[7] * y + m[15];
+  return [
+    (m[0] * x + m[4] * y + m[12]) / w,
+    (m[1] * x + m[5] * y + m[13]) / w,
+  ];
+}
+
+test('Camera3D - projected corners match the CSS matrix3d the preview applies', () => {
+  const viewport = { width: 1920, height: 1080 };
+  const camera = createDefaultCamera({ position: { x: 0, y: 0, z: -1000 }, target: { x: 0, y: 0, z: 0 } });
+  const pivotBase = { width: 400, height: 200 };
+  const layer = {
+    x: 40,
+    y: -30,
+    z: 120,
+    rotationX: 25,
+    rotationY: 40,
+    rotationZ: 12,
+    scaleX: 1.3,
+    scaleY: 0.8,
+    is3D: true,
+  };
+
+  const proj = project3DLayer(layer, camera, viewport, { pivotBase });
+  assert.equal(proj.quad.corners.length, 4);
+
+  // The overlay layer is laid out with its top-left at the frame centre and
+  // re-centred by translate(-50%,-50%), so CSS resolves local point p to
+  //   frameCentre + M(p - elementCentre).
+  const halfW = pivotBase.width / 2;
+  const halfH = pivotBase.height / 2;
+  const localCorners = [
+    [-halfW, -halfH],
+    [halfW, -halfH],
+    [halfW, halfH],
+    [-halfW, halfH],
+  ];
+
+  localCorners.forEach(([lx, ly], i) => {
+    const [dx, dy] = applyMatrix3d(proj.matrix, lx, ly);
+    const expectedX = viewport.width / 2 + dx;
+    const expectedY = viewport.height / 2 + dy;
+    const [cornerX, cornerY] = proj.quad.corners[i];
+    assert.ok(
+      Math.abs(cornerX - expectedX) < 1e-6 && Math.abs(cornerY - expectedY) < 1e-6,
+      `corner ${i}: CSS gives (${expectedX}, ${expectedY}), quad says (${cornerX}, ${cornerY})`
+    );
+  });
+});
+
+test('Camera3D - a rotated 3D layer projects to a trapezoid, not a rectangle', () => {
+  const viewport = { width: 1920, height: 1080 };
+  const camera = createDefaultCamera({ position: { x: 0, y: 0, z: -1000 }, target: { x: 0, y: 0, z: 0 } });
+  const proj = project3DLayer(
+    { x: 0, y: 0, z: 0, rotationY: 45, is3D: true },
+    camera,
+    viewport,
+    { pivotBase: { width: 600, height: 300 } }
+  );
+
+  const [tl, tr, br, bl] = proj.quad.corners;
+  const leftEdge = Math.hypot(tl[0] - bl[0], tl[1] - bl[1]);
+  const rightEdge = Math.hypot(tr[0] - br[0], tr[1] - br[1]);
+  // Yaw pushes one edge of the layer away from the camera, so it must be
+  // foreshortened — anything within a few percent means the projection fell
+  // back to a flat rectangle.
+  assert.ok(
+    Math.abs(leftEdge - rightEdge) / Math.max(leftEdge, rightEdge) > 0.05,
+    `expected foreshortening, got edges ${leftEdge} vs ${rightEdge}`
+  );
+});
+
+test('Camera3D - pivot is scaled by the layer box, not read as pixels', async () => {
+  const { buildLayerMatrix } = await import('./camera3d.js');
+  const box = { width: 400, height: 200 };
+  // Applies a column-major model matrix to a layer-local point.
+  const apply = (m, x, y) => [
+    m[0] * x + m[4] * y + m[12],
+    m[1] * x + m[5] * y + m[13],
+  ];
+
+  // With no rotation or scale the pivot is a no-op wherever it sits.
+  const centred = buildLayerMatrix({ x: 0, y: 0, pivotX: 0, pivotY: 0 }, null, box);
+  const offCentre = buildLayerMatrix({ x: 0, y: 0, pivotX: 0.5, pivotY: -0.25 }, null, box);
+  assert.equal(offCentre[12], 0);
+  assert.equal(offCentre[13], 0);
+  assert.equal(centred[12], 0);
+
+  // pivotX 0.5 is half the layer's WIDTH = 200px, not half a pixel. Under a
+  // 90° rotation the pivot itself is the fixed point, so the pivot must map to
+  // itself and the element centre must swing to (200, -200).
+  const rotated = buildLayerMatrix(
+    { x: 0, y: 0, rotationZ: 90, pivotX: 0.5, pivotY: 0 },
+    null,
+    box
+  );
+  const [pivotWorldX, pivotWorldY] = apply(rotated, 200, 0);
+  assert.ok(Math.abs(pivotWorldX - 200) < 1e-6, `pivot must stay at its own X, got ${pivotWorldX}`);
+  assert.ok(Math.abs(pivotWorldY - 0) < 1e-6, `pivot must stay at its own Y, got ${pivotWorldY}`);
+
+  const [centreWorldX, centreWorldY] = apply(rotated, 0, 0);
+  assert.ok(Math.abs(centreWorldX - 200) < 1e-6, `centre X should be 200, got ${centreWorldX}`);
+  assert.ok(Math.abs(centreWorldY + 200) < 1e-6, `centre Y should be -200, got ${centreWorldY}`);
+
+  // And with scale, the pivot stays put while everything else scales away
+  // from it — proof the normalization used px, not the raw 0.5.
+  const scaled = buildLayerMatrix({ x: 0, y: 0, scaleX: 2, pivotX: 0.5 }, null, box);
+  assert.ok(Math.abs(apply(scaled, 200, 0)[0] - 200) < 1e-6, 'pivot stays fixed under scale');
+  assert.ok(Math.abs(apply(scaled, 0, 0)[0] + 200) < 1e-6, 'centre moves to -200 under x2 scale');
+});
+
+test('Camera3D - layer boxes straddling the near plane are flagged, not culled', () => {
+  const viewport = { width: 1920, height: 1080 };
+  // Camera 300px from the origin plane; a 1200px-wide, steeply rotated layer
+  // reaches behind it.
+  const camera = createDefaultCamera({ position: { x: 0, y: 0, z: -300 }, target: { x: 0, y: 0, z: 0 } });
+
+  const straddling = { x: 0, y: 0, z: 0, rotationY: 75, is3D: true };
+  const proj = project3DLayer(straddling, camera, viewport, {
+    pivotBase: { width: 1400, height: 400 },
+  });
+  assert.equal(proj.inFrontOfCamera, true, 'a partly-visible layer must not be dropped');
+  assert.equal(proj.fullyInFront, false, 'and it must be reported as needing clipping');
+});
+
+test('Camera3D - a layer entirely behind the camera is not visible', () => {
+  const viewport = { width: 1920, height: 1080 };
+  const camera = createDefaultCamera({ position: { x: 0, y: 0, z: -1000 }, target: { x: 0, y: 0, z: 0 } });
+  const proj = project3DLayer({ x: 0, y: 0, z: -2000, is3D: true }, camera, viewport, {
+    pivotBase: { width: 100, height: 100 },
+  });
+  assert.equal(proj.inFrontOfCamera, false);
+});
+
+test('Camera3D - pivot base and quad box can differ without desyncing', () => {
+  const viewport = { width: 1920, height: 1080 };
+  const camera = createDefaultCamera({ position: { x: 0, y: 0, z: -1000 }, target: { x: 0, y: 0, z: 0 } });
+  // A text layer: pivot normalized against 180px (the preview default) while it
+  // renders at frame size.
+  const proj = project3DLayer(
+    { x: 0, y: 0, z: 0, pivotX: 0.5, pivotY: 0.5, rotationZ: 90, is3D: true },
+    camera,
+    viewport,
+    { pivotBase: { width: 180, height: 180 }, box: { width: 1920, height: 1080 } }
+  );
+
+  assert.equal(proj.pivotPx.x, 90, 'pivot is half of the 180px base, not of the frame');
+  assert.equal(proj.pivotPx.y, 90);
+  assert.equal(proj.quad.width, 1920, 'the warped box is still the frame');
+  assert.equal(proj.quad.height, 1080);
+});
+
+test('Camera3D - autoOrient towardsPOI aims a parented layer at the target in world space', async () => {
+  const { buildLayerMatrix } = await import('./camera3d.js');
+  const viewport = { width: 1920, height: 1080 };
+  const camera = createDefaultCamera({
+    position: { x: 0, y: 0, z: -1000 },
+    // Off-axis target so a local-vs-world mix-up changes the angles.
+    target: { x: 800, y: 300, z: -400 },
+  });
+  const pivotBase = { width: 100, height: 100 };
+
+  // The same world pose expressed two ways: directly at x=200, and as a child
+  // at local x=0 under a parent at x=200.
+  const parentMat = buildLayerMatrix({ x: 200, y: 0, z: 0, is3D: true }, null, pivotBase);
+  const direct = project3DLayer(
+    { x: 200, y: 0, z: 0, autoOrient: 'towardsPOI', is3D: true },
+    camera,
+    viewport,
+    { pivotBase }
+  );
+  const parented = project3DLayer(
+    { x: 0, y: 0, z: 0, autoOrient: 'towardsPOI', is3D: true },
+    camera,
+    viewport,
+    { parentMatrix: parentMat, pivotBase }
+  );
+
+  assert.ok(
+    Math.abs(direct.rotationY - parented.rotationY) < 1e-6,
+    `yaw differs: direct ${direct.rotationY}, parented ${parented.rotationY}`
+  );
+  assert.ok(
+    Math.abs(direct.rotationX - parented.rotationX) < 1e-6,
+    `pitch differs: direct ${direct.rotationX}, parented ${parented.rotationX}`
+  );
+  // And it must actually aim at the target, not straight ahead.
+  assert.ok(Math.abs(direct.rotationY) > 5, 'the layer should yaw toward the off-axis target');
+});

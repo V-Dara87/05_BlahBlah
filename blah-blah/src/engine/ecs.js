@@ -236,6 +236,10 @@ export function createCameraComponent(config = {}) {
     target: { x: 0, y: 0, z: 0, ...(config.target || {}) },
     fov: config.fov ?? 50,
     zoom: config.zoom ?? 1.0,
+    // Roll around the line of sight. Authored here (and in CameraCard) so the
+    // view does not have to borrow the camera entity's Transform rotation,
+    // which also drives parenting and 2D layout.
+    roll: config.roll ?? 0,
   };
 }
 

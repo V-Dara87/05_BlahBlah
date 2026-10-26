@@ -58,6 +58,58 @@ function Shape3DCanvas({ shapeComp, proj }) {
 }
 
 /**
+ * A 3D primitive living on a 3D layer. Unlike <Shape3DCanvas> this canvas is
+ * positioned at the frame origin and is NOT inside the layer's `matrix3d` div:
+ * the mesh is projected through the scene camera by geometry3d.js itself, so
+ * letting CSS project it again would foreshorten it twice (which is what the
+ * old markup did — once per renderer, in opposite directions).
+ */
+function Shape3DScreenCanvas({ shapeComp, proj, width, height, opacity = 1 }) {
+  const canvasRef = useRef(null);
+
+  useLayoutEffect(() => {
+    const cvs = canvasRef.current;
+    if (!cvs) return;
+    const ctx = cvs.getContext('2d');
+    if (!ctx) return;
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, cvs.width, cvs.height);
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, opacity));
+    drawShape3D(ctx, shapeComp, {
+      matrix: proj?.camMatrix,
+      viewMatrix: proj?.viewMatrix,
+      focalLength: proj?.focalLength,
+      viewport: { width, height },
+      near: proj?.nearPlane,
+      far: proj?.farPlane,
+    });
+    ctx.restore();
+  });
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="rendered-shape-3d-screen-canvas"
+      width={width}
+      height={height}
+      style={{
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        width: `${width}px`,
+        height: `${height}px`,
+        pointerEvents: 'none',
+        // Same depth band as its layer div, later in DOM order so it paints on
+        // top of that div's (empty) box.
+        zIndex: proj?.zIndex ?? 0,
+      }}
+    />
+  );
+}
+
+/**
  * Foreground overlay layer — every non-video, non-audio active entity:
  * Script (react/canvas-kind), Text, and Shape components, plus each
  * selected entity's rotate/scale gizmo. Pulled out of EntityRenderer.jsx's
@@ -171,7 +223,15 @@ export function OverlayLayer({
 
     const is3D = Boolean(item.is3D && item.projectedTransform);
     const proj = item.projectedTransform;
-    if (is3D && proj && !proj.inFrontOfCamera) return null;
+    // A mesh's geometry extends in Z beyond the layer's flat box, so the box
+    // crossing the near plane does not mean the shape is gone — its faces are
+    // clipped individually.
+    const meshOn3DLayer = Boolean(shapeComp && is3DShape(shapeComp.shapeType) && is3D);
+    if (is3D && proj && !proj.inFrontOfCamera && !meshOn3DLayer) return null;
+    // A mesh layer past the near plane still draws (its faces are clipped
+    // individually), but its transformed div does not: the matrix would be
+    // meaningless there and would leave an invisible hit area over the frame.
+    const showLayerDiv = !is3D || !proj || proj.inFrontOfCamera;
 
     const renderX = is3D ? (proj.screenX - safeResWidth / 2) : transform.x;
     const renderY = is3D ? (proj.screenY - safeResHeight / 2) : transform.y;
@@ -189,15 +249,31 @@ export function OverlayLayer({
 
     return (
       <Fragment key={entity.id}>
+      {showLayerDiv && (
       <div
         className={`preview-render-layer ${onUpdateEntity ? 'gizmo-draggable' : ''} ${isSelected && onUpdateEntity ? 'selected' : ''}`}
         style={{
           transform: cssTransform,
+          // A 3D primitive on a 3D layer paints itself into a screen-space
+          // canvas (see <Shape3DScreenCanvas>), leaving this div empty — which
+          // would also leave it with nothing to click. Giving it the shape's own
+          // box makes the projected card the hit area, matching where the mesh
+          // sits, and the drag handlers keep working.
+          ...(meshOn3DLayer
+            ? { width: `${shapeComp.width || 140}px`, height: `${shapeComp.height || 140}px` }
+            : null),
           // Shift rotation/scale origin to the pivot point. Same
           // formula as the video layer: pivotX/Y normalized × baseSize
           // gives the pixel offset from element center. Default 0,0 →
           // no offset → identical behavior to before.
-          transformOrigin: `calc(50% + ${(transform.pivotX ?? 0) * baseWidth}px) calc(50% + ${(transform.pivotY ?? 0) * baseHeight}px)`,
+          //
+          // A 3D layer keeps a plain centre origin: its pivot is already
+          // inside the projected matrix (camera3d buildLayerMatrix, in box
+          // pixels). Shifting transform-origin by the pivot as well applied
+          // it twice and made the matrix itself pivot-free.
+          transformOrigin: is3D
+            ? '50% 50%'
+            : `calc(50% + ${(transform.pivotX ?? 0) * baseWidth}px) calc(50% + ${(transform.pivotY ?? 0) * baseHeight}px)`,
           opacity: (transform.opacity ?? 1) * transitionFactor,
           zIndex: computedZIndex,
           willChange: 'transform, opacity',
@@ -299,7 +375,11 @@ export function OverlayLayer({
               // The parent div already handles position/rotateZ via CSS transform; 3D
               // camera projection handles rotateX/Y/Z via CSS too. Passing transform
               // here would double-apply those rotations.
-              <Shape3DCanvas shapeComp={shapeComp} proj={proj} />
+              //
+              // On a 3D layer the mesh is NOT drawn here: the div's `matrix3d`
+              // would apply perspective a second time on top of the mesh's own.
+              // It is rendered in screen space by <Shape3DScreenCanvas> below.
+              is3D && proj ? null : <Shape3DCanvas shapeComp={shapeComp} proj={proj} />
             ) : (
               <div
                 className="rendered-shape-node"
@@ -345,7 +425,23 @@ export function OverlayLayer({
           )}
         </EntityErrorBoundary>
       </div>
+      )}
  
+      {/* 3D primitive on a 3D layer: drawn through the scene camera in screen
+          space, as a sibling of the transformed div so the layer's CSS
+          `matrix3d` cannot apply perspective on top of the mesh's own. */}
+      {meshOn3DLayer && proj && (
+        <Shape3DScreenCanvas
+          shapeComp={shapeComp}
+          proj={proj}
+          width={safeResWidth}
+          height={safeResHeight}
+          // Same fade the layer's own div applies (layer opacity × transition),
+          // since this canvas is a sibling and inherits neither.
+          opacity={(transform.opacity ?? 1) * transitionFactor}
+        />
+      )}
+
       {/* Selection outline + rotate/scale gizmo handles — a SIBLING
           of .preview-render-layer above, not a child of it. The
           content div carries `scale(transform.scaleX,
@@ -361,7 +457,7 @@ export function OverlayLayer({
           place. Kept in the same z-index band as the content div
           (right after it, translate(-50%,-50%) centered the same
           way) so it still visually tracks the clip 1:1. */}
-      {isSelected && onUpdateEntity && (
+      {isSelected && onUpdateEntity && showLayerDiv && (
         <div
           key={`${entity.id}-gizmo`}
           className={`preview-selection-gizmo${isFullFrameGizmo ? ' is-full-frame' : ''}`}

@@ -78,12 +78,14 @@ export function getTransformFieldGroups(is3D = false) {
         { name: 'scaleY', type: 'number', dragLabel: 'Y', labelColor: '#4ade80', step: 0.01, defaultVal: 1 },
         { name: 'scaleZ', type: 'number', dragLabel: 'Z', labelColor: '#60a5fa', step: 0.01, defaultVal: 1 },
       ],
-    },
-    {
+    },    {
       label: 'Pivot',
       fields: [
         { name: 'pivotX', type: 'number', dragLabel: 'X', labelColor: '#f87171', step: 0.01, min: -0.5, max: 0.5, defaultVal: 0 },
         { name: 'pivotY', type: 'number', dragLabel: 'Y', labelColor: '#4ade80', step: 0.01, min: -0.5, max: 0.5, defaultVal: 0 },
+        // Pivot Z is in px (a layer has no depth to normalize against) and moves
+        // the point the layer rotates about through its own thickness.
+        { name: 'pivotZ', type: 'number', dragLabel: 'Z', labelColor: '#60a5fa', step: 1, defaultVal: 0 },
       ],
     },
     {
@@ -92,6 +94,8 @@ export function getTransformFieldGroups(is3D = false) {
         { name: 'opacity', type: 'number', slider: true, dragLabel: 'α', labelColor: '#a78bfa', step: 0.01, min: 0, max: 1, defaultVal: 1 },
       ],
     },
+
+
     {
       label: 'Speed',
       fields: [
