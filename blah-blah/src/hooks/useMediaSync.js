@@ -1,8 +1,26 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { setMediaElementVolume, setMediaElementRate, resumeAudioContext, disconnectMediaGainChain } from '../utils/mediaAudio';
 import { resolveEffectiveVolume, findEntityTrack } from '../utils/trackAudio';
 import { resolveTransitionAudioForEntity } from '../engine/renderPipeline';
  
+/** Idle (inactive) audio elements kept alive for quick re-entry; older ones are released. */
+const MAX_IDLE_AUDIO_ELEMENTS = 8;
+
+// The volume / rate setters touch the Web Audio graph and the element, so skip
+// them when nothing changed — they used to run for every element every frame.
+function applyVolumeIfChanged(el, volume, trackId) {
+  const key = `${volume}|${trackId ?? ''}`;
+  if (el.__bbVolKey === key) return;
+  setMediaElementVolume(el, volume, trackId);
+  el.__bbVolKey = key;
+}
+
+function applyRateIfChanged(el, rate) {
+  if (el.__bbRate === rate) return;
+  setMediaElementRate(el, rate);
+  el.__bbRate = rate;
+}
+
 /**
  * Keeps <video>/<audio> elements glued to the timeline during playback and
  * scrubbing. Pulled out of EntityRenderer.jsx, where the video and audio
@@ -42,12 +60,17 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
   // parent fallback (an AudioSource child clip fades with its video
   // parent). Cheap to rebuild each effect run; entities is already the
   // full list both effects below iterate.
-  const entityMapRef = useRef(new Map());
-  entityMapRef.current = new Map((entities || []).map((e) => [e.id, e]));
+  const entityMap = useMemo(() => new Map((entities || []).map((e) => [e.id, e])), [entities]);
+  const entityMapRef = useRef(entityMap);
+  entityMapRef.current = entityMap;
  
   // Video — elements are created declaratively in JSX (ref callback sets
   // videoRefs.current[entity.id]); this effect only drives an existing element.
   useEffect(() => {
+    // Set by the cleanup below. An older run that was still awaiting
+    // resumeAudioContext() must not apply play()/seek after a newer run (e.g.
+    // the user paused in the meantime) has already taken over.
+    let cancelled = false;
     const isStateTransition = wasPlayingRef.current !== isPlaying;
     wasPlayingRef.current = isPlaying;
  
@@ -81,6 +104,7 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
     const startPlayback = async () => {
       if (isPlaying) {
         await resumeAudioContext();
+        if (cancelled) return;
       }
  
       syncItems.forEach(({ entity, transform }) => {
@@ -112,8 +136,8 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
           // touching a transition.
           const videoTransitionAudio = resolveTransitionAudioForEntity(entity, transitionAudioWindows, entityMapRef.current);
           if (videoTransitionAudio) effectiveVolume *= videoTransitionAudio.gainAt(currentTime);
-          setMediaElementVolume(vidEl, effectiveVolume, track?.id);
-          setMediaElementRate(vidEl, speed);
+          applyVolumeIfChanged(vidEl, effectiveVolume, track?.id);
+          applyRateIfChanged(vidEl, speed);
  
           if (isPlaying) {
             if (vidEl.paused || isStateTransition || Math.abs(vidEl.currentTime - localTime) > 0.6) {
@@ -139,7 +163,7 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
         if (el && !el.paused) el.pause();
       }
       // Clean up videos whose entity was deleted from the project
-      if (!entities.some((e) => e.id === id)) {
+      if (!entityMapRef.current.has(id)) {
         const el = videoRefs.current[id];
         if (el) {
           if (!el.paused) el.pause();
@@ -148,15 +172,21 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
         delete videoRefs.current[id];
       }
     });
+
+    return () => {
+      cancelled = true;
+    };
   }, [currentTime, isPlaying, activeVideoItems, entities, tracks, transitionPlan, transitionAudioWindows]);
  
   // Audio — same rate/volume/seek treatment as video above, but audio
   // elements are created imperatively here (no <audio> in JSX) since
   // there's nothing to render for them.
   useEffect(() => {
+    let cancelled = false;
     const startPlayback = async () => {
       if (isPlaying) {
         await resumeAudioContext();
+        if (cancelled) return;
       }
  
       computedEntities.forEach(({ entity, transform }) => {
@@ -165,14 +195,20 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
           (entity.type === 'audio' ? { src: entity.src } : null);
         if (audioComp && audioComp.src) {
           let aud = audioRefs.current[entity.id];
+          // Compare against the src WE assigned: `aud.src` reads back as the
+          // browser-normalized absolute URL, so it never equalled a relative or
+          // otherwise differently-written audioComp.src and the element was
+          // reloaded on every frame.
           if (!aud) {
             aud = new Audio();
             aud.crossOrigin = 'anonymous';
             aud.src = audioComp.src;
+            aud.__bbSrc = audioComp.src;
             audioRefs.current[entity.id] = aud;
-          } else if (aud.src !== audioComp.src) {
+          } else if (aud.__bbSrc !== audioComp.src) {
             aud.crossOrigin = 'anonymous';
             aud.src = audioComp.src;
+            aud.__bbSrc = audioComp.src;
           }
  
           const speed = (audioComp.speed || 1) * (transform?.speed ?? 1);
@@ -188,8 +224,8 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
           // clip that happens to be a transition side directly.
           const audioTransitionAudio = resolveTransitionAudioForEntity(entity, transitionAudioWindows, entityMapRef.current);
           if (audioTransitionAudio) effectiveVolume *= audioTransitionAudio.gainAt(currentTime);
-          setMediaElementVolume(aud, effectiveVolume, track?.id);
-          setMediaElementRate(aud, speed);
+          applyVolumeIfChanged(aud, effectiveVolume, track?.id);
+          applyRateIfChanged(aud, speed);
  
           if (isPlaying) {
             if (aud.paused || Math.abs(aud.currentTime - localTime) > 0.6) {
@@ -208,13 +244,16 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
  
     startPlayback();
  
+    const activeIds = new Set(computedEntities.map(({ entity }) => entity.id));
+    const idleIds = [];
     Object.keys(audioRefs.current).forEach((id) => {
-      if (!computedEntities.some(({ entity }) => entity.id === id)) {
+      if (!activeIds.has(id)) {
         const aud = audioRefs.current[id];
         if (aud && !aud.paused) aud.pause();
+        idleIds.push(id);
       }
       // Clean up audio elements whose entity was deleted from the project
-      if (!entities.some((e) => e.id === id)) {
+      if (!entityMapRef.current.has(id)) {
         const aud = audioRefs.current[id];
         if (aud) {
           if (!aud.paused) aud.pause();
@@ -223,6 +262,25 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
         delete audioRefs.current[id];
       }
     });
+
+    // A project split into hundreds of clips (silence cut) would otherwise keep
+    // hundreds of Audio elements + Web Audio nodes alive. Release the oldest
+    // idle ones; they are recreated on demand when their clip becomes active.
+    if (idleIds.length > MAX_IDLE_AUDIO_ELEMENTS) {
+      idleIds.slice(0, idleIds.length - MAX_IDLE_AUDIO_ELEMENTS).forEach((id) => {
+        const aud = audioRefs.current[id];
+        if (!aud) return;
+        if (!aud.paused) aud.pause();
+        disconnectMediaGainChain(aud);
+        aud.removeAttribute('src');
+        aud.load();
+        delete audioRefs.current[id];
+      });
+    }
+
+    return () => {
+      cancelled = true;
+    };
   }, [currentTime, isPlaying, computedEntities, entities, tracks, transitionAudioWindows]);
  
   // Cleanup on unmount — stop and disconnect every element this hook

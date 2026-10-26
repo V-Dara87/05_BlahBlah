@@ -30,5 +30,4 @@ tauri-plugin-shell = "2"
 reqwest = { version = "0.13", features = ["stream"] }
 sha2 = "0.10"
 futures-util = "0.3"
-tokio = { version = "1", features = ["fs", "io-util"] }
-
+tokio = { version = "1", features = ["fs", "io-util", "time"] }

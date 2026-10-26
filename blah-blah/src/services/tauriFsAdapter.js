@@ -20,6 +20,55 @@ export function joinPath(...segments) {
 }
 
 /**
+ * True when `name` is a single, plain path segment: no separators, no `.` / `..`,
+ * no drive prefix, no NUL. Mirrors what browser FileSystemDirectoryHandle accepts.
+ */
+export function isSafeChildName(name) {
+  if (typeof name !== 'string') return false;
+  const s = name.trim();
+  if (!s || s === '.' || s === '..') return false;
+  if (/[/\\\0]/.test(s)) return false;
+  if (/^[a-zA-Z]:/.test(s)) return false;
+  return true;
+}
+
+export function assertSafeChildName(name) {
+  if (!isSafeChildName(name)) {
+    const err = new TypeError(`Invalid file or folder name: ${JSON.stringify(name)}`);
+    err.name = 'TypeError';
+    throw err;
+  }
+}
+
+/**
+ * Writes via a temp file + rename so a crash mid-write can never leave a
+ * half-written target. For .json files the previous version is kept as `.bak`.
+ */
+async function atomicWrite(fs, filePath, writeTemp) {
+  const tmpPath = `${filePath}.${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}.tmp`;
+  try {
+    await writeTemp(tmpPath);
+    if (/\.json$/i.test(filePath)) {
+      try {
+        if (await fs.exists(filePath)) {
+          await fs.copyFile(filePath, `${filePath}.bak`);
+        }
+      } catch {
+        // Backup is best-effort; never block the save on it.
+      }
+    }
+    await fs.rename(tmpPath, filePath);
+  } catch (err) {
+    try {
+      await fs.remove(tmpPath);
+    } catch {
+      // temp file already gone
+    }
+    throw err;
+  }
+}
+
+/**
  * Extracts a display folder or file name from an absolute path.
  */
 export function getBaseName(filePath) {
@@ -82,7 +131,8 @@ export function createTauriFileHandle(filePath, fileName) {
         async close() {
           const fs = await import('@tauri-apps/plugin-fs');
           if (buffer.length === 1 && typeof buffer[0] === 'string') {
-            await fs.writeTextFile(filePath, buffer[0]);
+            const text = buffer[0];
+            await atomicWrite(fs, filePath, (tmp) => fs.writeTextFile(tmp, text));
           } else {
             // Assemble any string / Blob / File / Uint8Array chunks into binary
             const parts = [];
@@ -105,7 +155,7 @@ export function createTauriFileHandle(filePath, fileName) {
               combined.set(p, offset);
               offset += p.byteLength;
             }
-            await fs.writeFile(filePath, combined);
+            await atomicWrite(fs, filePath, (tmp) => fs.writeFile(tmp, combined));
           }
         },
       };
@@ -135,6 +185,7 @@ export function createTauriDirectoryHandle(dirPath, dirName) {
     },
 
     async getFileHandle(childName, options = {}) {
+      assertSafeChildName(childName);
       const fs = await import('@tauri-apps/plugin-fs');
       const fullPath = joinPath(dirPath, childName);
       const fileExists = await fs.exists(fullPath);
@@ -152,6 +203,7 @@ export function createTauriDirectoryHandle(dirPath, dirName) {
     },
 
     async getDirectoryHandle(childName, options = {}) {
+      assertSafeChildName(childName);
       const fs = await import('@tauri-apps/plugin-fs');
       const fullPath = joinPath(dirPath, childName);
       const dirExists = await fs.exists(fullPath);
@@ -169,6 +221,7 @@ export function createTauriDirectoryHandle(dirPath, dirName) {
     },
 
     async removeEntry(childName, options = {}) {
+      assertSafeChildName(childName);
       const fs = await import('@tauri-apps/plugin-fs');
       const fullPath = joinPath(dirPath, childName);
       await fs.remove(fullPath, { recursive: !!options.recursive });

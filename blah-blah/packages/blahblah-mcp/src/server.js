@@ -226,6 +226,23 @@ export const TOOLS = [
   },
 ];
 
+/**
+ * Resolves an output file path and makes sure it stays inside the project
+ * directory and is an image file. Prevents a prompt-injected client from
+ * writing to arbitrary locations through `outFile`.
+ */
+function resolveOutFile(baseDir, outFile) {
+  const resolved = path.resolve(baseDir, String(outFile));
+  const rel = path.relative(baseDir, resolved);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error('outFile must be inside the project directory.');
+  }
+  if (!/\.(svg|png)$/i.test(resolved)) {
+    throw new Error('outFile must end with .svg or .png.');
+  }
+  return resolved;
+}
+
 export async function handleToolCall(name, args) {
   const dir = args?.dir ? path.resolve(args.dir) : process.cwd();
 
@@ -328,13 +345,13 @@ export async function handleToolCall(name, args) {
       if (isPng) {
         const buf = renderFramePng(project, args.time);
         if (args.outFile) {
-          const outPath = path.resolve(args.outFile);
+          const outPath = resolveOutFile(dir, args.outFile);
           await fs.writeFile(outPath, buf);
         }
         return { ...evaluated, format: 'png', pngBase64: buf.toString('base64'), pngFile: args.outFile || null };
       }
       if (args.outFile) {
-        const outPath = path.resolve(args.outFile);
+        const outPath = resolveOutFile(dir, args.outFile);
         const svg = renderFrameSvg(project, args.time);
         await fs.writeFile(outPath, svg, 'utf8');
         return { ...evaluated, svgFile: outPath };

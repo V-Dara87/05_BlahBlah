@@ -1,4 +1,4 @@
- /**
+/**
  * exportRunner — the export-time counterpart of EntityRenderer.jsx: frame
  * drawing, the video frame provider, and the deterministic audio mixdown.
  *
@@ -212,6 +212,78 @@ export function createCanvasContainerPool() {
  * always seeks and always awaits the browser actually landing the seek
  * (the 'seeked' event) before the caller is allowed to draw.
  */
+const VIDEO_LOAD_TIMEOUT_MS = 30_000;
+const VIDEO_SEEK_TIMEOUT_MS = 15_000;
+
+/**
+ * Resolves on `okEvent`, rejects on the element's `error` event or after
+ * `timeoutMs`. Without this, a missing `seeked` / `loadedmetadata` event
+ * would hang the whole export forever.
+ */
+function waitForMediaEvent(video, okEvent, timeoutMs, label) {
+  return new Promise((resolve, reject) => {
+    let timer = null;
+    const cleanup = () => {
+      clearTimeout(timer);
+      video.removeEventListener(okEvent, onOk);
+      video.removeEventListener('error', onErr);
+    };
+    const onOk = () => {
+      cleanup();
+      resolve();
+    };
+    const onErr = () => {
+      cleanup();
+      reject(new Error(`${label}: the browser reported a media error`));
+    };
+    timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`${label}: timed out after ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+    video.addEventListener(okEvent, onOk);
+    video.addEventListener('error', onErr);
+  });
+}
+
+/**
+ * Picks an H.264 (High profile) level that fits the frame size and frame rate,
+ * then confirms the browser can actually encode it. Returns the first
+ * supported codec string. Throws a readable error when nothing is supported.
+ */
+export async function pickAvcCodec({ width, height, framerate, bitrate }) {
+  // [level hex, MaxFS (macroblocks per frame), MaxMBPS (macroblocks per second)]
+  const LEVELS = [
+    ['28', 8192, 245760], // 4.0
+    ['2a', 8704, 522240], // 4.2
+    ['32', 22080, 589824], // 5.0
+    ['33', 36864, 983040], // 5.1
+    ['34', 36864, 2073600], // 5.2
+    ['3c', 139264, 4177920], // 6.0
+    ['3d', 139264, 8355840], // 6.1
+    ['3e', 139264, 16711680], // 6.2
+  ];
+  const mbsPerFrame = Math.ceil(width / 16) * Math.ceil(height / 16);
+  const mbsPerSecond = mbsPerFrame * framerate;
+  const candidates = LEVELS.filter(([, maxFs, maxMbps]) => mbsPerFrame <= maxFs && mbsPerSecond <= maxMbps).map(
+    ([hex]) => `avc1.6400${hex}`
+  );
+  if (candidates.length === 0) {
+    throw new Error(`${width}x${height} at ${framerate} fps exceeds what H.264 supports.`);
+  }
+  if (typeof VideoEncoder.isConfigSupported !== 'function') return candidates[0];
+  for (const codec of candidates) {
+    try {
+      const { supported } = await VideoEncoder.isConfigSupported({ codec, width, height, bitrate, framerate });
+      if (supported) return codec;
+    } catch {
+      // try the next level
+    }
+  }
+  throw new Error(
+    `This device cannot encode H.264 at ${width}x${height} / ${framerate} fps. Try a lower resolution or frame rate.`
+  );
+}
+
 export function createVideoFrameProvider() {
   const videos = new Map(); // entityId -> HTMLVideoElement
  
@@ -227,20 +299,15 @@ export function createVideoFrameProvider() {
       video.playsInline = true;
       video.preload = 'auto';
  
-      await new Promise((resolve, reject) => {
-        const onReady = () => {
-          video.removeEventListener('loadedmetadata', onReady);
-          video.removeEventListener('error', onError);
-          resolve();
-        };
-        const onError = () => {
-          video.removeEventListener('loadedmetadata', onReady);
-          video.removeEventListener('error', onError);
-          reject(new Error(`Failed to load video source: ${src}`));
-        };
-        video.addEventListener('loadedmetadata', onReady);
-        video.addEventListener('error', onError);
-      });
+      try {
+        if (video.readyState < 1) {
+          await waitForMediaEvent(video, 'loadedmetadata', VIDEO_LOAD_TIMEOUT_MS, `Failed to load video source ${src}`);
+        }
+      } catch (err) {
+        video.removeAttribute('src');
+        video.load();
+        throw err;
+      }
  
       videos.set(entityId, video);
       return video;
@@ -264,14 +331,9 @@ export function createVideoFrameProvider() {
       // Already close enough (same frame) — skip the seek/await round-trip.
       if (Math.abs(video.currentTime - clamped) < 1 / 240) return;
  
-      await new Promise((resolve) => {
-        const onSeeked = () => {
-          video.removeEventListener('seeked', onSeeked);
-          resolve();
-        };
-        video.addEventListener('seeked', onSeeked);
-        video.currentTime = clamped;
-      });
+      const seeked = waitForMediaEvent(video, 'seeked', VIDEO_SEEK_TIMEOUT_MS, `Seek to ${clamped.toFixed(2)}s failed`);
+      video.currentTime = clamped;
+      await seeked;
     },
  
     getVideoElement(entityId) {
@@ -2182,10 +2244,13 @@ export async function encodeAudioTrack({ audioBuffer, muxer, sampleRate = 48000 
  
   const numberOfChannels = audioBuffer.numberOfChannels;
  
+  // A throw inside the encoder's error callback is swallowed by the browser,
+  // so the error is stored here and re-thrown from the encode loop instead.
+  let encoderError = null;
   const audioEncoder = new AudioEncoder({
     output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
     error: (e) => {
-      throw e;
+      encoderError = e;
     },
   });
   audioEncoder.configure({
@@ -2201,6 +2266,7 @@ export async function encodeAudioTrack({ audioBuffer, muxer, sampleRate = 48000 
   // Interleave once up front (AudioData wants interleaved planar-per-channel
   // or interleaved data depending on format; we use 'f32' interleaved here).
   for (let start = 0; start < totalFrames; start += chunkFrames) {
+    if (encoderError) throw encoderError;
     const frameCount = Math.min(chunkFrames, totalFrames - start);
     const interleaved = new Float32Array(frameCount * numberOfChannels);
  
@@ -2224,17 +2290,20 @@ export async function encodeAudioTrack({ audioBuffer, muxer, sampleRate = 48000 
     audioData.close();
  
     if (audioEncoder.encodeQueueSize > 4) {
+      // setTimeout, not requestAnimationFrame: rAF stops while the window is
+      // minimized or hidden, which would freeze the export.
       await new Promise((resolve) => {
         const check = () => {
-          if (audioEncoder.encodeQueueSize <= 2) resolve();
-          else requestAnimationFrame(check);
+          if (encoderError || audioEncoder.encodeQueueSize <= 2) resolve();
+          else setTimeout(check, 4);
         };
         check();
       });
     }
   }
- 
+
+  if (encoderError) throw encoderError;
   await audioEncoder.flush();
   audioEncoder.close();
+  if (encoderError) throw encoderError;
 }
- 

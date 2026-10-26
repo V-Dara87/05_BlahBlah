@@ -69,7 +69,7 @@ const toScriptFileName = (name) => `${(name || '').replace(/\.(js|jsx|ts|tsx|cs)
  
  
  
-import { isTauri, createTauriDirectoryHandle, joinPath } from './tauriFsAdapter';
+import { isTauri, createTauriDirectoryHandle, joinPath, isSafeChildName } from './tauriFsAdapter';
 import { convertFileSrc } from '@tauri-apps/api/core';
 // Real media duration probing (metadata-only, same technique + fallback as
 // the import path) — reused here because reload rebuilds mediaAssets by
@@ -131,6 +131,35 @@ function withProjectLock(dirHandle, task) {
   return run;
 }
  
+/**
+ * Reads + parses project.json, falling back to project.json.bak when the main
+ * file is corrupt (e.g. a crash during a non-atomic write by an older build).
+ * Throws a NotFoundError when there is no project.json at all, and a clear
+ * Error when it exists but neither it nor its backup can be parsed — so an
+ * unreadable project is never silently treated as empty and overwritten.
+ */
+async function readProjectJsonWithBackup(dirHandle) {
+  const readParsed = async (fileName) => {
+    const handle = await dirHandle.getFileHandle(fileName);
+    return JSON.parse(await (await handle.getFile()).text());
+  };
+  try {
+    return await readParsed('project.json');
+  } catch (err) {
+    if (err?.name === 'NotFoundError') throw err;
+    try {
+      const backup = await readParsed('project.json.bak');
+      console.warn('project.json could not be read; restored from project.json.bak.', err);
+      return backup;
+    } catch {
+      throw new Error(
+        `project.json is unreadable and no valid backup was found (${err?.message || err}). ` +
+        'The project was not opened so that it cannot be overwritten.'
+      );
+    }
+  }
+}
+
 const prefabFileName = (name) => (name.endsWith('.json') ? name : `${name}.prefab.json`);
  
 /**
@@ -448,10 +477,7 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
  
   // 1. Read project.json if present
   try {
-    const projectJsonHandle = await dirHandle.getFileHandle('project.json');
-    const projectJsonFile = await projectJsonHandle.getFile();
-    const projectJsonText = await projectJsonFile.text();
-    const parsed = JSON.parse(projectJsonText);
+    const parsed = await readProjectJsonWithBackup(dirHandle);
     // Schema gate — a project from a NEWER build warns (never blocks the
     // load); a missing schemaVersion reads as 0, which is exactly the
     // pre-unification format migrateEntities below handles (the 0 → 1
@@ -476,8 +502,11 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
           .map((entry) => [entry.name, entry])
       );
     }
-  } catch {
-    // project.json doesn't exist yet; will create on save
+  } catch (err) {
+    // A missing project.json is fine (it is created on save). Anything else
+    // means an existing project could not be read: stop rather than let the
+    // next autosave overwrite it with an empty project.
+    if (err?.name !== 'NotFoundError') throw err;
   }
  
   // 2. Read scripts/ folder
@@ -848,6 +877,10 @@ export async function saveProjectToDirectory(dirHandle, projectStateOrGetter, op
         }
       }
       for (const [fileName, script] of byFile) {
+        if (!isSafeChildName(fileName)) {
+          console.warn(`Skipped saving script with unsafe file name: ${fileName}`);
+          continue;
+        }
         await syncScriptFile(scriptsDirHandle, syncState, fileName, script.code || '');
       }
     }
@@ -857,6 +890,10 @@ export async function saveProjectToDirectory(dirHandle, projectStateOrGetter, op
       const prefabsDirHandle = await dirHandle.getDirectoryHandle('prefabs', { create: true });
       for (const prefab of projectState.prefabs) {
         const fileName = prefabFileName(prefab.name);
+        if (!isSafeChildName(fileName)) {
+          console.warn(`Skipped saving prefab with unsafe file name: ${fileName}`);
+          continue;
+        }
         const text = JSON.stringify(prefab, null, 2);
         if (skipIfUnchanged && syncState && syncState.prefabs.get(fileName) === text) continue;
         const prefabFileHandle = await prefabsDirHandle.getFileHandle(fileName, { create: true });
@@ -1153,7 +1190,11 @@ export async function moveMediaFileOnDisk(dirHandle, fileName, oldFolder = null,
  * Delete an entire folder directory from a project section on disk.
  */
 export async function deleteFolderFromProject(dirHandle, section, folderName) {
-  if (!dirHandle || !section || !folderName || section === 'shared' || folderName === '.' || folderName === '..') return;
+  if (!dirHandle || !section || !folderName || section === 'shared') return;
+  if (!isSafeChildName(section) || !isSafeChildName(folderName)) {
+    console.error(`Refusing to delete folder with unsafe name: ${section}/${folderName}`);
+    return;
+  }
   const rootName = section === 'prefabs' ? 'prefabs' : section;
  
   if (isTauri() && dirHandle.path) {
@@ -1190,7 +1231,11 @@ export async function deleteFolderFromProject(dirHandle, section, folderName) {
  * Rename a folder directory in a project section on disk.
  */
 export async function renameFolderInProject(dirHandle, section, oldName, newName) {
-  if (!dirHandle || !section || !oldName || !newName || section === 'shared' || oldName === newName || oldName === '.' || oldName === '..' || newName === '.' || newName === '..') return;
+  if (!dirHandle || !section || !oldName || !newName || section === 'shared' || oldName === newName) return;
+  if (!isSafeChildName(section) || !isSafeChildName(oldName) || !isSafeChildName(newName)) {
+    console.error(`Refusing to rename folder with unsafe name: ${section}/${oldName} -> ${newName}`);
+    return;
+  }
   const rootName = section === 'prefabs' ? 'prefabs' : section;
  
   if (isTauri() && dirHandle.path) {
@@ -1428,4 +1473,3 @@ export async function watchScriptsDirectory(dirHandle, onChange) {
     return null;
   }
 }
- 

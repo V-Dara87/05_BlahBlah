@@ -13,6 +13,25 @@
  */
 
 const DEFAULT_MAX_CACHED_FRAMES = 180; // ~6 seconds at 30fps
+// Frames are full-size canvases (width x height x 4 bytes): 180 of them at 4K
+// would be ~6 GB. The byte budget keeps memory bounded whatever the resolution.
+const DEFAULT_MAX_CACHED_BYTES = 256 * 1024 * 1024;
+
+// Hashing a whole script's source char-by-char on EVERY frame is wasteful; the
+// source rarely changes, so remember the hash per code string.
+const codeHashMemo = new Map();
+const CODE_HASH_MEMO_LIMIT = 64;
+
+function memoCodeHash(code) {
+  const key = code || '';
+  let hash = codeHashMemo.get(key);
+  if (hash === undefined) {
+    hash = fastStringHash(key);
+    if (codeHashMemo.size >= CODE_HASH_MEMO_LIMIT) codeHashMemo.clear();
+    codeHashMemo.set(key, hash);
+  }
+  return hash;
+}
 
 function fastStringHash(str) {
   let hash = 5381;
@@ -34,9 +53,11 @@ function hashProps(props) {
 }
 
 export class FrameCache {
-  constructor(maxFrames = DEFAULT_MAX_CACHED_FRAMES) {
+  constructor(maxFrames = DEFAULT_MAX_CACHED_FRAMES, maxBytes = DEFAULT_MAX_CACHED_BYTES) {
     this.maxFrames = maxFrames;
-    this.cache = new Map(); // key -> { canvas, width, height, lastUsed }
+    this.maxBytes = maxBytes;
+    this.totalBytes = 0;
+    this.cache = new Map(); // key -> { canvas, width, height, lastUsed, entityId, bytes }
     this.entityToKeys = new Map(); // entityId -> Set of keys
     this.hits = 0;
     this.misses = 0;
@@ -44,11 +65,15 @@ export class FrameCache {
 
   /**
    * Generates a deterministic composite key for a single frame snapshot.
+   * `timingKey` must capture anything else the frame depends on, such as the
+   * clip's duration and start (progress / timeLeft / timelineTime derive from
+   * them) — otherwise a trimmed or moved clip would show stale frames.
    */
-  generateKey(entityId, scriptId, scriptCode, props, frame, width, height) {
-    const codeHash = fastStringHash(scriptCode || '');
+  generateKey(entityId, scriptId, scriptCode, props, frame, width, height, timingKey = '') {
+    const codeHash = memoCodeHash(scriptCode);
     const pHash = hashProps(props);
-    return `${entityId}::${scriptId || 's'}::${codeHash}::${pHash}::f${frame}::${width}x${height}`;
+    const timing = timingKey === '' ? '' : `::t${timingKey}`;
+    return `${entityId}::${scriptId || 's'}::${codeHash}::${pHash}::f${frame}::${width}x${height}${timing}`;
   }
 
   /**
@@ -96,13 +121,27 @@ export class FrameCache {
       copyCanvas = { width, height, __mock: true };
     }
 
-    // Evict oldest if limit reached
-    if (this.cache.size >= this.maxFrames) {
+    // Replacing an existing key must release the old entry's bytes first.
+    if (this.cache.has(key)) this.delete(key);
+
+    const bytes = width * height * 4;
+    // A single frame larger than the whole budget is never cached.
+    if (bytes > this.maxBytes) {
+      if (!copyCanvas.__mock) copyCanvas.width = 0;
+      return;
+    }
+
+    // Evict oldest until both the frame-count and the byte budget have room.
+    while (
+      this.cache.size > 0 &&
+      (this.cache.size >= this.maxFrames || this.totalBytes + bytes > this.maxBytes)
+    ) {
       const oldestKey = this.cache.keys().next().value;
       this.delete(oldestKey);
     }
 
-    this.cache.set(key, { canvas: copyCanvas, width, height, lastUsed: Date.now() });
+    this.cache.set(key, { canvas: copyCanvas, width, height, lastUsed: Date.now(), entityId, bytes });
+    this.totalBytes += bytes;
 
     // Track keys per entity for quick invalidation
     if (!this.entityToKeys.has(entityId)) {
@@ -132,7 +171,21 @@ export class FrameCache {
   }
 
   delete(key) {
+    const entry = this.cache.get(key);
+    if (!entry) return;
     this.cache.delete(key);
+    this.totalBytes = Math.max(0, this.totalBytes - (entry.bytes || 0));
+    // Drop the key from the per-entity index too, so evicted frames don't leave
+    // ever-growing key sets behind.
+    const keys = this.entityToKeys.get(entry.entityId);
+    if (keys) {
+      keys.delete(key);
+      if (keys.size === 0) this.entityToKeys.delete(entry.entityId);
+    }
+    // Release the canvas backing store right away instead of waiting for GC.
+    if (entry.canvas && !entry.canvas.__mock && typeof entry.canvas.width === 'number') {
+      entry.canvas.width = 0;
+    }
   }
 
   /**
@@ -141,8 +194,8 @@ export class FrameCache {
   invalidateEntity(entityId) {
     const keys = this.entityToKeys.get(entityId);
     if (!keys) return;
-    for (const key of keys) {
-      this.cache.delete(key);
+    for (const key of [...keys]) {
+      this.delete(key);
     }
     this.entityToKeys.delete(entityId);
   }
@@ -151,8 +204,10 @@ export class FrameCache {
    * Clears all cached frames.
    */
   clear() {
+    for (const key of [...this.cache.keys()]) this.delete(key);
     this.cache.clear();
     this.entityToKeys.clear();
+    this.totalBytes = 0;
     this.hits = 0;
     this.misses = 0;
   }
@@ -164,6 +219,8 @@ export class FrameCache {
     return {
       size: this.cache.size,
       maxFrames: this.maxFrames,
+      bytes: this.totalBytes,
+      maxBytes: this.maxBytes,
       hits: this.hits,
       misses: this.misses,
       hitRatio: this.hits + this.misses > 0 ? (this.hits / (this.hits + this.misses)).toFixed(2) : '0.00',

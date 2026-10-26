@@ -1,4 +1,3 @@
- 
 import React from 'react';
 import { pushCompileError, pushRuntimeError, getConsoleGeneration } from './scriptConsole.js';
 import ReactDOM from 'react-dom';
@@ -39,6 +38,14 @@ import { getSandboxScope, assertNoLifecycleTypos } from './scriptSandbox.js';
  * script is enough to retain a few thousand compiled modules.
  */
 const CACHE_LIMIT = 50;
+// Compiled modules are what scripts actually RUN from, so they get a much larger
+// budget: with the shared limit of 50, a project with more than 50 distinct
+// scripts evicted live scripts that nothing then recompiled.
+const COMPILED_CACHE_LIMIT = 500;
+
+// The last project folder handle seen by a compile call, so an evicted script
+// can be recompiled on demand from the (sync) render path.
+let lastProjectDirHandle = null;
 
 const compiledModuleCache = new Map();
 const propsSchemaCache = new Map();
@@ -56,10 +63,10 @@ const lastErrorGeneration = new Map();
  * least recently used; re-inserting refreshes recency. Returns the value so
  * call sites can `return cacheSet(...)`.
  */
-function cacheSet(map, key, value) {
+function cacheSet(map, key, value, limit = CACHE_LIMIT) {
   if (map.has(key)) map.delete(key);
   map.set(key, value);
-  if (map.size > CACHE_LIMIT) {
+  if (map.size > limit) {
     map.delete(map.keys().next().value);
   }
   return value;
@@ -716,6 +723,7 @@ function failNoCompiler(scriptCode, scriptName) {
  */
 export async function precompileWithBundler(scriptCode, projectDirHandle, scriptName) {
   if (!scriptCode) return { ok: true };
+  if (projectDirHandle) lastProjectDirHandle = projectDirHandle;
 
   // Mark pending up front: the Inspector should show "Compiling…" while the
   // async compile is in flight, never a false red error.
@@ -743,7 +751,7 @@ export async function precompileWithBundler(scriptCode, projectDirHandle, script
     lastErrorCache.delete(scriptCode);
     lastErrorGeneration.delete(scriptCode);
     pendingBundleCache.delete(scriptCode);
-    cacheSet(compiledModuleCache, scriptCode, exportedResult);
+    cacheSet(compiledModuleCache, scriptCode, exportedResult, COMPILED_CACHE_LIMIT);
     notifyScriptsRecompiled();
     return { ok: true };
   } catch (err) {
@@ -1473,7 +1481,11 @@ function runCompiledModule(transpiled, sourceName, scriptName = '') {
 export function compileScriptModule(scriptCode, scriptName) {
   if (!scriptCode) return null;
   if (compiledModuleCache.has(scriptCode)) {
-    return compiledModuleCache.get(scriptCode);
+    // Real LRU: a read refreshes recency so scripts in use are evicted last.
+    const hit = compiledModuleCache.get(scriptCode);
+    compiledModuleCache.delete(scriptCode);
+    compiledModuleCache.set(scriptCode, hit);
+    return hit;
   }
 
   // ── STRICT GATE ── if a previous compile recorded an error, never run.
@@ -1490,7 +1502,14 @@ export function compileScriptModule(scriptCode, scriptName) {
   // Still starting esbuild, or it is ready and this script simply has not
   // been compiled yet → pending. Never a false error.
   if (!esbuildInitSettled || esbuildReady) {
+    const wasPending = pendingBundleCache.has(scriptCode);
     pendingBundleCache.add(scriptCode);
+    // First miss for this source (e.g. it was evicted): nothing else will
+    // compile it — precompileAllProjectScripts skips anything already pending —
+    // so start the compile here instead of leaving it "Compiling…" forever.
+    if (!wasPending && lastProjectDirHandle) {
+      precompileWithBundler(scriptCode, lastProjectDirHandle, scriptName).catch(() => {});
+    }
     return null;
   }
 
@@ -1669,4 +1688,3 @@ export function getCompiledReactComponent(scriptCode) {
 export function getScriptError(scriptCode) {
   return lastErrorCache.get(scriptCode) || null;
 }
- 

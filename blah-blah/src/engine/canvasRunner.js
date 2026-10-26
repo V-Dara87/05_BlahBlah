@@ -1,4 +1,3 @@
- 
 import {
   compileScriptModule,
   getScriptError,
@@ -297,19 +296,21 @@ export function updateCanvasComponent({
   const isScrub =
     mounted.lastLocalTime !== null && Math.abs(localTime - mounted.lastLocalTime) > scrubThreshold;
  
+  const seekArgs = {
+    container,
+    time: localTime,
+    frame,
+    fps,
+    props: effProps,
+    canvasWidth: effWidth,
+    canvasHeight: effHeight,
+    tween: Tween,
+    Tween,
+    ...timingArgs,
+  };
   if (isScrub && !mounted.mountFailed) {
-    safeCall(mounted.instance, 'onSeek', {
-      container,
-      time: localTime,
-      frame,
-      fps,
-      props: effProps,
-      canvasWidth: effWidth,
-      canvasHeight: effHeight,
-      tween: Tween,
-      Tween,
-      ...timingArgs,
-    }, scriptName, scriptCode);
+    safeCall(mounted.instance, 'onSeek', seekArgs, scriptName, scriptCode);
+    mounted.cacheSkipped = false;
   }
  
   mounted.lastLocalTime = localTime;
@@ -349,14 +350,23 @@ export function updateCanvasComponent({
   // Applies to 2D Canvas components with an active 2D rendering context.
   const has2dCtx = !!mounted.instance?.ctx && !!mounted.instance?.canvas;
   const cacheKey = has2dCtx
-    ? globalFrameCache.generateKey(entityId, scriptId, scriptCode, effProps, frame, effWidth, effHeight)
+    ? globalFrameCache.generateKey(entityId, scriptId, scriptCode, effProps, frame, effWidth, effHeight, `${effDuration}:${effStartTime}`)
     : null;
 
   if (has2dCtx && cacheKey) {
     const cached = globalFrameCache.get(cacheKey);
     if (cached && globalFrameCache.blit(mounted.instance.ctx, cached)) {
-      return; // Cache HIT: Blitted in microseconds, completely skipping script execution!
+      // Cache HIT: blitted in microseconds, completely skipping script execution.
+      // onUpdate did NOT run, so a script that accumulates state is now behind;
+      // remember that so the next real render gives it an onSeek reset first.
+      mounted.cacheSkipped = true;
+      return;
     }
+  }
+
+  if (mounted.cacheSkipped && !mounted.mountFailed) {
+    mounted.cacheSkipped = false;
+    safeCall(mounted.instance, 'onSeek', seekArgs, scriptName, scriptCode);
   }
 
   if (!mounted.mountFailed) {
@@ -436,6 +446,13 @@ function removeInstanceDom(instance, container) {
     } catch {
       // A throwing dispose() must not abort the rest of the teardown.
     }
+    try {
+      // dispose() alone leaves the WebGL context alive until GC; after enough
+      // remounts the browser's context limit is hit and canvases go blank.
+      instance.renderer?.forceContextLoss?.();
+    } catch {
+      // best effort
+    }
   }
   if (!container) return;
   while (container.firstChild) {
@@ -477,4 +494,3 @@ function safeCall(instance, methodName, args, scriptName, scriptCode) {
 
  
 export { getScriptError };
- 

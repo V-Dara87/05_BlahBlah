@@ -1,4 +1,3 @@
- 
 import { useState, useRef, useEffect } from 'react';
 import { Muxer, ArrayBufferTarget, StreamTarget } from 'mp4-muxer';
 import {
@@ -26,6 +25,7 @@ import {
   drawExportFrame,
   createCanvasContainerPool,
   createVideoFrameProvider,
+  pickAvcCodec,
   computeActiveEntitiesAtTime,
   resolveTransitionFramePlan,
   getTransitionAudioWindows,
@@ -432,14 +432,25 @@ export function ExportModal({
         fastStart: streamedFile ? false : 'in-memory',
       });
  
+      // A throw inside the encoder's error callback is swallowed by the
+      // browser, so the error is stored and re-thrown from the frame loop.
+      let encoderError = null;
       videoEncoder = new VideoEncoder({
         output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
         error: (e) => {
-          throw e;
+          encoderError = e;
         },
       });
+      // Pick an H.264 level that fits this resolution + fps (1080p60 / 4K need
+      // more than level 4.0) and make sure the device can encode it.
+      const avcCodec = await pickAvcCodec({
+        width: encodeWidth,
+        height: encodeHeight,
+        framerate: targetFps,
+        bitrate: bitrateMbps * 1_000_000,
+      });
       videoEncoder.configure({
-        codec: 'avc1.640028',
+        codec: avcCodec,
         width: encodeWidth,
         height: encodeHeight,
         bitrate: bitrateMbps * 1_000_000,
@@ -452,6 +463,7 @@ export function ExportModal({
       // natural, cheap check rather than something bolted on afterward).
       for (let i = 0; i < totalFrames; i++) {
         if (abortRef.current) break;
+        if (encoderError) throw encoderError;
  
         const time = exportStartTime + i / targetFps;
  
@@ -555,14 +567,17 @@ export function ExportModal({
         // instantly — avoids unbounded internal encoder queue growth on
         // long exports without slowing the loop down to real-time.
         if (videoEncoder.encodeQueueSize > 4) {
+          // setTimeout, not requestAnimationFrame: rAF stops while the window
+          // is minimized or hidden, which would freeze the export.
           await new Promise((resolve) => {
             const check = () => {
-              if (videoEncoder.encodeQueueSize <= 2) resolve();
-              else requestAnimationFrame(check);
+              if (encoderError || videoEncoder.encodeQueueSize <= 2) resolve();
+              else setTimeout(check, 4);
             };
             check();
           });
         }
+        if (encoderError) throw encoderError;
  
         setCurrentSec(time);
         const rawPct = Math.min(99, Math.round(((i + 1) / totalFrames) * 100));
@@ -574,8 +589,10 @@ export function ExportModal({
         if (previewCanvas) {
           const pctx = previewCanvas.getContext('2d');
           if (pctx) {
-            previewCanvas.width = renderCanvas.width;
-            previewCanvas.height = renderCanvas.height;
+            // Assigning width/height reallocates the bitmap every time, so
+            // only do it when the size actually changed.
+            if (previewCanvas.width !== renderCanvas.width) previewCanvas.width = renderCanvas.width;
+            if (previewCanvas.height !== renderCanvas.height) previewCanvas.height = renderCanvas.height;
             pctx.drawImage(renderCanvas, 0, 0);
           }
         }
@@ -588,6 +605,7 @@ export function ExportModal({
  
       await videoEncoder.flush();
       videoEncoder.close();
+      if (encoderError) throw encoderError;
  
       // 4. Encode the mixed-down audio (if any) into the same muxer, after
       // the video track is fully flushed. Order relative to the muxer
@@ -1123,4 +1141,3 @@ export function ExportModal({
     </div>
   );
 }
- 

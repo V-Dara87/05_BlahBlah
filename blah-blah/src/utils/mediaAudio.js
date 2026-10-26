@@ -155,11 +155,11 @@ export function ensureMediaGainChain(el) {
   }
 }
  
-/** Clip an authored volume to the supported 0–100 range. */
+/** Clip an authored volume to the supported 0–4 range (4 = +12 dB). */
 export function clampVolume(volume) {
   const v = Number(volume);
   if (!Number.isFinite(v)) return 1;
-  return Math.max(0, Math.min(100, v));
+  return Math.max(0, Math.min(4, v));
 }
  
 /**

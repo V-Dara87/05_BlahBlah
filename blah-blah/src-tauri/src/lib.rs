@@ -1,8 +1,9 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tauri::webview::{NewWindowFeatures, NewWindowResponse};
 use tauri::{Emitter, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
-use tauri_plugin_shell::process::CommandEvent;
+use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
 #[derive(Clone, serde::Serialize)]
@@ -11,6 +12,59 @@ pub struct FfmpegProgressEvent {
     pub line: String,
     pub key: Option<String>,
     pub value: Option<String>,
+}
+
+/// Cap for captured stdout / stderr of sidecar processes. Only the tail is
+/// kept, so a chatty process cannot grow memory without bound.
+const OUTPUT_CAP_BYTES: usize = 1024 * 1024;
+
+fn push_capped(buf: &mut Vec<u8>, bytes: &[u8]) {
+    buf.extend_from_slice(bytes);
+    buf.push(b'\n');
+    if buf.len() > OUTPUT_CAP_BYTES {
+        let excess = buf.len() - OUTPUT_CAP_BYTES;
+        buf.drain(..excess);
+    }
+}
+
+/// Running sidecar children by session id, so they can be cancelled.
+static RUNNING_PROCESSES: std::sync::Mutex<Option<HashMap<String, CommandChild>>> =
+    std::sync::Mutex::new(None);
+
+fn register_process(sess_id: &str, child: CommandChild) {
+    if sess_id.is_empty() {
+        return;
+    }
+    if let Ok(mut lock) = RUNNING_PROCESSES.lock() {
+        lock.get_or_insert_with(HashMap::new)
+            .insert(sess_id.to_string(), child);
+    }
+}
+
+/// Removes the child from the registry. Returns true when it was still
+/// registered (i.e. it was NOT cancelled in the meantime).
+fn unregister_process(sess_id: &str) -> bool {
+    if sess_id.is_empty() {
+        return true;
+    }
+    match RUNNING_PROCESSES.lock() {
+        Ok(mut lock) => lock
+            .as_mut()
+            .map_or(false, |map| map.remove(sess_id).is_some()),
+        Err(_) => true,
+    }
+}
+
+#[tauri::command]
+fn cancel_process(session_id: String) -> bool {
+    let child = RUNNING_PROCESSES
+        .lock()
+        .ok()
+        .and_then(|mut lock| lock.as_mut().and_then(|map| map.remove(&session_id)));
+    match child {
+        Some(child) => child.kill().is_ok(),
+        None => false,
+    }
 }
 
 #[tauri::command]
@@ -58,10 +112,11 @@ async fn run_ffmpeg(
         .sidecar("ffmpeg")
         .map_err(|e| format!("Failed to configure ffmpeg sidecar: {e}"))?;
 
-    let (mut rx, _child) = sidecar_command
+    let (mut rx, child) = sidecar_command
         .args(args)
         .spawn()
         .map_err(|e| format!("Failed to spawn ffmpeg sidecar: {e}"))?;
+    register_process(&sess_id, child);
 
     let mut stdout_accum = Vec::new();
     let mut stderr_accum = Vec::new();
@@ -87,21 +142,24 @@ async fn run_ffmpeg(
                     },
                 );
 
-                stdout_accum.extend(line_bytes);
-                stdout_accum.push(b'\n');
+                push_capped(&mut stdout_accum, &line_bytes);
             }
             CommandEvent::Stderr(line_bytes) => {
-                stderr_accum.extend(line_bytes);
-                stderr_accum.push(b'\n');
+                push_capped(&mut stderr_accum, &line_bytes);
             }
             CommandEvent::Terminated(payload) => {
                 exit_code = payload.code;
             }
             CommandEvent::Error(err) => {
+                unregister_process(&sess_id);
                 return Err(format!("ffmpeg process error: {err}"));
             }
             _ => {}
         }
+    }
+
+    if !unregister_process(&sess_id) {
+        return Err("ffmpeg process cancelled by user".to_string());
     }
 
     let stdout = String::from_utf8_lossy(&stdout_accum).to_string();
@@ -173,10 +231,11 @@ async fn run_whisper(
         .sidecar("whisper-cli")
         .map_err(|e| format!("Failed to configure whisper-cli sidecar: {e}"))?;
 
-    let (mut rx, _child) = sidecar_command
+    let (mut rx, child) = sidecar_command
         .args(args)
         .spawn()
         .map_err(|e| format!("Failed to spawn whisper-cli sidecar: {e}"))?;
+    register_process(&sess_id, child);
 
     let mut stdout_accum = Vec::new();
     let mut stderr_accum = Vec::new();
@@ -193,8 +252,7 @@ async fn run_whisper(
                         line: line_str,
                     },
                 );
-                stdout_accum.extend(line_bytes);
-                stdout_accum.push(b'\n');
+                push_capped(&mut stdout_accum, &line_bytes);
             }
             CommandEvent::Stderr(line_bytes) => {
                 let line_str = String::from_utf8_lossy(&line_bytes).to_string();
@@ -205,17 +263,21 @@ async fn run_whisper(
                         line: line_str,
                     },
                 );
-                stderr_accum.extend(line_bytes);
-                stderr_accum.push(b'\n');
+                push_capped(&mut stderr_accum, &line_bytes);
             }
             CommandEvent::Terminated(payload) => {
                 exit_code = payload.code;
             }
             CommandEvent::Error(err) => {
+                unregister_process(&sess_id);
                 return Err(format!("whisper process error: {err}"));
             }
             _ => {}
         }
+    }
+
+    if !unregister_process(&sess_id) {
+        return Err("whisper process cancelled by user".to_string());
     }
 
     let stdout = String::from_utf8_lossy(&stdout_accum).to_string();
@@ -266,26 +328,55 @@ fn cancel_download(session_id: String) {
     }
 }
 
+/// Max time to wait for the server's response headers.
+const DOWNLOAD_CONNECT_TIMEOUT_SECS: u64 = 30;
+/// Max time to wait for the next chunk before the download is considered stalled.
+const DOWNLOAD_STALL_TIMEOUT_SECS: u64 = 60;
+
+fn clear_download_cancel(sess_id: &str) {
+    if sess_id.is_empty() {
+        return;
+    }
+    if let Ok(mut lock) = CANCELLED_DOWNLOADS.lock() {
+        if let Some(set) = lock.as_mut() {
+            set.remove(sess_id);
+        }
+    }
+}
+
 #[tauri::command]
 async fn download_package(
     app: tauri::AppHandle,
     url: String,
     dest_path: String,
     session_id: Option<String>,
+    expected_sha256: Option<String>,
 ) -> Result<u64, String> {
     use futures_util::StreamExt;
+    use sha2::{Digest, Sha256};
+    use std::time::Duration;
     use tokio::io::AsyncWriteExt;
 
     let sess_id = session_id.unwrap_or_default();
+
+    // A hash is mandatory: never keep a file we cannot verify.
+    let expected = expected_sha256
+        .map(|h| h.trim().to_ascii_lowercase())
+        .filter(|h| !h.is_empty())
+        .ok_or_else(|| "Refusing to download a package without a SHA-256 hash.".to_string())?;
+
     let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(DOWNLOAD_CONNECT_TIMEOUT_SECS))
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
 
-    let response = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {e}"))?;
+    let response = tokio::time::timeout(
+        Duration::from_secs(DOWNLOAD_CONNECT_TIMEOUT_SECS * 2),
+        client.get(&url).send(),
+    )
+    .await
+    .map_err(|_| "Request timed out".to_string())?
+    .map_err(|e| format!("Request failed: {e}"))?;
 
     if !response.status().is_success() {
         return Err(format!("Download failed with HTTP status: {}", response.status()));
@@ -307,70 +398,95 @@ async fn download_package(
             .as_millis()
     ));
 
-    let mut file = tokio::fs::File::create(&tmp_dest)
-        .await
-        .map_err(|e| format!("Failed to create temporary download file: {e}"))?;
+    let result: Result<u64, String> = async {
+        let mut file = tokio::fs::File::create(&tmp_dest)
+            .await
+            .map_err(|e| format!("Failed to create temporary download file: {e}"))?;
 
-    let mut stream = response.bytes_stream();
-    let mut downloaded: u64 = 0;
-    let mut last_emit = std::time::Instant::now();
+        let mut hasher = Sha256::new();
+        let mut stream = response.bytes_stream();
+        let mut downloaded: u64 = 0;
+        let mut last_emit = std::time::Instant::now();
 
-    while let Some(chunk_result) = stream.next().await {
-        if is_download_cancelled(&sess_id) {
-            drop(file);
-            let _ = tokio::fs::remove_file(&tmp_dest).await;
-            let mut lock = CANCELLED_DOWNLOADS.lock().unwrap();
-            if let Some(set) = lock.as_mut() {
-                set.remove(&sess_id);
+        loop {
+            if is_download_cancelled(&sess_id) {
+                return Err("Download cancelled by user".to_string());
             }
-            return Err("Download cancelled by user".to_string());
+
+            let next = tokio::time::timeout(
+                Duration::from_secs(DOWNLOAD_STALL_TIMEOUT_SECS),
+                stream.next(),
+            )
+            .await
+            .map_err(|_| "Download stalled (no data received)".to_string())?;
+
+            let Some(chunk_result) = next else { break };
+            let chunk = chunk_result.map_err(|e| format!("Error reading download stream: {e}"))?;
+            hasher.update(&chunk);
+            file.write_all(&chunk)
+                .await
+                .map_err(|e| format!("Error writing chunk to file: {e}"))?;
+            downloaded += chunk.len() as u64;
+
+            if last_emit.elapsed().as_millis() >= 100 || downloaded == total_bytes.unwrap_or(0) {
+                last_emit = std::time::Instant::now();
+                let percent = total_bytes.map(|total| {
+                    if total > 0 {
+                        (downloaded as f64 / total as f64) * 100.0
+                    } else {
+                        0.0
+                    }
+                });
+                let _ = app.emit(
+                    "package-download-progress",
+                    PackageDownloadProgressEvent {
+                        session_id: sess_id.clone(),
+                        bytes_downloaded: downloaded,
+                        total_bytes,
+                        percent,
+                    },
+                );
+            }
         }
 
-        let chunk = chunk_result.map_err(|e| format!("Error reading download stream: {e}"))?;
-        file.write_all(&chunk)
+        file.flush()
             .await
-            .map_err(|e| format!("Error writing chunk to file: {e}"))?;
-        downloaded += chunk.len() as u64;
+            .map_err(|e| format!("Error flushing downloaded file: {e}"))?;
+        drop(file);
 
-        if last_emit.elapsed().as_millis() >= 100 || downloaded == total_bytes.unwrap_or(0) {
-            last_emit = std::time::Instant::now();
-            let percent = total_bytes.map(|total| {
-                if total > 0 {
-                    (downloaded as f64 / total as f64) * 100.0
-                } else {
-                    0.0
-                }
-            });
-            let _ = app.emit(
-                "package-download-progress",
-                PackageDownloadProgressEvent {
-                    session_id: sess_id.clone(),
-                    bytes_downloaded: downloaded,
-                    total_bytes,
-                    percent,
-                },
+        // Verify BEFORE the file is moved to its final path.
+        let actual = format!("{:x}", hasher.finalize());
+        if actual != expected {
+            return Err(
+                "SHA-256 verification failed: the downloaded file was corrupted or tampered with."
+                    .to_string(),
             );
         }
+
+        Ok(downloaded)
     }
+    .await;
 
-    file.flush()
-        .await
-        .map_err(|e| format!("Error flushing downloaded file: {e}"))?;
-    drop(file);
+    clear_download_cancel(&sess_id);
 
-    if !sess_id.is_empty() {
-        let mut lock = CANCELLED_DOWNLOADS.lock().unwrap();
-        if let Some(set) = lock.as_mut() {
-            set.remove(&sess_id);
+    let downloaded = match result {
+        Ok(n) => n,
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&tmp_dest).await;
+            return Err(e);
+        }
+    };
+
+    if tokio::fs::rename(&tmp_dest, &dest).await.is_err() {
+        // Windows cannot rename over an existing file.
+        if dest.exists() {
+            let _ = tokio::fs::remove_file(&dest).await;
+        }
+        if let Err(e) = tokio::fs::rename(&tmp_dest, &dest).await {
+            let _ = tokio::fs::remove_file(&tmp_dest).await;
+            return Err(format!("Failed to finalize downloaded file: {e}"));
         }
     }
-
-    if dest.exists() {
-        let _ = tokio::fs::remove_file(&dest).await;
-    }
-    tokio::fs::rename(&tmp_dest, &dest)
-        .await
-        .map_err(|e| format!("Failed to finalize downloaded file: {e}"))?;
 
     Ok(downloaded)
 }
@@ -574,6 +690,7 @@ pub fn run() {
       run_whisper,
       download_package,
       cancel_download,
+      cancel_process,
       verify_sha256,
       get_app_data_dir
     ])
@@ -593,4 +710,3 @@ pub fn run() {
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }
-

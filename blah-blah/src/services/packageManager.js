@@ -438,7 +438,15 @@ export async function downloadPackage(packageId, { onProgress } = {}) {
     throw new Error('Failed to resolve application directory.');
   }
 
+  if (!pkg.sha256 || typeof pkg.sha256 !== 'string') {
+    throw new Error(`Package ${pkg.id} has no SHA-256 hash; refusing to install an unverifiable download.`);
+  }
+
   const targetRelPath = pkg.installPath || `models/${pkg.id}.bin`;
+  // Reject absolute paths and traversal in manifest-provided install paths.
+  if (/^([a-zA-Z]:)?[/\\]/.test(targetRelPath) || targetRelPath.split(/[/\\]/).includes('..')) {
+    throw new Error(`Invalid install path for package ${pkg.id}.`);
+  }
   const fullDestPath = joinPath(appDir, targetRelPath);
 
   const sessionId = `pkg-dl-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -469,22 +477,9 @@ export async function downloadPackage(packageId, { onProgress } = {}) {
       url: pkg.url,
       destPath: fullDestPath,
       sessionId,
+      // Verified in Rust BEFORE the file is moved to its final path.
+      expectedSha256: pkg.sha256,
     });
-
-    // Verify SHA-256 if specified
-    if (pkg.sha256) {
-      const isMatch = await invoke('verify_sha256', {
-        filePath: fullDestPath,
-        expectedHash: pkg.sha256,
-      });
-
-      if (!isMatch) {
-        await removeFileIfExists(fullDestPath);
-        throw new Error(
-          `SHA-256 verification failed for package ${pkg.id}. The downloaded file was corrupted or tampered with and has been removed.`
-        );
-      }
-    }
 
     // Update installed registry
     const registry = await getInstalledPackagesRegistry();
