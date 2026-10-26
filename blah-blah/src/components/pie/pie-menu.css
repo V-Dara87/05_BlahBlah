@@ -1,0 +1,215 @@
+/* Radial (pie) menu overlay — components/pie/PieMenu.jsx.
+   Colours come from the --unity-* tokens so the active slice follows the
+   accent theme. z-index sits above dock popouts and context menus (9999 is
+   reserved for modals/menus, which the wheel never opens over). */
+
+@keyframes pieFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes piePopIn {
+  from { opacity: 0; transform: scale(0.92); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.pie-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.3);
+  cursor: crosshair;
+  animation: pieFadeIn 0.08s ease-out;
+}
+
+.pie-wheel {
+  position: absolute;
+  /* Clicks are hit-tested by angle on the backdrop, so the wheel itself must
+     never eat them (that also makes the seams between slices clickable). */
+  pointer-events: none;
+  animation: piePopIn 0.09s ease-out;
+  will-change: opacity, transform;
+}
+
+.pie-svg { display: block; pointer-events: none; }
+
+.pie-slice {
+  fill: var(--unity-subtle);
+  stroke: var(--unity-darkest);
+  stroke-width: 1.5;
+  transition: fill 0.06s linear;
+}
+
+.pie-slice.is-empty {
+  fill: rgba(50, 50, 50, 0.35);
+  stroke: rgba(25, 25, 25, 0.6);
+}
+
+.pie-slice.is-disabled { fill: var(--unity-panel); }
+
+.pie-slice.is-active {
+  fill: var(--unity-accent);
+  stroke: var(--unity-accent-blue);
+}
+
+.pie-slice.is-disabled.is-active {
+  fill: #6b3b3b;
+  stroke: #a05454;
+}
+
+.pie-hub {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 130px;
+  height: 130px;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 12px;
+  border-radius: 50%;
+  background: rgba(31, 31, 31, 0.94);
+  border: 1px solid var(--unity-darkest);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 8px 22px rgba(0, 0, 0, 0.45);
+  text-align: center;
+  pointer-events: none;
+}
+
+.pie-hub-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #f0f0f0;
+  line-height: 1.25;
+}
+
+.pie-hub-hint {
+  font-size: 10px;
+  color: var(--unity-text-dim);
+  line-height: 1.3;
+}
+
+.pie-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 108px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: var(--unity-text-muted);
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.25;
+  text-align: center;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+  pointer-events: none;
+}
+
+.pie-label svg { color: var(--unity-text-dim); flex-shrink: 0; }
+.pie-label.is-active { color: #fff; }
+.pie-label.is-active svg { color: #fff; }
+.pie-label.is-disabled { color: #7d7d7d; }
+.pie-label.is-disabled svg { color: #6f6f6f; }
+
+.pie-foot {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 5px 12px;
+  background: rgba(40, 40, 40, 0.95);
+  border: 1px solid var(--unity-darkest);
+  border-radius: 3px;
+  color: var(--unity-text-dim);
+  font-size: 10.5px;
+  pointer-events: none;
+}
+
+.pie-foot span { display: inline-flex; align-items: center; gap: 4px; }
+
+.pie-foot kbd,
+.pie-kbd {
+  padding: 0 5px;
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 3px;
+  color: var(--unity-text);
+  font-family: inherit;
+  font-size: 10px;
+}
+
+/* ---- Settings -> Radial Menu tab -------------------------------------- */
+
+.pie-slot-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.pie-slot-index {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 50%;
+  color: var(--unity-text-dim);
+  font-size: 10.5px;
+}
+
+.pie-slot-select {
+  flex: 0 1 260px;
+  min-width: 0;
+}
+
+.pie-slot-hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--unity-text-dim);
+  font-size: 11px;
+}
+
+.pie-mode-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.pie-mode-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 7px 9px;
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.pie-mode-option.is-active { border-color: var(--unity-accent-blue); }
+.pie-mode-option input { margin-top: 2px; }
+
+.pie-mode-text { display: flex; flex-direction: column; gap: 2px; }
+.pie-mode-label { color: var(--unity-text); font-size: 12px; }
+.pie-mode-hint { color: var(--unity-text-dim); font-size: 11px; line-height: 1.35; }
+
+.pie-key-btn { min-width: 110px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pie-backdrop,
+  .pie-wheel { animation-duration: 0.01ms; }
+}

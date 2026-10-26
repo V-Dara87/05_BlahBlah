@@ -1,9 +1,10 @@
-import { MonitorPlay, Save, Mic, Keyboard, Cpu, Palette } from 'lucide-react';
+import { MonitorPlay, Save, Mic, Keyboard, Cpu, Palette, CircleDot } from 'lucide-react';
 import { ProjectTab } from './ProjectTab';
 import { AutosaveTab } from './AutosaveTab';
 import { AppearanceTab } from './AppearanceTab';
 import { AudioTab } from './AudioTab';
 import { KeyboardShortcutsTab } from './KeyboardShortcutsTab';
+import { PieMenuTab } from './PieMenuTab';
 import { SystemTab } from './SystemTab';
 import { resetAllSettings } from './resetAllSettings';
 
@@ -193,6 +194,20 @@ export const SETTINGS_TABS = [
     keywords: ['keys', 'keybind', 'hotkey', 'binding', 'rebind'],
     Component: KeyboardShortcutsTab,
     getProps: () => ({}),
+  },
+  {
+    id: 'pieMenu',
+    label: 'Radial Menu',
+    icon: CircleDot,
+    section: 'editor',
+    scope: 'global',
+    subtitle: 'The pie menu that opens at your cursor',
+    keywords: ['pie', 'radial', 'wheel', 'tab', 'blender', 'quick', 'menu', 'slice', 'hotkey'],
+    Component: PieMenuTab,
+    getProps: (ctx) => ({
+      settings: ctx.pieSettings,
+      onChange: ctx.onPieSettingsChange,
+    }),
   },
 
   // ---- Media ---------------------------------------------------------------

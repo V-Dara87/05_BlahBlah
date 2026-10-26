@@ -34,6 +34,8 @@ export function SettingsModal({
   onExportSettingsChange,
   themeSettings,
   onThemeSettingsChange,
+  pieSettings,
+  onPieSettingsChange,
 }) {
   const [activeTabId, setActiveTabId] = useState(DEFAULT_SETTINGS_TAB_ID);
   const [query, setQuery] = useState('');
@@ -70,6 +72,8 @@ export function SettingsModal({
     onExportSettingsChange,
     themeSettings,
     onThemeSettingsChange,
+    pieSettings,
+    onPieSettingsChange,
   };
  
   const ActiveComponent = activeTab.Component;

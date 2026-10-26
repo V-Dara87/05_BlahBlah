@@ -2,6 +2,7 @@ import { AUTOSAVE_DEFAULTS } from '../../../services/autosaveSettings';
 import { saveAudioSettings } from '../../../services/audioSettings';
 import { resetKeybindSettings } from '../../../services/keybindSettings';
 import { THEME_DEFAULTS } from '../../../services/themeSettings';
+import { resetPieSettings } from '../../../services/pieMenuSettings';
 
 /**
  * ============================================================================
@@ -47,6 +48,13 @@ export const RESETTABLE_SETTINGS = [
     // Also broadcasts 'blahblah:keybinds-changed', so menus and the shortcut
     // handler update immediately.
     reset: () => resetKeybindSettings(),
+  },
+  {
+    id: 'pieMenu',
+    label: 'Radial menu',
+    // Saves through pieMenuSettings.js, which broadcasts the change, so the
+    // live wheel and its Settings tab update immediately.
+    reset: () => resetPieSettings(),
   },
   {
     id: 'audio',

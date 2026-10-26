@@ -1,4 +1,3 @@
- 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useProjectStore } from './hooks/useProjectStore';
 import { usePlaybackController } from './hooks/usePlaybackController';
@@ -12,6 +11,7 @@ import { useAutosaveSettings } from './hooks/useAutosaveSettings';
 import { useEditorSettings } from './hooks/useEditorSettings';
 import { useExportSettings } from './hooks/useExportSettings';
 import { useThemeSettings } from './hooks/useThemeSettings';
+import { usePieSettings } from './hooks/usePieSettings';
 import { useAudioRecording } from './hooks/useAudioRecording';
 import { usePrefabEditing } from './hooks/usePrefabEditing';
 import { useOsFileDrop } from './hooks/useOsFileDrop';
@@ -32,6 +32,7 @@ import { TimelineViewProvider } from './dock/TimelineViewContext';
 import { PlaybackProvider } from './hooks/PlaybackContext';
 import { EditorHeader } from './components/shell/EditorHeader';
 import { EditorPlaybackShortcuts } from './components/shell/EditorPlaybackShortcuts';
+import { PieMenu } from './components/pie/PieMenu';
 import { PlaybackStoreBridge } from './components/shell/PlaybackStoreBridge';
 import { INITIAL_TRACKS, DEFAULT_RESOLUTION } from './types';
 import { loadKeybindSettings } from './services/keybindSettings';
@@ -194,6 +195,9 @@ export function App() {
   // <html> as CSS custom properties; main.jsx applies the stored one before the
   // first render so there is no flash of the default blue.
   const { themeSettings, updateThemeSettings } = useThemeSettings();
+  // Radial (pie) menu settings (Settings > Radial Menu). The wheel itself is
+  // <PieMenu /> below; it reads the same persisted settings.
+  const { pieSettings, updatePieSettings } = usePieSettings();
   const [silenceTarget, setSilenceTarget] = useState({ type: 'clip', id: null });
   const [silencePreviewData, setSilencePreviewData] = useState(null);
  
@@ -619,6 +623,30 @@ export function App() {
         exportRange={exportRange}
         totalDuration={activeDuration}
       />
+      {/* Radial (pie) menu — Tab by default (Settings > Radial Menu). Gets the
+          same handlers as the shortcuts above, plus a few app-level openers. */}
+      <PieMenu
+        selectedEntityId={selectedEntityId}
+        selectedIds={selectedIds}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        exportRange={exportRange}
+        totalDuration={activeDuration}
+        onSetExportRange={setExportRange}
+        onSaveProject={isPrefabMode ? handleSaveCurrentPrefab : handleSaveProjectToDisk}
+        onUndo={undo}
+        onRedo={redo}
+        {...editorPlaybackHandlers}
+        onAddTransition={isPrefabMode ? prefabEntityActions.handleAddTransitionClip : handleAddTransitionClip}
+        onCutSilence={handleOpenSilenceRemover}
+        onNewProject={() => setIsNewProjectOpen(true)}
+        onOpenProject={handleOpenProjectFolder}
+        onOpenExport={() => setIsExportOpen(true)}
+        onOpenProjectJson={() => setIsProjectJsonOpen(true)}
+        onOpenPackageManager={handleOpenPackageManager}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+        openOrFocusPanel={openOrFocusPanel}
+      />
       <div className="app-container">
       {/* Top Menu Bar — Unity-style File/Edit/View menus. In the
           frameless desktop build the right end carries window controls
@@ -819,6 +847,8 @@ export function App() {
         onExportSettingsChange={updateExportSettings}
         themeSettings={themeSettings}
         onThemeSettingsChange={updateThemeSettings}
+        pieSettings={pieSettings}
+        onPieSettingsChange={updatePieSettings}
       />
  
       <PackageManagerModal
