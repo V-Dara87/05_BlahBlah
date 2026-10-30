@@ -1,3 +1,4 @@
+export * from './fsutil.js';
 export * from './project.js';
 export * from './tracks.js';
 export * from './entities.js';

@@ -100,9 +100,11 @@ export const TrackHeader = memo(function TrackHeader({
       setIsResizing(false);
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
     };
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
   };
  
   const handleResizeDoubleClick = (e) => {
@@ -343,5 +345,3 @@ export const TrackHeader = memo(function TrackHeader({
     </>
   );
 });
- 
- 

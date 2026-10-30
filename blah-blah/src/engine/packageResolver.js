@@ -108,6 +108,24 @@ export function parseEsmPath(path) {
   return { name: m[1], version: m[2], rest: m[3] || '' };
 }
 
+/**
+ * Refuse a response that did not actually come from esm.sh (e.g. a redirect to
+ * another host): its body is about to be compiled and executed.
+ */
+function assertFromEsmSh(res, label) {
+  const finalUrl = typeof res.url === 'string' ? res.url : '';
+  if (finalUrl && !finalUrl.startsWith(`${ESM_SH_BASE}/`)) {
+    throw new Error(`Refusing "${label}": the response came from an unexpected host (${finalUrl}).`);
+  }
+}
+
+// An exact version (1.2.3, 1.2.3-beta.1): safe to use as a cache key as-is.
+const EXACT_VERSION_RE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+
+// esm.sh internal module paths: plain path characters and an optional simple
+// query (?bundle, ?target=es2022). No "..", no protocol-relative tricks.
+const ESM_CHUNK_PATH_RE = /^\/[A-Za-z0-9@._~+\/-]+(?:\?[A-Za-z0-9=&._,-]+)?$/;
+
 /** Extract the resolved `name@version` from an esm.sh response's X-Esm-Path header. */
 function resolvedVersionFromResponse(res) {
   const esmPath = res.headers.get('x-esm-path');
@@ -143,7 +161,11 @@ export async function resolvePackageImport(specifier) {
     const pinned = getPinnedPackageVersion(name);
     if (pinned && hasCachedModuleSource(`${name}@${pinned}`)) {
       const sourceText = await getCachedModuleSource(`${name}@${pinned}`);
-      return { sourceText, key: `${name}@${pinned}`, name, version: pinned, subpath: '' };
+      // null = the cached copy failed its integrity check (or could not be
+      // read): fall through and fetch a fresh one instead of using it.
+      if (sourceText !== null) {
+        return { sourceText, key: `${name}@${pinned}`, name, version: pinned, subpath: '' };
+      }
     }
   }
 
@@ -166,6 +188,7 @@ export async function resolvePackageImport(specifier) {
   if (!res.ok) {
     throw new Error(`Could not fetch package "${specifier}" from esm.sh — HTTP ${res.status}${res.status === 404 ? ' (package not found?)' : ''}.`);
   }
+  assertFromEsmSh(res, specifier);
 
   const sourceText = await res.text();
 
@@ -179,9 +202,14 @@ export async function resolvePackageImport(specifier) {
     if (fromBody) resolvedVersion = fromBody;
   }
   if (!resolvedVersion) {
-    // Last resort: whatever was asked for (with ranges, esm.sh already
-    // resolved them in the body comment/header in practice).
-    resolvedVersion = versionPart || `${name}@latest`;
+    // Only an exact version is a stable cache key. A range, a tag or "latest"
+    // would cache whatever esm.sh serves today under a name that means
+    // something different tomorrow, so refuse instead of guessing.
+    if (versionPart && EXACT_VERSION_RE.test(versionPart)) {
+      resolvedVersion = versionPart;
+    } else {
+      throw new Error(`Could not determine which version of "${specifier}" esm.sh served. Import an exact version (for example "${name}@1.2.3").`);
+    }
   }
   if (!resolvedVersion.startsWith(`${name}@`)) {
     resolvedVersion = `${name}@${resolvedVersion}`;
@@ -207,8 +235,13 @@ export async function resolvePackageImport(specifier) {
  */
 export async function resolveEsmShChunk(path) {
   await initModuleCache();
+  if (typeof path !== 'string' || path.includes('..') || path.startsWith('//') || !ESM_CHUNK_PATH_RE.test(path)) {
+    throw new Error(`Refusing to fetch unexpected esm.sh module path "${path}".`);
+  }
   if (hasCachedModuleSource(path)) {
-    return getCachedModuleSource(path);
+    const cached = await getCachedModuleSource(path);
+    if (cached !== null) return cached;
+    // Failed its integrity check or could not be read: fetch it again below.
   }
   let res;
   try {
@@ -219,6 +252,7 @@ export async function resolveEsmShChunk(path) {
   if (!res.ok) {
     throw new Error(`Could not fetch esm.sh module "${path}" — HTTP ${res.status}.`);
   }
+  assertFromEsmSh(res, path);
   const sourceText = await res.text();
   await putCachedModuleSource(path, sourceText);
   return sourceText;

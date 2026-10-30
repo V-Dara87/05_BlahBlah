@@ -3,21 +3,12 @@ import { getCompiledReactComponent, detectScriptKind, extractScriptProps } from 
 import { resolveScriptProps } from '../../engine/referenceTypes';
 import { resolveTextRendererText, cssFontFamily, DEFAULT_TEXT_FONT_SIZE, DEFAULT_TEXT_FONT_COLOR, DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_WEIGHT } from '../../engine/textRenderer';
 import { isScriptComponent } from '../../engine/ecs';
+import { findScriptDef } from '../../engine/scriptLookup';
 import { is3DShape, drawShape3D } from '../../engine/geometry3d';
 import { EntityErrorBoundary } from '../entity/EntityErrorBoundary';
 import { ScriptGizmoOverlay } from './ScriptGizmoOverlay';
 import './overlay-layer.css';
  
-/** The script a ScriptComponent points at (same lookup the rest of this file uses). */
-function findScriptDef(scripts, comp) {
-  return scripts.find(
-    (s) =>
-      s.id === comp.scriptId ||
-      s.name === comp.scriptName ||
-      s.name === `${comp.scriptName}.jsx` ||
-      s.id === `script-${comp.scriptName}`
-  );
-}
 
 function Shape3DCanvas({ shapeComp, proj }) {
   const canvasRef = useRef(null);
@@ -191,13 +182,7 @@ export function OverlayLayer({
       .join(', ');
     const ReactComponentNodes = [];
     for (const comp of scriptComps) {
-      const scriptDef = scripts.find(
-        (s) =>
-          s.id === comp.scriptId ||
-          s.name === comp.scriptName ||
-          s.name === `${comp.scriptName}.jsx` ||
-          s.id === `script-${comp.scriptName}`
-      );
+      const scriptDef = findScriptDef(scripts, comp);
       if (!scriptDef || !scriptDef.code) continue;
       if (detectScriptKind(scriptDef.code) !== 'react') continue;
       const CompiledComponent = getCompiledReactComponent(scriptDef.code);
@@ -309,13 +294,7 @@ export function OverlayLayer({
               entity::scriptId so multiple canvas scripts on one
               entity stay independent. */}
           {scriptComps.map((comp) => {
-            const scriptDef = scripts.find(
-              (s) =>
-                s.id === comp.scriptId ||
-                s.name === comp.scriptName ||
-                s.name === `${comp.scriptName}.jsx` ||
-                s.id === `script-${comp.scriptName}`
-            );
+            const scriptDef = findScriptDef(scripts, comp);
             if (!scriptDef?.code || detectScriptKind(scriptDef.code) !== 'canvas') return null;
             const mountKey = `${entity.id}::${comp.scriptId}`;
             return (

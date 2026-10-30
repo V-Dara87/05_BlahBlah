@@ -985,10 +985,12 @@ export const TimelineCanvas = memo(function TimelineCanvas({
  
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
     };
  
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   }, [scrollRef, hitTestAtClientPoint, getSnappedTime, onSelectClip, onToggleSelect, onUpdateClip, onUpdateClips, onDuplicateClips]);
 
   /**
@@ -1084,10 +1086,12 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       flushTrimUpdate();
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
     };
 
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   }, [scrollRef, getSnappedTime, onSelectClip, onUpdateClip]);
 
   /**
@@ -1133,9 +1137,11 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   }, [scrollRef, onSelectClip, onUpdateClip]);
 
   /**
@@ -1189,10 +1195,12 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       setPickwhip(null);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
     };
 
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   }, [contentPointAtClientPoint, hitTestAtClientPoint, onSelectClip, onUpdateClip]);
  
   const handlePointerMove = useCallback((event) => {
@@ -1351,9 +1359,14 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     const onUp = (upEvent) => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
       lassoDragRef.current = false;
       lassoRef.current = null;
       setLassoVersion((v) => v + 1);
+ 
+      // A cancelled gesture (touch taken over by the OS, window lost the
+      // pointer) has no meaningful end point: drop the lasso, don't select.
+      if (upEvent.type === 'pointercancel') return;
  
       if (hasMoved) {
         const point = contentPointAtClientPoint(upEvent.clientX, upEvent.clientY) || startPoint;
@@ -1379,6 +1392,7 @@ export const TimelineCanvas = memo(function TimelineCanvas({
  
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   }, [contentPointAtClientPoint, scrollRef, setSelectedIds, setSelectedEntityId, onClearSelection, onSeek]);
  
   /**
@@ -1434,6 +1448,7 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
       if (isRightButton) {
         // 'contextmenu' fires right after 'pointerup' for the same
         // right-click, so this listener must still be attached when it
@@ -1445,6 +1460,7 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
     if (isRightButton) {
       window.addEventListener('contextmenu', onContextMenu, true);
     }

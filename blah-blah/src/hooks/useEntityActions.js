@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import {
   createGameObject,
   createDefaultTransform,
@@ -85,6 +85,12 @@ export function useEntityActions({
   getPlaybackTime,
   handleUpdatePrefab,
 }) {
+  // Latest entities for use INSIDE callbacks whose identity must not change
+  // with every edit (selection clean-up after a delete). Reading it here keeps
+  // setSelectedEntityId out of the setEntities updater, which must stay pure.
+  const entitiesRef = useRef(entities);
+  entitiesRef.current = entities;
+
   // Update entity properties / components. Coalesced: this fires on every
   // intermediate value while dragging a clip or scrubbing an Inspector
   // number field, so we merge those into one undo step per gesture instead
@@ -92,13 +98,11 @@ export function useEntityActions({
   const handleUpdateEntity = useCallback((entityId, updates) => {
     // Support _delete flag for context menu deletion
     if (updates._delete) {
-      setEntities((prev) => {
-        const next = removeEntitiesByIds(prev, [entityId]);
-        if (selectedEntityId && !next.some((e) => e.id === selectedEntityId)) {
-          setSelectedEntityId(null);
-        }
-        return next;
-      });
+      if (selectedEntityId
+        && !removeEntitiesByIds(entitiesRef.current, [entityId]).some((e) => e.id === selectedEntityId)) {
+        setSelectedEntityId(null);
+      }
+      setEntities((prev) => removeEntitiesByIds(prev, [entityId]));
       return;
     }
     setEntities((prev) => {
@@ -164,19 +168,17 @@ export function useEntityActions({
       }
  
       return prev.map((e) => (e.id === entityId ? { ...e, ...updates } : e));
-    }, { coalesce: true });
+    }, { coalesce: `entity:${entityId}` });
   }, [setEntities, selectedEntityId, setSelectedEntityId]);
  
   // Delete entity.
   const handleDeleteEntity = useCallback((entityIdOrIds) => {
     const ids = Array.isArray(entityIdOrIds) ? entityIdOrIds : [entityIdOrIds];
-    setEntities((prev) => {
-      const next = removeEntitiesByIds(prev, ids);
-      if (selectedEntityId && !next.some((e) => e.id === selectedEntityId)) {
-        setSelectedEntityId(null);
-      }
-      return next;
-    });
+    if (selectedEntityId
+      && !removeEntitiesByIds(entitiesRef.current, ids).some((e) => e.id === selectedEntityId)) {
+      setSelectedEntityId(null);
+    }
+    setEntities((prev) => removeEntitiesByIds(prev, ids));
   }, [setEntities, selectedEntityId, setSelectedEntityId]);
  
   // Ripple trim the selected clip to the playhead — 'before' cuts off
@@ -227,7 +229,7 @@ export function useEntityActions({
     setEntities(prev => prev.map(e => {
       const u = updatesMap.get(e.id);
       return u ? { ...e, ...u } : e;
-    }), { coalesce: true });
+    }), { coalesce: `clips:${[...updatesMap.keys()].sort().join(',')}` });
   }, [setEntities]);
  
   // Duplicate one or more entities. Each copy gets a fresh id, cloned
@@ -1224,7 +1226,7 @@ export function useEntityActions({
   // Coalesced for the same reason as handleUpdateEntity — track volume
   // sliders etc. fire continuously while dragging.
   const handleUpdateTrack = useCallback((trackId, updates) => {
-    setTracks(prev => prev.map(t => t.id === trackId ? { ...t, ...updates } : t), { coalesce: true });
+    setTracks(prev => prev.map(t => t.id === trackId ? { ...t, ...updates } : t), { coalesce: `track:${trackId}` });
   }, [setTracks]);
  
   // Delete track and all clips on it

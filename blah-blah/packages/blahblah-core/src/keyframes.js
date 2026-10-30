@@ -11,6 +11,16 @@ export const CURVE_PRESETS = {
   overshoot: { name: 'Overshoot', cp1: { x: 0.15, y: 1.2 }, cp2: { x: 0.3, y: 1 } },
 };
 
+// Numeric strings (from the CLI) become numbers; booleans, colors and other
+// strings are kept as they are. `Number(true)` and `Number('')` must not turn
+// into 1 and 0.
+function coerceKeyframeValue(value) {
+  if (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value))) {
+    return Number(value);
+  }
+  return value;
+}
+
 export function addKeyframe(
   project,
   entityId,
@@ -35,15 +45,26 @@ export function addKeyframe(
   entity.keyframes[trackKey] = entity.keyframes[trackKey] || {};
   const fieldList = entity.keyframes[trackKey][field] || [];
 
-  const preset = CURVE_PRESETS[ease] || CURVE_PRESETS.linear;
+  if (!Object.prototype.hasOwnProperty.call(CURVE_PRESETS, ease)) {
+    throw new Error(
+      `Unknown ease "${ease}". Use one of: ${Object.keys(CURVE_PRESETS).join(', ')}.`
+    );
+  }
+  const preset = CURVE_PRESETS[ease];
   const timeNum = Number(time);
+  if (!Number.isFinite(timeNum) || timeNum < 0) {
+    throw new Error(`Keyframe time must be a number >= 0 (got ${JSON.stringify(time)}).`);
+  }
+  if (value === undefined || value === null || value === '') {
+    throw new Error('Keyframe value is required.');
+  }
   const withoutSameTime = fieldList.filter((k) => k.time !== timeNum);
 
   const kfId = `kf-${trackKey}-${field}-${timeNum}-${crypto.randomUUID().slice(0, 6)}`;
   const newKf = {
     id: kfId,
     time: timeNum,
-    value: Number.isNaN(Number(value)) ? value : Number(value),
+    value: coerceKeyframeValue(value),
     cp1: preset.cp1,
     cp2: preset.cp2,
   };
@@ -60,15 +81,19 @@ export function removeKeyframes(project, entityId, keyframeIds) {
 
   const idsToRemove = new Set(Array.isArray(keyframeIds) ? keyframeIds : [keyframeIds]);
   const keyframes = entity.keyframes || {};
+  let removedCount = 0;
 
   for (const trackKey of Object.keys(keyframes)) {
     const byField = keyframes[trackKey];
     for (const field of Object.keys(byField)) {
-      byField[field] = (byField[field] || []).filter((k) => !idsToRemove.has(k.id));
+      const before = byField[field] || [];
+      const after = before.filter((k) => !idsToRemove.has(k.id));
+      removedCount += before.length - after.length;
+      byField[field] = after;
     }
   }
 
-  return { removedCount: idsToRemove.size };
+  return { removedCount };
 }
 
 export function listKeyframes(project, entityId) {

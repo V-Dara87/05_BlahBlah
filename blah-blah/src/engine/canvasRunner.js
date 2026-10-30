@@ -11,6 +11,36 @@ import { resolveScriptProps } from './referenceTypes.js';
 import { Tween } from './motionTween.js';
 import { pushRuntimeError, withScriptConsole } from './scriptConsole.js';
 import { globalFrameCache } from './frameCache.js';
+
+// ─── Frame-cache key helpers ────────────────────────────────────────────────
+const REFERENCE_FIELD_TYPES = new Set(['entity', 'asset', 'struct', 'struct[]', 'asset[]', 'entity[]']);
+const schemaRefMemo = new WeakMap();
+
+/** True when resolveScriptProps could turn any field into an entity/asset reference. */
+function schemaHasReferences(schema) {
+  if (!Array.isArray(schema) || schema.length === 0) return false;
+  let hit = schemaRefMemo.get(schema);
+  if (hit === undefined) {
+    hit = schema.some((f) => REFERENCE_FIELD_TYPES.has(f.type)
+      || (f.type === 'array' && (f.itemType === 'asset' || f.itemType === 'entity')));
+    schemaRefMemo.set(schema, hit);
+  }
+  return hit;
+}
+
+const identityIds = new WeakMap();
+let nextIdentityId = 1;
+
+/** Small stable number for an object's identity (changes whenever the array is replaced). */
+function identityStamp(obj) {
+  if (!obj || typeof obj !== 'object') return 0;
+  let id = identityIds.get(obj);
+  if (id === undefined) {
+    id = nextIdentityId++;
+    identityIds.set(obj, id);
+  }
+  return id;
+}
  
 /**
  * P0 #2 — canvas-kind script lifecycle runner.
@@ -349,8 +379,16 @@ export function updateCanvasComponent({
   // RAM Preview Frame Cache: Check if this exact frame has already been rendered.
   // Applies to 2D Canvas components with an active 2D rendering context.
   const has2dCtx = !!mounted.instance?.ctx && !!mounted.instance?.canvas;
+  // The cache key hashes the RAW props (stable object identity, hash is
+  // remembered per object) instead of re-serialising the freshly resolved copy
+  // every frame. Anything the resolution step could change (entity / asset
+  // references) is folded in through the identity of the entity and asset
+  // lists, so editing a referenced entity still invalidates the frame.
+  const refStamp = schemaHasReferences(schema)
+    ? `:r${identityStamp(allEntities)}.${identityStamp(allAssets)}`
+    : '';
   const cacheKey = has2dCtx
-    ? globalFrameCache.generateKey(entityId, scriptId, scriptCode, effProps, frame, effWidth, effHeight, `${effDuration}:${effStartTime}`)
+    ? globalFrameCache.generateKey(entityId, scriptId, scriptCode, props, frame, effWidth, effHeight, `${effDuration}:${effStartTime}${refStamp}`)
     : null;
 
   if (has2dCtx && cacheKey) {

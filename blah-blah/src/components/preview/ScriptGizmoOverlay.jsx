@@ -160,10 +160,12 @@ export function ScriptGizmoOverlay({
       setMarquee(null);
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
     };
 
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
   }, [screenToCanvasCoords, gizmos, selectedIds]);
 
   // Handle pointer down on a specific gizmo
@@ -320,10 +322,12 @@ export function ScriptGizmoOverlay({
       dragSessionRef.current = null;
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
     };
 
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
   }, [selectedIds, gizmos, screenToCanvasCoords, entity, autoKeyEnabled, currentTime, fps, onUpdateEntity]);
 
   // Context Menu handler on gizmo

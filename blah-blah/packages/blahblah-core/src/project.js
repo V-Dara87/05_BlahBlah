@@ -1,5 +1,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import {
+  atomicWriteFile,
+  hashText,
+  resolveProjectDir,
+  withLock,
+} from './fsutil.js';
 
 export const CURRENT_SCHEMA_VERSION = 1;
 
@@ -26,8 +32,18 @@ export async function initProject({
   name = 'Untitled Project',
   resolution = '1080p',
   customResolution = null,
+  overwrite = false,
 } = {}) {
-  const projectDir = path.resolve(dir);
+  const projectDir = resolveProjectDir(dir);
+  const projectFilePath = path.join(projectDir, 'project.json');
+  if (!overwrite) {
+    const exists = await fs.access(projectFilePath).then(() => true, () => false);
+    if (exists) {
+      throw new Error(
+        `A project already exists at "${projectFilePath}". Pass overwrite: true to replace it.`
+      );
+    }
+  }
   await fs.mkdir(projectDir, { recursive: true });
   await fs.mkdir(path.join(projectDir, 'scripts'), { recursive: true });
   await fs.mkdir(path.join(projectDir, 'prefabs'), { recursive: true });
@@ -41,13 +57,13 @@ export async function initProject({
     createdAt: Date.now(),
     lastModified: Date.now(),
     resolution: { width: res.width, height: res.height },
-    tracks: [...DEFAULT_TRACKS],
+    // Deep copy: the shared defaults must never be mutated by edits to one project.
+    tracks: DEFAULT_TRACKS.map((t) => ({ ...t })),
     entities: [],
     scriptIndex: [],
   };
 
-  const projectFilePath = path.join(projectDir, 'project.json');
-  await fs.writeFile(projectFilePath, JSON.stringify(projectData, null, 2), 'utf8');
+  await atomicWriteFile(projectFilePath, JSON.stringify(projectData, null, 2), { backup: true });
 
   // Also write default jsconfig.json inside scripts/
   const jsconfig = {
@@ -67,10 +83,9 @@ export async function initProject({
     },
     include: ['**/*', '.blahblah/**/*'],
   };
-  await fs.writeFile(
+  await atomicWriteFile(
     path.join(projectDir, 'scripts', 'jsconfig.json'),
-    JSON.stringify(jsconfig, null, 2),
-    'utf8'
+    JSON.stringify(jsconfig, null, 2)
   );
 
   return {
@@ -80,39 +95,111 @@ export async function initProject({
   };
 }
 
-/**
- * Loads project.json from a project directory.
- */
-export async function loadProject(dir = process.cwd()) {
-  const projectDir = path.resolve(dir);
-  const projectFilePath = path.join(projectDir, 'project.json');
+export class ProjectConflictError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ProjectConflictError';
+    this.code = 'EPROJECT_CONFLICT';
+  }
+}
 
+async function readProjectFile(projectFilePath) {
+  let raw;
   try {
-    const raw = await fs.readFile(projectFilePath, 'utf8');
-    const project = JSON.parse(raw);
-    return {
-      projectDir,
-      projectFilePath,
-      project,
-    };
+    raw = await fs.readFile(projectFilePath, 'utf8');
   } catch (err) {
     if (err.code === 'ENOENT') {
       throw new Error(`No project.json found at "${projectFilePath}". Run 'blahblah project init' first.`);
     }
-    throw new Error(`Failed to parse project.json at "${projectFilePath}": ${err.message}`);
+    throw err;
   }
+
+  let project;
+  try {
+    project = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `Failed to parse project.json at "${projectFilePath}": ${err.message}. ` +
+        `A backup may exist at "${projectFilePath}.bak".`
+    );
+  }
+  if (!project || typeof project !== 'object' || Array.isArray(project)) {
+    throw new Error(`project.json at "${projectFilePath}" must contain a JSON object.`);
+  }
+  if (
+    typeof project.schemaVersion === 'number' &&
+    project.schemaVersion > CURRENT_SCHEMA_VERSION
+  ) {
+    throw new Error(
+      `project.json uses schemaVersion ${project.schemaVersion}, which is newer than this tool supports ` +
+        `(${CURRENT_SCHEMA_VERSION}). Update BlahBlah before editing this project.`
+    );
+  }
+  return { raw, project };
 }
 
 /**
- * Saves project data back to project.json.
+ * Loads project.json from a project directory. The returned `revision` is a
+ * hash of the file as read; pass it to saveProject to detect concurrent edits.
  */
-export async function saveProject(dir = process.cwd(), project) {
-  const projectDir = path.resolve(dir);
+export async function loadProject(dir = process.cwd()) {
+  const projectDir = resolveProjectDir(dir);
+  const projectFilePath = path.join(projectDir, 'project.json');
+  const { raw, project } = await readProjectFile(projectFilePath);
+  return { projectDir, projectFilePath, project, revision: hashText(raw) };
+}
+
+/**
+ * Saves project data back to project.json atomically, keeping the previous
+ * version as project.json.bak. When `expectedRevision` is given, the save is
+ * refused if the file changed on disk since it was loaded.
+ */
+export async function saveProject(dir = process.cwd(), project, { expectedRevision } = {}) {
+  const projectDir = resolveProjectDir(dir);
   const projectFilePath = path.join(projectDir, 'project.json');
 
+  if (expectedRevision !== undefined) {
+    let currentRaw = null;
+    try {
+      currentRaw = await fs.readFile(projectFilePath, 'utf8');
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
+    if (currentRaw === null || hashText(currentRaw) !== expectedRevision) {
+      throw new ProjectConflictError(
+        'project.json changed on disk while it was being edited (is the editor saving at the same time?).'
+      );
+    }
+  }
+
   project.lastModified = Date.now();
-  await fs.writeFile(projectFilePath, JSON.stringify(project, null, 2), 'utf8');
+  await atomicWriteFile(projectFilePath, JSON.stringify(project, null, 2), { backup: true });
   return { projectDir, projectFilePath, project };
+}
+
+/**
+ * Safe read-modify-write. Edits for the same project run one at a time, the
+ * file is re-read right before `mutator` runs, and a concurrent change made by
+ * another process makes the cycle retry. If `mutator` throws, nothing is
+ * written. Returns whatever `mutator` returns.
+ */
+export async function updateProject(dir, mutator, { retries = 4 } = {}) {
+  const projectDir = resolveProjectDir(dir);
+  const lockKey = path.join(projectDir, 'project.json');
+
+  return withLock(lockKey, async () => {
+    for (let attempt = 0; ; attempt++) {
+      const { project, revision } = await loadProject(projectDir);
+      const result = await mutator(project, { projectDir });
+      try {
+        await saveProject(projectDir, project, { expectedRevision: revision });
+        return result;
+      } catch (err) {
+        if (err instanceof ProjectConflictError && attempt < retries) continue;
+        throw err;
+      }
+    }
+  });
 }
 
 /**

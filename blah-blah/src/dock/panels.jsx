@@ -1,4 +1,3 @@
- 
 import { memo, useState, useCallback, useMemo } from 'react';
 import { ProjectPanel } from '../components/ProjectPanel';
 import { EntityRenderer } from '../components/entity/EntityRenderer';
@@ -14,7 +13,7 @@ import { ConsolePanel } from '../components/shared/ConsolePanel';
 import { setKeyframeCurve, findKeyframeById, DEFAULT_CP1, DEFAULT_CP2 } from '../engine/keyframes';
 import { useEditorContext } from './EditorContext';
 import { useTimelineView } from './TimelineViewContext';
-import { useCurrentTime, useIsPlaying, useIsLooping, usePlaybackStore } from '../hooks/PlaybackContext';
+import { useCurrentTime, useThrottledCurrentTime, useIsPlaying, useIsLooping, usePlaybackStore } from '../hooks/PlaybackContext';
  
 export const ProjectDockPanel = memo(function ProjectDockPanel() {
   const {
@@ -145,7 +144,8 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
     });
   }, [selectedEntityId]);
  
-  const currentTime = useCurrentTime();
+  // Display-only: the Inspector is the heaviest panel, so cap it while playing.
+  const currentTime = useThrottledCurrentTime(10);
   const selectedEntity = entities.find((e) => e.id === activeEntityId);
  
   // Multi-select: 2+ existing clips selected on the timeline (and the
@@ -363,7 +363,7 @@ export const DopesheetDockPanel = memo(function DopesheetDockPanel() {
     snappingEnabled, setSnappingEnabled,
   } = useEditorContext();
  
-  const currentTime = useCurrentTime();
+  const currentTime = useThrottledCurrentTime(30);
   const store = usePlaybackStore();
   const selectedEntity = entities.find((e) => e.id === selectedEntityId);
  

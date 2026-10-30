@@ -53,10 +53,12 @@ function usePlayheadDrag({ pixelsPerSecond, onSeek, onDragPosition, isDraggingRe
       isDraggingRef.current = false;
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
     };
 
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
   };
 
   return handlePointerDown;

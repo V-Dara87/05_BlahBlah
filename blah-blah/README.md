@@ -517,3 +517,90 @@ const v = MathUtils.lerp(0, 100, progress);
 const r = MathUtils.remap(time, 0, 5, 0, 1);
 const d = MathUtils.degToRad(45);
 ```
+
+---
+
+## AI Bridge Protocol & Live Control
+
+The AI Bridge (`@blahblah/core` bridge module) provides bidirectional communication between external AI tools (CLI, MCP server) and editor instances.
+
+### 1. File IPC (`.aibridge/`)
+Projects can contain a `.aibridge` directory for offline or file-based IPC:
+- `.aibridge/token`: Randomly generated bearer secret created by the bridge server on launch.
+- `.aibridge/inbox/<timestamp>-<random>.json`: Queued commands sent to the editor.
+- `.aibridge/outbox/<command-id>.json`: Results written back after execution.
+
+#### Command Format (Inbox)
+```json
+{
+  "id": "cmd-1793022520851-a1b2",
+  "command": "seek",
+  "time": 2.5,
+  "token": "<bearer-token>"
+}
+```
+
+#### Result Format (Outbox)
+```json
+{
+  "id": "cmd-1793022520851-a1b2",
+  "ok": true,
+  "data": { "currentTime": 2.5 }
+}
+```
+
+### 2. HTTP Protocol
+When the bridge server is running, commands can be POSTed to `http://127.0.0.1:<port>/command`:
+- **Authentication**: `Authorization: Bearer <token>`
+- **Security**: Loopback Host validation (`127.0.0.1`, `localhost`) and Origin check (`tauri://localhost`, `http://tauri.localhost`, `http://localhost:5173`).
+- **Supported Commands**:
+  - `seek`: `{ command: "seek", time: <seconds> }`
+  - `reload`: `{ command: "reload" }`
+  - `select`: `{ command: "select", entityId: "<id>" }`
+  - `play`: `{ command: "play" }`
+  - `pause`: `{ command: "pause" }`
+  - `render_frame`: `{ command: "render_frame", time: <seconds>, format: "png" | "svg" }`
+
+### 3. Model Context Protocol (MCP) Tools
+The MCP server provides 22 tools covering:
+- **Project Lifecycle**: `blahblah_project_init`, `blahblah_project_inspect`
+- **Timeline & Tracks**: `blahblah_track_list`, `blahblah_track_add`, `blahblah_track_remove`, `blahblah_clip_add`, `blahblah_audio_add`
+- **Entities & Transforms**: `blahblah_entity_add`, `blahblah_entity_set_prop`, `blahblah_entity_set_transform`, `blahblah_entity_remove`
+- **Keyframes**: `blahblah_keyframe_add`, `blahblah_keyframe_list`, `blahblah_keyframe_remove`
+- **User Scripts**: `blahblah_script_list`, `blahblah_script_read`, `blahblah_script_create`, `blahblah_script_write`, `blahblah_script_validate`
+- **Rendering & Preview**: `blahblah_render_frame` (supports `source: "editor" | "schematic"`), `blahblah_export_plan`
+- **Live Control**: `blahblah_live_control`
+
+---
+
+## Safe Concurrent Editing (`project.json`)
+
+When working with external AI tools (CLI/MCP) alongside the interactive editor:
+1. **Revision Tracking**: `project.json` loads with a SHA-1 content hash (`revision`).
+2. **Conflict Prevention**: Before autosaving, the app verifies that `project.json` on disk matches the known `revision`. If an external tool modified the file, the autosave pauses and raises `ProjectConflictError`, avoiding clobbering external edits.
+3. **External Change Watcher**: The app monitors `project.json` on disk (debounced 300ms).
+   - If editor is clean (`saved`), external edits are seamlessly reloaded.
+   - If editor has unsaved changes, the user is prompted before reloading to prevent silent data loss.
+4. **Atomic Writes with Backup**: Both CLI/MCP (`atomicWriteFile`) and editor (`tauriFsAdapter` / `saveProjectToDirectory`) write atomically via temporary files and maintain a `.bak` backup copy.
+
+---
+
+## Static Script Prop Helpers
+
+Canvas components can define interactive UI inspector props using helper functions:
+```javascript
+export default class MyComponent extends CanvasComponent {
+  static props = {
+    speed: num(1.5, { min: 0, max: 10, step: 0.1, label: 'Speed' }),
+    fillColor: color('#38bdf8', { label: 'Accent Color' }),
+    visible: bool(true, { label: 'Visible' }),
+    title: text('Hello World', { multiline: false }),
+    alignment: select('center', ['left', 'center', 'right']),
+    soundEffect: asset(null, 'audio'),
+    target: entity(null),
+    fontFamily: font('sans-serif'),
+    reset: button('Reset Values'),
+  };
+}
+```
+`extractScriptPropsSchema` in `blahblah-core` parses all 9 prop helpers statically without executing script code in the CLI/MCP process.

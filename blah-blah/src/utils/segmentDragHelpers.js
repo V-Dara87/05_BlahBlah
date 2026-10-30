@@ -41,10 +41,12 @@ export function startSegmentMoveDrag({ e, segment, pixelsPerSecond, snappingPoin
   const handlePointerUp = () => {
     window.removeEventListener('pointermove', handlePointerMove);
     window.removeEventListener('pointerup', handlePointerUp);
+    window.removeEventListener('pointercancel', handlePointerUp);
   };
  
   window.addEventListener('pointermove', handlePointerMove);
   window.addEventListener('pointerup', handlePointerUp);
+  window.addEventListener('pointercancel', handlePointerUp);
 }
  
 /**
@@ -81,9 +83,10 @@ export function startSegmentResizeDrag({ e, segment, edge, pixelsPerSecond, snap
   const handlePointerUp = () => {
     window.removeEventListener('pointermove', handlePointerMove);
     window.removeEventListener('pointerup', handlePointerUp);
+    window.removeEventListener('pointercancel', handlePointerUp);
   };
  
   window.addEventListener('pointermove', handlePointerMove);
   window.addEventListener('pointerup', handlePointerUp);
+  window.addEventListener('pointercancel', handlePointerUp);
 }
- 

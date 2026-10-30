@@ -43,13 +43,22 @@ function fastStringHash(str) {
   return hash.toString(36);
 }
 
+// props objects come from immutable project state (edits create a new object),
+// so the hash can be remembered per object instead of re-serialising every frame.
+const propsHashMemo = new WeakMap();
+
 function hashProps(props) {
   if (!props || typeof props !== 'object') return '0';
+  const cached = propsHashMemo.get(props);
+  if (cached !== undefined) return cached;
+  let hash;
   try {
-    return fastStringHash(JSON.stringify(props));
+    hash = fastStringHash(JSON.stringify(props));
   } catch {
-    return '0';
+    hash = '0';
   }
+  propsHashMemo.set(props, hash);
+  return hash;
 }
 
 export class FrameCache {

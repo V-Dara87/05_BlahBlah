@@ -240,9 +240,11 @@ export const Dopesheet = memo(function Dopesheet({
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   }, [selectedEntity, xToTime, onSeek, snapToNearestKeyframe, clipDuration]);
 
   // Ctrl/Cmd + wheel zoom centered on cursor
@@ -630,6 +632,7 @@ export const Dopesheet = memo(function Dopesheet({
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
 
       // If user clicked without dragging and without modifiers, select only this key
       if (!hasMoved && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && selectedKeyIds.size > 1) {
@@ -639,6 +642,7 @@ export const Dopesheet = memo(function Dopesheet({
 
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   };
 
   // Group summary row interaction: select or drag all child keys at this timestamp
@@ -708,10 +712,12 @@ export const Dopesheet = memo(function Dopesheet({
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
     };
 
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   };
 
   // Lasso / Marquee selection handler starting on empty lane space
@@ -774,6 +780,7 @@ export const Dopesheet = memo(function Dopesheet({
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
       setBoxSelect(null);
 
       if (!hasMoved) {
@@ -797,6 +804,7 @@ export const Dopesheet = memo(function Dopesheet({
 
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   };
 
   // Keyboard navigation & shortcuts

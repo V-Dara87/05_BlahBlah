@@ -62,10 +62,12 @@ export const TimeRuler = memo(function TimeRuler({
     const handlePointerUp = () => {
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
     };
  
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
   };
  
   // Determine tick interval based on zoom level — shared with TrackLane's
@@ -130,5 +132,3 @@ export const TimeRuler = memo(function TimeRuler({
     </div>
   );
 });
- 
- 

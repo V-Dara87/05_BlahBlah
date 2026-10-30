@@ -86,7 +86,26 @@ export function useProjectPersistence({ getProjectState, onNeedNewProject }) {
       } catch (err) {
         if (isManual) {
           console.error('Disk save error:', err);
-          alert(`Save failed: ${err.message}`);
+          if (err?.name === 'ProjectConflictError' && typeof window !== 'undefined') {
+            const forceSave = window.confirm(
+              `${err.message}\n\nDo you want to force overwrite the external changes on disk?`
+            );
+            if (forceSave) {
+              try {
+                await saveProjectToDirectory(
+                  handle,
+                  () => getProjectStateRef.current(),
+                  { force: true, skipUnchanged: false, ignoreConflict: true }
+                );
+                if (folderHandleRef.current === handle) setSaveStatus('saved');
+                return true;
+              } catch (retryErr) {
+                alert(`Force save failed: ${retryErr.message}`);
+              }
+            }
+          } else {
+            alert(`Save failed: ${err.message}`);
+          }
         } else {
           console.warn('Autosave failed:', err);
         }

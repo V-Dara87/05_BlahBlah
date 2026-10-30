@@ -7,6 +7,7 @@ import { useSharedLibraryActions } from './hooks/useSharedLibraryActions';
 import { useDockPanels } from './hooks/useDockPanels';
 import { useProjectPersistence } from './hooks/useProjectPersistence';
 import { useProjectAutosave } from './hooks/useProjectAutosave';
+import { useAiBridgeListener } from './hooks/useAiBridgeListener';
 import { useAutosaveSettings } from './hooks/useAutosaveSettings';
 import { useEditorSettings } from './hooks/useEditorSettings';
 import { useExportSettings } from './hooks/useExportSettings';
@@ -278,6 +279,7 @@ export function App() {
     setResolution,
     setSelectedEntityId,
     selectedEntityId,
+    saveStatus,
     setSaveStatus,
     setSchemaWarning,
     setScreen,
@@ -513,6 +515,20 @@ export function App() {
     setSaveStatus,
     settings: autosaveSettings,
   });
+
+  // AI Bridge — enables MCP and CLI tools to control playback, select entities,
+  // reload scripts, and capture live composited frames through .aibridge IPC.
+  useAiBridgeListener({
+    projectFolderHandle,
+    playbackStoreRef,
+    setSelectedEntityId,
+    entities: activeEntities,
+    tracks,
+    scripts,
+    resolution,
+    mediaAssets,
+  });
+
  
   // Global keyboard shortcuts live in EditorPlaybackShortcuts (inside
   // PlaybackProvider) so App never re-renders on every playback frame.

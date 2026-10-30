@@ -1,0 +1,685 @@
+{
+  "name": "Why BlahBlah?",
+  "version": "1.0",
+  "schemaVersion": 1,
+  "lastModified": 1793026676672,
+  "resolution": {
+    "width": 1920,
+    "height": 1080
+  },
+  "tracks": [
+    {
+      "id": "track-1",
+      "name": "Track 1",
+      "type": "layer",
+      "muted": false,
+      "locked": false,
+      "visible": true,
+      "volume": 1
+    },
+    {
+      "id": "track-2",
+      "name": "Track 2",
+      "type": "layer",
+      "muted": false,
+      "locked": false,
+      "visible": true,
+      "volume": 1
+    },
+    {
+      "id": "track-3",
+      "name": "Track 3",
+      "type": "layer",
+      "muted": false,
+      "locked": false,
+      "visible": true,
+      "volume": 1
+    },
+    {
+      "id": "track-4",
+      "name": "Track 4",
+      "type": "layer",
+      "muted": false,
+      "locked": false,
+      "visible": true,
+      "volume": 1
+    }
+  ],
+  "entities": [
+    {
+      "id": "go-67201649-138a-4ca9-8ce5-d0b313cd9770",
+      "name": "Background",
+      "tag": "Untagged",
+      "layer": "Default",
+      "active": true,
+      "parentId": null,
+      "trackId": "track-1",
+      "startTime": 0,
+      "duration": 45,
+      "type": "empty",
+      "src": "",
+      "color": "#ec4899",
+      "components": [
+        {
+          "type": "Transform",
+          "x": 0,
+          "y": 0,
+          "rotation": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "opacity": 1,
+          "pivotX": 0,
+          "pivotY": 0
+        },
+        {
+          "type": "ScriptComponent",
+          "scriptId": "script-AnimatedBg",
+          "scriptName": "AnimatedBg",
+          "enabled": true,
+          "props": {}
+        }
+      ],
+      "keyframes": {}
+    },
+    {
+      "id": "go-71abf738-82ac-4d65-bbcb-49ffcaf0ee82",
+      "name": "Opening Burst",
+      "tag": "Untagged",
+      "layer": "Default",
+      "active": true,
+      "parentId": null,
+      "trackId": "track-4",
+      "startTime": 0,
+      "duration": 5,
+      "type": "empty",
+      "src": "",
+      "color": "#ec4899",
+      "components": [
+        {
+          "type": "Transform",
+          "x": 0,
+          "y": 0,
+          "rotation": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "opacity": 1,
+          "pivotX": 0,
+          "pivotY": 0
+        },
+        {
+          "type": "ScriptComponent",
+          "scriptId": "script-ParticleBurst",
+          "scriptName": "ParticleBurst",
+          "enabled": true,
+          "props": {
+            "burstTime": 0.3,
+            "count": 60
+          }
+        }
+      ],
+      "keyframes": {}
+    },
+    {
+      "id": "go-325dfaa5-aecc-44ac-a19b-b285b885913b",
+      "name": "Hero Title",
+      "tag": "Untagged",
+      "layer": "Default",
+      "active": true,
+      "parentId": null,
+      "trackId": "track-3",
+      "startTime": 0.2,
+      "duration": 6,
+      "type": "empty",
+      "src": "",
+      "color": "#ec4899",
+      "components": [
+        {
+          "type": "Transform",
+          "x": 0,
+          "y": 0,
+          "rotation": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "opacity": 1,
+          "pivotX": 0,
+          "pivotY": 0
+        },
+        {
+          "type": "ScriptComponent",
+          "scriptId": "script-HeroTitle",
+          "scriptName": "HeroTitle",
+          "enabled": true,
+          "props": {}
+        }
+      ],
+      "keyframes": {
+        "Transform": {
+          "opacity": [
+            {
+              "id": "kf-Transform-opacity-5.2-1c9b6a",
+              "time": 5.2,
+              "value": 1,
+              "cp1": {
+                "x": 0.25,
+                "y": 0.25
+              },
+              "cp2": {
+                "x": 0.75,
+                "y": 0.75
+              }
+            },
+            {
+              "id": "kf-Transform-opacity-6-acd289",
+              "time": 6,
+              "value": 0,
+              "cp1": {
+                "x": 0.42,
+                "y": 0
+              },
+              "cp2": {
+                "x": 0.58,
+                "y": 1
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "go-818a0cdd-20db-4708-9581-b143fc06f079",
+      "name": "Section 1 Title",
+      "tag": "Untagged",
+      "layer": "Default",
+      "active": true,
+      "parentId": null,
+      "trackId": "track-3",
+      "startTime": 6.5,
+      "duration": 7.5,
+      "type": "empty",
+      "src": "",
+      "color": "#ec4899",
+      "components": [
+        {
+          "type": "Transform",
+          "x": 0,
+          "y": -240,
+          "rotation": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "opacity": 1,
+          "pivotX": 0,
+          "pivotY": 0
+        },
+        {
+          "type": "ScriptComponent",
+          "scriptId": "script-SectionTitle",
+          "scriptName": "SectionTitle",
+          "enabled": true,
+          "props": {
+            "label": "01 / AGENTIC CONTROL"
+          }
+        }
+      ],
+      "keyframes": {}
+    },
+    {
+      "id": "go-e61849f6-fc2f-4310-badc-715a96937ea3",
+      "name": "Feature Card 1",
+      "tag": "Untagged",
+      "layer": "Default",
+      "active": true,
+      "parentId": null,
+      "trackId": "track-2",
+      "startTime": 7,
+      "duration": 7,
+      "type": "empty",
+      "src": "",
+      "color": "#ec4899",
+      "components": [
+        {
+          "type": "Transform",
+          "x": 0,
+          "y": 0,
+          "rotation": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "opacity": 1,
+          "pivotX": 0,
+          "pivotY": 0
+        },
+        {
+          "type": "ScriptComponent",
+          "scriptId": "script-FeatureCard",
+          "scriptName": "FeatureCard",
+          "enabled": true,
+          "props": {
+            "body": "Autonomous AI agents can scrub the playhead, select entities, write motion scripts, and evaluate composited preview frames in real-time.",
+            "cardHeight": 320,
+            "cardWidth": 640,
+            "entranceDelay": 0.1,
+            "icon": "🤖",
+            "title": "Live AI Bridge & MCP"
+          }
+        }
+      ],
+      "keyframes": {
+        "Transform": {
+          "opacity": [
+            {
+              "id": "kf-Transform-opacity-6.2-13f215",
+              "time": 6.2,
+              "value": 1,
+              "cp1": {
+                "x": 0.25,
+                "y": 0.25
+              },
+              "cp2": {
+                "x": 0.75,
+                "y": 0.75
+              }
+            },
+            {
+              "id": "kf-Transform-opacity-7-b11291",
+              "time": 7,
+              "value": 0,
+              "cp1": {
+                "x": 0.42,
+                "y": 0
+              },
+              "cp2": {
+                "x": 0.58,
+                "y": 1
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "go-05cd4c7a-ecdf-4dbf-abb4-af004c1cd7ec",
+      "name": "Burst 1",
+      "tag": "Untagged",
+      "layer": "Default",
+      "active": true,
+      "parentId": null,
+      "trackId": "track-4",
+      "startTime": 6.8,
+      "duration": 3.5,
+      "type": "empty",
+      "src": "",
+      "color": "#ec4899",
+      "components": [
+        {
+          "type": "Transform",
+          "x": 0,
+          "y": 0,
+          "rotation": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "opacity": 1,
+          "pivotX": 0,
+          "pivotY": 0
+        },
+        {
+          "type": "ScriptComponent",
+          "scriptId": "script-ParticleBurst",
+          "scriptName": "ParticleBurst",
+          "enabled": true,
+          "props": {
+            "burstTime": 0.2,
+            "count": 81.4
+          }
+        }
+      ],
+      "keyframes": {}
+    },
+    {
+      "id": "go-e47b4330-7d5f-492a-98cb-6cfe00c4c6b7",
+      "name": "Section 2 Title",
+      "tag": "Untagged",
+      "layer": "Default",
+      "active": true,
+      "parentId": null,
+      "trackId": "track-3",
+      "startTime": 14.5,
+      "duration": 7.5,
+      "type": "empty",
+      "src": "",
+      "color": "#ec4899",
+      "components": [
+        {
+          "type": "Transform",
+          "x": 0,
+          "y": -240,
+          "rotation": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "opacity": 1,
+          "pivotX": 0,
+          "pivotY": 0
+        },
+        {
+          "type": "ScriptComponent",
+          "scriptId": "script-SectionTitle",
+          "scriptName": "SectionTitle",
+          "enabled": true,
+          "props": {
+            "label": "02 / PROCEDURAL GRAPHICS"
+          }
+        }
+      ],
+      "keyframes": {}
+    },
+    {
+      "id": "go-cf98182e-0d1b-4b40-b59a-2007ad3dad92",
+      "name": "Feature Card 2",
+      "tag": "Untagged",
+      "layer": "Default",
+      "active": true,
+      "parentId": null,
+      "trackId": "track-2",
+      "startTime": 15,
+      "duration": 7,
+      "type": "empty",
+      "src": "",
+      "color": "#ec4899",
+      "components": [
+        {
+          "type": "Transform",
+          "x": 0,
+          "y": 0,
+          "rotation": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "opacity": 1,
+          "pivotX": 0,
+          "pivotY": 0
+        },
+        {
+          "type": "ScriptComponent",
+          "scriptId": "script-FeatureCard",
+          "scriptName": "FeatureCard",
+          "enabled": true,
+          "props": {
+            "body": "Write clean code in JSX, Canvas2D, or Three.js. Hot-reload updates live on the timeline with full keyframe interpolation.",
+            "cardHeight": 320,
+            "cardWidth": 640,
+            "entranceDelay": 0.1,
+            "icon": "⚡",
+            "title": "React & Canvas Scripts"
+          }
+        }
+      ],
+      "keyframes": {}
+    },
+    {
+      "id": "go-e14bee50-2e0e-41cb-9283-081604a85d90",
+      "name": "Burst 2",
+      "tag": "Untagged",
+      "layer": "Default",
+      "active": true,
+      "parentId": null,
+      "trackId": "track-4",
+      "startTime": 14.8,
+      "duration": 3.5,
+      "type": "empty",
+      "src": "",
+      "color": "#ec4899",
+      "components": [
+        {
+          "type": "Transform",
+          "x": 0,
+          "y": 0,
+          "rotation": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "opacity": 1,
+          "pivotX": 0,
+          "pivotY": 0
+        },
+        {
+          "type": "ScriptComponent",
+          "scriptId": "script-ParticleBurst",
+          "scriptName": "ParticleBurst",
+          "enabled": true,
+          "props": {
+            "burstTime": 0.2,
+            "count": 35
+          }
+        }
+      ],
+      "keyframes": {}
+    },
+    {
+      "id": "go-69a003ca-c560-4efe-ba25-223c946412b0",
+      "name": "Section 3 Title",
+      "tag": "Untagged",
+      "layer": "Default",
+      "active": true,
+      "parentId": null,
+      "trackId": "track-3",
+      "startTime": 22.5,
+      "duration": 7.5,
+      "type": "empty",
+      "src": "",
+      "color": "#ec4899",
+      "components": [
+        {
+          "type": "Transform",
+          "x": 0,
+          "y": -240,
+          "rotation": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "opacity": 1,
+          "pivotX": 0,
+          "pivotY": 0
+        },
+        {
+          "type": "ScriptComponent",
+          "scriptId": "script-SectionTitle",
+          "scriptName": "SectionTitle",
+          "enabled": true,
+          "props": {
+            "label": "03 / ENTERPRISE INTEGRITY"
+          }
+        }
+      ],
+      "keyframes": {}
+    },
+    {
+      "id": "go-793ec73d-097c-44ba-a6c1-04df15474f45",
+      "name": "Feature Card 3",
+      "tag": "Untagged",
+      "layer": "Default",
+      "active": true,
+      "parentId": null,
+      "trackId": "track-2",
+      "startTime": 23,
+      "duration": 7,
+      "type": "empty",
+      "src": "",
+      "color": "#ec4899",
+      "components": [
+        {
+          "type": "Transform",
+          "x": 0,
+          "y": 0,
+          "rotation": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "opacity": 1,
+          "pivotX": 0,
+          "pivotY": 0
+        },
+        {
+          "type": "ScriptComponent",
+          "scriptId": "script-FeatureCard",
+          "scriptName": "FeatureCard",
+          "enabled": true,
+          "props": {
+            "body": "Seamless multi-agent and human co-editing with optimistic revision hashing, concurrent lock retries, and automatic .bak safety.",
+            "cardHeight": 320,
+            "cardWidth": 640,
+            "entranceDelay": 0.1,
+            "icon": "🛡️",
+            "title": "Atomic & Conflict-Free"
+          }
+        }
+      ],
+      "keyframes": {}
+    },
+    {
+      "id": "go-3f0433da-39b5-4ffd-9f21-44bab863a990",
+      "name": "Burst 3",
+      "tag": "Untagged",
+      "layer": "Default",
+      "active": true,
+      "parentId": null,
+      "trackId": "track-4",
+      "startTime": 22.8,
+      "duration": 3.5,
+      "type": "empty",
+      "src": "",
+      "color": "#ec4899",
+      "components": [
+        {
+          "type": "Transform",
+          "x": 0,
+          "y": 0,
+          "rotation": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "opacity": 1,
+          "pivotX": 0,
+          "pivotY": 0
+        },
+        {
+          "type": "ScriptComponent",
+          "scriptId": "script-ParticleBurst",
+          "scriptName": "ParticleBurst",
+          "enabled": true,
+          "props": {
+            "burstTime": 0.2,
+            "count": 35
+          }
+        }
+      ],
+      "keyframes": {}
+    },
+    {
+      "id": "go-0714fb19-8e6c-47c1-ac58-6663d046c5fe",
+      "name": "Outro CTA",
+      "tag": "Untagged",
+      "layer": "Default",
+      "active": true,
+      "parentId": null,
+      "trackId": "track-3",
+      "startTime": 30.5,
+      "duration": 11.5,
+      "type": "empty",
+      "src": "",
+      "color": "#ec4899",
+      "components": [
+        {
+          "type": "Transform",
+          "x": 0,
+          "y": 0,
+          "rotation": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "opacity": 1,
+          "pivotX": 0,
+          "pivotY": 0
+        },
+        {
+          "type": "ScriptComponent",
+          "scriptId": "script-OutroCta",
+          "scriptName": "OutroCta",
+          "enabled": true,
+          "props": {
+            "heading": "Start Building with BlahBlah",
+            "tagline": "The AI-Native Motion Canvas & Video Engine"
+          }
+        }
+      ],
+      "keyframes": {}
+    },
+    {
+      "id": "go-10b6e29c-c026-4b21-850f-a11e34d38e3e",
+      "name": "Celebration Burst",
+      "tag": "Untagged",
+      "layer": "Default",
+      "active": true,
+      "parentId": null,
+      "trackId": "track-4",
+      "startTime": 31,
+      "duration": 5,
+      "type": "empty",
+      "src": "",
+      "color": "#ec4899",
+      "components": [
+        {
+          "type": "Transform",
+          "x": 0,
+          "y": 0,
+          "rotation": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "opacity": 1,
+          "pivotX": 0,
+          "pivotY": 0
+        },
+        {
+          "type": "ScriptComponent",
+          "scriptId": "script-ParticleBurst",
+          "scriptName": "ParticleBurst",
+          "enabled": true,
+          "props": {
+            "burstTime": 0.5,
+            "count": 75
+          }
+        }
+      ],
+      "keyframes": {}
+    }
+  ],
+  "scriptIndex": [
+    {
+      "name": "AnimatedBg.jsx",
+      "id": "script-AnimatedBg",
+      "folder": null,
+      "createdAt": null
+    },
+    {
+      "name": "FeatureCard.jsx",
+      "id": "script-FeatureCard",
+      "folder": null,
+      "createdAt": null
+    },
+    {
+      "name": "HeroTitle.jsx",
+      "id": "script-HeroTitle",
+      "folder": null,
+      "createdAt": null
+    },
+    {
+      "name": "OutroCta.jsx",
+      "id": "script-OutroCta",
+      "folder": null,
+      "createdAt": null
+    },
+    {
+      "name": "ParticleBurst.jsx",
+      "id": "script-ParticleBurst",
+      "folder": null,
+      "createdAt": null
+    },
+    {
+      "name": "SectionTitle.jsx",
+      "id": "script-SectionTitle",
+      "folder": null,
+      "createdAt": null
+    }
+  ]
+}

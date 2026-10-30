@@ -2,6 +2,7 @@ import { useLayoutEffect, useEffect, useRef } from 'react';
 import { updateCanvasComponent, pruneCanvasComponents } from '../engine/canvasRunner';
 import { isScriptComponent } from '../engine/ecs';
 import { detectScriptKind } from '../engine/scriptRunner';
+import { findScriptDef } from '../engine/scriptLookup';
  
 /**
  * Drives canvas-kind script components every frame: mounts on first
@@ -38,13 +39,7 @@ export function useCanvasScriptDriver({ computedEntities, scripts, currentTime, 
     computedEntities.forEach(({ entity, localTime }) => {
       for (const comp of entity.components || []) {
         if (!isScriptComponent(comp) || comp.enabled === false || !comp.scriptId) continue;
-        const scriptDef = scripts.find(
-          (s) =>
-            s.id === comp.scriptId ||
-            s.name === comp.scriptName ||
-            s.name === `${comp.scriptName}.jsx` ||
-            s.id === `script-${comp.scriptName}`
-        );
+        const scriptDef = findScriptDef(scripts, comp);
         if (!scriptDef || !scriptDef.code) continue;
         if (detectScriptKind(scriptDef.code) !== 'canvas') continue;
  
@@ -88,4 +83,3 @@ export function useCanvasScriptDriver({ computedEntities, scripts, currentTime, 
  
   return { canvasContainerRefs };
 }
- 

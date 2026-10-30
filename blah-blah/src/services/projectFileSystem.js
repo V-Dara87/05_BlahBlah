@@ -5,6 +5,11 @@
  */
  
 import { CURRENT_SCHEMA_VERSION, DEFAULT_RESOLUTION } from '../types';
+import {
+  computeTextHash,
+  ProjectConflictError,
+} from '../utils/projectRevision.js';
+export { computeTextHash, ProjectConflictError };
 // Schema gate + migrations — pure functions in ecs.js (Node-importable +
 // unit-tested), not here, because this module's `?raw` SDK import below
 // breaks plain-Node tests. migrateEntities is the schemaVersion 0 → 1
@@ -113,6 +118,7 @@ function getSyncState(dirHandle) {
     state = {
       lock: Promise.resolve(),
       projectFingerprint: null,
+      revision: null,
       prefabs: new Map(),
       scripts: new Map(),
       tombstones: new Map(),
@@ -141,7 +147,8 @@ function withProjectLock(dirHandle, task) {
 async function readProjectJsonWithBackup(dirHandle) {
   const readParsed = async (fileName) => {
     const handle = await dirHandle.getFileHandle(fileName);
-    return JSON.parse(await (await handle.getFile()).text());
+    const raw = await (await handle.getFile()).text();
+    return { parsed: JSON.parse(raw), raw };
   };
   try {
     return await readParsed('project.json');
@@ -428,10 +435,16 @@ export async function createNewProjectFolder(parentDirHandle, projectName, defau
     scriptIndex: [],
   };
  
+  const projectJsonStr = JSON.stringify(initialProjectJson, null, 2);
   const projectFileHandle = await projectDirHandle.getFileHandle('project.json', { create: true });
   const writable = await projectFileHandle.createWritable();
-  await writable.write(JSON.stringify(initialProjectJson, null, 2));
+  await writable.write(projectJsonStr);
   await writable.close();
+  const newSyncState = getSyncState(projectDirHandle);
+  if (newSyncState) {
+    newSyncState.revision = await computeTextHash(projectJsonStr);
+    newSyncState.projectFingerprint = JSON.stringify({ ...initialProjectJson, lastModified: 0 });
+  }
  
   return {
     dirHandle: projectDirHandle,
@@ -475,9 +488,11 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
     // (ScriptComponent.scriptId is the only place those ids are referenced.)
   let scriptIndex = new Map();
  
+  let projectRaw = null;
   // 1. Read project.json if present
   try {
-    const parsed = await readProjectJsonWithBackup(dirHandle);
+    const { parsed, raw } = await readProjectJsonWithBackup(dirHandle);
+    projectRaw = raw;
     // Schema gate — a project from a NEWER build warns (never blocks the
     // load); a missing schemaVersion reads as 0, which is exactly the
     // pre-unification format migrateEntities below handles (the 0 → 1
@@ -517,6 +532,7 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
   const syncState = getSyncState(dirHandle);
   if (syncState) {
     syncState.projectFingerprint = null;
+    syncState.revision = projectRaw ? await computeTextHash(projectRaw) : null;
     syncState.prefabs.clear();
     syncState.scripts.clear();
     syncState.tombstones.clear();
@@ -764,6 +780,7 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
     prefabs: loadedPrefabs,
     mediaAssets: loadedMedia,
     schemaWarning,
+    revision: syncState?.revision || null,
   };
 }
  
@@ -787,7 +804,7 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
  */
 export async function saveProjectToDirectory(dirHandle, projectStateOrGetter, options = {}) {
   if (!dirHandle) return false;
-  const { force = false, skipUnchanged = true } = options || {};
+  const { force = false, skipUnchanged = true, ignoreConflict = false } = options || {};
   const skipIfUnchanged = skipUnchanged && !force;
  
   return withProjectLock(dirHandle, async () => {
@@ -799,6 +816,25 @@ export async function saveProjectToDirectory(dirHandle, projectStateOrGetter, op
     const projectState =
       typeof projectStateOrGetter === 'function' ? projectStateOrGetter() : projectStateOrGetter;
     const syncState = getSyncState(dirHandle);
+
+    // Conflict check: ensure project.json on disk was not modified externally since load/last save
+    if (!ignoreConflict && syncState?.revision) {
+      let diskRaw = null;
+      try {
+        const handle = await dirHandle.getFileHandle('project.json', { create: false });
+        diskRaw = await (await handle.getFile()).text();
+      } catch (err) {
+        if (err?.name !== 'NotFoundError') throw err;
+      }
+      if (diskRaw !== null) {
+        const diskHash = await computeTextHash(diskRaw);
+        if (diskHash !== syncState.revision) {
+          throw new ProjectConflictError(
+            'project.json changed on disk while it was being edited (external CLI, MCP, or editor edits detected).'
+          );
+        }
+      }
+    }
  
     // 1. Write project.json
     //
@@ -846,11 +882,27 @@ export async function saveProjectToDirectory(dirHandle, projectStateOrGetter, op
  
     const projectFingerprint = JSON.stringify(buildProjectJson(0));
     if (!(skipIfUnchanged && syncState && syncState.projectFingerprint === projectFingerprint)) {
+      if (!dirHandle.isTauri) {
+        try {
+          const existing = await dirHandle.getFileHandle('project.json', { create: false });
+          const oldText = await (await existing.getFile()).text();
+          const bakHandle = await dirHandle.getFileHandle('project.json.bak', { create: true });
+          const bakWritable = await bakHandle.createWritable();
+          await bakWritable.write(oldText);
+          await bakWritable.close();
+        } catch {
+          // Backup is best-effort
+        }
+      }
+      const jsonText = JSON.stringify(buildProjectJson(Date.now()), null, 2);
       const projectFileHandle = await dirHandle.getFileHandle('project.json', { create: true });
       const projectWritable = await projectFileHandle.createWritable();
-      await projectWritable.write(JSON.stringify(buildProjectJson(Date.now()), null, 2));
+      await projectWritable.write(jsonText);
       await projectWritable.close();
-      if (syncState) syncState.projectFingerprint = projectFingerprint;
+      if (syncState) {
+        syncState.projectFingerprint = projectFingerprint;
+        syncState.revision = await computeTextHash(jsonText);
+      }
     }
  
     // 2. Sync scripts to scripts/ folder
@@ -1470,6 +1522,59 @@ export async function watchScriptsDirectory(dirHandle, onChange) {
     return unwatch;
   } catch (err) {
     console.warn('fs watch unavailable — falling back to polling:', err);
+    return null;
+  }
+}
+
+/**
+ * Checks if project.json on disk has been changed by another process (MCP, CLI, VS Code)
+ * since it was loaded or last saved.
+ *
+ * @param {FileSystemDirectoryHandle} dirHandle
+ * @returns {Promise<boolean>} true if project.json changed externally
+ */
+export async function checkProjectJsonForChanges(dirHandle) {
+  if (!dirHandle) return false;
+  const syncState = getSyncState(dirHandle);
+  if (!syncState || !syncState.revision) return false;
+  try {
+    const handle = await dirHandle.getFileHandle('project.json', { create: false });
+    const file = await handle.getFile();
+    const raw = await file.text();
+    const currentHash = await computeTextHash(raw);
+    return currentHash !== syncState.revision;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Subscribes to native filesystem events for project.json.
+ *
+ * @param {FileSystemDirectoryHandle} dirHandle
+ * @param {() => void} onChange
+ * @returns {Promise<(() => void) | null>}
+ */
+export async function watchProjectFile(dirHandle, onChange) {
+  if (!isTauri() || !dirHandle?.path) return null;
+  try {
+    const { watch, exists } = await import('@tauri-apps/plugin-fs');
+    const projectPath = joinPath(dirHandle.path, 'project.json');
+    if (!(await exists(projectPath))) return null;
+    const unwatch = await watch(
+      dirHandle.path,
+      (event) => {
+        const paths = Array.isArray(event?.paths) ? event.paths : [];
+        const touched = paths.some((p) => /(^|[\\/])project\.json$/i.test(String(p || '')));
+        if (touched) {
+          onChange?.();
+        }
+      },
+      { recursive: false, delayMs: 250 }
+    );
+    return unwatch;
+  } catch (err) {
+    console.warn('project.json watch unavailable — falling back to polling:', err);
     return null;
   }
 }

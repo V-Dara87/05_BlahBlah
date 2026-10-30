@@ -1,8 +1,30 @@
-import fs from 'node:fs/promises';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import zlib from 'node:zlib';
 import { loadProject } from './project.js';
+
+export const MAX_RENDER_DIMENSION = 8192;
+
+function assertFiniteTime(time) {
+  if (typeof time !== 'number' || !Number.isFinite(time) || time < 0) {
+    throw new Error(`time must be a number >= 0 (got ${String(time)}).`);
+  }
+}
+
+function escapeXml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+/** Only plain CSS-ish colors reach SVG attributes. */
+function safeColor(value, fallback = '#38bdf8') {
+  return typeof value === 'string' && /^(#[0-9a-f]{3,8}|[a-z]+)$/i.test(value.trim())
+    ? value.trim()
+    : fallback;
+}
 
 // Cubic Bezier solver matching BlahBlah keyframe engine
 function evaluateBezier(cp1, cp2, t) {
@@ -68,6 +90,7 @@ function evaluateFieldAtTime(keyframesList = [], t = 0, defaultValue = 0) {
  * Evaluates all entities and keyframes in a project at a specific timestamp.
  */
 export function evaluateTimelineAtTime(project, time = 0) {
+  assertFiniteTime(time);
   const entities = project.entities || [];
   const tracks = project.tracks || [];
   const resolution = project.resolution || { width: 1920, height: 1080 };
@@ -79,9 +102,8 @@ export function evaluateTimelineAtTime(project, time = 0) {
   for (const entity of entities) {
     if (entity.active === false) continue;
     const track = trackMap.get(entity.trackId);
-    if (track && (track.visible === false || track.muted === true)) {
-      // Keep in mind muted/hidden tracks
-    }
+    // A hidden track draws nothing. (Muted only affects audio, not visuals.)
+    if (track && track.visible === false) continue;
 
     const start = entity.startTime || 0;
     const end = start + (entity.duration || 0);
@@ -153,6 +175,7 @@ export function evaluateTimelineAtTime(project, time = 0) {
 export function renderFrameSvg(project, time = 0) {
   const { resolution, activeEntities } = evaluateTimelineAtTime(project, time);
   const { width, height } = resolution;
+  assertRenderSize(width, height);
   const centerX = width / 2;
   const centerY = height / 2;
 
@@ -167,8 +190,9 @@ export function renderFrameSvg(project, time = 0) {
     const sy = transform.scaleY || 1;
     const op = transform.opacity ?? 1;
 
-    const label = scriptComponent?.props?.title || scriptComponent?.scriptName || name;
-    const boxColor = color || '#38bdf8';
+    const rawLabel = scriptComponent?.props?.title || scriptComponent?.scriptName || name;
+    const label = escapeXml(typeof rawLabel === 'string' || typeof rawLabel === 'number' ? rawLabel : name);
+    const boxColor = safeColor(color);
 
     elements += `
       <g transform="translate(${x}, ${y}) rotate(${rot}) scale(${sx}, ${sy})" opacity="${op}">
@@ -191,103 +215,118 @@ export function renderFrameSvg(project, time = 0) {
   return svg;
 }
 
+function assertRenderSize(width, height) {
+  const ok = (n) => Number.isInteger(n) && n > 0 && n <= MAX_RENDER_DIMENSION;
+  if (!ok(width) || !ok(height)) {
+    throw new Error(`Project resolution ${width}x${height} is not renderable (1-${MAX_RENDER_DIMENSION} px per side).`);
+  }
+}
+
 // ─── Pure-JS minimal PNG encoder ─────────────────────────────────────────────
 
 function pngUint32(n) {
   const b = Buffer.alloc(4);
-  b.writeUInt32BE(n, 0);
+  b.writeUInt32BE(n >>> 0, 0);
   return b;
+}
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(...buffers) {
+  let crc = 0xffffffff;
+  for (const buf of buffers) {
+    for (let i = 0; i < buf.length; i++) {
+      crc = CRC_TABLE[(crc ^ buf[i]) & 0xff] ^ (crc >>> 8);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 function pngChunk(type, data) {
   const typeBytes = Buffer.from(type, 'ascii');
-  const len = pngUint32(data.length);
-
-  // CRC over type + data
-  let crc = 0xffffffff;
-  for (const byte of [...typeBytes, ...data]) {
-    crc ^= byte;
-    for (let j = 0; j < 8; j++) {
-      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
-    }
-  }
-  crc ^= 0xffffffff;
-  const crcBuf = Buffer.alloc(4);
-  crcBuf.writeUInt32BE(crc >>> 0, 0);
-
-  return Buffer.concat([len, typeBytes, data, crcBuf]);
+  return Buffer.concat([pngUint32(data.length), typeBytes, data, pngUint32(crc32(typeBytes, data))]);
 }
 
-function hexToRgb(hex) {
-  const n = parseInt(hex.replace('#', ''), 16);
+function hexToRgb(hex, fallback = [56, 189, 248]) {
+  let h = String(hex ?? '').trim().replace(/^#/, '');
+  if (/^[0-9a-f]{3}$/i.test(h)) h = h.split('').map((c) => c + c).join('');
+  if (!/^[0-9a-f]{6}([0-9a-f]{2})?$/i.test(h)) return fallback;
+  const n = parseInt(h.slice(0, 6), 16);
   return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
 }
 
-function setPixel(pixels, width, x, y, r, g, b, a = 255) {
-  if (x < 0 || y < 0 || x >= width) return;
+/** Alpha-blends a colour onto the (opaque) canvas. `a` is 0-255. */
+function blendPixel(pixels, width, height, x, y, r, g, b, a = 255) {
+  if (x < 0 || y < 0 || x >= width || y >= height || a <= 0) return;
   const idx = (y * width + x) * 4;
-  pixels[idx] = r;
-  pixels[idx + 1] = g;
-  pixels[idx + 2] = b;
-  pixels[idx + 3] = a;
-}
-
-function drawRect(pixels, width, height, x1, y1, w, h, r, g, b, a = 255) {
-  for (let row = y1; row < y1 + h; row++) {
-    if (row < 0 || row >= height) continue;
-    for (let col = x1; col < x1 + w; col++) {
-      setPixel(pixels, width, col, row, r, g, b, a);
-    }
-  }
+  const k = Math.min(255, a) / 255;
+  pixels[idx] = Math.round(pixels[idx] + (r - pixels[idx]) * k);
+  pixels[idx + 1] = Math.round(pixels[idx + 1] + (g - pixels[idx + 1]) * k);
+  pixels[idx + 2] = Math.round(pixels[idx + 2] + (b - pixels[idx + 2]) * k);
+  pixels[idx + 3] = 255;
 }
 
 function drawHLine(pixels, width, height, y, r, g, b, dashOn = 6, dashOff = 6) {
   if (y < 0 || y >= height) return;
   for (let x = 0; x < width; x++) {
-    const phase = x % (dashOn + dashOff);
-    if (phase < dashOn) setPixel(pixels, width, x, y, r, g, b, 200);
+    if (x % (dashOn + dashOff) < dashOn) blendPixel(pixels, width, height, x, y, r, g, b, 200);
   }
 }
 
 function drawVLine(pixels, width, height, x, r, g, b, dashOn = 6, dashOff = 6) {
   if (x < 0 || x >= width) return;
   for (let y = 0; y < height; y++) {
-    const phase = y % (dashOn + dashOff);
-    if (phase < dashOn) setPixel(pixels, width, x, y, r, g, b, 200);
+    if (y % (dashOn + dashOff) < dashOn) blendPixel(pixels, width, height, x, y, r, g, b, 200);
   }
 }
 
-function drawRoundedRect(pixels, width, height, cx, cy, hw, hh, rx, ry, rg, rb, ra, strokeW = 3, fillA = 60) {
-  const x1 = cx - hw, y1 = cy - hh, x2 = cx + hw, y2 = cy + hh;
-  // fill interior
-  for (let row = y1; row <= y2; row++) {
-    for (let col = x1; col <= x2; col++) {
-      if (row < 0 || row >= height || col < 0 || col >= width) continue;
-      const idx = (row * width + col) * 4;
-      pixels[idx] = rx; pixels[idx + 1] = ry; pixels[idx + 2] = rg; pixels[idx + 3] = fillA;
-    }
-  }
-  // stroke: top, bottom, left, right edges (strokeW px)
-  for (let s = 0; s < strokeW; s++) {
-    for (let col = x1; col <= x2; col++) {
-      setPixel(pixels, width, col, y1 + s, rx, ry, rg, ra);
-      setPixel(pixels, width, col, y2 - s, rx, ry, rg, ra);
-    }
-    for (let row = y1; row <= y2; row++) {
-      setPixel(pixels, width, x1 + s, row, rx, ry, rg, ra);
-      setPixel(pixels, width, x2 - s, row, rx, ry, rg, ra);
+/**
+ * Draws a translucent box with a solid outline, honouring position, scale,
+ * rotation (degrees, clockwise) and opacity like the SVG renderer does.
+ */
+function drawEntityBox(pixels, width, height, cx, cy, hw, hh, rotationDeg, rgb, opacity, strokeW = 3, fillAlpha = 64) {
+  const [r, g, b] = rgb;
+  const theta = ((rotationDeg || 0) * Math.PI) / 180;
+  const cos = Math.cos(theta);
+  const sin = Math.sin(theta);
+  const reach = Math.ceil(Math.hypot(hw, hh));
+  const op = Math.max(0, Math.min(1, opacity));
+
+  for (let py = Math.max(0, Math.floor(cy - reach)); py <= Math.min(height - 1, Math.ceil(cy + reach)); py++) {
+    for (let px = Math.max(0, Math.floor(cx - reach)); px <= Math.min(width - 1, Math.ceil(cx + reach)); px++) {
+      const dx = px - cx;
+      const dy = py - cy;
+      const lx = dx * cos + dy * sin;
+      const ly = -dx * sin + dy * cos;
+      const insideX = hw - Math.abs(lx);
+      const insideY = hh - Math.abs(ly);
+      if (insideX < 0 || insideY < 0) continue;
+      const onEdge = Math.min(insideX, insideY) < strokeW;
+      blendPixel(pixels, width, height, px, py, r, g, b, (onEdge ? 255 : fillAlpha) * op);
     }
   }
 }
 
 /**
  * Generates a PNG raster image of the project canvas at time `t`.
- * Uses a pure-JS PNG encoder (zlib deflateRawSync) — no native dependencies.
+ * Uses a pure-JS PNG encoder (zlib deflateSync) — no native dependencies.
+ *
+ * NOTE: this is a SCHEMATIC preview. Every active entity is drawn as a box at
+ * its evaluated transform; the output of the entity's script is not rendered.
  * @returns {Buffer} PNG file bytes
  */
 export function renderFramePng(project, time = 0) {
   const { resolution, activeEntities } = evaluateTimelineAtTime(project, time);
   const { width, height } = resolution;
+  assertRenderSize(width, height);
   const centerX = Math.floor(width / 2);
   const centerY = Math.floor(height / 2);
 
@@ -311,48 +350,49 @@ export function renderFramePng(project, time = 0) {
   // Draw entities as boxes
   for (const item of activeEntities) {
     const { transform, color } = item;
-    const ex = Math.floor(centerX + (transform.x || 0));
-    const ey = Math.floor(centerY + (transform.y || 0));
-    const sx = transform.scaleX || 1;
-    const sy = transform.scaleY || 1;
-    const hw = Math.floor(100 * sx);
-    const hh = Math.floor(50 * sy);
-    const [boxR, boxG, boxB] = hexToRgb(color || '#38bdf8');
-
-    drawRoundedRect(pixels, width, height, ex, ey, hw, hh, boxR, boxG, boxB, 255, 255, 3, 60);
+    drawEntityBox(
+      pixels,
+      width,
+      height,
+      centerX + (transform.x || 0),
+      centerY + (transform.y || 0),
+      Math.abs(100 * (transform.scaleX ?? 1)),
+      Math.abs(50 * (transform.scaleY ?? 1)),
+      transform.rotation || 0,
+      hexToRgb(color),
+      transform.opacity ?? 1
+    );
   }
 
-  // Build PNG: PNG signature + IHDR + IDAT + IEND
   const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
-  // IHDR
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
   ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8;  // bit depth
-  ihdr[9] = 6;  // color type: RGBA
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 6; // color type: RGBA
   ihdr[10] = 0; // compression
   ihdr[11] = 0; // filter
   ihdr[12] = 0; // interlace
 
-  // Filter bytes: one 0x00 byte per scanline (no filter)
-  const filtered = Buffer.alloc(height * (1 + width * 4));
+  // One filter byte (0 = None) in front of every scanline.
+  const stride = width * 4;
+  const raw = Buffer.alloc(height * (1 + stride));
   for (let row = 0; row < height; row++) {
-    filtered[row * (1 + width * 4)] = 0; // filter type: None
-    const src = Buffer.from(pixels.buffer, row * width * 4, width * 4);
-    src.copy(filtered, row * (1 + width * 4) + 1);
+    const offset = row * (1 + stride);
+    raw[offset] = 0;
+    Buffer.from(pixels.buffer, row * stride, stride).copy(raw, offset + 1);
   }
 
-  const compressed = zlib.deflateRawSync(filtered);
+  // PNG's IDAT stream is zlib-wrapped deflate (RFC 1950), not raw deflate.
+  const compressed = zlib.deflateSync(raw);
 
-  const png = Buffer.concat([
+  return Buffer.concat([
     signature,
     pngChunk('IHDR', ihdr),
     pngChunk('IDAT', compressed),
     pngChunk('IEND', Buffer.alloc(0)),
   ]);
-
-  return png;
 }
 
 /**
@@ -373,8 +413,15 @@ export async function exportWithFfmpeg({
 
   const crf = quality === 'ultra' ? '18' : quality === 'high' ? '23' : '28';
   const out = path.resolve(outputPath);
+  if (/["`$\n\r]/.test(out)) {
+    throw new Error('outputPath must not contain quotes, backticks, "$" or line breaks.');
+  }
 
   return {
+    // This only BUILDS a command line; nothing is executed and the command
+    // produces a black placeholder video, not the project's real frames.
+    planOnly: true,
+    note: 'Plan only: the command renders a black placeholder, not the project timeline.',
     success: true,
     resolution: `${width}x${height}`,
     totalDuration,

@@ -1,13 +1,16 @@
 import path from 'node:path';
-import fs from 'node:fs/promises';
 import {
   initProject,
   loadProject,
-  saveProject,
+  updateProject,
   inspectProject,
   listTracks,
   addTrack,
   removeTrack,
+  requireTrack,
+  validateEntityProps,
+  loadScriptSchema,
+  sanitizeScriptName,
   addVideoClip,
   addAudioClip,
   addScriptEntity,
@@ -25,9 +28,12 @@ import {
   renderFrameSvg,
   renderFramePng,
   exportWithFfmpeg,
+  atomicWriteFile,
   sendFileCommand,
   sendHttpCommand,
   startBridgeServer,
+  validateBridgeCommand,
+  DEFAULT_BRIDGE_PORT,
 } from '../../blahblah-core/src/index.js';
 
 function parseArgs(args) {
@@ -52,6 +58,15 @@ function parseArgs(args) {
   }
 
   return { positional, options };
+}
+
+function numberOption(options, key, fallback) {
+  if (options[key] === undefined) return fallback;
+  const n = Number(options[key]);
+  if (options[key] === true || !Number.isFinite(n)) {
+    throw new Error(`--${key} must be a number (got ${JSON.stringify(options[key])}).`);
+  }
+  return n;
 }
 
 function printOutput(data, options, message = '') {
@@ -94,7 +109,7 @@ Usage:
   blahblah keyframe add --id <id> --field <name> --time <sec> --value <val> [--ease <ease>] [--track-key <key>] [--dir <path>] [--json]
   blahblah keyframe list --id <id> [--dir <path>] [--json]
 
-  blahblah script new <name> [--type <canvas|motion|react|codesnippet>] [--dir <path>] [--json]
+  blahblah script new <name> [--type <canvas|motion|react|codesnippet>] [--force] [--dir <path>] [--json]
   blahblah script list [--dir <path>] [--json]
   blahblah script check <file> [--json]
 
@@ -130,24 +145,21 @@ Usage:
 
     // ─── TRACK COMMANDS ────────────────────────────────────────────────────
     if (command === 'track') {
-      const { project } = await loadProject(projectDir);
-
       if (subcommand === 'list') {
+        const { project } = await loadProject(projectDir);
         const tracks = listTracks(project);
         printOutput(tracks, options);
         return;
       }
       if (subcommand === 'add') {
         const name = positional[2] || options.name;
-        const newTrack = addTrack(project, { name, id: options.id });
-        await saveProject(projectDir, project);
+        const newTrack = await updateProject(projectDir, (project) => addTrack(project, { name, id: options.id }));
         printOutput(newTrack, options, `✓ Added track "${newTrack.name}" (${newTrack.id})`);
         return;
       }
       if (subcommand === 'remove') {
         const trackId = positional[2] || options.id;
-        const removed = removeTrack(project, trackId);
-        await saveProject(projectDir, project);
+        const removed = await updateProject(projectDir, (project) => removeTrack(project, trackId));
         printOutput(removed, options, `✓ Removed track "${trackId}"`);
         return;
       }
@@ -156,20 +168,23 @@ Usage:
 
     // ─── CLIP COMMANDS ─────────────────────────────────────────────────────
     if (command === 'clip') {
-      const { project } = await loadProject(projectDir);
-
       if (subcommand === 'add') {
         const file = options.file;
-        if (!file) throw new Error('--file is required for clip add');
-        const clipRes = addVideoClip(project, {
-          file,
-          name: options.name,
-          trackId: options.track || 'track-1',
-          startTime: options.start !== undefined ? Number(options.start) : 0,
-          duration: options.duration !== undefined ? Number(options.duration) : 5,
-          includeAudio: options.audio !== false,
+        if (!file || file === true) throw new Error('--file is required for clip add');
+        const startTime = numberOption(options, 'start', 0);
+        const duration = numberOption(options, 'duration', 5);
+        const clipRes = await updateProject(projectDir, (project) => {
+          const trackId = options.track || 'track-1';
+          requireTrack(project, trackId);
+          return addVideoClip(project, {
+            file,
+            name: options.name,
+            trackId,
+            startTime,
+            duration,
+            includeAudio: options.audio !== false,
+          });
         });
-        await saveProject(projectDir, project);
         printOutput(clipRes, options, `✓ Added clip "${clipRes.video.name}"`);
         return;
       }
@@ -178,33 +193,50 @@ Usage:
 
     // ─── ENTITY COMMANDS ───────────────────────────────────────────────────
     if (command === 'entity') {
-      const { project } = await loadProject(projectDir);
-
       if (subcommand === 'add') {
         let props = {};
         if (options.props) {
           try {
             props = JSON.parse(options.props);
-          } catch {
-            props = {};
+          } catch (err) {
+            throw new Error(`--props must be valid JSON: ${err.message}`);
+          }
+          if (!props || typeof props !== 'object' || Array.isArray(props)) {
+            throw new Error('--props must be a JSON object, e.g. \'{"title":"Hi"}\'.');
           }
         }
-        const entity = addScriptEntity(project, {
-          name: options.name || positional[2],
-          scriptName: options.script || positional[2],
-          trackId: options.track || 'track-1',
-          startTime: options.start !== undefined ? Number(options.start) : 0,
-          duration: options.duration !== undefined ? Number(options.duration) : 5,
-          props,
+        const scriptName = options.script || positional[2];
+        const startTime = numberOption(options, 'start', 0);
+        const duration = numberOption(options, 'duration', 5);
+
+        // If the script exists, check the props against what it declares.
+        // (A script that does not exist yet is allowed so it can be written afterwards.)
+        const schema = scriptName ? await loadScriptSchema(projectDir, scriptName) : null;
+        if (schema) {
+          const propErrors = validateEntityProps(schema, props);
+          if (propErrors.length > 0) throw new Error(`Invalid props:\n${propErrors.join('\n')}`);
+        } else if (scriptName) {
+          console.error(`Warning: script "${sanitizeScriptName(scriptName)}" was not found in scripts/ (create it with 'blahblah script new').`);
+        }
+
+        const entity = await updateProject(projectDir, (project) => {
+          const trackId = options.track || 'track-1';
+          requireTrack(project, trackId);
+          return addScriptEntity(project, {
+            name: options.name || positional[2],
+            scriptName,
+            trackId,
+            startTime,
+            duration,
+            props,
+          });
         });
-        await saveProject(projectDir, project);
         printOutput(entity, options, `✓ Added entity "${entity.name}" (${entity.id})`);
         return;
       }
       if (subcommand === 'remove') {
         const entityId = positional[2] || options.id;
-        const rm = removeEntity(project, entityId);
-        await saveProject(projectDir, project);
+        const rm = await updateProject(projectDir, (project) => removeEntity(project, entityId));
         printOutput(rm, options, `✓ Removed entity "${entityId}"`);
         return;
       }
@@ -222,25 +254,33 @@ Usage:
         } catch {
           // keep as string
         }
-        const updatedProps = setEntityProp(project, entityId, propName, parsedVal);
-        await saveProject(projectDir, project);
+        const { project: current } = await loadProject(projectDir);
+        const target = findEntity(current, entityId);
+        if (!target) throw new Error(`Entity "${entityId}" not found.`);
+        const scriptComp = (target.components || []).find((c) => c.type === 'ScriptComponent');
+        const schema = scriptComp?.scriptName ? await loadScriptSchema(projectDir, scriptComp.scriptName) : null;
+        const updatedProps = await updateProject(projectDir, (project) =>
+          setEntityProp(project, target.id, propName, parsedVal, { schema })
+        );
         printOutput(updatedProps, options, `✓ Updated prop "${propName}" on entity "${entityId}"`);
         return;
       }
       if (subcommand === 'set-transform') {
         const entityId = options.id || positional[2];
         const updates = {};
-        if (options.x !== undefined) updates.x = Number(options.x);
-        if (options.y !== undefined) updates.y = Number(options.y);
+        if (options.x !== undefined) updates.x = numberOption(options, 'x');
+        if (options.y !== undefined) updates.y = numberOption(options, 'y');
         if (options.scale !== undefined) {
-          updates.scaleX = Number(options.scale);
-          updates.scaleY = Number(options.scale);
+          updates.scaleX = numberOption(options, 'scale');
+          updates.scaleY = updates.scaleX;
         }
-        if (options.rot !== undefined) updates.rotation = Number(options.rot);
-        if (options.opacity !== undefined) updates.opacity = Number(options.opacity);
+        if (options.rot !== undefined) updates.rotation = numberOption(options, 'rot');
+        if (options.opacity !== undefined) updates.opacity = numberOption(options, 'opacity');
+        if (Object.keys(updates).length === 0) {
+          throw new Error('Give at least one of --x, --y, --scale, --rot, --opacity.');
+        }
 
-        const updated = setEntityTransform(project, entityId, updates);
-        await saveProject(projectDir, project);
+        const updated = await updateProject(projectDir, (project) => setEntityTransform(project, entityId, updates));
         printOutput(updated, options, `✓ Updated transform on entity "${entityId}"`);
         return;
       }
@@ -249,28 +289,22 @@ Usage:
 
     // ─── KEYFRAME COMMANDS ─────────────────────────────────────────────────
     if (command === 'keyframe') {
-      const { project } = await loadProject(projectDir);
-
       if (subcommand === 'add') {
         const entityId = options.id || positional[2];
         const field = options.field;
-        const time = options.time !== undefined ? Number(options.time) : 0;
+        const time = numberOption(options, 'time', 0);
         const value = options.value;
         const ease = options.ease || 'linear';
         const trackKey = options['track-key'] || 'Transform';
 
-        const kf = addKeyframe(project, entityId, {
-          trackKey,
-          field,
-          time,
-          value,
-          ease,
-        });
-        await saveProject(projectDir, project);
+        const kf = await updateProject(projectDir, (project) =>
+          addKeyframe(project, entityId, { trackKey, field, time, value, ease })
+        );
         printOutput(kf, options, `✓ Added keyframe for ${field} at ${time}s on entity "${entityId}"`);
         return;
       }
       if (subcommand === 'list') {
+        const { project } = await loadProject(projectDir);
         const entityId = options.id || positional[2];
         const kfs = listKeyframes(project, entityId);
         printOutput(kfs, options);
@@ -288,6 +322,7 @@ Usage:
           dir: projectDir,
           name,
           type,
+          overwrite: options.force === true,
         });
         printOutput(script, options, `✓ Created script "${script.fileName}" (${type}) at ${script.filePath}`);
         return;
@@ -299,9 +334,12 @@ Usage:
       }
       if (subcommand === 'check') {
         const target = positional[2] || options.file;
+        if (!target || target === true) throw new Error('Give the script file to check: blahblah script check <file>');
         const filePath = path.resolve(projectDir, target);
-        const checkRes = await validateScript(filePath);
+        // The user runs the CLI on their own machine, so any path is allowed here.
+        const checkRes = await validateScript(filePath, { unrestricted: true });
         printOutput(checkRes, options, checkRes.valid ? `✓ Script "${target}" is valid.` : `✗ Script "${target}" has errors.`);
+        if (!checkRes.valid) process.exitCode = 1;
         return;
       }
       throw new Error(`Unknown script subcommand: "${subcommand}"`);
@@ -312,14 +350,14 @@ Usage:
       const { project } = await loadProject(projectDir);
 
       if (subcommand === 'frame') {
-        const time = options.time !== undefined ? Number(options.time) : 0;
+        const time = numberOption(options, 'time', 0);
         const evaluated = evaluateTimelineAtTime(project, time);
 
         if (options.out) {
           const outPath = path.resolve(options.out);
-          if (outPath.endsWith('.png')) {
+          if (/\.png$/i.test(outPath)) {
             const pngBuf = renderFramePng(project, time);
-            await fs.writeFile(outPath, pngBuf);
+            await atomicWriteFile(outPath, pngBuf);
             printOutput(
               { ...evaluated, out: outPath, format: 'png' },
               options,
@@ -327,7 +365,7 @@ Usage:
             );
           } else {
             const svg = renderFrameSvg(project, time);
-            await fs.writeFile(outPath, svg, 'utf8');
+            await atomicWriteFile(outPath, svg);
             printOutput(
               { ...evaluated, out: outPath },
               options,
@@ -344,9 +382,13 @@ Usage:
           projectDir,
           outputPath: options.out || 'output.mp4',
           quality: options.quality || 'high',
-          fps: options.fps ? Number(options.fps) : 60,
+          fps: numberOption(options, 'fps', 60),
         });
-        printOutput(exportRes, options, `✓ Export plan created:\n  ${exportRes.command}`);
+        printOutput(
+          exportRes,
+          options,
+          `✓ Export plan created (plan only: this command renders a black placeholder, not the timeline):\n  ${exportRes.command}`
+        );
         return;
       }
       throw new Error(`Unknown render subcommand: "${subcommand}"`);
@@ -357,28 +399,38 @@ Usage:
       if (subcommand === 'send') {
         const cmdType = options.cmd || positional[2];
         const arg = options.arg !== undefined ? options.arg : positional[3];
-        const payload = { type: cmdType, arg };
+        const payload = validateBridgeCommand({ type: cmdType, arg });
 
         // Write file IPC
-        await sendFileCommand(projectDir, payload);
+        const queued = await sendFileCommand(projectDir, payload);
 
         // Also attempt HTTP IPC if live server is running
+        let delivered = false;
         try {
-          await sendHttpCommand(payload, options.port || 9876);
+          const res = await sendHttpCommand(payload, options.port || DEFAULT_BRIDGE_PORT, { projectDir });
+          delivered = Boolean(res.delivered);
         } catch {
-          // file IPC is sufficient fallback
+          // file IPC is the fallback
         }
 
-        printOutput(payload, options, `✓ Sent bridge command: ${JSON.stringify(payload)}`);
+        printOutput(
+          { ...queued, delivered },
+          options,
+          delivered
+            ? `✓ Bridge command delivered: ${JSON.stringify(payload)}`
+            : `✓ Bridge command queued (no running editor acknowledged it yet): ${JSON.stringify(payload)}`
+        );
         return;
       }
       if (subcommand === 'start') {
-        const port = Number(options.port || 9876);
+        const port = Number(options.port || DEFAULT_BRIDGE_PORT);
         const bridge = await startBridgeServer({
           port,
+          projectDir,
           onCommand: (c) => console.log(`[Bridge Recv] ${JSON.stringify(c)}`),
         });
-        console.log(`✓ BlahBlah Live Bridge server listening on http://127.0.0.1:${port}`);
+        console.log(`✓ BlahBlah Live Bridge server listening on http://127.0.0.1:${bridge.port}`);
+        console.log(`  Token (also saved to ${path.join(projectDir, '.aibridge', 'token')}): ${bridge.token}`);
         return;
       }
       throw new Error(`Unknown bridge subcommand: "${subcommand}"`);

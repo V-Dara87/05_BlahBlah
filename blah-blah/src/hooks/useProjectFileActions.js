@@ -6,6 +6,8 @@ import {
   checkScriptsForChanges,
   verifyPermission,
   watchScriptsDirectory,
+  watchProjectFile,
+  checkProjectJsonForChanges,
 } from '../services/projectFileSystem';
 import { recordProjectCreated, recordProjectOpened } from '../services/recentProjects';
 import { precompileAllProjectScripts } from '../engine/scriptRunner';
@@ -47,6 +49,7 @@ export function useProjectFileActions({
   setProjectName,
   setResolution,
   setSelectedEntityId,
+  saveStatus,
   setSaveStatus,
   setSchemaWarning,
   setScreen,
@@ -219,6 +222,81 @@ export function useProjectFileActions({
     };
   }, [projectFolderHandle]);
  
+
+
+  const saveStatusRef = useRef(saveStatus);
+  useEffect(() => {
+    saveStatusRef.current = saveStatus;
+  }, [saveStatus]);
+
+  const isCheckingProjectRef = useRef(false);
+  const debounceProjectTimerRef = useRef(null);
+
+  useEffect(() => {
+    if (!projectFolderHandle) return;
+
+    let disposed = false;
+    let unwatchFn = null;
+    let poller = null;
+
+    const handleProjectJsonChanged = () => {
+      if (disposed) return;
+      if (debounceProjectTimerRef.current) {
+        clearTimeout(debounceProjectTimerRef.current);
+      }
+      debounceProjectTimerRef.current = setTimeout(async () => {
+        if (disposed || isCheckingProjectRef.current) return;
+        isCheckingProjectRef.current = true;
+        try {
+          const changed = await checkProjectJsonForChanges(projectFolderHandle);
+          if (!changed || disposed) return;
+
+          const currentStatus = saveStatusRef.current;
+          if (currentStatus === 'saved') {
+            console.info('project.json changed externally; reloading project...');
+            await openProjectFromHandle(projectFolderHandle);
+          } else {
+            const confirmReload = typeof window !== 'undefined' && window.confirm(
+              'project.json was modified externally, but you have unsaved changes in the editor.\n\n' +
+              'Reload from disk and discard your unsaved changes?'
+            );
+            if (confirmReload && !disposed) {
+              await openProjectFromHandle(projectFolderHandle);
+            }
+          }
+        } catch (err) {
+          console.warn('Failed to handle external project.json update:', err);
+        } finally {
+          isCheckingProjectRef.current = false;
+        }
+      }, 300);
+    };
+
+    watchProjectFile(projectFolderHandle, handleProjectJsonChanged).then((unwatch) => {
+      if (disposed) {
+        try { unwatch?.(); } catch {}
+        return;
+      }
+      unwatchFn = unwatch;
+      if (!unwatchFn) {
+        poller = setInterval(() => {
+          handleProjectJsonChanged();
+        }, 2000);
+      }
+    });
+
+    return () => {
+      disposed = true;
+      if (debounceProjectTimerRef.current) {
+        clearTimeout(debounceProjectTimerRef.current);
+      }
+      if (unwatchFn) {
+        try { unwatchFn(); } catch {}
+      }
+      if (poller) clearInterval(poller);
+    };
+  }, [projectFolderHandle, openProjectFromHandle]);
+
   return {
     handleProjectCreated,
     handleOpenProjectFolder,

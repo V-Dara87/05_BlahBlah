@@ -1,8 +1,9 @@
 import { UnityHeader } from './UnityHeader';
-import { useCurrentTime, useIsPlaying, useIsLooping, usePlaybackStore } from '../../hooks/PlaybackContext';
+import { useThrottledCurrentTime, useIsPlaying, useIsLooping, usePlaybackStore } from '../../hooks/PlaybackContext';
 
 export function EditorHeader(props) {
-  const currentTime = useCurrentTime();
+  // Timecode text only: no need to re-render the whole header 60x/s.
+  const currentTime = useThrottledCurrentTime(15);
   const isPlaying = useIsPlaying();
   const isLooping = useIsLooping();
   const store = usePlaybackStore();
