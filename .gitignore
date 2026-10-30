@@ -26,6 +26,19 @@ dist-ssr
 .cache/
 *.peaks
 *.download.tmp
+*.bak
+
+# Media & local snapshots
+*.mp4
+*.mov
+*.avi
+*.webm
+.freebuff/
+.stelechos/
+
+# Sidecar binaries (place platform-specific executables/dlls manually)
+blah-blah/src-tauri/binaries/*
+!blah-blah/src-tauri/binaries/.gitkeep
 
 # Demo and scratch projects
 demo_explainer/
