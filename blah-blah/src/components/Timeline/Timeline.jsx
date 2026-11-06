@@ -51,7 +51,7 @@ const ZOOM_WHEEL_MAX_DELTA = 60;
 // live in utils/timelineLayout.js (shared with TrackHeader and unit-tested).
 // Re-exported here so existing importers stay unchanged.
 export { TRACK_HEIGHT } from '../../utils/timelineLayout';
-import { computeTrackLanes, isTransitionClipLike } from '../../utils/timelineLayout';
+import { TRACK_HEIGHT, computeTrackLanes, isTransitionClipLike } from '../../utils/timelineLayout';
 import './timeline.css';
  
 export const Timeline = memo(function Timeline({
@@ -106,6 +106,9 @@ export const Timeline = memo(function Timeline({
   // The toolbar +/- buttons and keyboard shortcuts have no mouse position to
   // anchor to, so they always use the playhead regardless of this setting.
   zoomAnchorMode = 'cursor',
+  // Row height for tracks that haven't been resized by hand
+  // (services/editorSettings.js -> defaultTrackHeight).
+  defaultTrackHeight = TRACK_HEIGHT,
 }) {
   const playbackStore = usePlaybackStore();
   const lanesScrollRef = useRef(null);
@@ -179,13 +182,13 @@ export const Timeline = memo(function Timeline({
   // resizable) rowHeight, not a single shared TRACK_HEIGHT constant — see
   // TrackHeader.jsx's resize handle and track.height in types.js.
   const layout = useMemo(() => {
-    const trackRows = computeTrackLanes(tracks, clips);
+    const trackRows = computeTrackLanes(tracks, clips, defaultTrackHeight);
     let surfaceY = 0;
     for (const row of trackRows) {
       surfaceY += row.rowHeight;
     }
     return { trackRows, surfaceY };
-  }, [tracks, clips]);
+  }, [tracks, clips, defaultTrackHeight]);
  
   const timelineLanesHeight = Math.max(layout.surfaceY, 180);
   const totalWidth = Math.max(totalDuration * pixelsPerSecond + 400, 1600);
@@ -1121,6 +1124,7 @@ export const Timeline = memo(function Timeline({
                     <TrackHeader
                       track={row.track}
                       rowHeight={row.rowHeight}
+                      defaultTrackHeight={defaultTrackHeight}
                       onUpdateTrack={onUpdateTrack}
                       onDeleteTrack={onDeleteTrack}
                       canDeleteTrack={tracks.length > 1}
@@ -1166,6 +1170,7 @@ export const Timeline = memo(function Timeline({
               clips={clips}
               mediaAssets={mediaAssets}
               pixelsPerSecond={pixelsPerSecond}
+              defaultTrackHeight={defaultTrackHeight}
               selectedIds={mergedSelectedIds}
               exportRange={exportRange}
               recordingTrackId={recordingTrackId}

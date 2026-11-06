@@ -1,7 +1,3 @@
- 
- 
- 
- 
 import { useRef, useEffect, useMemo, useState, Fragment } from 'react';
 import { getCompiledReactComponent, detectScriptKind, extractScriptProps } from '../../engine/scriptRunner';
 import { resolveScriptProps } from '../../engine/referenceTypes';
@@ -136,7 +132,16 @@ export function EntityRenderer({
   );
 
   const computedEntities = useMemo(() => {
-    return computeActiveEntitiesAtTime({ entities, tracks, scripts, time: currentTime, fps, allAssets: mediaAssets, index: activeEntityIndex });
+    // Project frame size for the camera projection. Export passes the real
+    // project size (exportRunner.js); without it the preview projected every 3D
+    // layer as if the frame were always 1920x1080, so the camera's focal length
+    // and centre were wrong for any other resolution and 3D shapes/layers did
+    // not line up with what export renders.
+    const viewport = {
+      width: resolution?.width > 0 ? resolution.width : FALLBACK_RESOLUTION.width,
+      height: resolution?.height > 0 ? resolution.height : FALLBACK_RESOLUTION.height,
+    };
+    return computeActiveEntitiesAtTime({ entities, tracks, scripts, time: currentTime, fps, allAssets: mediaAssets, index: activeEntityIndex, viewport });
     // NOTE -- clip-duration vs. tween-duration boundary: a non-looping
     // tween correctly clamps to 1 and settles once localTime passes the
     // tween's own duration, but the active-entity check only knows about
@@ -145,7 +150,7 @@ export function EntityRenderer({
     // instead of landing on its final frame — documented authoring trap,
     // intentionally not "fixed" here.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- activeEntityIndex carries the project-change invalidation (including scriptsRecompiledTick, so a freshly-bundled script still re-runs this pass); entities/tracks/scripts stay listed so the transform pass can never be served stale entity objects.
-  }, [activeEntityIndex, currentTime, fps, mediaAssets, entities, tracks, scripts]);
+  }, [activeEntityIndex, currentTime, fps, mediaAssets, entities, tracks, scripts, resolution?.width, resolution?.height]);
  
   // Track-order -> stacking order. Previously every overlay entity got the
   // same flat zIndex (15, or 30 if selected) regardless of which track it
@@ -435,7 +440,3 @@ export function EntityRenderer({
       />
     </section>
   );}
- 
- 
- 
- 

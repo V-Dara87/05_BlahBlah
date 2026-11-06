@@ -1,4 +1,5 @@
 import { DEFAULT_PIXELS_PER_SECOND } from '../types';
+import { TRACK_HEIGHT, MIN_TRACK_HEIGHT, MAX_TRACK_HEIGHT } from '../utils/timelineLayout';
  
 /**
  * Persisted editor settings (Settings modal -> "Timeline" tab, added in the
@@ -24,6 +25,11 @@ import { DEFAULT_PIXELS_PER_SECOND } from '../types';
  *                            (mouse position) or 'playhead' (seekbar
  *                            position). Was hard-coded to playhead-only
  *                            anchoring in Timeline.jsx.
+ *  - defaultTrackHeight      Row height (px) of every timeline track that has
+ *                            not been resized by hand (no `track.height`).
+ *                            Was the hard-coded TRACK_HEIGHT in
+ *                            utils/timelineLayout.js. Tracks the user dragged
+ *                            to a custom height keep that height.
  *
  * Bounds (exported so the Settings tab and the sanitizer can never disagree):
  *  - Zoom is limited to 10..160, the range EVERY zoom control can reach. The
@@ -46,6 +52,7 @@ export const EDITOR_DEFAULTS = Object.freeze({
   // 'cursor' matches most editors (Premiere, Resolve, Figma); 'playhead'
   // is the older behavior of always centering on the seekbar instead.
   zoomAnchorMode: 'cursor',
+  defaultTrackHeight: TRACK_HEIGHT,
 });
  
 export const EDITOR_MIN_PIXELS_PER_SECOND = 10;
@@ -54,6 +61,10 @@ export const EDITOR_MIN_CLIP_DURATION_SEC = 0.5;
 export const EDITOR_MAX_CLIP_DURATION_SEC = 600;
 export const EDITOR_MIN_UNDO_LIMIT = 10;
 export const EDITOR_MAX_UNDO_LIMIT = 500;
+// Same bounds the per-track resize handle uses, so a default can never be
+// outside what a single track can be dragged to.
+export const EDITOR_MIN_TRACK_HEIGHT = MIN_TRACK_HEIGHT;
+export const EDITOR_MAX_TRACK_HEIGHT = MAX_TRACK_HEIGHT;
  
 /**
  * Coerce a stored value into a clamped, rounded number, or `fallback` when it
@@ -98,6 +109,12 @@ export function sanitizeEditorSettings(candidate) {
       c.zoomAnchorMode === 'cursor' || c.zoomAnchorMode === 'playhead'
         ? c.zoomAnchorMode
         : EDITOR_DEFAULTS.zoomAnchorMode,
+    defaultTrackHeight: toClampedNumber(
+      c.defaultTrackHeight,
+      EDITOR_MIN_TRACK_HEIGHT,
+      EDITOR_MAX_TRACK_HEIGHT,
+      EDITOR_DEFAULTS.defaultTrackHeight
+    ),
   };
 }
  

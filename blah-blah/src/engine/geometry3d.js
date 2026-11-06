@@ -357,7 +357,13 @@ export function renderMesh3D(ctx, mesh, {
     const v0 = transformed[indices[0]];
     const v1 = transformed[indices[1]];
     const v2 = transformed[indices[2]];
-    const normal = calculateNormal(v0, v1, v2);
+    // The mesh faces are wound so that calculateNormal() points INTO the
+    // solid (e.g. the cube's front face gives +Z, away from the viewer).
+    // The light below is a direction TOWARD the light, so it needs the
+    // outward normal; with the inward one every visible face fell back to
+    // ambient-only and the shape looked dark and flat (lit from behind/below).
+    const inward = calculateNormal(v0, v1, v2);
+    const normal = [-inward[0], -inward[1], -inward[2]];
 
     // Fully outside a clip plane: nothing to draw. Faces that only cross one
     // are clipped per-vertex at draw time instead of vanishing whole.
@@ -497,8 +503,11 @@ export function drawShape3D(ctx, shapeComp, transform = {}) {
   const options = {
     x: 0,
     y: 0,
-    rotationX: (tf.rotationX || 0) + (shapeComp.rotationX || 0),
-    rotationY: (tf.rotationY || 0) + (shapeComp.rotationY || 0),
+    // The inspector shows 25 / -35 as the 3D Tilt when nothing is stored, so
+    // the renderer must use the same defaults. With `|| 0` an untouched cube
+    // was drawn dead-on and looked like a flat square.
+    rotationX: (tf.rotationX || 0) + (shapeComp.rotationX ?? 25),
+    rotationY: (tf.rotationY || 0) + (shapeComp.rotationY ?? -35),
     rotationZ: (tf.rotation || 0) + (shapeComp.rotationZ || 0),
     scaleX: tf.scaleX ?? 1,
     scaleY: tf.scaleY ?? 1,

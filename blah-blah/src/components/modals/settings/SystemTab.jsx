@@ -3,6 +3,11 @@ import { AlertCircle, AlertTriangle, CheckCircle2, RefreshCw, RotateCcw } from '
 import { getFfmpegVersion } from '../../../services/ffmpegRunner';
 import { isTauri } from '../../../services/tauriFsAdapter';
 import { RESETTABLE_SETTINGS } from './resetAllSettings';
+import {
+  EDITOR_DEFAULTS,
+  EDITOR_MIN_TRACK_HEIGHT,
+  EDITOR_MAX_TRACK_HEIGHT,
+} from '../../../services/editorSettings';
 
 /**
  * System tab — what the app is running on, whether the FFmpeg sidecar works,
@@ -176,6 +181,45 @@ export function SystemTab({ onResetAll, editorSettings, onEditorSettingsChange }
             />
             <span>Playhead / seekbar</span>
           </label>
+        </div>
+      )}
+
+      {/* Default track height - global editor preference (services/editorSettings.js).
+          Applies to every track that has not been resized by hand. A track the
+          user dragged to a custom height keeps it (double-click its resize
+          handle to make it follow this default again). */}
+      {onEditorSettingsChange && (
+        <div className="form-field-group settings-group-spaced">
+          <label className="form-label" htmlFor="default-track-height">Default track height</label>
+          <p className="hint-text-sm settings-hint-below">
+            Height of timeline tracks you haven't resized yourself. Tracks you dragged to a custom height keep it.
+          </p>
+          <div className="custom-resolution-row">
+            <input
+              id="default-track-height"
+              type="range"
+              min={EDITOR_MIN_TRACK_HEIGHT}
+              max={EDITOR_MAX_TRACK_HEIGHT}
+              step={4}
+              value={editorSettings?.defaultTrackHeight ?? EDITOR_DEFAULTS.defaultTrackHeight}
+              onChange={(e) =>
+                onEditorSettingsChange({ ...(editorSettings || {}), defaultTrackHeight: Number(e.target.value) })
+              }
+            />
+            <span className="custom-resolution-unit">
+              {editorSettings?.defaultTrackHeight ?? EDITOR_DEFAULTS.defaultTrackHeight}px
+            </span>
+            <button
+              type="button"
+              className="btn-secondary btn-xs"
+              disabled={(editorSettings?.defaultTrackHeight ?? EDITOR_DEFAULTS.defaultTrackHeight) === EDITOR_DEFAULTS.defaultTrackHeight}
+              onClick={() =>
+                onEditorSettingsChange({ ...(editorSettings || {}), defaultTrackHeight: EDITOR_DEFAULTS.defaultTrackHeight })
+              }
+            >
+              Reset
+            </button>
+          </div>
         </div>
       )}
 

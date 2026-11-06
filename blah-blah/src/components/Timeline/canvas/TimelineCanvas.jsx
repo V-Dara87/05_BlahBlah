@@ -267,6 +267,9 @@ export const TimelineCanvas = memo(function TimelineCanvas({
   clips = [],
   mediaAssets = [],
   pixelsPerSecond = 40,
+  // Row height for tracks without their own height (editor setting). Undefined
+  // falls back to TRACK_HEIGHT inside the layout helpers.
+  defaultTrackHeight,
   selectedIds = [],
   exportRange = null,
   recordingTrackId = null,
@@ -385,8 +388,8 @@ export const TimelineCanvas = memo(function TimelineCanvas({
   // whole project just to recolour one card. On a long project that is the
   // difference between one rAF redraw and a full re-layout per pointer move.
   const scene = useMemo(
-    () => buildTimelineScene({ tracks, clips, pixelsPerSecond, mediaAssets }),
-    [tracks, clips, pixelsPerSecond, mediaAssets]
+    () => buildTimelineScene({ tracks, clips, pixelsPerSecond, mediaAssets, defaultTrackHeight }),
+    [tracks, clips, pixelsPerSecond, mediaAssets, defaultTrackHeight]
   );
  
   // Latest inputs, read by the rAF draw without making it a dependency (so

@@ -23,9 +23,14 @@ import {
 } from '../../utils/removeGaps';
 import './track-header.css';
  
+// Rows shorter than this switch the header to its compact layout (smaller
+// buttons, smaller name, tighter padding) so the controls aren't clipped.
+const COMPACT_HEADER_HEIGHT = 56;
+
 export const TrackHeader = memo(function TrackHeader({
   track,
   rowHeight,
+  defaultTrackHeight = TRACK_HEIGHT,
   onUpdateTrack,
   onDeleteTrack,
   canDeleteTrack = false,
@@ -63,7 +68,7 @@ export const TrackHeader = memo(function TrackHeader({
     setTempName(track.name);
   }
   const inputRef = useRef(null);
-  const effectiveHeight = rowHeight ?? clampTrackHeight(track.height || TRACK_HEIGHT);
+  const effectiveHeight = rowHeight ?? clampTrackHeight(track.height || defaultTrackHeight);
  
   // Drag-to-resize — grabbing the handle at the bottom edge of the header
   // adjusts this track's own height (persisted as track.height, same
@@ -110,8 +115,10 @@ export const TrackHeader = memo(function TrackHeader({
   const handleResizeDoubleClick = (e) => {
     // Double-click the handle to reset back to the default height, same
     // "double-click to reset" convention as most DAW/NLE track headers.
+    // Clearing track.height (instead of writing a number) makes the track
+    // follow the "default track height" setting again, including later changes.
     e.stopPropagation();
-    onUpdateTrack(track.id, { height: TRACK_HEIGHT });
+    onUpdateTrack(track.id, { height: undefined });
   };
  
   useEffect(() => {
@@ -188,7 +195,7 @@ export const TrackHeader = memo(function TrackHeader({
   return (
     <>
     <div
-      className={`track-header-row ${recording ? 'recording-active' : ''} ${track.locked ? 'track-locked' : ''}`}
+      className={`track-header-row ${recording ? 'recording-active' : ''} ${track.locked ? 'track-locked' : ''} ${effectiveHeight < COMPACT_HEADER_HEIGHT ? 'compact' : ''}`}
       style={{ height: effectiveHeight }}
       onContextMenu={handleContextMenu}
     >
@@ -251,7 +258,6 @@ export const TrackHeader = memo(function TrackHeader({
  
           <button
             className="track-btn add-clip-track-btn"
-            style={{ padding: '0 3px', height: '17px', minWidth: '19px' }}
             title={`Add Clip to ${track.name} at Playhead (+C)`}
             onClick={() => onAddEmptyClip && onAddEmptyClip(track.id)}
             disabled={track.locked}

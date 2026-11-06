@@ -446,3 +446,40 @@
 .inspector-header-row select {
   text-overflow: ellipsis;
 }
+
+/* Inspector footer: compact buttons / short names / lighter footer when the
+   panel is small. Classes `narrow` / `short` are set by UnityInspector.jsx. */
+.inspector-footer .btn-label-short { display: none; }
+.inspector-footer .unity-btn { min-width: 0; white-space: nowrap; overflow: hidden; }
+.inspector-footer .unity-btn > span { overflow: hidden; text-overflow: ellipsis; }
+
+.inspector-footer.narrow {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.inspector-footer.narrow .add-comp-wrapper,
+.inspector-footer.narrow .unity-btn { flex: 1 1 0; min-width: 0; }
+.inspector-footer.narrow .add-comp-wrapper .unity-btn { width: 100%; }
+.inspector-footer.narrow .btn-label-full { display: none; }
+.inspector-footer.narrow .btn-label-short { display: inline; }
+.inspector-footer.narrow .unity-btn { padding: 3px 4px; gap: 3px; font-size: 10px; }
+
+.inspector-footer.short {
+  padding: 4px 6px;
+  gap: 4px;
+  background: transparent;
+  border-top: 1px solid var(--unity-border);
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+.inspector-footer.short .add-comp-wrapper,
+.inspector-footer.short .unity-btn { flex: 1 1 0; min-width: 0; }
+.inspector-footer.short .add-comp-wrapper .unity-btn { width: 100%; }
+.inspector-footer.short .btn-label-full { display: none; }
+.inspector-footer.short .btn-label-short { display: inline; }
+.inspector-footer.short .unity-btn { padding: 2px 6px; gap: 3px; font-size: 10px; min-height: 22px; }
+.inspector-footer.short .comp-dropdown-popover { bottom: 28px; }
+
+.inspector-footer.narrow .add-component-popover,
+.inspector-footer.short .add-component-popover { width: min(240px, calc(100vw - 24px)); }

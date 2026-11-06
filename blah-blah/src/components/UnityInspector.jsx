@@ -1,4 +1,4 @@
-import { useState, memo, useMemo, useRef } from 'react';
+import { useState, memo, useMemo, useRef, useEffect } from 'react';
 import {
   Sliders,
   Plus,
@@ -126,6 +126,23 @@ export const UnityInspector = memo(function UnityInspector({
   const sidebarRef = useRef(null);
   const footerRef = useRef(null);
   const [popoverMaxHeight, setPopoverMaxHeight] = useState(340);
+  // Footer buttons shrink (shorter names, smaller size, lighter footer) when the
+  // Inspector panel is narrow or short. Measured on the sidebar itself.
+  const [footerSize, setFooterSize] = useState('');
+  useEffect(() => {
+    const el = sidebarRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const update = () => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      const next = [w > 0 && w < 280 ? 'narrow' : '', h > 0 && h < 380 ? 'short' : ''].filter(Boolean).join(' ');
+      setFooterSize((prev) => (prev === next ? prev : next));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
  
   const {
     showAddComponent,
@@ -752,7 +769,7 @@ export const UnityInspector = memo(function UnityInspector({
       </div>
  
       {/* Footer Actions */}
-      <div className="inspector-footer" ref={footerRef}>
+      <div className={`inspector-footer${footerSize ? ' ' + footerSize : ''}`} ref={footerRef}>
         {!isTransitionClip && (
         <div className="add-comp-wrapper">
           <button
@@ -766,7 +783,8 @@ export const UnityInspector = memo(function UnityInspector({
             }}
           >
             <Plus size={13} />
-            <span>Add Component</span>
+            <span className="btn-label-full">Add Component</span>
+            <span className="btn-label-short">Add</span>
           </button>
  
           {showAddComponent && (
@@ -885,13 +903,15 @@ export const UnityInspector = memo(function UnityInspector({
         {!isTransitionClip && (
           <button className="unity-btn unity-btn-prefab full-width" onClick={handleSavePrefabClick}>
             {savedPrefab ? <Check size={13} /> : <Package size={13} />}
-            <span>{savedPrefab ? 'Saved to Prefabs!' : 'Save as Prefab'}</span>
+            <span className="btn-label-full">{savedPrefab ? 'Saved to Prefabs!' : 'Save as Prefab'}</span>
+            <span className="btn-label-short">{savedPrefab ? 'Saved' : 'Prefab'}</span>
           </button>
         )}
  
         <button className="unity-btn unity-btn-danger-text full-width" onClick={() => onDeleteEntity(selectedEntity.id)}>
           <Trash2 size={12} />
-          <span>Delete Clip</span>
+          <span className="btn-label-full">Delete Clip</span>
+          <span className="btn-label-short">Delete</span>
         </button>
       </div>
  
@@ -899,4 +919,3 @@ export const UnityInspector = memo(function UnityInspector({
     </aside>
   );
 });
- 

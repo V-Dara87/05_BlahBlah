@@ -1,4 +1,5 @@
 import { AUTOSAVE_DEFAULTS } from '../../../services/autosaveSettings';
+import { EDITOR_DEFAULTS } from '../../../services/editorSettings';
 import { saveAudioSettings } from '../../../services/audioSettings';
 import { resetKeybindSettings } from '../../../services/keybindSettings';
 import { THEME_DEFAULTS } from '../../../services/themeSettings';
@@ -64,6 +65,12 @@ export const RESETTABLE_SETTINGS = [
       saveAudioSettings(defaults);
       ctx.onSettingsChanged?.(defaults);
     },
+  },
+  {
+    id: 'editor',
+    label: 'Timeline defaults',
+    // Same updater the System tab uses, so the timeline re-lays out immediately.
+    reset: (ctx) => ctx.onEditorSettingsChange?.({ ...EDITOR_DEFAULTS }),
   },
   {
     id: 'theme',

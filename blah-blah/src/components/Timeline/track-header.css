@@ -219,3 +219,77 @@
     transform: scale(0.7);
   }
 }
+
+.add-clip-track-btn {
+  padding: 0 3px;
+  height: 17px;
+  min-width: 19px;
+}
+
+/* Compact header: used when the track row is short (see COMPACT_HEADER_HEIGHT
+   in TrackHeader.jsx). Smaller buttons and name, tighter padding, and no
+   second bottom border (the row already draws one), so nothing is clipped
+   and no dark strip is left under the buttons. */
+.track-header-row.compact .track-header-controls {
+  gap: 2px;
+  padding: 2px 6px;
+  border-bottom: none;
+  overflow: hidden;
+}
+
+.track-header-row.compact .track-header-title-box {
+  gap: 4px;
+}
+
+.track-header-row.compact .track-icon {
+  width: 9px;
+  height: 9px;
+}
+
+.track-header-row.compact .track-name {
+  font-size: 9px;
+  line-height: 11px;
+  max-width: 120px;
+}
+
+.track-header-row.compact .track-name-input {
+  font-size: 9px;
+  padding: 0 3px;
+  width: 90px;
+}
+
+.track-header-row.compact .track-header-btns {
+  gap: 2px;
+  height: 14px;
+}
+
+.track-header-row.compact .track-btn {
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+}
+
+.track-header-row.compact .track-btn svg {
+  width: 8px;
+  height: 8px;
+}
+
+.track-header-row.compact .track-btn.track-solo-btn {
+  font-size: 8px;
+}
+
+.track-header-row.compact .add-clip-track-btn {
+  height: 14px;
+  min-width: 16px;
+  padding: 0 2px;
+}
+
+.track-header-row.compact .add-clip-track-btn span {
+  font-size: 7px !important;
+}
+
+.track-header-row.compact .track-header-rec-badge {
+  height: 14px;
+  font-size: 8px;
+  padding: 0 3px;
+}

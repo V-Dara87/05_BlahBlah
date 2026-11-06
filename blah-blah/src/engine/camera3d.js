@@ -272,7 +272,12 @@ export function findActiveCamera(activeEntities = [], tracks = [], worldMap = ne
   });
 
   for (const entity of sorted) {
-    const camComp = entity.components?.find((c) => c.type === 'Camera');
+    // Read the camera from the keyframe-RESOLVED entity (localMap holds it,
+    // see resolveEntityLocal in the renderer). The raw entity only has the
+    // authored base values, so position / target / fov / zoom / roll
+    // keyframes never played back and an animated camera stayed frozen.
+    const resolvedEntity = localMap.get(entity.id)?.entity ?? entity;
+    const camComp = resolvedEntity.components?.find((c) => c.type === 'Camera');
     if (camComp && camComp.enabled !== false) {
       const camWorld = worldMap.get(entity.id) || localMap.get(entity.id)?.localTransform;
       const posX = camComp.positionX ?? camComp.position?.x ?? 0;

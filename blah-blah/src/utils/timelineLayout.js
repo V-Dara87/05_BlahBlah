@@ -3,7 +3,8 @@
  *
  * Every track is a full track row, no sub-tracks, no parent-child
  * hierarchy, no clip grouping. A track's row height defaults to
- * TRACK_HEIGHT but is independently resizable per-track (drag the handle
+ * TRACK_HEIGHT (or the user's "default track height" setting, passed into
+ * computeTrackLanes) but is independently resizable per-track (drag the handle
  * at the bottom of a TrackHeader — see TrackHeader.jsx) and persisted as
  * `track.height` on the track object itself, the same way mute/lock/
  * visible already persist per-track state.
@@ -41,9 +42,11 @@ export function getTickIntervalSeconds(pixelsPerSecond) {
  *
  * @param {Array} tracks  All project tracks
  * @param {Array} clips   All project clips/entities
+ * @param {number} [defaultHeight]  Row height for tracks with no `track.height`
+ *   (the "default track height" setting). Falls back to TRACK_HEIGHT.
  * @returns {Array<{ track, clips, rowHeight }>}
  */
-export function computeTrackLanes(tracks = [], clips = []) {
+export function computeTrackLanes(tracks = [], clips = [], defaultHeight = TRACK_HEIGHT) {
   // ONE pass over `clips` into per-track buckets, instead of re-filtering the
   // whole array once per track. The result is identical (each row's `clips`
   // keeps the array's own order) but the cost drops from O(tracks x clips) to
@@ -63,7 +66,7 @@ export function computeTrackLanes(tracks = [], clips = []) {
     return {
       track,
       clips: trackClips,
-      rowHeight: clampTrackHeight(track.height || TRACK_HEIGHT),
+      rowHeight: clampTrackHeight(track.height || defaultHeight),
       depth: 0,
     };
   });

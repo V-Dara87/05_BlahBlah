@@ -174,6 +174,9 @@ export function buildTimelineScene({
   clips = [],
   pixelsPerSecond = 1,
   mediaAssets = [],
+  // Row height for tracks without their own `track.height` (the "default track
+  // height" setting). Undefined falls back to TRACK_HEIGHT.
+  defaultTrackHeight,
 } = {}) {
   const pps = pixelsPerSecond > 0 ? pixelsPerSecond : 1;
   const rows = [];
@@ -189,7 +192,7 @@ export function buildTimelineScene({
 
   // One pass per row: row Y comes from computeTrackLanes (the same helper the
   // DOM path uses), sub-lanes from computeClipSubLanes.
-  const lanes = computeTrackLanes(tracks, clips);
+  const lanes = computeTrackLanes(tracks, clips, defaultTrackHeight);
   let y = 0;
   lanes.forEach((row, rowIndex) => {
     const rowHeight = clampTrackHeight(row.rowHeight);

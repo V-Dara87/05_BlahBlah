@@ -620,6 +620,27 @@ const UI_ZOOM_STEP: f64 = 0.05;
 /// Last zoom applied to the main window, as `f64` bits.
 static LAST_UI_ZOOM_BITS: AtomicU64 = AtomicU64::new(0);
 
+/// User-chosen zoom (header zoom buttons), as `f64` bits. 1.0 = 100%. It is
+/// multiplied into the automatic fit zoom, so the whole app scales while the
+/// window-size fitting keeps working.
+static USER_UI_ZOOM_BITS: AtomicU64 = AtomicU64::new(0x3FF0_0000_0000_0000); // 1.0f64
+const USER_MIN_ZOOM: f64 = 0.5;
+const USER_MAX_ZOOM: f64 = 2.0;
+const FINAL_MIN_ZOOM: f64 = 0.25;
+const FINAL_MAX_ZOOM: f64 = 4.0;
+
+/// Set the user zoom factor and re-apply it to the calling window.
+#[tauri::command]
+fn set_ui_zoom(window: WebviewWindow, factor: f64) -> Result<(), String> {
+  if !factor.is_finite() {
+    return Err("invalid zoom factor".to_string());
+  }
+  let clamped = factor.clamp(USER_MIN_ZOOM, USER_MAX_ZOOM);
+  USER_UI_ZOOM_BITS.store(clamped.to_bits(), Ordering::Relaxed);
+  apply_fit_zoom(&window, true);
+  Ok(())
+}
+
 /// UI zoom factor for a window of `width` x `height` logical pixels.
 fn fit_zoom(width: f64, height: f64) -> f64 {
   if !(width > 0.0 && height > 0.0) {
@@ -653,7 +674,9 @@ fn apply_fit_zoom(window: &WebviewWindow, force: bool) {
     return;
   }
 
-  let zoom = fit_zoom(size.width as f64 / scale, size.height as f64 / scale);
+  let user_zoom = f64::from_bits(USER_UI_ZOOM_BITS.load(Ordering::Relaxed));
+  let zoom = (fit_zoom(size.width as f64 / scale, size.height as f64 / scale) * user_zoom)
+    .clamp(FINAL_MIN_ZOOM, FINAL_MAX_ZOOM);
   let previous = LAST_UI_ZOOM_BITS.swap(zoom.to_bits(), Ordering::Relaxed);
   if !force && previous == zoom.to_bits() {
     return;
@@ -800,7 +823,8 @@ pub fn run() {
       cancel_download,
       cancel_process,
       verify_sha256,
-      get_app_data_dir
+      get_app_data_dir,
+      set_ui_zoom
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {

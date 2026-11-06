@@ -26,7 +26,7 @@ import { useLayoutEffect, useRef } from 'react';
 import { formatTimecode } from '../../utils/timeFormat';
 import { isTauri } from '../../services/tauriFsAdapter';
 import { openProjectInVsCode, openProjectInExplorer } from '../../services/ideLauncher';
-import { useTimelineView } from '../../dock/TimelineViewContext';
+import { useUiZoom } from '../../services/uiZoom';
 import './unity-header.css';
  
 /** Highest compact level; see the `data-compact` rules in unity-header.css. */
@@ -129,11 +129,8 @@ export function UnityHeader({
   onOpenSettings,
   onGoToHub,
 }) {
-  // Zoom live-readout / controls read the hot timeline-view context directly
-  // instead of being props threaded through App — see
-  // dock/TimelineViewContext.jsx. Keeping them off App state means a zoom
-  // tick re-renders only this header and the timeline, not the whole editor.
-  const { pixelsPerSecond, setPixelsPerSecond: onSetPixelsPerSecond } = useTimelineView();
+  // Whole-app zoom (the header +/- scales the entire UI, not just the timeline).
+  const { zoom: uiZoom, zoomIn: uiZoomIn, zoomOut: uiZoomOut, resetZoom: uiZoomReset } = useUiZoom();
   const headerRef = useRef(null);
   useCompactHeader(headerRef);
 
@@ -353,16 +350,23 @@ export function UnityHeader({
           <div className="unity-zoom-group">
             <button
               className="unity-tool-btn-sm"
-              title="Zoom Out (-)"
-              onClick={() => onSetPixelsPerSecond(prev => Math.max(10, prev - 10))}
+              title="Zoom Out (Ctrl + -)"
+              onClick={uiZoomOut}
             >
               <ZoomOut size={13} />
             </button>
-            <span className="zoom-text">{Math.round((pixelsPerSecond / 40) * 100)}%</span>
+            <span
+              className="zoom-text"
+              title="Reset app zoom to 100% (Ctrl + 0)"
+              style={{ cursor: 'pointer' }}
+              onClick={uiZoomReset}
+            >
+              {Math.round(uiZoom * 100)}%
+            </span>
             <button
               className="unity-tool-btn-sm"
-              title="Zoom In (+)"
-              onClick={() => onSetPixelsPerSecond(prev => Math.min(160, prev + 10))}
+              title="Zoom In (Ctrl + =)"
+              onClick={uiZoomIn}
             >
               <ZoomIn size={13} />
             </button>

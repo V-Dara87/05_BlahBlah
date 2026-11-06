@@ -154,6 +154,9 @@
 .timeline-scroll-area {
   display: flex;
   flex-direction: column;
+  /* Fill the whole panel so no empty dark strip is left under the tracks. */
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: hidden;
   position: relative;
   background: var(--unity-darkest);
@@ -190,4 +193,3 @@
 .lanes-surface:active {
   cursor: grabbing;
 }
- 
