@@ -1,5 +1,11 @@
-# Place platform-specific FFmpeg sidecar binaries in this directory:
-# Windows: ffmpeg-x86_64-pc-windows-msvc.exe
-# macOS (Apple Silicon): ffmpeg-aarch64-apple-darwin
-# macOS (Intel): ffmpeg-x86_64-apple-darwin
-# Linux: ffmpeg-x86_64-unknown-linux-gnu
+# Sidecar binaries live here and are git-ignored. Run `npm run sidecars`
+# (scripts/download-sidecars.mjs) to download / build the ones for this machine.
+#
+# Tauri looks for <name>-<target-triple>[.exe]:
+# Windows (x64):          ffmpeg-x86_64-pc-windows-msvc.exe, whisper-cli-x86_64-pc-windows-msvc.exe
+# macOS (Apple Silicon):  ffmpeg-aarch64-apple-darwin, whisper-cli-aarch64-apple-darwin
+# macOS (Intel):          ffmpeg-x86_64-apple-darwin, whisper-cli-x86_64-apple-darwin
+# Linux (x64):            ffmpeg-x86_64-unknown-linux-gnu, whisper-cli-x86_64-unknown-linux-gnu
+#
+# Windows only: whisper-cli.exe needs its DLLs next to it. They are kept in
+# windows-dlls/ and shipped via src-tauri/tauri.windows.conf.json.

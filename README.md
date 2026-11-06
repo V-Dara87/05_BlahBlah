@@ -9,6 +9,8 @@ Video editor and tutorial overlay motion graphics workspace powered by React, Ta
   - `packages/blahblah-cli/` - CLI tool for autonomous video editing and inspection
   - `packages/blahblah-mcp/` - Model Context Protocol (MCP) server for AI assistants
   - `packages/blahblah-sdk/` - User script runtime SDK and type definitions
+  - `scripts/download-sidecars.mjs` - Sidecar installer (run via `npm run sidecars`)
+  - `src-tauri/binaries/` - Sidecar binaries (git-ignored, filled by the installer)
 - `demo-explainer/` - Example project demonstrating motion scripts, keyframe animation, and custom components
 - `AGENTS.md` - AI agent guide for BlahBlah automation via CLI and MCP
 
@@ -24,13 +26,36 @@ npm run dev
 
 ### Tauri Desktop App
 
+The desktop app uses two external tools as Tauri sidecars: **FFmpeg** and **whisper-cli** (Whisper). Install them once before the first run:
+
 ```bash
 cd blah-blah
+npm install
+npm run sidecars   # downloads / builds the sidecars for this machine
 npm run tauri:dev
 ```
 
-> **Note on Desktop Sidecar Binaries**:
-> Precompiled FFmpeg and Whisper binaries for Tauri sidecars should be placed in `blah-blah/src-tauri/binaries/` (see `blah-blah/src-tauri/binaries/.gitkeep` for platform naming).
+#### Sidecar binaries
+
+Sidecars are **not committed to Git**. `npm run sidecars` (`scripts/download-sidecars.mjs`) puts the ones for your machine into `blah-blah/src-tauri/binaries/`.
+
+Tauri expects the file name `<name>-<target-triple>[.exe]`:
+
+| Platform | Files |
+|---|---|
+| Windows (x64) | `ffmpeg-x86_64-pc-windows-msvc.exe`, `whisper-cli-x86_64-pc-windows-msvc.exe` |
+| macOS (Apple Silicon) | `ffmpeg-aarch64-apple-darwin`, `whisper-cli-aarch64-apple-darwin` |
+| macOS (Intel) | `ffmpeg-x86_64-apple-darwin`, `whisper-cli-x86_64-apple-darwin` |
+| Linux (x64) | `ffmpeg-x86_64-unknown-linux-gnu`, `whisper-cli-x86_64-unknown-linux-gnu` |
+
+**Windows only:** `whisper-cli.exe` needs its DLLs next to it. They are kept in `src-tauri/binaries/windows-dlls/` and shipped with the app through `src-tauri/tauri.windows.conf.json`:
+
+- `ggml-base.dll`
+- `ggml-cpu.dll`
+- `ggml.dll`
+- `whisper.dll`
+
+If the app cannot find FFmpeg or Whisper, run `npm run sidecars` again and check the file names above.
 
 ### AI Agent Automation
 

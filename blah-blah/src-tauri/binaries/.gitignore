@@ -1,0 +1,5 @@
+# Sidecar binaries are downloaded/built by `npm run sidecars`
+# (scripts/download-sidecars.mjs). Do not commit them.
+*
+!.gitkeep
+!.gitignore

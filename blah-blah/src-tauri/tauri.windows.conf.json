@@ -1,0 +1,10 @@
+{
+  "bundle": {
+    "resources": {
+      "binaries/windows-dlls/ggml-base.dll": "ggml-base.dll",
+      "binaries/windows-dlls/ggml-cpu.dll": "ggml-cpu.dll",
+      "binaries/windows-dlls/ggml.dll": "ggml.dll",
+      "binaries/windows-dlls/whisper.dll": "whisper.dll"
+    }
+  }
+}
