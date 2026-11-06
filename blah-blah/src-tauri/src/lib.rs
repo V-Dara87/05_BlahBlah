@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use tauri::webview::{NewWindowFeatures, NewWindowResponse};
+use tauri::webview::{NewWindowFeatures, NewWindowResponse, PageLoadEvent};
 use tauri::{Emitter, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
@@ -562,13 +562,121 @@ fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<WebviewWindow> {
 
   // `on_new_window` is `'static`, so it needs an owned handle of its own.
   let handler_app = app.clone();
-  WebviewWindowBuilder::from_config(app, &config)?
+  let mut builder = WebviewWindowBuilder::from_config(app, &config)?;
+
+  // The configured size is a preference, not a promise: on a 1366x768 laptop a
+  // 1400x900 window would open larger than the screen and its edges (menu bar,
+  // timeline, window buttons) would be unreachable. Clamp it to the monitor.
+  if let Some((width, height)) = fitted_window_size(app, config.width, config.height) {
+    builder = builder.inner_size(width, height).center();
+  }
+
+  let window = builder
     .on_new_window(move |url, features| {
       create_popout_window(&handler_app, url, features)
         .map(|window| NewWindowResponse::Create { window })
         .unwrap_or(NewWindowResponse::Deny)
     })
-    .build()
+    // Zoom is applied per page load too, so a reload (or the dev server
+    // restarting) never leaves the UI at the wrong scale.
+    .on_page_load(|window, payload| {
+      if matches!(payload.event(), PageLoadEvent::Finished) {
+        apply_fit_zoom(&window, true);
+      }
+    })
+    .build()?;
+
+  // Re-fit the UI every time the window is resized, maximised, moved to a
+  // monitor with another DPI, and so on.
+  let resized = window.clone();
+  window.on_window_event(move |event| {
+    if matches!(
+      event,
+      tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. }
+    ) {
+      apply_fit_zoom(&resized, false);
+    }
+  });
+  apply_fit_zoom(&window, true);
+
+  Ok(window)
+}
+
+/// Window size the editor UI is laid out for, in logical (DPI-independent)
+/// pixels. A window smaller than this is zoomed out so the whole editor still
+/// fits instead of being clipped.
+const UI_DESIGN_WIDTH: f64 = 1280.0;
+const UI_DESIGN_HEIGHT: f64 = 720.0;
+/// Windows larger than this are zoomed in a little (4K at 100% OS scaling,
+/// ultrawide monitors) so text and controls do not become tiny.
+const UI_LARGE_WIDTH: f64 = 1920.0;
+const UI_LARGE_HEIGHT: f64 = 1080.0;
+const UI_MIN_ZOOM: f64 = 0.4;
+const UI_MAX_ZOOM: f64 = 2.0;
+/// Zoom moves in steps of this size, so dragging a window edge does not
+/// re-layout the whole editor on every pixel.
+const UI_ZOOM_STEP: f64 = 0.05;
+
+/// Last zoom applied to the main window, as `f64` bits.
+static LAST_UI_ZOOM_BITS: AtomicU64 = AtomicU64::new(0);
+
+/// UI zoom factor for a window of `width` x `height` logical pixels.
+fn fit_zoom(width: f64, height: f64) -> f64 {
+  if !(width > 0.0 && height > 0.0) {
+    return 1.0;
+  }
+  let shrink = (width / UI_DESIGN_WIDTH).min(height / UI_DESIGN_HEIGHT);
+  let zoom = if shrink < 1.0 {
+    shrink
+  } else {
+    (width / UI_LARGE_WIDTH).min(height / UI_LARGE_HEIGHT).max(1.0)
+  };
+  let stepped = (zoom / UI_ZOOM_STEP).round() * UI_ZOOM_STEP;
+  ((stepped * 100.0).round() / 100.0).clamp(UI_MIN_ZOOM, UI_MAX_ZOOM)
+}
+
+/// Zoom the main webview so the whole editor fits the current window size.
+///
+/// The size comes from the native window (physical size / OS scale factor), not
+/// from `window.innerWidth` — the latter changes with the zoom itself and
+/// would feed back into the calculation. Webview zoom is a real browser zoom,
+/// so pointer coordinates, canvases and the dock layout stay consistent.
+fn apply_fit_zoom(window: &WebviewWindow, force: bool) {
+  // A minimised window reports a meaningless size.
+  if window.is_minimized().unwrap_or(false) {
+    return;
+  }
+  let (Ok(size), Ok(scale)) = (window.inner_size(), window.scale_factor()) else {
+    return;
+  };
+  if scale <= 0.0 || size.width == 0 || size.height == 0 {
+    return;
+  }
+
+  let zoom = fit_zoom(size.width as f64 / scale, size.height as f64 / scale);
+  let previous = LAST_UI_ZOOM_BITS.swap(zoom.to_bits(), Ordering::Relaxed);
+  if !force && previous == zoom.to_bits() {
+    return;
+  }
+  if let Err(err) = window.set_zoom(zoom) {
+    log::warn!("could not apply UI zoom {zoom}: {err}");
+  }
+}
+
+/// Largest window (logical pixels) that still fits on the primary monitor,
+/// leaving room for the taskbar / dock. `None` when the monitor is unknown.
+fn fitted_window_size(app: &tauri::AppHandle, width: f64, height: f64) -> Option<(f64, f64)> {
+  let monitor = app.primary_monitor().ok().flatten()?;
+  let scale = monitor.scale_factor();
+  if scale <= 0.0 {
+    return None;
+  }
+  let screen_width = monitor.size().width as f64 / scale;
+  let screen_height = monitor.size().height as f64 / scale;
+  Some((
+    width.min((screen_width * 0.94).floor()),
+    height.min((screen_height * 0.90).floor()),
+  ))
 }
 
 /// Name the window for a pop-out request.

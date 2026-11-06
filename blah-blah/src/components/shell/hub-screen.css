@@ -5,8 +5,8 @@
    App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
 
 .hub-screen {
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -24,6 +24,9 @@
 .hub-container {
   width: 100%;
   max-width: 560px;
+  /* Auto margins centre the card but, unlike align-items: center, stop it from
+     being clipped at the top when the window is shorter than the card. */
+  margin: auto;
   display: flex;
   flex-direction: column;
   gap: 22px;
