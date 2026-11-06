@@ -11,15 +11,31 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 0 12px;
   flex-shrink: 0;
   z-index: 50;
+  /* One row, always: UnityHeader.jsx measures the content and raises
+     data-compact (see the end of this file) until it fits. Nothing may wrap
+     ("VS Code" used to break onto two lines) or push the page wider. */
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
 }
  
 .unity-header-left, .unity-header-center, .unity-header-right {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex: 0 0 auto;
+}
+ 
+.unity-header-left > *,
+.unity-header-center > *,
+.unity-header-right > *,
+.unity-quick-tools > *,
+.unity-transport-toolbar > * {
+  flex-shrink: 0;
 }
  
 .unity-logo-group {
@@ -175,7 +191,6 @@
   color: var(--unity-text-muted);
 }
  
-��
 .unity-transport-btn:hover {
   background: var(--unity-subtle);
   color: var(--unity-text);
@@ -324,4 +339,69 @@
  
 .unity-logo-hub-btn:hover {
   background: var(--unity-subtle);
+}
+
+/* ---------------------------------------------------------------------------
+   Compact levels. UnityHeader.jsx sets data-compact="0".."3" on the header,
+   picking the lowest level at which all three groups fit on one row. Each level
+   includes the one before it. Every control that loses its label keeps a title
+   tooltip, so nothing becomes unreachable.
+     1  drop decoration, tighten spacing
+     2  icon-only buttons
+     3  minimal: no brand text, no zoom, short timecode, icon-only status
+   --------------------------------------------------------------------------- */
+
+.unity-header:is([data-compact="1"], [data-compact="2"], [data-compact="3"]) {
+  gap: 4px;
+  padding: 0 8px;
+}
+
+.unity-header:is([data-compact="1"], [data-compact="2"], [data-compact="3"])
+  :is(.unity-header-left, .unity-header-center, .unity-header-right) {
+  gap: 5px;
+}
+
+.unity-header:is([data-compact="1"], [data-compact="2"], [data-compact="3"]) .unity-version-tag,
+.unity-header:is([data-compact="1"], [data-compact="2"], [data-compact="3"]) .zoom-text {
+  display: none;
+}
+
+.unity-header:is([data-compact="1"], [data-compact="2"], [data-compact="3"]) .unity-project-input {
+  max-width: 100px;
+}
+
+.unity-header:is([data-compact="1"], [data-compact="2"], [data-compact="3"]) .folder-name-label {
+  max-width: 80px;
+}
+
+.unity-header:is([data-compact="1"], [data-compact="2"], [data-compact="3"]) .unity-hdr-btn {
+  padding: 3px 6px;
+}
+
+.unity-header:is([data-compact="1"], [data-compact="2"], [data-compact="3"]) .unity-action-btn {
+  padding: 5px 9px;
+}
+
+.unity-header:is([data-compact="2"], [data-compact="3"]) .unity-hdr-btn > span:not(.folder-name-label),
+.unity-header:is([data-compact="2"], [data-compact="3"]) .unity-action-btn > span,
+.unity-header:is([data-compact="2"], [data-compact="3"]) .unity-tool-btn > span {
+  display: none;
+}
+
+.unity-header[data-compact="3"] .unity-app-title,
+.unity-header[data-compact="3"] .folder-name-label,
+.unity-header[data-compact="3"] .timecode-sep,
+.unity-header[data-compact="3"] .timecode-total,
+.unity-header[data-compact="3"] .unity-zoom-group {
+  display: none;
+}
+
+.unity-header[data-compact="3"] .unity-project-input {
+  max-width: 80px;
+}
+
+/* Keep the status icons, hide their words (font-size 0 collapses the text node;
+   the lucide icons are sized by their width/height attributes). */
+.unity-header[data-compact="3"] :is(.save-status-saved, .save-status-memory, .schema-warning-badge) {
+  font-size: 0;
 }

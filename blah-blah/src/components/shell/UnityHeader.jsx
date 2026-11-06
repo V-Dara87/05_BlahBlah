@@ -22,12 +22,83 @@ import {
   Settings,
   AlertTriangle
 } from 'lucide-react';
+import { useLayoutEffect, useRef } from 'react';
 import { formatTimecode } from '../../utils/timeFormat';
 import { isTauri } from '../../services/tauriFsAdapter';
 import { openProjectInVsCode, openProjectInExplorer } from '../../services/ideLauncher';
 import { useTimelineView } from '../../dock/TimelineViewContext';
 import './unity-header.css';
  
+/** Highest compact level; see the `data-compact` rules in unity-header.css. */
+const MAX_COMPACT_LEVEL = 3;
+
+/**
+ * Keeps the header on one row at any window width.
+ *
+ * The header holds ~1700px of controls but the window can be much narrower, so
+ * instead of letting the right-hand buttons fall off-screen this picks the
+ * least compact level (`data-compact` 0..3, each one hiding more labels and
+ * decoration) at which every group fits. It measures the real layout, so it
+ * stays correct when buttons appear (Save / VS Code), the project name or save
+ * status changes, fonts load, or the UI zoom changes.
+ *
+ * `data-compact` is written straight to the DOM, not through React state: the
+ * probe (reset to 0, grow until it fits) happens inside one task, so the
+ * browser never paints an intermediate level.
+ */
+function useCompactHeader(ref) {
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+
+    const fits = () => {
+      const style = getComputedStyle(el);
+      const gap = parseFloat(style.columnGap) || 0;
+      const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+      const kids = Array.from(el.children);
+      const content = kids.reduce((sum, kid) => sum + kid.offsetWidth, 0)
+        + gap * Math.max(0, kids.length - 1);
+      return content + padding <= el.clientWidth;
+    };
+
+    const fit = () => {
+      let level = 0;
+      el.dataset.compact = '0';
+      while (!fits() && level < MAX_COMPACT_LEVEL) {
+        level += 1;
+        el.dataset.compact = String(level);
+      }
+    };
+
+    // Re-fit on the next frame rather than inside the observer callbacks, so
+    // changing the layout from here can never trigger the browser's
+    // "ResizeObserver loop" error.
+    let frame = 0;
+    const schedule = () => {
+      if (!frame) {
+        frame = requestAnimationFrame(() => {
+          frame = 0;
+          fit();
+        });
+      }
+    };
+
+    fit(); // synchronous first pass, before the first paint
+
+    const resizeObserver = new ResizeObserver(schedule);
+    resizeObserver.observe(el); // window resize / zoom change
+    const mutationObserver = new MutationObserver(schedule);
+    mutationObserver.observe(el, { childList: true, subtree: true, characterData: true });
+    if (document.fonts?.ready) document.fonts.ready.then(schedule).catch(() => {});
+
+    return () => {
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [ref]);
+}
+
 export function UnityHeader({
   projectName,
   setProjectName,
@@ -63,9 +134,11 @@ export function UnityHeader({
   // dock/TimelineViewContext.jsx. Keeping them off App state means a zoom
   // tick re-renders only this header and the timeline, not the whole editor.
   const { pixelsPerSecond, setPixelsPerSecond: onSetPixelsPerSecond } = useTimelineView();
+  const headerRef = useRef(null);
+  useCompactHeader(headerRef);
 
   return (
-    <header className="unity-header">
+    <header className="unity-header" ref={headerRef}>
       {/* Left: Unity Brand & Project Actions */}
       <div className="unity-header-left">
         <button
@@ -328,4 +401,3 @@ export function UnityHeader({
     </header>
   );
 }
- 
