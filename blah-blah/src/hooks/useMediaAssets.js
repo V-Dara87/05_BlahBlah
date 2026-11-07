@@ -14,6 +14,17 @@ import {
   resetPeakStatusForAsset,
   deletePeaksForAsset,
 } from '../services/peakCache';
+
+/** Releases a blob URL; Tauri's asset:// URLs are not owned by the browser. */
+function revokeBlobUrl(url) {
+  if (typeof url === 'string' && url.startsWith('blob:')) {
+    try {
+      URL.revokeObjectURL(url);
+    } catch {
+      // Already revoked, or not a real blob URL.
+    }
+  }
+}
  
 /**
  * useMediaAssets — the media-asset library (state + import/remove logic).
@@ -127,6 +138,8 @@ export function useMediaAssets({ projectFolderHandle, onReconcileAssetUrl } = {}
   const handleRemoveMediaAsset = async (assetId) => {
     const asset = mediaAssets.find((a) => a.id === assetId);
     setMediaAssets((prev) => prev.filter((a) => a.id !== assetId));
+    // The asset is gone from every consumer; free its blob-backed object URL.
+    revokeBlobUrl(asset?.url);
     if (projectFolderHandle && asset) {
       // Delete the generated peak file first, while the media file is still
       // on disk for the size/mtime-based name to resolve.
@@ -192,13 +205,17 @@ export function useMediaAssets({ projectFolderHandle, onReconcileAssetUrl } = {}
     const isVideo = detectMediaKind(newFile) === 'video';
     const duration = (await probeFileDuration(newFile, isVideo)) || MEDIA_FALLBACK_DURATION[isVideo ? 'video' : 'audio'];
  
+    const replacementUrl = URL.createObjectURL(newFile);
     setMediaAssets(prev => prev.map(a => a.id === assetId ? {
       ...a,
-      url: URL.createObjectURL(newFile),
+      url: replacementUrl,
       size: newFile.size,
       duration,
       type: isVideo ? 'video' : 'audio',
     } : a));
+    // The previous file's blob URL is no longer displayed. Defer the revoke so
+    // React has committed the replacement before the old URL goes away.
+    setTimeout(() => revokeBlobUrl(asset.url), 1000);
  
     // Persist the replacement over the SAME on-disk location (keep the
     // asset's existing filename) so paths already referencing it stay
@@ -209,6 +226,8 @@ export function useMediaAssets({ projectFolderHandle, onReconcileAssetUrl } = {}
         const { convertFileSrc } = await import('@tauri-apps/api/core');
         const replaced = { ...asset, url: convertFileSrc(savedPath), path: savedPath };
         setMediaAssets(prev => prev.map(a => a.id === assetId ? replaced : a));
+        // The temporary blob URL is replaced by the asset:// URL above.
+        setTimeout(() => revokeBlobUrl(replacementUrl), 1000);
         // The bytes changed, so the asset's old peak file no longer applies;
         // forget its status and queue a fresh generation for the new file.
         resetPeakStatusForAsset(assetId);

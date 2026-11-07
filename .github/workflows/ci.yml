@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: Web (lint, tests, build, audit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: blah-blah
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: blah-blah/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      - name: npm audit (high and above)
+        run: npm audit --audit-level=high
+
+  rust:
+    name: Rust (tests, audit)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: blah-blah/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: blah-blah/src-tauri
+
+      # The bundled sidecar binaries are gitignored build inputs. `cargo test`
+      # only builds the library, so empty placeholders are enough to let the
+      # resource declarations resolve on a fresh checkout.
+      - name: Create sidecar placeholders
+        shell: bash
+        run: |
+          mkdir -p binaries/windows-dlls
+          for name in ggml-base.dll ggml-cpu.dll ggml.dll whisper.dll; do
+            [ -f "binaries/windows-dlls/$name" ] || : > "binaries/windows-dlls/$name"
+          done
+
+      - name: cargo test
+        run: cargo test --locked
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: cargo audit
+        run: cargo audit

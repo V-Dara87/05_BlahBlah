@@ -210,6 +210,8 @@ export function App() {
     setProjectFolderHandle,
     saveStatus,
     setSaveStatus,
+    saveError,
+    clearSaveError,
     schemaWarning,
     setSchemaWarning,
     handleSaveProjectToDisk,
@@ -668,6 +670,45 @@ export function App() {
           frameless desktop build the right end carries window controls
           and a drag region (see framelessChrome above). */}
       <MenuBar menus={menuBarConfig} trailing={framelessChrome} />
+
+      {/* Autosave failures used to be console-only: the badge changed to
+          "in-memory" but nothing explained why. Keep the message visible and
+          dismissible until a later save succeeds. */}
+      {saveError && (
+        <div
+          role="alert"
+          style={{
+            position: 'fixed',
+            right: 16,
+            bottom: 16,
+            zIndex: 10000,
+            maxWidth: 440,
+            display: 'flex',
+            gap: 12,
+            alignItems: 'flex-start',
+            padding: '10px 12px',
+            borderRadius: 8,
+            background: '#7f1d1d',
+            color: '#fff',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+            fontSize: 12,
+            lineHeight: 1.45,
+          }}
+        >
+          <span style={{ flex: 1 }}>
+            Autosave failed: {saveError}
+            {' '}Your changes are still in memory — use Save Project to Disk.
+          </span>
+          <button
+            type="button"
+            onClick={clearSaveError}
+            aria-label="Dismiss save error"
+            style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontWeight: 700 }}
+          >
+            ×
+          </button>
+        </div>
+      )}
  
       {/* Top Navigation Bar */}
       <EditorHeader

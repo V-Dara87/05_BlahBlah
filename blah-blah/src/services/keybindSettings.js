@@ -10,6 +10,8 @@
  * match time.
  */
  
+import { readJson, writeJson } from '../utils/appStorage.js';
+
 const STORAGE_KEY = 'blahblah.keybindSettings.v1';
  
 // Every rebindable action, with its id (used everywhere in code), a
@@ -91,26 +93,19 @@ export function normalizeKeyEvent(e) {
 }
  
 export function loadKeybindSettings() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...DEFAULT_BINDINGS };
-    const parsed = JSON.parse(raw);
-    // Merge over defaults rather than trusting the stored blob wholesale,
-    // so a shortcut added in a later app version (not present in an
-    // older saved blob) still gets its default instead of being
-    // undefined.
-    return { ...DEFAULT_BINDINGS, ...parsed };
-  } catch {
+  const parsed = readJson(STORAGE_KEY, null);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     return { ...DEFAULT_BINDINGS };
   }
+  // Merge over defaults rather than trusting the stored blob wholesale,
+  // so a shortcut added in a later app version (not present in an
+  // older saved blob) still gets its default instead of being
+  // undefined.
+  return { ...DEFAULT_BINDINGS, ...parsed };
 }
  
 export function saveKeybindSettings(bindings) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(bindings));
-  } catch {
-    // Ignore storage errors (private browsing, quota, etc.)
-  }
+  writeJson(STORAGE_KEY, bindings);
   // Same-tab localStorage writes don't fire the native 'storage' event
   // (that only fires in OTHER tabs), so broadcast our own event to let
   // EditorPlaybackShortcuts (and anything else reading bindings) pick up

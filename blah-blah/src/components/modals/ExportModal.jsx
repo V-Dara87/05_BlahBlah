@@ -158,6 +158,18 @@ export function ExportModal({
     };
   }, [isOpen]);
  
+  // Release the previous export blob when a new one replaces it, and when the
+  // modal closes: without this every export keeps a full MP4 in memory for the
+  // rest of the session.
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    return () => {
+      if (downloadUrl && downloadUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(downloadUrl);
+      }
+    };
+  }, [isOpen, downloadUrl]);
+
   if (!isOpen) return null;
  
   const isFfmpegEngine = engine === 'ffmpeg' && isTauri() && ffmpegAvailable;

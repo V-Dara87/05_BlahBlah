@@ -12,7 +12,14 @@ import {
   verifyBridgeToken,
   isCommandStale,
   findEntityForSelect,
+  isSafeBridgeId,
+  validateBridgeCommandShape,
+  MAX_BRIDGE_COMMAND_BYTES,
+  MAX_BRIDGE_TIME_SECONDS,
 } from '../utils/aiBridgeCore';
+import { createLogger } from '../utils/logger.js';
+
+const log = createLogger('bridge');
 import {
   getBridgePaths,
   ensureBridgeDirectories,
@@ -58,7 +65,7 @@ export function useAiBridgeListener({
         if (cancelled) return;
         await cleanupStaleInboxCommands(projectDir);
       } catch (err) {
-        console.warn('AI Bridge initialization error:', err);
+        log.warn('AI Bridge initialization error:', err);
       }
     })();
 
@@ -89,6 +96,14 @@ export function useAiBridgeListener({
         let cmd = null;
         try {
           const raw = await fs.readTextFile(filePath);
+          // Commands are tiny (id, type, arg, timestamp). A multi-megabyte file
+          // in the inbox is not one of ours; drop it without parsing.
+          if (raw.length > MAX_BRIDGE_COMMAND_BYTES) {
+            log.warn(`AI Bridge: ignored oversized command file ${targetFileName}`);
+            await fs.remove(filePath).catch(() => {});
+            isProcessingRef.current = false;
+            return;
+          }
           cmd = JSON.parse(raw);
         } catch {
           // Bad JSON or partial file: remove and continue
@@ -100,21 +115,26 @@ export function useAiBridgeListener({
         // Always delete inbox file so command runs exactly once
         await fs.remove(filePath).catch(() => {});
 
-        if (!cmd || !cmd.id || !cmd.type) {
+        const shapeError = validateBridgeCommandShape(cmd);
+        if (shapeError) {
+          log.warn(`AI Bridge: rejected malformed command: ${shapeError}`);
+          if (isSafeBridgeId(cmd?.id)) {
+            await writeBridgeResult(projectDir, cmd.id, { ok: false, error: shapeError });
+          }
           isProcessingRef.current = false;
           return;
         }
 
         // Stale command check (>5 min)
         if (isCommandStale(cmd.timestamp)) {
-          console.warn(`AI Bridge: ignored stale command ${cmd.id} (${cmd.type})`);
+          log.warn(`AI Bridge: ignored stale command ${cmd.id} (${cmd.type})`);
           isProcessingRef.current = false;
           return;
         }
 
         // Bearer token verification
         if (!verifyBridgeToken(cmd.token, tokenRef.current)) {
-          console.warn(`AI Bridge: unauthorized command ${cmd.id} rejected`);
+          log.warn(`AI Bridge: unauthorized command ${cmd.id} rejected`);
           await writeBridgeResult(projectDir, cmd.id, {
             ok: false,
             error: 'Unauthorized: missing or invalid bridge token.',
@@ -128,7 +148,7 @@ export function useAiBridgeListener({
           switch (cmd.type) {
             case 'seek': {
               const rawTime = cmd.arg && typeof cmd.arg === 'object' ? cmd.arg.time : cmd.arg;
-              const targetTime = Number(rawTime ?? 0);
+              const targetTime = Math.min(Number(rawTime ?? 0), MAX_BRIDGE_TIME_SECONDS);
               playbackStoreRef.current?.seek(targetTime);
               await writeBridgeResult(projectDir, cmd.id, {
                 ok: true,
@@ -190,7 +210,7 @@ export function useAiBridgeListener({
 
             case 'render_frame': {
               const rawTime = cmd.arg && typeof cmd.arg === 'object' ? cmd.arg.time : cmd.arg;
-              const targetTime = Number(rawTime ?? 0);
+              const targetTime = Math.min(Number(rawTime ?? 0), MAX_BRIDGE_TIME_SECONDS);
 
               // Seek preview playhead for synchronized visual feedback
               try {
@@ -230,14 +250,14 @@ export function useAiBridgeListener({
             }
           }
         } catch (execErr) {
-          console.error(`AI Bridge: error executing command ${cmd.id}:`, execErr);
+          log.error(`AI Bridge: error executing command ${cmd.id}:`, execErr);
           await writeBridgeResult(projectDir, cmd.id, {
             ok: false,
             error: execErr?.message || String(execErr),
           });
         }
       } catch (pollErr) {
-        console.warn('AI Bridge polling error:', pollErr);
+        log.warn('AI Bridge polling error:', pollErr);
       } finally {
         isProcessingRef.current = false;
       }

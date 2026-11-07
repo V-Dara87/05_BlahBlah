@@ -39,6 +39,8 @@
  *   fallbacks and the resolved defaults ever disagree.
  */
 
+import { readJson, writeJson } from '../utils/appStorage.js';
+
 const STORAGE_KEY = 'blahblah.themeSettings.v1';
 
 /**
@@ -989,23 +991,14 @@ export function sanitizeThemeSettings(candidate) {
 }
 
 export function loadThemeSettings() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return sanitizeThemeSettings(THEME_DEFAULTS);
-    return sanitizeThemeSettings(JSON.parse(raw));
-  } catch {
-    return sanitizeThemeSettings(THEME_DEFAULTS);
-  }
+  const parsed = readJson(STORAGE_KEY, null);
+  return sanitizeThemeSettings(parsed || THEME_DEFAULTS);
 }
 
 /** Persists and returns the sanitized settings that were actually stored. */
 export function saveThemeSettings(settings) {
   const sanitized = sanitizeThemeSettings(settings);
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
-  } catch {
-    // Ignore storage errors (private browsing, quota, etc.)
-  }
+  writeJson(STORAGE_KEY, sanitized);
   return sanitized;
 }
 

@@ -12,6 +12,8 @@ import { isTauri } from './tauriFsAdapter';
  * The timeline's own zoom (Ctrl+wheel, timeline toolbar, `-` / `=`) is separate.
  */
 
+import { readString, writeString } from '../utils/appStorage.js';
+
 const STORAGE_KEY = 'blahblah.uiZoom';
 export const UI_ZOOM_MIN = 0.5;
 export const UI_ZOOM_MAX = 2;
@@ -21,13 +23,9 @@ const clampZoom = (v) =>
   Math.round(Math.min(UI_ZOOM_MAX, Math.max(UI_ZOOM_MIN, v)) * 100) / 100;
 
 function loadZoom() {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    const n = raw == null ? 1 : parseFloat(raw);
-    return Number.isFinite(n) ? clampZoom(n) : 1;
-  } catch {
-    return 1;
-  }
+  const raw = readString(STORAGE_KEY, null);
+  const n = raw == null ? 1 : parseFloat(raw);
+  return Number.isFinite(n) ? clampZoom(n) : 1;
 }
 
 let currentZoom = 1;
@@ -85,11 +83,7 @@ export function setUiZoom(value) {
   const next = clampZoom(value);
   if (next === currentZoom) return;
   currentZoom = next;
-  try {
-    window.localStorage.setItem(STORAGE_KEY, String(next));
-  } catch {
-    /* storage unavailable - zoom still works for this session */
-  }
+  writeString(STORAGE_KEY, String(next));
   applyZoom(next);
   listeners.forEach((fn) => fn());
 }

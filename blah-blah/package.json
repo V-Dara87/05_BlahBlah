@@ -12,6 +12,8 @@
     "build": "vite build",
     "lint": "oxlint",
     "test": "node scripts/run-tests.mjs",
+    "audit": "npm audit --audit-level=high",
+    "audit:rust": "cargo audit --file src-tauri/Cargo.lock",
     "cli": "node packages/blahblah-cli/bin/blahblah.mjs",
     "mcp": "node packages/blahblah-mcp/bin/mcp-server.mjs",
     "test:automation": "node packages/blahblah-core/tests/core.test.mjs && node packages/blahblah-cli/tests/cli.test.mjs && node packages/blahblah-mcp/tests/mcp.test.mjs",

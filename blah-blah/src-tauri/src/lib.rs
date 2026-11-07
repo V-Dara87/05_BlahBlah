@@ -1094,3 +1094,70 @@ pub fn run() {
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+
+    fn args(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn sidecar_args_reject_unknown_options() {
+        assert!(validate_sidecar_args(&args(&["-i", "C:/x.mp4", "--evil"]), &["-i"], "ffmpeg").is_err());
+    }
+
+    #[test]
+    fn sidecar_args_accept_negative_numbers_as_values() {
+        assert!(validate_sidecar_args(&args(&["-t", "-1"]), &["-t"], "ffmpeg").is_ok());
+    }
+
+    #[test]
+    fn sidecar_args_reject_control_characters() {
+        assert!(validate_sidecar_args(&args(&["-i", "a\nb"]), &["-i"], "ffmpeg").is_err());
+    }
+
+    #[test]
+    fn absolute_file_arg_rejects_relative_and_parent_paths() {
+        assert!(validate_absolute_file_arg(&args(&["-i", "relative.mp4"]), "-i", "ffmpeg").is_err());
+        assert!(validate_absolute_file_arg(&args(&["-i", "C:/tmp/../x.mp4"]), "-i", "ffmpeg").is_err());
+    }
+
+    #[test]
+    fn absolute_file_arg_requires_an_existing_file() {
+        let dir = std::env::temp_dir().join(format!("blahblah-arg-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("input.txt");
+        std::fs::write(&file, b"x").unwrap();
+        let existing_args = vec!["-i".to_string(), file.to_string_lossy().into_owned()];
+        assert!(validate_absolute_file_arg(&existing_args, "-i", "ffmpeg").is_ok());
+        let missing_args = vec![
+            "-i".to_string(),
+            dir.join("missing.txt").to_string_lossy().into_owned(),
+        ];
+        assert!(validate_absolute_file_arg(&missing_args, "-i", "ffmpeg").is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn output_prefix_rejects_relative_paths() {
+        assert!(validate_output_prefix(&args(&["-of", "out"]), "-of", "whisper").is_err());
+        let abs = std::env::temp_dir()
+            .join("blahblah-out")
+            .to_string_lossy()
+            .into_owned();
+        assert!(validate_output_prefix(&args(&["-of", &abs]), "-of", "whisper").is_ok());
+    }
+
+    #[test]
+    fn download_url_allows_only_https_model_hosts() {
+        assert!(validate_download_url("https://huggingface.co/models/x.bin").is_ok());
+        assert!(validate_download_url("https://cdn-lfs.huggingface.co/x.bin").is_ok());
+        assert!(validate_download_url("https://foo.hf.co/x.bin").is_ok());
+        assert!(validate_download_url("http://huggingface.co/x.bin").is_err());
+        assert!(validate_download_url("file:///etc/passwd").is_err());
+        assert!(validate_download_url("https://user:pw@huggingface.co/x").is_err());
+        assert!(validate_download_url("https://evil.example/x").is_err());
+        assert!(validate_download_url("https://huggingface.co.evil/x").is_err());
+    }
+}

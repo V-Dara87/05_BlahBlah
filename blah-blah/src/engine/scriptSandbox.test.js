@@ -92,3 +92,17 @@ test('assertNoLifecycleTypos reads class prototypes and plain objects', () => {
   assert.throws(() => assertNoLifecycleTypos({ onSeeek() {} }), /did you mean 'onSeek'/);
   assert.doesNotThrow(() => assertNoLifecycleTypos(function ReactComponent() {}));
 });
+test('attack: blocked globals cannot be reached through aliases or Reflect', () => {
+  const w = createGuardedGlobal(fakeGlobal());
+  for (const alias of ['window', 'self', 'globalThis', 'top', 'parent', 'frames']) {
+    assert.throws(() => w[alias].localStorage, ScriptSandboxError, alias);
+    assert.throws(() => Reflect.get(w[alias], '__TAURI_INTERNALS__'), ScriptSandboxError, alias);
+  }
+});
+
+test('attack: bridge fetch targets stay blocked through window aliases', async () => {
+  const w = createGuardedGlobal(fakeGlobal());
+  for (const bad of ['ipc://localhost/x', 'http://ipc.localhost/x', 'file:///C:/secret.txt']) {
+    await assert.rejects(() => w.window.fetch(bad), ScriptSandboxError, bad);
+  }
+});

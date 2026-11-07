@@ -15,6 +15,8 @@
  *                   because that comparison is what keeps external edits safe.
  */
  
+import { readJson, writeJson } from '../utils/appStorage.js';
+
 const STORAGE_KEY = 'blahblah.autosaveSettings.v1';
  
 export const AUTOSAVE_DEFAULTS = Object.freeze({
@@ -54,22 +56,13 @@ export function sanitizeAutosaveSettings(candidate) {
 }
  
 export function loadAutosaveSettings() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...AUTOSAVE_DEFAULTS };
-    return sanitizeAutosaveSettings(JSON.parse(raw));
-  } catch {
-    return { ...AUTOSAVE_DEFAULTS };
-  }
+  const parsed = readJson(STORAGE_KEY, null);
+  return parsed ? sanitizeAutosaveSettings(parsed) : { ...AUTOSAVE_DEFAULTS };
 }
  
 /** Persists and returns the sanitized settings that were actually stored. */
 export function saveAutosaveSettings(settings) {
   const sanitized = sanitizeAutosaveSettings(settings);
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
-  } catch {
-    // Ignore storage errors (private browsing, quota, etc.)
-  }
+  writeJson(STORAGE_KEY, sanitized);
   return sanitized;
 }

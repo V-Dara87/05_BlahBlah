@@ -75,7 +75,7 @@ const toScriptFileName = (name) => `${(name || '').replace(/\.(js|jsx|ts|tsx|cs)
  
  
 import { isTauri, createTauriDirectoryHandle, joinPath, isSafeChildName, allowProjectDirectory } from './tauriFsAdapter';
-import { validateProjectJson } from './projectSchema';
+import { validateProjectJson, MAX_PROJECT_JSON_BYTES } from './projectSchema';
 import { convertFileSrc } from '@tauri-apps/api/core';
 // Real media duration probing (metadata-only, same technique + fallback as
 // the import path) — reused here because reload rebuilds mediaAssets by
@@ -149,22 +149,33 @@ async function readProjectJsonWithBackup(dirHandle) {
   const readParsed = async (fileName) => {
     const handle = await dirHandle.getFileHandle(fileName);
     const raw = await (await handle.getFile()).text();
+    // Parse only after the size check: a multi-gigabyte file (or a decompression
+    // bomb in a zip-extracted project) must not be handed to JSON.parse.
+    if (raw.length > MAX_PROJECT_JSON_BYTES) {
+      throw new Error(
+        `${fileName} is larger than the ${MAX_PROJECT_JSON_BYTES}-character limit and was not opened.`
+      );
+    }
     return { parsed: JSON.parse(raw), raw };
   };
   try {
     return await readParsed('project.json');
   } catch (err) {
     if (err?.name === 'NotFoundError') throw err;
-    try {
-      const backup = await readParsed('project.json.bak');
-      console.warn('project.json could not be read; restored from project.json.bak.', err);
-      return backup;
-    } catch {
-      throw new Error(
-        `project.json is unreadable and no valid backup was found (${err?.message || err}). ` +
-        'The project was not opened so that it cannot be overwritten.'
-      );
+    // Recovery order: last known-good backup, then the crash-recovery copy.
+    for (const fallback of ['project.json.bak', 'project.recovery.json']) {
+      try {
+        const restored = await readParsed(fallback);
+        console.warn(`project.json could not be read; restored from ${fallback}.`, err);
+        return restored;
+      } catch {
+        // Try the next fallback tier.
+      }
     }
+    throw new Error(
+      `project.json is unreadable and no valid backup or recovery copy was found (${err?.message || err}). ` +
+      'The project was not opened so that it cannot be overwritten.'
+    );
   }
 }
 
@@ -974,6 +985,20 @@ export async function saveProjectToDirectory(dirHandle, projectStateOrGetter, op
       if (syncState) {
         syncState.projectFingerprint = projectFingerprint;
         syncState.revision = await computeTextHash(jsonText);
+      }
+      // Crash recovery: keep the last successfully written document as a third
+      // fallback tier (project.json -> .bak -> recovery) for when the main file
+      // is later damaged by an external tool or a partial sync. Best-effort: a
+      // failed recovery copy never fails the save that just succeeded.
+      try {
+        const recoveryHandle = await dirHandle.getFileHandle('project.recovery.json', {
+          create: true,
+        });
+        const recoveryWritable = await recoveryHandle.createWritable();
+        await recoveryWritable.write(jsonText);
+        await recoveryWritable.close();
+      } catch (recoveryErr) {
+        console.warn('Could not update the project recovery copy:', recoveryErr);
       }
     }
  

@@ -10,6 +10,8 @@
  * every project you open.
  */
 
+import { readJson, writeJson } from '../utils/appStorage.js';
+
 const STORAGE_KEY = 'blahblah.pieMenuSettings.v1';
 export const PIE_SETTINGS_EVENT = 'blahblah:pie-menu-changed';
 
@@ -159,22 +161,12 @@ export function sanitizePieSettings(raw) {
 }
 
 export function loadPieSettings() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return sanitizePieSettings(null);
-    return sanitizePieSettings(JSON.parse(raw));
-  } catch {
-    return sanitizePieSettings(null);
-  }
+  return sanitizePieSettings(readJson(STORAGE_KEY, null));
 }
 
 export function savePieSettings(settings) {
   const clean = sanitizePieSettings(settings);
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
-  } catch {
-    // Ignore storage errors (private browsing, quota, etc.)
-  }
+  writeJson(STORAGE_KEY, clean);
   // Same-tab localStorage writes do not fire the native 'storage' event, so
   // broadcast our own for the live menu and the Settings tab.
   window.dispatchEvent(new CustomEvent(PIE_SETTINGS_EVENT, { detail: clean }));

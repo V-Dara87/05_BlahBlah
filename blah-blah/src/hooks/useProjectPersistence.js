@@ -1,5 +1,8 @@
 import { useCallback, useRef, useState } from 'react';
 import { saveProjectToDirectory } from '../services/projectFileSystem';
+import { createLogger } from '../utils/logger.js';
+
+const log = createLogger('persistence');
  
 /**
  * useProjectPersistence — disk folder handle + save status + the save queue.
@@ -52,6 +55,9 @@ export function useProjectPersistence({ getProjectState, onNeedNewProject }) {
   // 'saved' | 'saving' | 'unsaved' (changes not on disk yet) | 'in-memory' (last save failed)
   const [saveStatus, setSaveStatus] = useState('in-memory');
   const [schemaWarning, setSchemaWarning] = useState(null);
+  // The message of the most recent failed write, shown as a dismissible banner.
+  // Cleared by the next successful save (or by the user dismissing it).
+  const [saveError, setSaveError] = useState(null);
  
   const getProjectStateRef = useRef(getProjectState);
   getProjectStateRef.current = getProjectState;
@@ -82,10 +88,12 @@ export function useProjectPersistence({ getProjectState, onNeedNewProject }) {
         );
         // A different folder may have been opened while we were saving.
         if (folderHandleRef.current === handle) setSaveStatus('saved');
+        setSaveError(null);
         return true;
       } catch (err) {
+        setSaveError(err?.message || String(err));
         if (isManual) {
-          console.error('Disk save error:', err);
+          log.error('Disk save error:', err);
           if (err?.name === 'ProjectConflictError' && typeof window !== 'undefined') {
             const forceSave = window.confirm(
               `${err.message}\n\nDo you want to force overwrite the external changes on disk?`
@@ -98,6 +106,7 @@ export function useProjectPersistence({ getProjectState, onNeedNewProject }) {
                   { force: true, skipUnchanged: false, ignoreConflict: true }
                 );
                 if (folderHandleRef.current === handle) setSaveStatus('saved');
+                setSaveError(null);
                 return true;
               } catch (retryErr) {
                 alert(`Force save failed: ${retryErr.message}`);
@@ -107,7 +116,7 @@ export function useProjectPersistence({ getProjectState, onNeedNewProject }) {
             alert(`Save failed: ${err.message}`);
           }
         } else {
-          console.warn('Autosave failed:', err);
+          log.warn('Autosave failed:', err);
         }
         if (folderHandleRef.current === handle) setSaveStatus('in-memory');
         return false;
@@ -166,6 +175,8 @@ export function useProjectPersistence({ getProjectState, onNeedNewProject }) {
     setProjectFolderHandle,
     saveStatus,
     setSaveStatus,
+    saveError,
+    clearSaveError: useCallback(() => setSaveError(null), []),
     schemaWarning,
     setSchemaWarning,
     handleSaveProjectToDisk,

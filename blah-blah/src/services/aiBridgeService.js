@@ -22,13 +22,19 @@ import { isTauri, joinPath } from './tauriFsAdapter';
 import {
   DEFAULT_MAX_COMMAND_AGE_MS,
   MAX_FRAME_LONG_SIDE,
+  MAX_BRIDGE_COMMAND_BYTES,
+  MAX_BRIDGE_FRAME_BASE64_CHARS,
   verifyBridgeToken,
   isCommandStale,
+  isSafeBridgeId,
   calculateDownscaleDimensions,
   formatBridgeResult,
   base64ToUint8Array,
 } from '../utils/aiBridgeCore';
 import { drawExportFrame, createCanvasContainerPool } from '../engine/exportRunner';
+import { createLogger } from '../utils/logger.js';
+
+const log = createLogger('bridge');
 
 /**
  * Generates paths for .aibridge directory structure.
@@ -86,7 +92,10 @@ export async function readOrGenerateBridgeToken(projectDir) {
   try {
     if (await fs.exists(paths.token)) {
       const existing = (await fs.readTextFile(paths.token)).trim();
-      if (existing) return existing;
+      // A real token is 48 lowercase hex characters (24 random bytes). Anything
+      // else — an empty/hand-edited file, a truncated write — is replaced so a
+      // predictable token can never become the project's shared secret.
+      if (/^[a-f0-9]{48}$/.test(existing)) return existing;
     }
     // Generate secure 32-byte hex token
     const randomBytes = new Uint8Array(24);
@@ -116,13 +125,18 @@ export async function cleanupStaleInboxCommands(projectDir, maxAgeMs = DEFAULT_M
       const filePath = joinPath(paths.inbox, entry.name);
       try {
         const text = await fs.readTextFile(filePath);
+        if (text.length > MAX_BRIDGE_COMMAND_BYTES) {
+          log.warn(`removed oversized command file ${entry.name}`);
+          await fs.remove(filePath);
+          continue;
+        }
         const cmd = JSON.parse(text);
         if (isCommandStale(cmd.timestamp, now, maxAgeMs)) {
           await fs.remove(filePath);
         }
       } catch {
         // Corrupt or unreadable file: remove it
-        await fs.remove(filePath).catch(() => {});
+        await fs.remove(filePath).catch((err) => log.debug('could not remove stale command', err));
       }
     }
   } catch (err) {
@@ -136,6 +150,12 @@ export async function cleanupStaleInboxCommands(projectDir, maxAgeMs = DEFAULT_M
 export async function writeBridgeResult(projectDir, id, result) {
   const fs = await getFs();
   if (!fs || !projectDir || !id) return;
+  // The id is interpolated into a file name; reject anything that could escape
+  // the outbox (or overwrite a different file) instead of writing it.
+  if (!isSafeBridgeId(String(id))) {
+    log.warn('refused to write a result with an unsafe command id:', id);
+    return;
+  }
   const paths = getBridgePaths(projectDir);
   const outPath = joinPath(paths.outbox, `${id}.json`);
   const tmpPath = `${outPath}.${crypto.randomUUID()}.tmp`;
@@ -161,6 +181,14 @@ export async function writeBridgeResult(projectDir, id, result) {
 export async function writeBridgeFramePng(projectDir, id, pngBase64) {
   const fs = await getFs();
   if (!fs || !projectDir || !id || !pngBase64) return;
+  if (!isSafeBridgeId(String(id))) {
+    log.warn('refused to write a frame with an unsafe command id:', id);
+    return;
+  }
+  if (pngBase64.length > MAX_BRIDGE_FRAME_BASE64_CHARS) {
+    log.warn('refused to write an oversized bridge frame');
+    return;
+  }
   const paths = getBridgePaths(projectDir);
   const pngPath = joinPath(paths.outbox, `${id}.png`);
   const tmpPath = `${pngPath}.${crypto.randomUUID()}.tmp`;

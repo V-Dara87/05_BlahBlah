@@ -41,6 +41,8 @@ import { TRACK_HEIGHT, MIN_TRACK_HEIGHT, MAX_TRACK_HEIGHT } from '../utils/timel
  *    holds every snapshot in memory), not limits inherited from elsewhere.
  */
  
+import { readJson, writeJson } from '../utils/appStorage.js';
+
 const STORAGE_KEY = 'blahblah.editorSettings.v1';
  
 export const EDITOR_DEFAULTS = Object.freeze({
@@ -119,22 +121,13 @@ export function sanitizeEditorSettings(candidate) {
 }
  
 export function loadEditorSettings() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...EDITOR_DEFAULTS };
-    return sanitizeEditorSettings(JSON.parse(raw));
-  } catch {
-    return { ...EDITOR_DEFAULTS };
-  }
+  const parsed = readJson(STORAGE_KEY, null);
+  return parsed ? sanitizeEditorSettings(parsed) : { ...EDITOR_DEFAULTS };
 }
  
 /** Persists and returns the sanitized settings that were actually stored. */
 export function saveEditorSettings(settings) {
   const sanitized = sanitizeEditorSettings(settings);
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
-  } catch {
-    // Ignore storage errors (private browsing, quota, etc.)
-  }
+  writeJson(STORAGE_KEY, sanitized);
   return sanitized;
 }

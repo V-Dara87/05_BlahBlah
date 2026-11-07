@@ -4,27 +4,19 @@
  * localStorage so it survives reloads without needing a project folder.
  */
  
+import { readJson, writeJson } from '../utils/appStorage.js';
+
 const STORAGE_KEY = 'blahblah.audioSettings.v1';
  
 export function loadAudioSettings() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { inputDeviceId: 'default' };
-    const parsed = JSON.parse(raw);
-    return {
-      inputDeviceId: parsed.inputDeviceId || 'default',
-    };
-  } catch {
-    return { inputDeviceId: 'default' };
-  }
+  const parsed = readJson(STORAGE_KEY, null);
+  return {
+    inputDeviceId: parsed?.inputDeviceId || 'default',
+  };
 }
  
 export function saveAudioSettings(settings) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-  } catch {
-    // Ignore storage errors (private browsing, quota, etc.)
-  }
+  writeJson(STORAGE_KEY, settings);
 }
  
 /**

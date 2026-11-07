@@ -7,6 +7,93 @@
 export const DEFAULT_MAX_COMMAND_AGE_MS = 5 * 60 * 1000; // 5 minutes
 export const MAX_FRAME_LONG_SIDE = 1280;
 
+/** Hard cap on a command JSON file; anything larger is not a bridge command. */
+export const MAX_BRIDGE_COMMAND_BYTES = 64 * 1024;
+/** Cap on the base64 PNG written back for render_frame. */
+export const MAX_BRIDGE_FRAME_BASE64_CHARS = 32 * 1024 * 1024;
+/** Largest seek/render time accepted from an agent (24 hours). */
+export const MAX_BRIDGE_TIME_SECONDS = 24 * 60 * 60;
+export const BRIDGE_COMMAND_TYPES = Object.freeze([
+  'seek',
+  'play',
+  'pause',
+  'select',
+  'reload',
+  'render_frame',
+]);
+
+// Bridge ids become file names in .aibridge/outbox, so they may only contain
+// characters that are safe on every platform (no separators, drive colons, dots
+// that could mean "..").
+const BRIDGE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+export function isSafeBridgeId(id) {
+  return typeof id === 'string' && BRIDGE_ID_PATTERN.test(id);
+}
+
+function invalidTime(value) {
+  return (
+    typeof value !== 'number' ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > MAX_BRIDGE_TIME_SECONDS
+  );
+}
+
+/**
+ * Validates the JSON envelope of an inbox command before anything in the app
+ * touches it. Returns a human-readable error string, or null when valid.
+ *
+ * This is deliberately separate from `validateBridgeCommand` in
+ * blahblah-core: that one builds commands on the trusted side, this one checks
+ * what a local process wrote into the project folder, where id/timestamp are
+ * attacker-controlled and are used as file names and log fields.
+ */
+export function validateBridgeCommandShape(command) {
+  if (!command || typeof command !== 'object' || Array.isArray(command)) {
+    return 'Command must be a JSON object.';
+  }
+  if (!isSafeBridgeId(command.id)) {
+    return 'Command id is missing or contains unsafe characters.';
+  }
+  if (!BRIDGE_COMMAND_TYPES.includes(command.type)) {
+    return `Unknown bridge command "${String(command.type)}".`;
+  }
+  if (typeof command.timestamp !== 'number' || !Number.isFinite(command.timestamp)) {
+    return 'Command timestamp must be a finite number.';
+  }
+
+  if (command.type === 'seek') {
+    const time = typeof command.arg === 'string' ? Number(command.arg) : command.arg;
+    if (invalidTime(time)) {
+      return `"seek" needs a time between 0 and ${MAX_BRIDGE_TIME_SECONDS} seconds.`;
+    }
+  }
+
+  if (command.type === 'render_frame') {
+    const raw =
+      command.arg && typeof command.arg === 'object' && !Array.isArray(command.arg)
+        ? command.arg.time
+        : command.arg;
+    const time = typeof raw === 'string' ? Number(raw) : raw;
+    if (invalidTime(time)) {
+      return `"render_frame" needs a time between 0 and ${MAX_BRIDGE_TIME_SECONDS} seconds.`;
+    }
+  }
+
+  if (command.type === 'select') {
+    const target =
+      command.arg && typeof command.arg === 'object'
+        ? command.arg.id ?? command.arg.name
+        : command.arg;
+    if (typeof target !== 'string' || target.trim() === '' || target.length > 200) {
+      return '"select" needs an entity id or name (max 200 characters).';
+    }
+  }
+
+  return null;
+}
+
 export const ALLOWED_BRIDGE_ORIGINS = [
   'tauri://localhost',
   'http://tauri.localhost',

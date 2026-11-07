@@ -30,6 +30,8 @@ import { FFMPEG_FORMATS, FFMPEG_QUALITY_PRESETS } from './ffmpegExportRunner';
  * automatically.
  */
  
+import { readJson, writeJson } from '../utils/appStorage.js';
+
 const STORAGE_KEY = 'blahblah.exportSettings.v1';
  
 export const EXPORT_RESOLUTION_PRESETS = Object.freeze(['project', '720p', '1080p', '4k']);
@@ -82,22 +84,13 @@ export function sanitizeExportSettings(candidate) {
 }
  
 export function loadExportSettings() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...EXPORT_DEFAULTS };
-    return sanitizeExportSettings(JSON.parse(raw));
-  } catch {
-    return { ...EXPORT_DEFAULTS };
-  }
+  const parsed = readJson(STORAGE_KEY, null);
+  return parsed ? sanitizeExportSettings(parsed) : { ...EXPORT_DEFAULTS };
 }
  
 /** Persists and returns the sanitized settings that were actually stored. */
 export function saveExportSettings(settings) {
   const sanitized = sanitizeExportSettings(settings);
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
-  } catch {
-    // Ignore storage errors (private browsing, quota, etc.)
-  }
+  writeJson(STORAGE_KEY, sanitized);
   return sanitized;
 }
