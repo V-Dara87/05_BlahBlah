@@ -84,6 +84,13 @@ self.onmessage = (event) => {
       if (instance && canvas) {
         instance.canvas = canvas;
         instance.ctx = canvas.getContext('2d');
+        // Ensure the DrawContext wrapper exists now that ctx is available.
+        // CanvasComponent._ensureDraw() creates instance.draw from this.ctx;
+        // call it here because onMount runs before set_canvas in the host
+        // handshake, so the base class never got a chance to create it.
+        if (typeof instance._ensureDraw === 'function') {
+          instance._ensureDraw();
+        }
       }
       reply(type, id);
       return;
@@ -101,6 +108,10 @@ self.onmessage = (event) => {
           signal: new AbortController().signal,
         });
       }
+      // After onMount, ensure draw is wired up (ctx may now be set by the base class).
+      if (instance && typeof instance._ensureDraw === 'function') {
+        instance._ensureDraw();
+      }
       reply(type, id);
       return;
     }
@@ -112,7 +123,18 @@ self.onmessage = (event) => {
     }
 
     if (type === 'update') {
-      if (typeof instance?.onUpdate === 'function') instance.onUpdate(withRuntimeArgs(payload));
+      if (typeof instance?.onUpdate === 'function') {
+        // Ensure draw is available before every frame, in case onMount didn't
+        // have a chance to create it (e.g. first frame right after set_canvas).
+        if (instance.ctx && typeof instance._ensureDraw === 'function') {
+          instance._ensureDraw();
+        }
+        // Pass `draw` in the args so scripts that destructure `{ draw }` from
+        // onUpdate args get the DrawContext — same as the main-thread path in
+        // canvasRunner.js (line: `const draw = mounted.instance?.draw || null`).
+        const draw = instance.draw || null;
+        instance.onUpdate({ ...withRuntimeArgs(payload), draw });
+      }
       reply(type, id);
       return;
     }
