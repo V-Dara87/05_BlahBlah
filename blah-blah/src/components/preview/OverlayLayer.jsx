@@ -7,6 +7,7 @@ import { findScriptDef } from '../../engine/scriptLookup';
 import { is3DShape, drawShape3D } from '../../engine/geometry3d';
 import { EntityErrorBoundary } from '../entity/EntityErrorBoundary';
 import { ScriptGizmoOverlay } from './ScriptGizmoOverlay';
+import { Gizmo3D } from './Gizmo3D';
 import './overlay-layer.css';
  
 
@@ -130,6 +131,9 @@ export function OverlayLayer({
   handleRotateGizmoPointerDown,
   handleScaleGizmoPointerDown,
   autoKeyEnabled = false,
+  gizmoTool = 'move',
+  onGizmo3DPointerDown,
+  active3DHandle = null,
 }) {
   return items.map((item) => {
     const { entity, transform, localTransform } = item;
@@ -421,6 +425,22 @@ export function OverlayLayer({
         />
       )}
 
+      {/* 3D Transform Gizmo (Move / Rotate / Scale) for selected 3D shape entity */}
+      {isSelected && onUpdateEntity && meshOn3DLayer && proj && (
+        <Gizmo3D
+          key={`${entity.id}-gizmo-3d`}
+          projectedTransform={proj}
+          activeTool={gizmoTool}
+          activeHandle={active3DHandle}
+          width={safeResWidth}
+          height={safeResHeight}
+          zIndex={Math.max(1000 + 100 + layerZIndexOf(item), (proj.zIndex ?? 0) + 50)}
+          onHandlePointerDown={(handle, e) => {
+            onGizmo3DPointerDown?.(e, entity, item, handle, gizmoTool);
+          }}
+        />
+      )}
+
       {/* Selection outline + rotate/scale gizmo handles — a SIBLING
           of .preview-render-layer above, not a child of it. The
           content div carries `scale(transform.scaleX,
@@ -436,7 +456,7 @@ export function OverlayLayer({
           place. Kept in the same z-index band as the content div
           (right after it, translate(-50%,-50%) centered the same
           way) so it still visually tracks the clip 1:1. */}
-      {isSelected && onUpdateEntity && showLayerDiv && (
+      {isSelected && onUpdateEntity && showLayerDiv && !meshOn3DLayer && (
         <div
           key={`${entity.id}-gizmo`}
           className={`preview-selection-gizmo${isFullFrameGizmo ? ' is-full-frame' : ''}`}

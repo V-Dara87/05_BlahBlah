@@ -1206,6 +1206,49 @@ export function InspectorFieldList({
 }
  
 /**
+ * Inspector / Dopesheet field schema for the built-in Camera component.
+ *
+ * Adding a new field here automatically gives it a Dopesheet lane and a
+ * keyframe diamond in the Inspector — no extra wiring needed.
+ *
+ * ⚠️  COMPONENT REGISTRY CONTRACT — keep in sync with
+ *     `fieldSchemaForComponent` in Dopesheet.jsx whenever this list changes.
+ */
+export const CAMERA_FIELDS = [
+  { name: 'positionX', type: 'number', label: 'Position X', dragLabel: 'X', step: 1, defaultVal: 0 },
+  { name: 'positionY', type: 'number', label: 'Position Y', dragLabel: 'Y', step: 1, defaultVal: 0 },
+  { name: 'positionZ', type: 'number', label: 'Position Z', dragLabel: 'Z', step: 1, defaultVal: -1000 },
+  { name: 'targetX',   type: 'number', label: 'Target X',   dragLabel: 'X', step: 1, defaultVal: 0 },
+  { name: 'targetY',   type: 'number', label: 'Target Y',   dragLabel: 'Y', step: 1, defaultVal: 0 },
+  { name: 'targetZ',   type: 'number', label: 'Target Z',   dragLabel: 'Z', step: 1, defaultVal: 0 },
+  { name: 'fov',       type: 'number', label: 'FOV',        dragLabel: '°', step: 1, min: 10, max: 150, defaultVal: 50 },
+  { name: 'zoom',      type: 'number', label: 'Zoom',       dragLabel: '×', step: 0.05, min: 0.1, max: 4.0, defaultVal: 1.0 },
+  { name: 'roll',      type: 'number', label: 'Roll',       dragLabel: '°', step: 1, min: -180, max: 180, defaultVal: 0 },
+];
+
+/**
+ * Inspector / Dopesheet field schema for the built-in ShapeRenderer component.
+ *
+ * Both 2D and 3D shape fields are listed here; the Dopesheet renders all of
+ * them (fields with no keyframes are hidden when "Show Only Keyframed" is on).
+ *
+ * ⚠️  COMPONENT REGISTRY CONTRACT — keep in sync with
+ *     `fieldSchemaForComponent` in Dopesheet.jsx whenever this list changes.
+ */
+export const SHAPE_RENDERER_FIELDS = [
+  { name: 'width',        type: 'number', label: 'Width',        dragLabel: 'W',  step: 1, min: 1, defaultVal: 140 },
+  { name: 'height',       type: 'number', label: 'Height',       dragLabel: 'H',  step: 1, min: 1, defaultVal: 140 },
+  { name: 'depth',        type: 'number', label: 'Depth',        dragLabel: 'D',  step: 1, min: 1, defaultVal: 140 },
+  { name: 'rotationX',    type: 'number', label: '3D Tilt X',    dragLabel: 'X°', step: 1, defaultVal: 25 },
+  { name: 'rotationY',    type: 'number', label: '3D Tilt Y',    dragLabel: 'Y°', step: 1, defaultVal: -35 },
+  { name: 'rotationZ',    type: 'number', label: '3D Tilt Z',    dragLabel: 'Z°', step: 1, defaultVal: 0 },
+  { name: 'color',        type: 'color',  label: 'Fill Color',                              defaultVal: '#ffffff' },
+  { name: 'strokeColor',  type: 'color',  label: 'Stroke Color',                            defaultVal: '#38bdf8' },
+  { name: 'strokeWidth',  type: 'number', label: 'Stroke Width', dragLabel: 'px', step: 0.5, min: 0, defaultVal: 0 },
+  { name: 'borderRadius', type: 'number', label: 'Roundness',    dragLabel: 'px', step: 1, min: 0, defaultVal: 0 },
+];
+
+/**
  * Inspector / Dopesheet schema for the built-in TextRenderer. Presentation
  * (size, color) lives here; timed copy lives on a SubtitleTrack referenced
  * by `subtitleSourceId` (a ref slot, not a keyframed field).

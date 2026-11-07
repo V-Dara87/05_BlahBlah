@@ -6,9 +6,12 @@ import {
   ChevronsLeft, ChevronsRight, SkipBack, SkipForward, ZoomIn, ZoomOut,
   Undo2, Redo2, Scissors, Trash2, Copy, Magnet,
   Activity, ClipboardPaste, Plus, Navigation, CornerDownRight,
-  ArrowLeftRight, Clock, FastForward,
+  ArrowLeftRight, Clock, FastForward, Camera,
 } from 'lucide-react';
-import { TRANSFORM_FIELD_GROUPS, TEXT_RENDERER_FIELDS } from '../inspector/InspectorField';
+import {
+  TRANSFORM_FIELD_GROUPS, TEXT_RENDERER_FIELDS,
+  CAMERA_FIELDS, SHAPE_RENDERER_FIELDS,
+} from '../inspector/InspectorField';
 import { extractScriptProps } from '../../engine/scriptRunner';
 import {
   trackKeyFor, getFieldKeyframes, setKeyframe, removeKeyframe,
@@ -44,12 +47,29 @@ const GROUP_ICONS = {
   MonoBehaviour: FileCode,
   TextRenderer: Type,
   ShapeRenderer: Square,
+  Camera: Camera,
 };
 
 const PIXELS_PER_SECOND = 60;
 const MIN_PPS = 15;
 const MAX_PPS = 240;
 
+/**
+ * Returns the animatable field schema for a component, used by the Dopesheet
+ * to build one lane row per field.
+ *
+ * -- EXTENSION POINT ----------------------------------------------------------
+ * When adding a NEW built-in component type (not a ScriptComponent) you MUST:
+ *   1. Export <TYPE>_FIELDS from InspectorField.jsx with every animatable
+ *      field described as { name, type, label, defaultVal, ... }.
+ *   2. Import that constant at the top of this file.
+ *   3. Add an if (component.type === '<Type>') return <TYPE>_FIELDS; branch
+ *      in this function.
+ *   4. Add the icon to GROUP_ICONS above.
+ * Skipping any step means the Dopesheet silently shows no lanes for that type.
+ * In DEV mode a console.warn fires for any unregistered type.
+ * -----------------------------------------------------------------------------
+ */
 function fieldSchemaForComponent(component, scripts) {
   if (component.type === 'Transform') {
     return TRANSFORM_FIELD_GROUPS.flatMap((g) => g.fields);
@@ -57,16 +77,32 @@ function fieldSchemaForComponent(component, scripts) {
   if (component.type === 'TextRenderer') {
     return TEXT_RENDERER_FIELDS;
   }
+  if (component.type === 'Camera') {
+    return CAMERA_FIELDS;
+  }
+  if (component.type === 'ShapeRenderer') {
+    return SHAPE_RENDERER_FIELDS;
+  }
   if (isScriptComponent(component)) {
     const scriptDef = scripts.find((s) => s.id === component.scriptId);
     if (!scriptDef) return [];
     return extractScriptProps(scriptDef.code);
+  }
+  // Unregistered built-in component -- follow the EXTENSION POINT guide above.
+  if (import.meta.env?.DEV) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[Dopesheet] fieldSchemaForComponent: unregistered component type ' + component.type + '. ' +
+      'Export its field schema from InspectorField.jsx, import it here, add a branch, and add an icon to GROUP_ICONS.'
+    );
   }
   return [];
 }
 
 function groupLabel(component, scripts) {
   if (component.type === 'Transform') return 'Transform';
+  if (component.type === 'Camera') return '3D Camera';
+  if (component.type === 'ShapeRenderer') return 'Shape';
   if (component.scriptId) {
     const scriptDef = scripts.find((s) => s.id === component.scriptId);
     return component.scriptName || scriptDef?.name || component.type;
@@ -296,8 +332,11 @@ export const Dopesheet = memo(function Dopesheet({
   const handleAddKeyAtPlayhead = (trackKey, fieldName, defaultVal) => {
     if (!selectedEntity) return;
     const comp = selectedEntity.components.find((c) => trackKeyFor(c) === trackKey);
-    const isTransform = comp?.type === 'Transform';
-    const currentVal = isTransform ? comp?.[fieldName] : comp?.props?.[fieldName];
+    // Built-in components (Transform, Camera, ShapeRenderer, TextRenderer, ...)
+    // store their values directly on the component object, not under .props.
+    // ScriptComponents store under .props. Check top-level first.
+    const isBuiltIn = comp && !isScriptComponent(comp);
+    const currentVal = isBuiltIn ? comp?.[fieldName] : comp?.props?.[fieldName];
     const value = currentVal !== undefined ? currentVal : defaultVal;
     const keyframes = setKeyframe(selectedEntity, trackKey, fieldName, snapToFrame(localTime), value);
     onUpdateEntity(selectedEntity.id, { keyframes });

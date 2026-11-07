@@ -50,6 +50,11 @@ export const SHORTCUT_ACTIONS = [
   { id: 'seekForward', label: 'Step Forward', group: 'Playback', default: 'ArrowRight' },
   { id: 'jumpToStart', label: 'Jump to Start', group: 'Playback', default: 'Home' },
   { id: 'jumpToEnd', label: 'Jump to End', group: 'Playback', default: 'End' },
+
+  // 3D Transform Tools
+  { id: 'gizmoToolMove', label: 'Gizmo Move Tool', group: 'Tools', default: 'W' },
+  { id: 'gizmoToolRotate', label: 'Gizmo Rotate Tool', group: 'Tools', default: 'E' },
+  { id: 'gizmoToolScale', label: 'Gizmo Scale Tool', group: 'Tools', default: 'R' },
 ];
  
 const DEFAULT_BINDINGS = Object.fromEntries(

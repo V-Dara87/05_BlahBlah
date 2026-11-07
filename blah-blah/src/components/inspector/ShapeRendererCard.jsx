@@ -3,6 +3,47 @@ import { DragNumber } from '../shared/DragNumber';
 import { InspectorCardHeader } from './InspectorCardHeader';
 import { FieldContextRow } from './InspectorField';
 import { is3DShape } from '../../engine/geometry3d';
+import { getFieldKeyframes, setKeyframe, removeKeyframe } from '../../engine/keyframes';
+
+/**
+ * Small keyframe-diamond button for a single ShapeRenderer field.
+ * Matches the pattern used by CameraCard / TextRendererCard.
+ */
+function ShapeKeyframeButton({ fieldName, value, selectedEntity, currentTime, onUpdateEntity }) {
+  if (!selectedEntity) return null;
+
+  const localTime = Math.max(0, currentTime - selectedEntity.startTime);
+  const snapped = Math.round(localTime * 30) / 30;
+
+  const kfs = getFieldKeyframes(selectedEntity, 'ShapeRenderer', fieldName);
+  const hasKeys = kfs.length > 0;
+  const keyAtTime = kfs.find((k) => Math.abs(k.time - snapped) < 1 / 60);
+
+  const handleToggle = () => {
+    let nextKfs;
+    if (keyAtTime) {
+      nextKfs = removeKeyframe(selectedEntity, 'ShapeRenderer', fieldName, keyAtTime.id);
+    } else {
+      nextKfs = setKeyframe(selectedEntity, 'ShapeRenderer', fieldName, snapped, value);
+    }
+    onUpdateEntity(selectedEntity.id, { keyframes: nextKfs });
+  };
+
+  const label = keyAtTime
+    ? `Remove ${fieldName} keyframe at current time`
+    : `Add ${fieldName} keyframe at current time`;
+
+  return (
+    <button
+      type="button"
+      className={`keyframe-btn ${hasKeys ? 'has-keys' : ''} ${keyAtTime ? 'at-current-time' : ''}`}
+      onClick={handleToggle}
+      aria-pressed={!!keyAtTime}
+      aria-label={label}
+      title={label}
+    />
+  );
+}
  
 // Right-click (copy / paste / reset) schemas for this card's rows. Defaults are
 // the same fallbacks the controls already show when a value is missing.
@@ -31,6 +72,9 @@ export function ShapeRendererCard({
   handleCardDragEnd,
   removeComponent,
   updateComponent,
+  selectedEntity,
+  currentTime,
+  onUpdateEntity,
 }) {
   const is3D = is3DShape(shapeComp?.shapeType);
 
@@ -130,6 +174,7 @@ export function ShapeRendererCard({
                   onChange={(v) => updateComponent('ShapeRenderer', { depth: Math.round(v) })}
                 />
               )}
+              <ShapeKeyframeButton fieldName="width" value={shapeComp.width ?? 140} selectedEntity={selectedEntity} currentTime={currentTime} onUpdateEntity={onUpdateEntity} />
             </div>
           </FieldContextRow>
 
@@ -175,6 +220,7 @@ export function ShapeRendererCard({
                   step={1}
                   onChange={(v) => updateComponent('ShapeRenderer', { rotationZ: Math.round(v) })}
                 />
+                <ShapeKeyframeButton fieldName="rotationX" value={shapeComp.rotationX ?? 25} selectedEntity={selectedEntity} currentTime={currentTime} onUpdateEntity={onUpdateEntity} />
               </div>
             </FieldContextRow>
           )}
@@ -197,21 +243,24 @@ export function ShapeRendererCard({
               </select>
             </FieldContextRow>
           )}
- 
+
           <FieldContextRow
             field={SHAPE_FILL_FIELD}
             value={shapeComp.color || '#ffffff'}
             onChange={(v) => updateComponent('ShapeRenderer', { color: v })}
           >
             <span className="row-label">Fill Color</span>
-            <input
-              type="color"
-              className="inspector-color-input"
-              value={shapeComp.color || '#ffffff'}
-              onChange={(e) => updateComponent('ShapeRenderer', { color: e.target.value })}
-            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flex: 1 }}>
+              <input
+                type="color"
+                className="inspector-color-input"
+                value={shapeComp.color || '#ffffff'}
+                onChange={(e) => updateComponent('ShapeRenderer', { color: e.target.value })}
+              />
+              <ShapeKeyframeButton fieldName="color" value={shapeComp.color || '#ffffff'} selectedEntity={selectedEntity} currentTime={currentTime} onUpdateEntity={onUpdateEntity} />
+            </div>
           </FieldContextRow>
- 
+
           {!is3D && shapeComp.shapeType !== 'circle' && (
             <FieldContextRow
               field={SHAPE_ROUND_FIELD}
@@ -219,44 +268,53 @@ export function ShapeRendererCard({
               onChange={(v) => updateComponent('ShapeRenderer', { borderRadius: Math.round(v) })}
             >
               <span className="row-label">Roundness</span>
-              <DragNumber
-                label="px"
-                value={shapeComp.borderRadius ?? 0}
-                step={1}
-                min={0}
-                max={Math.min(shapeComp.width ?? 140, shapeComp.height ?? 140) / 2}
-                onChange={(v) => updateComponent('ShapeRenderer', { borderRadius: Math.round(v) })}
-              />
+              <div className="drag-number-group">
+                <DragNumber
+                  label="px"
+                  value={shapeComp.borderRadius ?? 0}
+                  step={1}
+                  min={0}
+                  max={Math.min(shapeComp.width ?? 140, shapeComp.height ?? 140) / 2}
+                  onChange={(v) => updateComponent('ShapeRenderer', { borderRadius: Math.round(v) })}
+                />
+                <ShapeKeyframeButton fieldName="borderRadius" value={shapeComp.borderRadius ?? 0} selectedEntity={selectedEntity} currentTime={currentTime} onUpdateEntity={onUpdateEntity} />
+              </div>
             </FieldContextRow>
           )}
- 
+
           <FieldContextRow
             field={SHAPE_STROKE_COLOR_FIELD}
             value={shapeComp.strokeColor || '#38bdf8'}
             onChange={(v) => updateComponent('ShapeRenderer', { strokeColor: v })}
           >
             <span className="row-label">Stroke Color</span>
-            <input
-              type="color"
-              className="inspector-color-input"
-              value={shapeComp.strokeColor || '#38bdf8'}
-              onChange={(e) => updateComponent('ShapeRenderer', { strokeColor: e.target.value })}
-            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flex: 1 }}>
+              <input
+                type="color"
+                className="inspector-color-input"
+                value={shapeComp.strokeColor || '#38bdf8'}
+                onChange={(e) => updateComponent('ShapeRenderer', { strokeColor: e.target.value })}
+              />
+              <ShapeKeyframeButton fieldName="strokeColor" value={shapeComp.strokeColor || '#38bdf8'} selectedEntity={selectedEntity} currentTime={currentTime} onUpdateEntity={onUpdateEntity} />
+            </div>
           </FieldContextRow>
- 
+
           <FieldContextRow
             field={SHAPE_STROKE_W_FIELD}
             value={shapeComp.strokeWidth ?? 0}
             onChange={(v) => updateComponent('ShapeRenderer', { strokeWidth: v })}
           >
             <span className="row-label">Stroke W</span>
-            <DragNumber
-              label="px"
-              value={shapeComp.strokeWidth ?? 0}
-              step={0.5}
-              min={0}
-              onChange={(v) => updateComponent('ShapeRenderer', { strokeWidth: v })}
-            />
+            <div className="drag-number-group">
+              <DragNumber
+                label="px"
+                value={shapeComp.strokeWidth ?? 0}
+                step={0.5}
+                min={0}
+                onChange={(v) => updateComponent('ShapeRenderer', { strokeWidth: v })}
+              />
+              <ShapeKeyframeButton fieldName="strokeWidth" value={shapeComp.strokeWidth ?? 0} selectedEntity={selectedEntity} currentTime={currentTime} onUpdateEntity={onUpdateEntity} />
+            </div>
           </FieldContextRow>
         </div>
       )}

@@ -1,0 +1,96 @@
+/* 3D Transform Gizmo (Move / Rotate / Scale) overlay styling */
+
+.preview-gizmo-3d {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  overflow: visible;
+  user-select: none;
+}
+
+/* Base handle paths */
+.gizmo3d-stem,
+.gizmo3d-ring,
+.gizmo3d-head,
+.gizmo3d-cube {
+  transition: opacity 0.1s ease, stroke-width 0.1s ease, filter 0.1s ease;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Stems and lines */
+.gizmo3d-stem {
+  stroke-width: calc(2.2px / var(--view-scale, 1));
+}
+
+.gizmo3d-ring {
+  fill: none;
+  stroke-width: calc(2px / var(--view-scale, 1));
+}
+
+.gizmo3d-head {
+  stroke: none;
+}
+
+.gizmo3d-cube {
+  stroke-width: calc(1.5px / var(--view-scale, 1));
+}
+
+/* Interactive handle groups */
+.gizmo3d-handle-group {
+  cursor: pointer;
+  pointer-events: all;
+}
+
+.gizmo3d-handle-group:hover .gizmo3d-stem {
+  stroke-width: calc(3.5px / var(--view-scale, 1));
+}
+
+.gizmo3d-handle-group:hover .gizmo3d-ring {
+  stroke-width: calc(3.5px / var(--view-scale, 1));
+}
+
+.gizmo3d-handle-group:hover .gizmo3d-head,
+.gizmo3d-handle-group:hover .gizmo3d-cube {
+  filter: brightness(1.2);
+}
+
+/* Active / hovered highlight */
+.gizmo3d-handle-group.is-active .gizmo3d-stem,
+.gizmo3d-handle-group.is-active .gizmo3d-ring {
+  stroke: #facc15 !important;
+  stroke-width: calc(3.5px / var(--view-scale, 1));
+}
+
+.gizmo3d-handle-group.is-active .gizmo3d-head,
+.gizmo3d-handle-group.is-active .gizmo3d-cube {
+  fill: #facc15 !important;
+  stroke: #ca8a04 !important;
+}
+
+/* Handles pointing away into the scene are dimmed */
+.gizmo3d-handle-group.is-dimmed {
+  opacity: 0.45;
+}
+
+.gizmo3d-handle-group.is-dimmed:hover {
+  opacity: 0.85;
+}
+
+/* Wide invisible hit area for easy grabbing */
+.gizmo3d-hit-stroke {
+  fill: none;
+  stroke: transparent;
+  stroke-width: calc(18px / var(--view-scale, 1));
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  cursor: pointer;
+  pointer-events: stroke;
+}
+
+.gizmo3d-hit-fill {
+  fill: transparent;
+  stroke: none;
+  cursor: pointer;
+  pointer-events: fill;
+}

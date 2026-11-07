@@ -1,4 +1,6 @@
 import { trackKeyFor, getFieldKeyframes, setKeyframe } from '../engine/keyframes';
+import { buildGizmo3DGeometry, solveMove3D, solveRotate3D, solveScale3D } from '../engine/gizmo3d.js';
+import { mat4Translation, mat4RotationZ, mat4Scaling, mat4Multiply } from '../engine/camera3d.js';
 import '../components/preview/gizmo.css';
 
 /**
@@ -193,7 +195,7 @@ export function useGizmoDrag({
       const hasTransform = entity.components.some((c) => c.type === 'Transform');
       patch.components = hasTransform
         ? entity.components.map((c) => (c.type === 'Transform' ? { ...c, ...staticUpdates } : c))
-        : [{ type: 'Transform', x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1, ...staticUpdates }, ...entity.components];
+        : [{ type: 'Transform', x: 0, y: 0, z: 0, rotation: 0, rotationX: 0, rotationY: 0, scaleX: 1, scaleY: 1, scaleZ: 1, opacity: 1, is3D: true, ...staticUpdates }, ...entity.components];
     }
     if (Object.keys(patch).length > 0) onUpdateEntity(entityId, patch);
   };
@@ -213,10 +215,12 @@ export function useGizmoDrag({
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', end);
       window.removeEventListener('pointercancel', end);
+      window.removeEventListener('blur', end);
     };
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', end);
     window.addEventListener('pointercancel', end);
+    window.addEventListener('blur', end);
   };
 
   // Canvas-space point (offset from canvas centre, project px) -> screen px,
@@ -523,9 +527,183 @@ export function useGizmoDrag({
     });
   };
  
+  const handleGizmo3DPointerDown = (e, entity, item, handle, tool = 'move') => {
+    if (!onUpdateEntity) return;
+    e.stopPropagation();
+    e.preventDefault();
+    onSelectEntity(entity.id);
+
+    const frameEl = canvasFrameRef.current;
+    const doc = frameEl?.ownerDocument || (typeof document !== 'undefined' ? document : null);
+
+    const getScale = () =>
+      (frameScale || 1) * (previewMode === 'extended' ? (viewTransformRef.current.zoom || 1) : 1);
+
+    const clientToProject = (cx, cy) => {
+      if (!frameEl) return { x: cx, y: cy };
+      const rect = frameEl.getBoundingClientRect();
+      const s = getScale() || 1;
+      if (previewMode === 'extended') {
+        const vt = viewTransformRef.current;
+        return {
+          x: (cx - rect.left - (vt.panX || 0)) / s,
+          y: (cy - rect.top - (vt.panY || 0)) / s,
+        };
+      }
+      const left = rect.left + (rect.width - safeResWidth * (frameScale || 1)) / 2;
+      const top = rect.top + (rect.height - safeResHeight * (frameScale || 1)) / 2;
+      return {
+        x: (cx - left) / s,
+        y: (cy - top) / s,
+      };
+    };
+
+    const startProj = clientToProject(e.clientX, e.clientY);
+
+    const compItem = item || computedEntities.find((c) => c.entity.id === entity.id);
+    const lx = compItem?.localTransform || {};
+    const tf = compItem?.transform || {};
+    const proj = compItem?.projectedTransform;
+
+    const startPose = {
+      x: lx.x ?? tf.x ?? 0,
+      y: lx.y ?? tf.y ?? 0,
+      z: lx.z ?? tf.z ?? 0,
+      rotationX: lx.rotationX ?? tf.rotationX ?? 0,
+      rotationY: lx.rotationY ?? tf.rotationY ?? 0,
+      rotation: lx.rotationZ ?? lx.rotation ?? tf.rotationZ ?? tf.rotation ?? 0,
+      scaleX: lx.scaleX ?? tf.scaleX ?? 1,
+      scaleY: lx.scaleY ?? tf.scaleY ?? 1,
+      scaleZ: lx.scaleZ ?? tf.scaleZ ?? 1,
+    };
+
+    let parentMatrix = null;
+    if (entity.parentId) {
+      const parentItem = computedEntities.find((c) => c.entity.id === entity.parentId);
+      if (parentItem?.projectedTransform?.modelMatrix) {
+        parentMatrix = parentItem.projectedTransform.modelMatrix;
+      } else if (parentItem?.transform) {
+        const pt = parentItem.transform;
+        const mTrans = mat4Translation(pt.x || 0, pt.y || 0, 0);
+        const mRot = mat4RotationZ(((pt.rotation || 0) * Math.PI) / 180);
+        const mScale = mat4Scaling(pt.scaleX ?? 1, pt.scaleY ?? 1, 1);
+        parentMatrix = mat4Multiply(mat4Multiply(mTrans, mRot), mScale);
+      }
+    }
+
+    const geometry = proj
+      ? buildGizmo3DGeometry({
+          camMatrix: proj.camMatrix,
+          viewMatrix: proj.viewMatrix,
+          modelMatrix: proj.modelMatrix,
+          focalLength: proj.focalLength,
+          viewport: { width: safeResWidth, height: safeResHeight },
+          near: proj.nearPlane || 1,
+        })
+      : null;
+
+    const effectiveTool =
+      tool ||
+      (handle.startsWith('rotate-') ? 'rotate' : (handle.startsWith('scale-') ? 'scale' : 'move'));
+    const cursor =
+      effectiveTool === 'rotate' ? 'grabbing' : (effectiveTool === 'scale' ? 'nwse-resize' : 'move');
+    const feedback = createDragFeedback(doc, cursor);
+
+    gizmoDragRef.current = {
+      mode: 'gizmo3d',
+      entityId: entity.id,
+      handle,
+      tool: effectiveTool,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startProj,
+      startPose,
+      geometry,
+      parentMatrix,
+    };
+
+    bindDrag('gizmo3d', feedback, (moveEvent, drag) => {
+      const s = getScale() || 1;
+      const dxProj = (moveEvent.clientX - drag.startClientX) / s;
+      const dyProj = (moveEvent.clientY - drag.startClientY) / s;
+      const currProj = {
+        x: drag.startProj.x + dxProj,
+        y: drag.startProj.y + dyProj,
+      };
+
+      if (drag.tool === 'move') {
+        const moveRes = solveMove3D({
+          startPointer: drag.startProj,
+          currentPointer: currProj,
+          handle: drag.handle,
+          geometry: drag.geometry,
+          parentMatrix: drag.parentMatrix,
+        });
+
+        const delta = moveRes.deltaLocal;
+        const nextX = drag.startPose.x + delta.x;
+        const nextY = drag.startPose.y + delta.y;
+        const nextZ = drag.startPose.z + delta.z;
+
+        updateSelectedTransform(drag.entityId, { x: nextX, y: nextY, z: nextZ });
+        feedback.readout(
+          `X ${Math.round(nextX)}  Y ${Math.round(nextY)}  Z ${Math.round(nextZ)}`,
+          moveEvent.clientX,
+          moveEvent.clientY
+        );
+      } else if (drag.tool === 'rotate') {
+        const rotRes = solveRotate3D({
+          startPointer: drag.startProj,
+          currentPointer: currProj,
+          handle: drag.handle,
+          geometry: drag.geometry,
+        });
+
+        let nextAngle = (drag.startPose[rotRes.fieldName] ?? 0) + rotRes.deltaAngle;
+        if (moveEvent.shiftKey) {
+          nextAngle = Math.round(nextAngle / 15) * 15;
+        }
+
+        updateSelectedTransform(drag.entityId, { [rotRes.fieldName]: nextAngle });
+
+        const label = rotRes.axisKey.toUpperCase();
+        feedback.readout(`${label} ${fmt1(nextAngle)}°`, moveEvent.clientX, moveEvent.clientY);
+      } else if (drag.tool === 'scale') {
+        const scaleRes = solveScale3D({
+          startPointer: drag.startProj,
+          currentPointer: currProj,
+          handle: drag.handle,
+          geometry: drag.geometry,
+          startScale: {
+            scaleX: drag.startPose.scaleX,
+            scaleY: drag.startPose.scaleY,
+            scaleZ: drag.startPose.scaleZ,
+          },
+          shiftKey: moveEvent.shiftKey,
+        });
+
+        const { nextScale } = scaleRes;
+        updateSelectedTransform(drag.entityId, {
+          scaleX: nextScale.scaleX,
+          scaleY: nextScale.scaleY,
+          scaleZ: nextScale.scaleZ,
+        });
+
+        if (scaleRes.isUniform) {
+          feedback.readout(`Scale ${scaleRes.ratio.toFixed(2)}×`, moveEvent.clientX, moveEvent.clientY);
+        } else {
+          const axisKey = drag.handle.replace('scale-', '').toUpperCase();
+          const axisVal = nextScale[`scale${axisKey}`];
+          feedback.readout(`Scale ${axisKey} ${(axisVal ?? 1).toFixed(2)}×`, moveEvent.clientX, moveEvent.clientY);
+        }
+      }
+    });
+  };
+
   return {
     handleMoveGizmoPointerDown,
     handleRotateGizmoPointerDown,
     handleScaleGizmoPointerDown,
+    handleGizmo3DPointerDown,
   };
 }

@@ -3,6 +3,9 @@ import { getCompiledReactComponent, detectScriptKind, extractScriptProps } from 
 import { resolveScriptProps } from '../../engine/referenceTypes';
 import { resolveTextRendererText, cssFontFamily, DEFAULT_TEXT_FONT_SIZE, DEFAULT_TEXT_FONT_COLOR, DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_WEIGHT } from '../../engine/textRenderer';
 import { isScriptComponent, isVideoEntity, isAudioEntity } from '../../engine/ecs';
+import { is3DShape } from '../../engine/geometry3d';
+import { Move, RotateCw, Maximize2 } from 'lucide-react';
+import { loadKeybindSettings, normalizeKeyEvent } from '../../services/keybindSettings';
 import { computeActiveEntitiesAtTime, buildActiveEntityIndex, resolveTransitionFramePlan, getTransitionAudioWindows } from '../../engine/renderPipeline';
 import { EntityErrorBoundary } from './EntityErrorBoundary';
 import { usePreviewViewport } from '../../hooks/usePreviewViewport';
@@ -67,6 +70,17 @@ export function EntityRenderer({
 }) {
   const containerRef = useRef(null);
   const gizmoDragRef = useRef(null);
+  const [gizmoTool, setGizmoTool] = useState('move');
+  const [isPreviewFocused, setIsPreviewFocused] = useState(false);
+  const bindingsRef = useRef(loadKeybindSettings());
+
+  useEffect(() => {
+    const handleBindingsChanged = (e) => {
+      bindingsRef.current = e.detail || loadKeybindSettings();
+    };
+    window.addEventListener('blahblah:keybinds-changed', handleBindingsChanged);
+    return () => window.removeEventListener('blahblah:keybinds-changed', handleBindingsChanged);
+  }, []);
  
   // Preview frame measurement + extended-mode pan/zoom.
   // See hooks/usePreviewViewport.js.
@@ -266,7 +280,12 @@ export function EntityRenderer({
   // keyframes must be written as a keyframe at the current playhead time,
   // not a static prop, or resolveKeyframedComponents overwrites it back
   // every render). See hooks/useGizmoDrag.js.
-  const { handleMoveGizmoPointerDown, handleRotateGizmoPointerDown, handleScaleGizmoPointerDown } = useGizmoDrag({
+  const {
+    handleMoveGizmoPointerDown,
+    handleRotateGizmoPointerDown,
+    handleScaleGizmoPointerDown,
+    handleGizmo3DPointerDown,
+  } = useGizmoDrag({
     entities,
     onUpdateEntity,
     onSelectEntity,
@@ -279,6 +298,58 @@ export function EntityRenderer({
     viewportRefs: { canvasFrameRef, frameScale, previewMode, viewTransformRef },
     gizmoDragRef,
   });
+
+  const selectedItem = useMemo(
+    () => computedEntities.find((c) => c.entity.id === selectedEntityId),
+    [computedEntities, selectedEntityId]
+  );
+  const is3DShapeSelected = Boolean(
+    selectedItem?.is3D &&
+    selectedItem.entity?.components?.some((c) => c.type === 'ShapeRenderer' && is3DShape(c.shapeType))
+  );
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || e.target.isContentEditable) {
+        return;
+      }
+      const hasFocus = containerRef.current && (
+        containerRef.current.contains(document.activeElement) ||
+        document.activeElement === containerRef.current ||
+        isPreviewFocused
+      );
+      if (!hasFocus || !is3DShapeSelected) return;
+
+      const binding = normalizeKeyEvent(e);
+      if (!binding) return;
+
+      const bindings = bindingsRef.current || loadKeybindSettings();
+      let actionId = Object.keys(bindings).find((id) => bindings[id] === binding);
+
+      if (!actionId) {
+        if (binding === 'W') actionId = 'gizmoToolMove';
+        else if (binding === 'E') actionId = 'gizmoToolRotate';
+        else if (binding === 'R') actionId = 'gizmoToolScale';
+      }
+
+      if (actionId === 'gizmoToolMove') {
+        e.preventDefault();
+        e.stopPropagation();
+        setGizmoTool('move');
+      } else if (actionId === 'gizmoToolRotate') {
+        e.preventDefault();
+        e.stopPropagation();
+        setGizmoTool('rotate');
+      } else if (actionId === 'gizmoToolScale') {
+        e.preventDefault();
+        e.stopPropagation();
+        setGizmoTool('scale');
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [is3DShapeSelected, isPreviewFocused]);
  
   const toggleFullscreen = () => {
     if (!containerRef.current) return;
@@ -296,7 +367,17 @@ export function EntityRenderer({
   const safeResHeight = resolution?.height > 0 ? resolution.height : FALLBACK_RESOLUTION.height;
  
   return (
-    <section className="preview-panel" ref={containerRef}>
+    <section
+      className="preview-panel"
+      ref={containerRef}
+      tabIndex={0}
+      onFocus={() => setIsPreviewFocused(true)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget)) {
+          setIsPreviewFocused(false);
+        }
+      }}
+    >
       {/* Viewport Screen Frame */}
       <div
         className="preview-viewport-box"
@@ -310,6 +391,38 @@ export function EntityRenderer({
           if (e.target === e.currentTarget) onSelectEntity(null);
         }}
       >
+        {/* Floating 3D Transform Tool Switch (Move / Rotate / Scale) */}
+        {is3DShapeSelected && (
+          <div className="preview-gizmo3d-tools" title="3D Transform Tool (W: Move, E: Rotate, R: Scale)">
+            <button
+              type="button"
+              className={`gizmo3d-tool-btn ${gizmoTool === 'move' ? 'active' : ''}`}
+              onClick={() => setGizmoTool('move')}
+              title="Move Tool (W)"
+            >
+              <Move size={13} />
+              <span>Move</span>
+            </button>
+            <button
+              type="button"
+              className={`gizmo3d-tool-btn ${gizmoTool === 'rotate' ? 'active' : ''}`}
+              onClick={() => setGizmoTool('rotate')}
+              title="Rotate Tool (E)"
+            >
+              <RotateCw size={13} />
+              <span>Rotate</span>
+            </button>
+            <button
+              type="button"
+              className={`gizmo3d-tool-btn ${gizmoTool === 'scale' ? 'active' : ''}`}
+              onClick={() => setGizmoTool('scale')}
+              title="Scale Tool (R)"
+            >
+              <Maximize2 size={13} />
+              <span>Scale</span>
+            </button>
+          </div>
+        )}
         {/* Strictly preserves project aspect ratio — width and height are dynamically
             fitted to the available viewport box without distortion or stretching. */}
         <div
@@ -417,6 +530,8 @@ export function EntityRenderer({
             handleRotateGizmoPointerDown={handleRotateGizmoPointerDown}
             handleScaleGizmoPointerDown={handleScaleGizmoPointerDown}
             autoKeyEnabled={autoKeyEnabled}
+            gizmoTool={gizmoTool}
+            onGizmo3DPointerDown={handleGizmo3DPointerDown}
           />
  
           </div>

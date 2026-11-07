@@ -635,6 +635,9 @@ export const UnityInspector = memo(function UnityInspector({
             handleCardDragEnd={handleCardDragEnd}
             removeComponent={removeComponent}
             updateComponent={updateComponent}
+            selectedEntity={selectedEntity}
+            currentTime={currentTime}
+            onUpdateEntity={onUpdateEntity}
           />
         )}
  
