@@ -14,6 +14,7 @@ import { resolveScriptProps } from './referenceTypes.js';
 import { Tween } from './motionTween.js';
 import { pushRuntimeError, withScriptConsole } from './scriptConsole.js';
 import { globalFrameCache } from './frameCache.js';
+import { DrawContext } from '../../packages/blahblah-sdk/index.js';
 
 // ─── Frame-cache key helpers ────────────────────────────────────────────────
 const REFERENCE_FIELD_TYPES = new Set(['entity', 'asset', 'struct', 'struct[]', 'asset[]', 'entity[]']);
@@ -481,6 +482,7 @@ export function updateCanvasComponent({
       canvasWidth: effWidth,
       canvasHeight: effHeight,
       aspect: effHeight > 0 ? effWidth / effHeight : 1,
+      draw: instance?.draw || null,
       tween: Tween,
       Tween,
       ...timingArgs,
@@ -576,6 +578,20 @@ export function updateCanvasComponent({
     mounted.instance.canvasHeight = effHeight;
     mounted.instance.aspect = effHeight > 0 ? effWidth / effHeight : 1;
 
+    if (mounted.instance.ctx) {
+      if (typeof mounted.instance._ensureDraw === 'function') {
+        mounted.instance._ensureDraw();
+      } else if (mounted.instance.draw && typeof mounted.instance.draw._sync === 'function') {
+        mounted.instance.draw._sync(mounted.instance.ctx, effWidth, effHeight);
+      } else if (!mounted.instance.draw && typeof DrawContext === 'function') {
+        mounted.instance.draw = new DrawContext(mounted.instance.ctx, {
+          width: effWidth,
+          height: effHeight,
+          component: mounted.instance,
+        });
+      }
+    }
+
     // Automatic resize helper for Three.js WebGLRenderer & Camera if present
     const inst = mounted.instance;
     if (inst.autoResize !== false && inst.renderer && typeof inst.renderer.setSize === 'function') {
@@ -622,6 +638,7 @@ export function updateCanvasComponent({
   }
 
   if (!mounted.mountFailed) {
+    const draw = mounted.instance?.draw || null;
     const threw = safeCall(mounted.instance, 'onUpdate', {
       container,
       time: localTime,
@@ -631,6 +648,7 @@ export function updateCanvasComponent({
       canvasWidth: effWidth,
       canvasHeight: effHeight,
       aspect: effHeight > 0 ? effWidth / effHeight : 1,
+      draw,
       tween: Tween,
       Tween,
       ...timingArgs,

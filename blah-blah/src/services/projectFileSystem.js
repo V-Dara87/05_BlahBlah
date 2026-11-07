@@ -775,14 +775,22 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
     projectMeta.entities = projectMeta.entities.map((e) => {
       let freshUrl = null;
       if (e.src) {
-        const urlParts = e.src.split(/[/\\]/);
-        const lastPart = decodeURIComponent(urlParts[urlParts.length - 1] || '').toLowerCase();
+        let decoded = e.src;
+        try {
+          decoded = decodeURIComponent(e.src);
+        } catch {}
+        const urlParts = decoded.split(/[/\\]/);
+        const lastPart = (urlParts[urlParts.length - 1] || '').toLowerCase();
         if (mediaMap.has(lastPart)) {
           freshUrl = mediaMap.get(lastPart);
         }
       }
       if (!freshUrl && e.name) {
-        const cleanName = e.name.replace(/[🎵🎬\s]+$/g, '').trim().toLowerCase();
+        const cleanName = e.name
+          .replace(/\s*\(Audio\)\s*$/i, '')
+          .replace(/[🎵🎬\s]+$/g, '')
+          .trim()
+          .toLowerCase();
         if (mediaMap.has(cleanName)) {
           freshUrl = mediaMap.get(cleanName);
         }

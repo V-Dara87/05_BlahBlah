@@ -107,7 +107,11 @@ export function getAssetByUrl(url) {
   // to the right asset.
   return assets.find((a) => {
     if (!a?.url) return false;
-    const tail = (s) => String(s).split(/[/\\]/).pop();
+    const tail = (s) => {
+      let str = String(s || '');
+      try { str = decodeURIComponent(str); } catch {}
+      return str.split(/[/\\]/).pop();
+    };
     return tail(a.url) === tail(url);
   }) || null;
 }

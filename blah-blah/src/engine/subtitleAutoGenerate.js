@@ -20,7 +20,11 @@ export function resolveClipSourcePath(entity, mediaAssets = []) {
   if (Array.isArray(mediaAssets)) {
     const exact = mediaAssets.find((a) => a?.url === src || a?.path === src);
     if (exact?.path) return exact.path;
-    const tail = (s) => String(s || '').split(/[/\\]/).pop();
+    const tail = (s) => {
+      let str = String(s || '');
+      try { str = decodeURIComponent(str); } catch {}
+      return str.split(/[/\\]/).pop();
+    };
     const byName = mediaAssets.find((a) => a?.url && tail(a.url) === tail(src));
     if (byName?.path) return byName.path;
   }

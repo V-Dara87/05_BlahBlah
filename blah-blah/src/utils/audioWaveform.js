@@ -71,7 +71,11 @@ subscribePeaksUpdated((assetId) => {
     peakCache.clear();
     return;
   }
-  const tail = (value) => String(value).split(/[/\\]/).pop();
+  const tail = (value) => {
+    let str = String(value || '');
+    try { str = decodeURIComponent(str); } catch {}
+    return str.split(/[/\\]/).pop();
+  };
   const urlTail = tail(asset.url);
   for (const key of [...peakCache.keys()]) {
     const separator = key.indexOf('::');

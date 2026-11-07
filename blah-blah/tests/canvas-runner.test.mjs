@@ -444,6 +444,42 @@ test('AbortSignal is aborted on true unmount but NOT on container swap', () => {
   assert.equal(capturedSignal.aborted, true, 'signal must be aborted after true unmount');
 });
 
+test('onUpdate receives draw when instance has 2D context or draw', async () => {
+  const container = createMockElement('div');
+  const drawTestCode = `
+  export default class DrawTestScript {
+    onMount({ container }) {
+      this.ctx = {
+        save() {},
+        restore() {},
+        clearRect() {},
+        setTransform() {},
+        translate() {},
+      };
+      this.canvas = { tagName: 'CANVAS', parentNode: null };
+      container.appendChild(this.canvas);
+    }
+    onUpdate({ draw }) {
+      globalThis.capturedUpdateDraw = draw;
+    }
+  }
+  `;
+
+  await precompileWithBundler(drawTestCode, null, 'DrawTestScript.jsx');
+  globalThis.capturedUpdateDraw = undefined;
+  updateCanvasComponent({
+    entityId: 'e7_draw',
+    scriptId: 's7_draw',
+    scriptCode: drawTestCode,
+    container,
+    localTime: 0,
+  });
+
+  assert.ok(globalThis.capturedUpdateDraw, 'draw should be passed to onUpdate');
+  assert.equal(typeof globalThis.capturedUpdateDraw.clear, 'function', 'draw should have clear method');
+  pruneCanvasComponents([]);
+});
+
 console.log(`\nResults: ${passed} passed, ${failed} failed`);
 if (failed > 0) {
   process.exit(1);

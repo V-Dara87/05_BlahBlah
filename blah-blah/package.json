@@ -20,7 +20,10 @@
     "test:timeline": "node tests/run-timeline-layout-tests.mjs",
     "bench:index": "node tests/bench-active-index.mjs",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "sidecars": "node scripts/download-sidecars.mjs",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
