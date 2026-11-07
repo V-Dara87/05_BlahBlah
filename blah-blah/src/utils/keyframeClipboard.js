@@ -82,7 +82,7 @@ export function pasteKeyframesOntoEntity(entity, targetTime, targetTrackKey = nu
     if (!nextKeyframes[tk][fn]) nextKeyframes[tk][fn] = [];
 
     const newTime = Math.max(0, it.keyframe.time + timeOffset);
-    const newId = `kf-${tk}-${fn}-${newTime.toFixed(3)}-${Math.random().toString(36).slice(2, 7)}`;
+    const newId = `kf-${tk}-${fn}-${newTime.toFixed(3)}-${crypto.randomUUID().slice(0, 8)}`;
 
     // Remove any existing keyframe at the exact same timestamp to avoid overlapping dupes
     nextKeyframes[tk][fn] = nextKeyframes[tk][fn].filter(

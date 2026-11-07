@@ -47,7 +47,7 @@ export function openOrAddWindowToGroup({ win, containerApi, group }) {
   }
 
   // 3. Not open anywhere (or moveTo fallback): add to this group
-  const panelId = containerApi.getPanel?.(win.id) ? `${win.id}-${Date.now()}` : win.id;
+  const panelId = containerApi.getPanel?.(win.id) ? `${win.id}-${crypto.randomUUID()}` : win.id;
   return containerApi.addPanel?.({
     id: panelId,
     component: win.component,
@@ -66,7 +66,7 @@ export function addNewWindowInstanceToGroup({ win, containerApi, group }) {
   const title = count > 0 ? `${win.title} (${count + 1})` : win.title;
 
   return containerApi.addPanel?.({
-    id: `${win.component}-${Date.now()}`,
+    id: `${win.component}-${crypto.randomUUID()}`,
     component: win.component,
     title,
     position: { referenceGroup: group, direction: 'within' },

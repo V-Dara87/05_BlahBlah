@@ -402,7 +402,7 @@ export const Dopesheet = memo(function Dopesheet({
         for (const k of byField[fn] || []) {
           if (targetIds.has(k.id)) {
             const newTime = snapToFrame(k.time + offset);
-            const newId = `kf-${tk}-${fn}-${newTime.toFixed(3)}-${Math.random().toString(36).slice(2, 7)}`;
+            const newId = `kf-${tk}-${fn}-${newTime.toFixed(3)}-${crypto.randomUUID().slice(0, 8)}`;
             nextKeyframes[tk][fn] = nextKeyframes[tk][fn].filter(
               (existing) => Math.abs(existing.time - newTime) > 0.001
             );
@@ -616,7 +616,7 @@ export const Dopesheet = memo(function Dopesheet({
         for (const fn of Object.keys(byF || {})) {
           for (const k of byF[fn] || []) {
             if (targetIds.has(k.id)) {
-              const cloneId = `kf-${tk}-${fn}-${k.time.toFixed(3)}-${Math.random().toString(36).slice(2, 7)}`;
+              const cloneId = `kf-${tk}-${fn}-${k.time.toFixed(3)}-${crypto.randomUUID().slice(0, 8)}`;
               clonedKeyframes[tk][fn].push({
                 ...JSON.parse(JSON.stringify(k)),
                 id: cloneId,

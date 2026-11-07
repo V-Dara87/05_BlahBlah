@@ -35,7 +35,7 @@ export function useDockPanels() {
     } else {
       const refPanel = api.panels[0];
       api.addPanel({
-        id: `${componentName}-${Date.now()}`,
+        id: `${componentName}-${crypto.randomUUID()}`,
         component: componentName,
         title: defaultTitle,
         position: refPanel ? { direction: 'within', referencePanel: refPanel } : undefined,
@@ -50,7 +50,7 @@ export function useDockPanels() {
     const title = count > 0 ? `${defaultTitle} (${count + 1})` : defaultTitle;
     const refPanel = api.panels.find((p) => p.component === componentName) || api.panels[0];
     api.addPanel({
-      id: `${componentName}-${Date.now()}`,
+      id: `${componentName}-${crypto.randomUUID()}`,
       component: componentName,
       title,
       position: refPanel ? { direction: 'within', referencePanel: refPanel } : undefined,

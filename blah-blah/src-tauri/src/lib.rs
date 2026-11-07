@@ -1,10 +1,18 @@
 use std::collections::HashMap;
+use std::path::{Component, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tauri::webview::{NewWindowFeatures, NewWindowResponse, PageLoadEvent};
 use tauri::{Emitter, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri_plugin_fs::FsExt;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
+
+// ─── Sidecar / download hardening ────────────────────────────────────────────
+//
+// The webview can invoke these commands, so nothing a compromised page sends
+// may become an arbitrary command line, an arbitrary URL, or a write outside
+// the app's own data directory.
 
 #[derive(Clone, serde::Serialize)]
 pub struct FfmpegProgressEvent {
@@ -99,12 +107,122 @@ async fn ffmpeg_version(app: tauri::AppHandle) -> Result<String, String> {
     Ok(first_line)
 }
 
+/// FFmpeg options this app actually builds commands with. Anything else is
+/// rejected, so the sidecar cannot be re-purposed as a generic shell tool.
+const FFMPEG_ALLOWED_OPTIONS: &[&str] = &[
+    "-y", "-n", "-nostats", "-hide_banner", "-loglevel", "-ss", "-t", "-to", "-i",
+    "-vn", "-an", "-sn", "-ac", "-ar", "-ab", "-acodec", "-c:a", "-c:v", "-c",
+    "-f", "-pix_fmt", "-vf", "-filter_complex", "-filter:v", "-map", "-b:v", "-b:a",
+    "-crf", "-preset", "-profile:v", "-tag:v", "-movflags", "-progress", "-r", "-s",
+    "-aspect", "-shortest", "-af", "-frames:v", "-start_number", "-q:v", "-g", "-threads",
+    "-",
+];
+
+/// whisper-cli options this app builds commands with.
+const WHISPER_ALLOWED_OPTIONS: &[&str] = &[
+    "-m", "-f", "-l", "-osrt", "-of", "--print-progress", "-t", "--threads", "-pp", "-ml",
+    "-sow", "-owts", "-nt",
+];
+
+const MAX_ARG_COUNT: usize = 512;
+const MAX_ARG_BYTES: usize = 4096;
+const MAX_ARGS_TOTAL_BYTES: usize = 64 * 1024;
+
+/// Validate a sidecar argument vector: bounded size, no control bytes and no
+/// option outside the command's allowlist. Negative numbers (`-1`) are values.
+fn validate_sidecar_args(args: &[String], allowed: &[&str], label: &str) -> Result<(), String> {
+    if args.is_empty() {
+        return Err(format!("{label}: refusing to run with no arguments."));
+    }
+    if args.len() > MAX_ARG_COUNT {
+        return Err(format!("{label}: too many arguments ({}).", args.len()));
+    }
+
+    let mut total = 0usize;
+    for arg in args {
+        if arg.is_empty() {
+            return Err(format!("{label}: empty argument."));
+        }
+        if arg.len() > MAX_ARG_BYTES {
+            return Err(format!("{label}: argument is too long."));
+        }
+        if arg.contains('\0') || arg.contains('\n') || arg.contains('\r') {
+            return Err(format!("{label}: argument contains a forbidden character."));
+        }
+        total += arg.len();
+        if total > MAX_ARGS_TOTAL_BYTES {
+            return Err(format!("{label}: arguments are too large."));
+        }
+        if arg.starts_with('-') && arg.len() > 1 {
+            if arg.parse::<f64>().is_ok() {
+                continue;
+            }
+            if !allowed.iter().any(|option| *option == arg.as_str()) {
+                return Err(format!("{label}: option \"{arg}\" is not allowed."));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Every value of `option` must be an existing absolute path without `..`
+/// components, so an argument can never point outside a user-chosen file.
+fn validate_absolute_file_arg(args: &[String], option: &str, label: &str) -> Result<(), String> {
+    let mut index = 0;
+    while index < args.len() {
+        if args[index] == option {
+            let value = args
+                .get(index + 1)
+                .ok_or_else(|| format!("{label}: \"{option}\" has no value."))?;
+            let path = PathBuf::from(value);
+            if !path.is_absolute()
+                || path.components().any(|c| matches!(c, Component::ParentDir))
+            {
+                return Err(format!("{label}: \"{option}\" must be an absolute path."));
+            }
+            if !path.is_file() {
+                return Err(format!("{label}: input file does not exist: {value}"));
+            }
+            index += 2;
+        } else {
+            index += 1;
+        }
+    }
+    Ok(())
+}
+
+/// Like `validate_absolute_file_arg`, for an output prefix that does not exist
+/// yet (whisper's `-of`).
+fn validate_output_prefix(args: &[String], option: &str, label: &str) -> Result<(), String> {
+    let mut index = 0;
+    while index < args.len() {
+        if args[index] == option {
+            let value = args
+                .get(index + 1)
+                .ok_or_else(|| format!("{label}: \"{option}\" has no value."))?;
+            let path = PathBuf::from(value);
+            if !path.is_absolute()
+                || path.components().any(|c| matches!(c, Component::ParentDir))
+            {
+                return Err(format!("{label}: \"{option}\" must be an absolute path."));
+            }
+            index += 2;
+        } else {
+            index += 1;
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn run_ffmpeg(
     app: tauri::AppHandle,
     args: Vec<String>,
     session_id: Option<String>,
 ) -> Result<String, String> {
+    validate_sidecar_args(&args, FFMPEG_ALLOWED_OPTIONS, "ffmpeg")?;
+    validate_absolute_file_arg(&args, "-i", "ffmpeg")?;
+
     let sess_id = session_id.unwrap_or_default();
 
     let sidecar_command = app
@@ -224,6 +342,11 @@ async fn run_whisper(
     args: Vec<String>,
     session_id: Option<String>,
 ) -> Result<String, String> {
+    validate_sidecar_args(&args, WHISPER_ALLOWED_OPTIONS, "whisper")?;
+    validate_absolute_file_arg(&args, "-m", "whisper")?;
+    validate_absolute_file_arg(&args, "-f", "whisper")?;
+    validate_output_prefix(&args, "-of", "whisper")?;
+
     let sess_id = session_id.unwrap_or_default();
 
     let sidecar_command = app
@@ -328,6 +451,81 @@ fn cancel_download(session_id: String) {
     }
 }
 
+/// Hosts a model package may be downloaded from. The package manifest ships
+/// with the app, so an unknown host means the request did not come from it.
+const DOWNLOAD_HOST_ALLOWLIST: &[&str] = &[
+    "huggingface.co",
+    "cdn-lfs.huggingface.co",
+    "hf.co",
+];
+const DOWNLOAD_HOST_SUFFIX_ALLOWLIST: &[&str] = &[".huggingface.co", ".hf.co"];
+
+/// Downloads must be plain HTTPS from an allowlisted model host — no `file:`,
+/// `data:`, `http:` URLs and no redirect to either.
+fn validate_download_url(raw: &str) -> Result<reqwest::Url, String> {
+    let url = reqwest::Url::parse(raw).map_err(|e| format!("Invalid download URL: {e}"))?;
+    if url.scheme() != "https" {
+        return Err("Refusing to download over anything but HTTPS.".to_string());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("Refusing a download URL with embedded credentials.".to_string());
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| "Download URL has no host.".to_string())?
+        .to_ascii_lowercase();
+    let allowed = DOWNLOAD_HOST_ALLOWLIST.iter().any(|h| *h == host.as_str())
+        || DOWNLOAD_HOST_SUFFIX_ALLOWLIST
+            .iter()
+            .any(|suffix| host.ends_with(suffix));
+    if !allowed {
+        return Err(format!("Refusing to download from untrusted host: {host}"));
+    }
+    Ok(url)
+}
+
+/// The destination must resolve to a path inside the app's data directory.
+/// `..` is rejected outright and the parent is canonicalised before the check,
+/// so a symlink or junction cannot redirect the write elsewhere.
+fn validate_download_destination(
+    app: &tauri::AppHandle,
+    dest_path: &str,
+) -> Result<PathBuf, String> {
+    let dest = PathBuf::from(dest_path);
+    if dest_path.trim().is_empty() || !dest.is_absolute() {
+        return Err("Download destination must be an absolute path.".to_string());
+    }
+    if dest
+        .components()
+        .any(|c| matches!(c, Component::ParentDir))
+    {
+        return Err("Download destination may not contain '..'.".to_string());
+    }
+
+    let app_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {e}"))?;
+    std::fs::create_dir_all(&app_dir)
+        .map_err(|e| format!("Failed to create app data dir: {e}"))?;
+    let app_dir = std::fs::canonicalize(&app_dir)
+        .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
+
+    let parent = dest
+        .parent()
+        .ok_or_else(|| "Download destination has no parent directory.".to_string())?;
+    std::fs::create_dir_all(parent)
+        .map_err(|e| format!("Failed to create destination directory: {e}"))?;
+    let parent = std::fs::canonicalize(parent)
+        .map_err(|e| format!("Failed to resolve destination directory: {e}"))?;
+    if !parent.starts_with(&app_dir) {
+        return Err(
+            "Refusing to write a download outside the application data directory.".to_string(),
+        );
+    }
+    Ok(dest)
+}
+
 /// Max time to wait for the server's response headers.
 const DOWNLOAD_CONNECT_TIMEOUT_SECS: u64 = 30;
 /// Max time to wait for the next chunk before the download is considered stalled.
@@ -365,14 +563,28 @@ async fn download_package(
         .filter(|h| !h.is_empty())
         .ok_or_else(|| "Refusing to download a package without a SHA-256 hash.".to_string())?;
 
+    let url = validate_download_url(&url)?;
+    let dest = validate_download_destination(&app, &dest_path)?;
+
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(DOWNLOAD_CONNECT_TIMEOUT_SECS))
+        // A redirect may not escape HTTPS or the allowlisted hosts, so a
+        // trusted URL cannot be bounced to an arbitrary destination.
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 5 {
+                attempt.stop()
+            } else if validate_download_url(attempt.url().as_str()).is_err() {
+                attempt.stop()
+            } else {
+                attempt.follow()
+            }
+        }))
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
 
     let response = tokio::time::timeout(
         Duration::from_secs(DOWNLOAD_CONNECT_TIMEOUT_SECS * 2),
-        client.get(&url).send(),
+        client.get(url).send(),
     )
     .await
     .map_err(|_| "Request timed out".to_string())?
@@ -383,12 +595,6 @@ async fn download_package(
     }
 
     let total_bytes = response.content_length();
-    let dest = std::path::PathBuf::from(&dest_path);
-    if let Some(parent) = dest.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| format!("Failed to create destination directory: {e}"))?;
-    }
 
     let tmp_dest = dest.with_extension(format!(
         "{}.download.tmp",
@@ -535,6 +741,50 @@ async fn get_app_data_dir(app: tauri::AppHandle) -> Result<String, String> {
         .app_data_dir()
         .map_err(|e| format!("Failed to get app data dir: {e}"))?;
     Ok(dir.to_string_lossy().to_string())
+}
+
+/// Grant the filesystem plugin access to one user-chosen path (or, for a save
+/// destination that does not exist yet, to its parent folder). Only the exact
+/// folder is added, non-recursively, and only after the OS picker returned it.
+#[tauri::command]
+fn allow_user_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let target = PathBuf::from(&path);
+    if !target.is_absolute() || target.components().any(|c| matches!(c, Component::ParentDir)) {
+        return Err("Path must be absolute and may not contain '..'.".to_string());
+    }
+    let directory = if target.is_dir() {
+        target
+    } else {
+        target
+            .parent()
+            .map(|parent| parent.to_path_buf())
+            .ok_or_else(|| "Path has no parent directory.".to_string())?
+    };
+    if !directory.is_dir() {
+        return Err(format!("Directory does not exist: {}", directory.display()));
+    }
+    app.fs_scope()
+        .allow_directory(&directory, false)
+        .map_err(|e| format!("Failed to grant filesystem access: {e}"))
+}
+
+/// Grant the filesystem plugin access to one user-chosen project folder.
+///
+/// The static capability only covers the app's own data/temp/resource dirs;
+/// project folders live wherever the user picked them, so the scope is widened
+/// at open/create time instead of allowing every path up front.
+#[tauri::command]
+fn allow_project_dir(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let dir = PathBuf::from(&path);
+    if !dir.is_absolute() || dir.components().any(|c| matches!(c, Component::ParentDir)) {
+        return Err("Project directory must be an absolute path without '..'.".to_string());
+    }
+    if !dir.is_dir() {
+        return Err(format!("Project directory does not exist: {path}"));
+    }
+    app.fs_scope()
+        .allow_directory(&dir, true)
+        .map_err(|e| format!("Failed to grant filesystem access to the project folder: {e}"))
 }
 
 /// Sequence for pop-out window labels — a window label must be unique for the
@@ -824,6 +1074,8 @@ pub fn run() {
       cancel_process,
       verify_sha256,
       get_app_data_dir,
+      allow_project_dir,
+      allow_user_path,
       set_ui_zoom
     ])
     .setup(|app| {

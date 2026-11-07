@@ -111,7 +111,7 @@ export async function openExportFileStream(filePath) {
 export function exportTempFileName(prefix, sourcePath) {
   const base = String(sourcePath || 'source').split(/[/\\]/).pop() || 'source';
   const safe = base.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 64);
-  return `${prefix}-${safe}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.raw`;
+  return `${prefix}-${safe}-${crypto.randomUUID()}.raw`;
 }
  
 /** Join a directory with a generated temp file name (see exportTempFileName). */

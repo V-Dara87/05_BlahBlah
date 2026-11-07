@@ -45,7 +45,7 @@ export function assertSafeChildName(name) {
  * half-written target. For .json files the previous version is kept as `.bak`.
  */
 async function atomicWrite(fs, filePath, writeTemp) {
-  const tmpPath = `${filePath}.${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}.tmp`;
+  const tmpPath = `${filePath}.${crypto.randomUUID()}.tmp`;
   try {
     await writeTemp(tmpPath);
     if (/\.json$/i.test(filePath)) {
@@ -343,6 +343,38 @@ export async function removeFileIfExists(filePath) {
     await fs.remove(filePath);
   } catch {
     // already gone or not permitted — nothing else we can do
+  }
+}
+
+/**
+ * Grant the Rust filesystem scope access to a user-chosen project folder.
+ *
+ * Static capabilities only cover the app's own dirs; projects live wherever
+ * the user picked them, so this must run after the folder picker and before
+ * any read/write through the fs plugin.
+ */
+export async function allowProjectDirectory(dirPath) {
+  if (!isTauri() || !dirPath) return;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('allow_project_dir', { path: dirPath });
+  } catch (err) {
+    console.warn('[tauriFsAdapter] Could not extend the project filesystem scope:', err);
+  }
+}
+
+/**
+ * Grant the Rust filesystem scope access to a path the user just picked with a
+ * native dialog (an export destination, a model file, …). The static scope only
+ * covers app-owned folders, so each picker result is granted explicitly.
+ */
+export async function allowUserPath(filePath) {
+  if (!isTauri() || !filePath) return;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('allow_user_path', { path: filePath });
+  } catch (err) {
+    console.warn('[tauriFsAdapter] Could not extend the filesystem scope for the picked path:', err);
   }
 }
 

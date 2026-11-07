@@ -96,7 +96,7 @@ export function clearClipboard() {
 export function buildPastedClips(clips, pasteTime, trackIds = [], makeId) {
   if (!Array.isArray(clips) || clips.length === 0) return [];
  
-  const mint = makeId || (() => `go-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
+  const mint = makeId || (() => `go-${crypto.randomUUID()}`);
   const minStart = Math.min(...clips.map((c) => c.startTime || 0));
   const shift = Math.max(0, pasteTime) - minStart;
  

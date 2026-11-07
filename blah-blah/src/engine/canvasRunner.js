@@ -4,9 +4,12 @@ import {
   extractScriptProps,
   isScriptDisabled,
   markScriptSlow,
+  markScriptHang,
   formatRuntimeError,
   getCallBudgetMs,
+  getCompiledModuleCode,
 } from './scriptRunner.js';
+import { ScriptWorkerHost, ScriptHangError } from './scriptWorkerHost.js';
 import { resolveScriptProps } from './referenceTypes.js';
 import { Tween } from './motionTween.js';
 import { pushRuntimeError, withScriptConsole } from './scriptConsole.js';
@@ -108,6 +111,154 @@ const failedConstructors = new Map();
  
 const mountKeyFor = (entityId, scriptId = '') => `${entityId}::${scriptId || ''}`;
 
+// ─── Worker execution for canvas scripts ────────────────────────────────────
+//
+// Canvas scripts are pure per-frame drawing, so they run in a module Worker
+// against an OffscreenCanvas (see scriptWorkerHost.js / scriptWorkerRuntime.js).
+// `container` is null inside the worker, so scripts that touch the live DOM are
+// detected up front and stay on the main thread — as does any script whose
+// worker evaluation fails. A script that hangs is disabled instead of being
+// re-run on the main thread, which is the freeze this path exists to prevent.
+const workerFallbackCodes = new Map(); // mountKey -> code string that failed in a worker
+const WORKER_INCOMPATIBLE_SOURCE =
+  /\b(container|document|window|globalThis|self|renderer|THREE|WebGL|AudioContext|Image|FontFace|ResizeObserver|IntersectionObserver|MutationObserver|HTMLElement|Node|appendChild|createElement|querySelector|getElementById)\b/;
+// Inspector action buttons call methods on the LIVE instance
+// (scriptActions.js), which a worker cannot expose; those scripts stay on the
+// main thread so their actions keep working.
+const WORKER_ACTION_BUTTON_SOURCE = /\bbutton\s*\(|type\s*:\s*['"]button['"]/;
+
+function canRunScriptInWorker(scriptCode) {
+  return Boolean(
+    scriptCode &&
+    typeof Worker !== 'undefined' &&
+    typeof OffscreenCanvas !== 'undefined' &&
+    typeof HTMLCanvasElement !== 'undefined' &&
+    typeof HTMLCanvasElement.prototype?.transferControlToOffscreen === 'function' &&
+    !WORKER_INCOMPATIBLE_SOURCE.test(scriptCode) &&
+    !WORKER_ACTION_BUTTON_SOURCE.test(scriptCode) &&
+    getCompiledModuleCode(scriptCode),
+  );
+}
+
+/** Drop a worker record, kill its thread and remove its canvas. */
+function disposeWorkerRecord(mountKey, record) {
+  try {
+    record.host?.terminate();
+  } catch {
+    // already gone
+  }
+  try {
+    record.canvas?.remove?.();
+  } catch {
+    // already detached
+  }
+  if (mountedInstances.get(mountKey) === record) mountedInstances.delete(mountKey);
+}
+
+/**
+ * Start a canvas script in a worker. Returns true when the worker path was
+ * started (frames are driven once it reports ready), false when this script
+ * must use the main thread.
+ */
+function mountScriptInWorker(mountKey, {
+  entityId,
+  scriptId,
+  scriptName,
+  scriptCode,
+  container,
+  canvasWidth,
+  canvasHeight,
+  mountArgs,
+}) {
+  if (!canRunScriptInWorker(scriptCode)) return false;
+  if (workerFallbackCodes.get(mountKey) === scriptCode) return false;
+
+  let canvasEl;
+  try {
+    canvasEl = document.createElement('canvas');
+  } catch {
+    return false;
+  }
+  canvasEl.width = Math.max(1, Math.round(canvasWidth || 1));
+  canvasEl.height = Math.max(1, Math.round(canvasHeight || 1));
+  canvasEl.style.cssText = 'display:block;width:100%;height:100%;';
+  container.appendChild(canvasEl);
+
+  let offscreen;
+  try {
+    offscreen = canvasEl.transferControlToOffscreen();
+  } catch (err) {
+    canvasEl.remove();
+    workerFallbackCodes.set(mountKey, scriptCode);
+    console.warn('[canvasRunner] OffscreenCanvas transfer failed; using the main thread:', err);
+    return false;
+  }
+
+  const host = new ScriptWorkerHost({
+    scriptCode: getCompiledModuleCode(scriptCode),
+    scriptName,
+    timeoutMs: 1000,
+  });
+  const record = {
+    mode: 'worker',
+    pending: true,
+    workerFailed: false,
+    host,
+    canvas: canvasEl,
+    container,
+    entityId,
+    scriptId,
+    scriptName,
+    scriptCode,
+    lastLocalTime: null,
+  };
+  mountedInstances.set(mountKey, record);
+
+  (async () => {
+    try {
+      await host.initScript();
+      await host.attachOffscreenCanvas(offscreen);
+      await host.mount(mountArgs);
+      record.pending = false;
+    } catch (err) {
+      record.pending = false;
+      record.workerFailed = true;
+      workerFallbackCodes.set(mountKey, scriptCode);
+      disposeWorkerRecord(mountKey, record);
+      if (err instanceof ScriptHangError) {
+        // Never re-run a frozen script on the main thread: that is exactly the
+        // freeze the worker exists to prevent. Disable it until the code changes.
+        failedConstructors.set(mountKey, scriptCode);
+        markScriptHang(scriptCode, scriptName, host.timeoutMs);
+      } else {
+        console.warn(
+          `[canvasRunner] Worker execution failed for "${scriptName || 'script'}"; using the main thread:`,
+          err,
+        );
+      }
+    }
+  })();
+
+  return true;
+}
+
+/** Handle a failed seek/update: fall back to the main thread, or disable a hang. */
+function handleWorkerCallFailure(mountKey, record, err) {
+  if (record.workerFailed) return;
+  record.workerFailed = true;
+  workerFallbackCodes.set(mountKey, record.scriptCode);
+  disposeWorkerRecord(mountKey, record);
+  if (err instanceof ScriptHangError) {
+    failedConstructors.set(mountKey, record.scriptCode);
+    markScriptHang(record.scriptCode, record.scriptName, record.host?.timeoutMs);
+  } else {
+    console.warn(
+      `[canvasRunner] Worker call failed for "${record.scriptName || 'script'}"; using the main thread:`,
+      err,
+    );
+  }
+}
+
 /**
  * The live instance of a mounted canvas script, or null when it is not
  * mounted (entity off screen, script not attached, wrong script id).
@@ -163,6 +314,9 @@ export function updateCanvasComponent({
   startTime = 0,
   allEntities = [],
   allAssets = [],
+  // Live preview opts in (useCanvasScriptDriver.js). Export keeps the pooled
+  // main-thread renderer because it rasterizes the container's canvas itself.
+  allowWorker = false,
 }) {
   if (!scriptCode || !container) return;
 
@@ -229,6 +383,40 @@ export function updateCanvasComponent({
   };
  
   if (needsRemount) {
+    // Prefer the Worker for scripts that do not need the live DOM. Any previous
+    // instance is torn down first so only one canvas is ever in the container.
+    if (allowWorker && canRunScriptInWorker(scriptCode)) {
+      globalFrameCache.invalidateEntity(entityId);
+      if (mounted) {
+        if (mounted.mode === 'worker') {
+          disposeWorkerRecord(mountKey, mounted);
+        } else {
+          safeCall(mounted.instance, 'onUnmount', { container: mounted.container }, mounted.scriptName, mounted.scriptCode);
+          mounted.controller?.abort();
+          removeInstanceDom(mounted.instance, mounted.container);
+          mountedInstances.delete(mountKey);
+        }
+        mounted = undefined;
+      }
+      const started = mountScriptInWorker(mountKey, {
+        entityId,
+        scriptId,
+        scriptName,
+        scriptCode,
+        container,
+        canvasWidth: effWidth,
+        canvasHeight: effHeight,
+        mountArgs: {
+          props: effProps,
+          canvasWidth: effWidth,
+          canvasHeight: effHeight,
+          aspect: effHeight > 0 ? effWidth / effHeight : 1,
+          ...timingArgs,
+        },
+      });
+      if (started) return;
+    }
+
     globalFrameCache.invalidateEntity(entityId);
     if (mounted) {
       safeCall(mounted.instance, 'onUnmount', { container: mounted.container }, mounted.scriptName, mounted.scriptCode);
@@ -338,6 +526,32 @@ export function updateCanvasComponent({
     Tween,
     ...timingArgs,
   };
+  // Worker-mode instances are driven entirely by messages. The host watchdog
+  // turns an infinite loop into a ScriptHangError rather than a frozen editor.
+  if (mounted?.mode === 'worker') {
+    if (mounted.pending) return;
+    const record = mounted;
+    const payload = {
+      time: localTime,
+      frame,
+      fps,
+      props: effProps,
+      canvasWidth: effWidth,
+      canvasHeight: effHeight,
+      aspect: effHeight > 0 ? effWidth / effHeight : 1,
+      ...timingArgs,
+    };
+    const scrub =
+      record.lastLocalTime !== null &&
+      Math.abs(localTime - record.lastLocalTime) > scrubThreshold;
+    if (scrub) {
+      record.host.seek(payload).catch((err) => handleWorkerCallFailure(mountKey, record, err));
+    }
+    record.host.update(payload).catch((err) => handleWorkerCallFailure(mountKey, record, err));
+    record.lastLocalTime = localTime;
+    return;
+  }
+
   if (isScrub && !mounted.mountFailed) {
     safeCall(mounted.instance, 'onSeek', seekArgs, scriptName, scriptCode);
     mounted.cacheSkipped = false;
@@ -437,6 +651,14 @@ export function unmountCanvasComponent(entityId, scriptId = '') {
   // it here so the entity can mount cleanly if it comes back.
   failedConstructors.delete(mountKey);
   if (!mounted) return;
+  if (mounted.mode === 'worker') {
+    const record = mounted;
+    // Ask the worker to run onUnmount, then release it even if it never answers.
+    Promise.resolve(record.host?.unmount?.()).finally(() => disposeWorkerRecord(mountKey, record));
+    mountedInstances.delete(mountKey);
+    failedConstructors.delete(mountKey);
+    return;
+  }
   mounted.controller?.abort();
   safeCall(mounted.instance, 'onUnmount', { container: mounted.container }, mounted.scriptName, mounted.scriptCode);
   // onUnmount has run (it may still want to read the DOM), now clear out what

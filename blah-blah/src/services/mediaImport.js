@@ -165,7 +165,7 @@ export async function importMediaFiles({ files, onAddMediaAsset, mediaAssets = [
  
       const duration = (await probeFileDuration(file, isVideo)) || MEDIA_FALLBACK_DURATION[isVideo ? 'video' : 'audio'];
       const asset = {
-        id: `asset-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        id: `asset-${crypto.randomUUID()}`,
         name: file.name,
         type: isVideo ? 'video' : 'audio',
         url: URL.createObjectURL(file),

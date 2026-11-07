@@ -47,7 +47,7 @@ import {
  *     no IndexedDB, or no storage at all) the user is told.
  */
 
-const uid = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+const uid = (prefix) => `${prefix}-${crypto.randomUUID()}`;
 
 const MB = 1024 * 1024;
 const BIG_MEDIA_BYTES = 250 * MB;
@@ -78,6 +78,10 @@ async function saveTextFile(fileName, text) {
       filters: [{ name: 'Shared Library backup', extensions: ['json'] }],
     });
     if (!path) return false;
+    // The static fs capability covers only app-owned folders; grant the folder
+    // the user just picked (via the native Save dialog) before writing to it.
+    const { allowUserPath } = await import('../services/tauriFsAdapter');
+    await allowUserPath(path);
     const { writeTextFile } = await import('@tauri-apps/plugin-fs');
     await writeTextFile(path, text);
     return true;

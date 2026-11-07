@@ -79,7 +79,7 @@ export async function generateSubtitlesFromEntity({
   // Prepare temporary 16kHz mono WAV path
   const { tempDir } = await import('@tauri-apps/api/path');
   const osTemp = await tempDir();
-  const sessionNonce = `sub_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const sessionNonce = `sub_${crypto.randomUUID()}`;
   const tempWavPath = joinPath(osTemp, `${sessionNonce}.wav`);
 
   try {

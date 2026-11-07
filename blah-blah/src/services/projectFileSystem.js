@@ -74,7 +74,8 @@ const toScriptFileName = (name) => `${(name || '').replace(/\.(js|jsx|ts|tsx|cs)
  
  
  
-import { isTauri, createTauriDirectoryHandle, joinPath, isSafeChildName } from './tauriFsAdapter';
+import { isTauri, createTauriDirectoryHandle, joinPath, isSafeChildName, allowProjectDirectory } from './tauriFsAdapter';
+import { validateProjectJson } from './projectSchema';
 import { convertFileSrc } from '@tauri-apps/api/core';
 // Real media duration probing (metadata-only, same technique + fallback as
 // the import path) — reused here because reload rebuilds mediaAssets by
@@ -350,7 +351,11 @@ export async function pickProjectDirectory() {
       err.name = 'AbortError';
       throw err;
     }
-    return createTauriDirectoryHandle(selected);
+    const dirHandle = createTauriDirectoryHandle(selected);
+    // The fs plugin's static capability only covers app-owned folders; a
+    // user-picked project folder has to be granted at runtime.
+    await allowProjectDirectory(selected);
+    return dirHandle;
   }
  
   if (!isFileSystemSupported()) {
@@ -382,6 +387,9 @@ export async function createNewProjectFolder(parentDirHandle, projectName, defau
   }
  
   await verifyPermission(parentDirHandle, true);
+  // Grant the fs scope to the chosen parent BEFORE creating the project folder
+  // inside it (the static capability covers only app-owned directories).
+  if (parentDirHandle?.path) await allowProjectDirectory(parentDirHandle.path);
  
   // Clean folder name
   const safeName = projectName.trim().replace(/[\\/:*?"<>|]/g, '-');
@@ -465,6 +473,7 @@ export async function createNewProjectFolder(parentDirHandle, projectName, defau
  */
 export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
   if (!dirHandle) return null;
+  if (dirHandle?.path) await allowProjectDirectory(dirHandle.path);
   await verifyPermission(dirHandle, true);
  
   // P1 #6 — surfaced up through the return value (see `return` below) so
@@ -491,8 +500,18 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
   let projectRaw = null;
   // 1. Read project.json if present
   try {
-    const { parsed, raw } = await readProjectJsonWithBackup(dirHandle);
+    const { parsed: onDiskProject, raw } = await readProjectJsonWithBackup(dirHandle);
     projectRaw = raw;
+    // project.json is hand-editable and therefore untrusted input. Validate the
+    // structure once, drop entries that cannot render, and keep the rest of the
+    // project usable instead of failing the whole load.
+    const { project: parsed, warnings: schemaWarnings } = validateProjectJson(onDiskProject);
+    if (schemaWarnings.length > 0) {
+      console.warn(
+        `project.json has ${schemaWarnings.length} invalid entr${schemaWarnings.length === 1 ? 'y' : 'ies'}:`,
+        schemaWarnings.slice(0, 10),
+      );
+    }
     // Schema gate — a project from a NEWER build warns (never blocks the
     // load); a missing schemaVersion reads as 0, which is exactly the
     // pre-unification format migrateEntities below handles (the 0 → 1
@@ -785,6 +804,74 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
 }
  
 /**
+ * Write a file in the project root atomically, keeping the previous version as
+ * `<name>.bak`.
+ *
+ * The Tauri file adapter's `createWritable()` already writes a temp file and
+ * renames it into place (and copies the old JSON to .bak), so it is used
+ * directly there. The browser File System Access API has no atomic replace, so
+ * the text is first written to a temp file and then renamed over the target;
+ * when `move()` is unavailable the temp content is copied into the target as a
+ * fallback. Either way the previous project.json is preserved as .bak before
+ * the overwrite.
+ */
+async function writeFileAtomic(dirHandle, fileName, text) {
+  if (dirHandle?.isTauri) {
+    const handle = await dirHandle.getFileHandle(fileName, { create: true });
+    const writable = await handle.createWritable();
+    await writable.write(text);
+    await writable.close();
+    return;
+  }
+
+  // Read the previous version first: it becomes the backup, and reading it
+  // before the write means a failed backup can never block the save.
+  let previousText = null;
+  try {
+    const existing = await dirHandle.getFileHandle(fileName, { create: false });
+    previousText = await (await existing.getFile()).text();
+  } catch (err) {
+    if (err?.name !== 'NotFoundError') throw err;
+  }
+  if (previousText !== null) {
+    try {
+      const bakHandle = await dirHandle.getFileHandle(`${fileName}.bak`, { create: true });
+      const bakWritable = await bakHandle.createWritable();
+      await bakWritable.write(previousText);
+      await bakWritable.close();
+    } catch {
+      // Backup is best-effort; never block the save on it.
+    }
+  }
+
+  const tmpName = `${fileName}.${Date.now().toString(36)}.tmp`;
+  const tmpHandle = await dirHandle.getFileHandle(tmpName, { create: true });
+  const tmpWritable = await tmpHandle.createWritable();
+  await tmpWritable.write(text);
+  await tmpWritable.close();
+
+  try {
+    if (typeof tmpHandle.move === 'function') {
+      try {
+        await tmpHandle.move(fileName);
+      } catch {
+        // The target already exists on some platforms; replace it and retry.
+        await dirHandle.removeEntry(fileName).catch(() => {});
+        await tmpHandle.move(fileName);
+      }
+    } else {
+      const target = await dirHandle.getFileHandle(fileName, { create: true });
+      const writable = await target.createWritable();
+      await writable.write(text);
+      await writable.close();
+    }
+  } finally {
+    // No-op when move() consumed the temp file.
+    await dirHandle.removeEntry(tmpName).catch(() => {});
+  }
+}
+
+/**
  * Save project state to disk.
  * Writes project.json, scripts/, and prefabs/.
  *
@@ -882,23 +969,8 @@ export async function saveProjectToDirectory(dirHandle, projectStateOrGetter, op
  
     const projectFingerprint = JSON.stringify(buildProjectJson(0));
     if (!(skipIfUnchanged && syncState && syncState.projectFingerprint === projectFingerprint)) {
-      if (!dirHandle.isTauri) {
-        try {
-          const existing = await dirHandle.getFileHandle('project.json', { create: false });
-          const oldText = await (await existing.getFile()).text();
-          const bakHandle = await dirHandle.getFileHandle('project.json.bak', { create: true });
-          const bakWritable = await bakHandle.createWritable();
-          await bakWritable.write(oldText);
-          await bakWritable.close();
-        } catch {
-          // Backup is best-effort
-        }
-      }
       const jsonText = JSON.stringify(buildProjectJson(Date.now()), null, 2);
-      const projectFileHandle = await dirHandle.getFileHandle('project.json', { create: true });
-      const projectWritable = await projectFileHandle.createWritable();
-      await projectWritable.write(jsonText);
-      await projectWritable.close();
+      await writeFileAtomic(dirHandle, 'project.json', jsonText);
       if (syncState) {
         syncState.projectFingerprint = projectFingerprint;
         syncState.revision = await computeTextHash(jsonText);

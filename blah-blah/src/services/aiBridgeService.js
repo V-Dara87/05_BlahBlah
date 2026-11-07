@@ -138,7 +138,7 @@ export async function writeBridgeResult(projectDir, id, result) {
   if (!fs || !projectDir || !id) return;
   const paths = getBridgePaths(projectDir);
   const outPath = joinPath(paths.outbox, `${id}.json`);
-  const tmpPath = `${outPath}.${Date.now().toString(36)}.tmp`;
+  const tmpPath = `${outPath}.${crypto.randomUUID()}.tmp`;
   const json = JSON.stringify(formatBridgeResult(id, result.ok, result), null, 2);
 
   try {
@@ -163,7 +163,7 @@ export async function writeBridgeFramePng(projectDir, id, pngBase64) {
   if (!fs || !projectDir || !id || !pngBase64) return;
   const paths = getBridgePaths(projectDir);
   const pngPath = joinPath(paths.outbox, `${id}.png`);
-  const tmpPath = `${pngPath}.${Date.now().toString(36)}.tmp`;
+  const tmpPath = `${pngPath}.${crypto.randomUUID()}.tmp`;
   const bytes = base64ToUint8Array(pngBase64);
 
   try {

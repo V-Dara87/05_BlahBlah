@@ -88,7 +88,7 @@ export function usePrefabEditing({
       initialEntities = JSON.parse(JSON.stringify(p.entities));
     } else {
       initialEntities = [{
-        id: p.rootId || `prefab-root-${Date.now()}`,
+        id: p.rootId || `prefab-root-${crypto.randomUUID()}`,
         name: p.name ? p.name.replace(/ Prefab$/, '') : 'Prefab Root',
         trackId: tracks[0]?.id || 'track-1',
         startTime: 0,

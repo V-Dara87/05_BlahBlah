@@ -48,6 +48,10 @@ const COMPILED_CACHE_LIMIT = 500;
 let lastProjectDirHandle = null;
 
 const compiledModuleCache = new Map();
+// The compiled CommonJS source for each script string. The Worker runtime
+// evaluates this (not the class object, which cannot cross a worker boundary),
+// so it is cached next to the evaluated export.
+const compiledCodeCache = new Map();
 const propsSchemaCache = new Map();
 const lastErrorCache = new Map();
 const scriptKindCache = new Map();
@@ -751,6 +755,7 @@ export async function precompileWithBundler(scriptCode, projectDirHandle, script
     lastErrorCache.delete(scriptCode);
     lastErrorGeneration.delete(scriptCode);
     pendingBundleCache.delete(scriptCode);
+    cacheSet(compiledCodeCache, scriptCode, toCommonJsExports(compiled.code), COMPILED_CACHE_LIMIT);
     cacheSet(compiledModuleCache, scriptCode, exportedResult, COMPILED_CACHE_LIMIT);
     notifyScriptsRecompiled();
     return { ok: true };
@@ -1478,6 +1483,21 @@ function runCompiledModule(transpiled, sourceName, scriptName = '') {
  * there is no fallback compiler: the script gets a clear compile error and
  * does not run.
  */
+/**
+ * Compiled CommonJS source for a script, or null when it has not been compiled
+ * yet. Used by the Worker runtime, which must evaluate the code in its own
+ * thread rather than receive the already-evaluated class.
+ */
+export function getCompiledModuleCode(scriptCode) {
+  if (!scriptCode) return null;
+  const code = compiledCodeCache.get(scriptCode);
+  if (code === undefined) return null;
+  // Refresh LRU recency, same as compileScriptModule.
+  compiledCodeCache.delete(scriptCode);
+  compiledCodeCache.set(scriptCode, code);
+  return code;
+}
+
 export function compileScriptModule(scriptCode, scriptName) {
   if (!scriptCode) return null;
   if (compiledModuleCache.has(scriptCode)) {

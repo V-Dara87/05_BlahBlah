@@ -67,6 +67,9 @@ export function useCanvasScriptDriver({ computedEntities, scripts, currentTime, 
           // overrides via its own static props (see canvasRunner.js).
           canvasWidth: resolution?.width > 0 ? resolution.width : fallbackResolution.width,
           canvasHeight: resolution?.height > 0 ? resolution.height : fallbackResolution.height,
+          // DOM-free canvas scripts run in a Worker against an OffscreenCanvas;
+          // the runner falls back to this thread automatically.
+          allowWorker: true,
         });
       }
     });

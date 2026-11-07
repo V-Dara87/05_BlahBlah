@@ -312,7 +312,7 @@ export function PackageManagerModal({
       if (typeof onCreateScript === 'function') {
         const cleanName = (pkg.componentName || `${pkg.displayName.replace(/\s+/g, '')}.jsx`).replace(/\.jsx$/, '');
         await onCreateScript({
-          id: `script-${cleanName}-${Date.now()}`,
+          id: `script-${cleanName}-${crypto.randomUUID()}`,
           name: cleanName,
           code: pkg.sampleCode,
           type: 'canvas',
@@ -338,6 +338,10 @@ export function PackageManagerModal({
         filters: [{ name: 'GGML Model Files (*.bin)', extensions: ['bin'] }],
       });
       if (selected && typeof selected === 'string') {
+        // Grant the narrowed fs scope access to the folder the user picked
+        // (importLocalModelFile stats/reads this file immediately).
+        const { allowUserPath } = await import('../../services/tauriFsAdapter.js');
+        await allowUserPath(selected);
         const fileName = selected.split(/[/\\]/).pop() || '';
         setCustomForm((prev) => ({
           ...prev,

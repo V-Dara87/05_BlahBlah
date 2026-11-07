@@ -250,7 +250,7 @@ export function moveAllSharedItemsInFolder(fromFolder, toFolder) {
   );
 }
 
-const newId = () => `shared-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const newId = () => `shared-${crypto.randomUUID()}`;
 
 /** Convenience: build a prefab SharedItem (not yet stored). */
 export function makeSharedPrefabItem(prefab) {

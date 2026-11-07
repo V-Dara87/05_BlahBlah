@@ -11,6 +11,44 @@ import {
 } from '../services/projectFileSystem';
 import { recordProjectCreated, recordProjectOpened } from '../services/recentProjects';
 import { precompileAllProjectScripts } from '../engine/scriptRunner';
+
+// Project folders the user has explicitly trusted this session. A project may
+// contain scripts — arbitrary code that runs in the editor — so opening one
+// must be a deliberate choice, not a side effect of clicking a recent entry.
+const trustedProjectHandles = new WeakSet();
+const trustedProjectPaths = new Set();
+
+function isProjectTrusted(dirHandle) {
+  if (!dirHandle) return false;
+  if (trustedProjectHandles.has(dirHandle)) return true;
+  return Boolean(dirHandle.path && trustedProjectPaths.has(dirHandle.path));
+}
+
+function markProjectTrusted(dirHandle) {
+  if (!dirHandle) return;
+  trustedProjectHandles.add(dirHandle);
+  if (dirHandle.path) trustedProjectPaths.add(dirHandle.path);
+}
+
+/**
+ * Ask before loading a project that contains scripts. Returns false when the
+ * user declines, so the caller can leave the current project untouched.
+ */
+function confirmUntrustedScripts(dirHandle, loaded) {
+  const scriptCount = Array.isArray(loaded?.scripts) ? loaded.scripts.length : 0;
+  if (scriptCount === 0 || isProjectTrusted(dirHandle)) return true;
+
+  const message =
+    `"${loaded.projectName || dirHandle?.name || 'This project'}" contains ${scriptCount} script${scriptCount === 1 ? '' : 's'}.\n\n` +
+    'Scripts are executable code that runs inside the editor and can draw, animate and interact with the project. ' +
+    'Only open projects you trust.\n\n' +
+    'Open this project anyway?';
+  const accepted = typeof window !== 'undefined' && typeof window.confirm === 'function'
+    ? window.confirm(message)
+    : true;
+  if (accepted) markProjectTrusted(dirHandle);
+  return accepted;
+}
  
 /**
  * useProjectFileActions — the project-swap load paths (New Project / Open
@@ -81,7 +119,15 @@ export function useProjectFileActions({
   // handle into the editor and records it as a known/recent project.
   const openProjectFromHandle = useCallback(async (dirHandle) => {
     const loaded = await loadProjectFromDirectory(dirHandle, INITIAL_TRACKS);
- 
+
+    // Trust gate: loading itself only reads files, but EVERY later path
+    // (precompile, canvas mount) executes the project's scripts. Ask before
+    // any of that can happen, and do not replace the current project when the
+    // user declines.
+    if (!confirmUntrustedScripts(dirHandle, loaded)) {
+      throw new Error('Opening cancelled: the project contains scripts you did not trust.');
+    }
+
     setProjectFolderHandle(dirHandle);
     setProjectName(loaded.projectName);
     setResolution(loaded.resolution || DEFAULT_RESOLUTION);

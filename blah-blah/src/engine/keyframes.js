@@ -216,7 +216,7 @@ export function setKeyframe(entity, trackKey, fieldName, time, value) {
   const byField = { ...(keyframes[trackKey] || {}) };
   const existing = byField[fieldName] || [];
   const withoutSameTime = existing.filter((k) => k.time !== time);
-  const id = `kf-${trackKey}-${fieldName}-${time}-${Math.random().toString(36).slice(2, 8)}`;
+  const id = `kf-${trackKey}-${fieldName}-${time}-${crypto.randomUUID().slice(0, 8)}`;
   const next = [...withoutSameTime, { id, time, value }].sort((a, b) => a.time - b.time);
   byField[fieldName] = next;
   return { ...keyframes, [trackKey]: byField };

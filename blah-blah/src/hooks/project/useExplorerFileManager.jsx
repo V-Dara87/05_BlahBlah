@@ -375,7 +375,7 @@ export function useExplorerFileManager({
         : null;
  
     const newScript = {
-      id: `script-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      id: `script-${crypto.randomUUID()}`,
       name,
       folder: targetFolder,
       description: 'Blank JavaScript Motion script',

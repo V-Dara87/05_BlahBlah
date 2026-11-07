@@ -56,7 +56,7 @@ export async function runWhisper(audioPath, modelPath, { language = 'auto', onPr
   if (!audioPath) throw new Error('Audio path is required.');
   if (!modelPath) throw new Error('Model path is required.');
 
-  const sessionId = `whisper-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const sessionId = `whisper-${crypto.randomUUID()}`;
   let unlisten = null;
 
   // Generate unique output prefix in the OS temp directory

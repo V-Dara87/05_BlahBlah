@@ -249,12 +249,8 @@ export async function forgetProject(id) {
    and a list you search.
    =========================================================================== */
 
-/** Monotonic counter so two folders created in the same millisecond differ. */
-let folderSeq = 0;
-
 function makeFolderId() {
-  folderSeq += 1;
-  return `folder-${Date.now()}-${folderSeq}`;
+  return `folder-${crypto.randomUUID()}`;
 }
 
 /** Trim + clamp a folder name to something displayable. */

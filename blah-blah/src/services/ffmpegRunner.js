@@ -63,7 +63,7 @@ export async function runFfmpeg(args = [], { onProgress } = {}) {
     throw new TypeError('FFmpeg args must be an array of strings.');
   }
 
-  const sessionId = `ffmpeg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const sessionId = `ffmpeg-${crypto.randomUUID()}`;
   let unlisten = null;
 
   try {

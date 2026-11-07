@@ -102,7 +102,7 @@ export async function generatePeaksForAsset({
 
   const baseName = String(sourcePath).split(/[/\\]/).pop() || 'audio';
   const safeBase = baseName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 64);
-  const tempPath = joinPath(tempDirPath, `peaks-${safeBase}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.raw`);
+  const tempPath = joinPath(tempDirPath, `peaks-${safeBase}-${crypto.randomUUID()}.raw`);
 
   try {
     report('decode', 0);

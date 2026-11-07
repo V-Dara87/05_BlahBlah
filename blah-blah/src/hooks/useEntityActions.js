@@ -249,7 +249,7 @@ export function useEntityActions({
     // Map old target ids to new generated ids
     const idMap = new Map();
     targets.forEach((t) => {
-      idMap.set(t.id, `go-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`);
+      idMap.set(t.id, `go-${crypto.randomUUID()}`);
     });
  
     const newClips = targets.map((target) => {
@@ -352,7 +352,7 @@ export function useEntityActions({
       }) || [];
  
       const part1 = { ...target, name: `${target.name}_001`, duration: part1Dur };
-      const newId = `go-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+      const newId = `go-${crypto.randomUUID()}`;
       parentPart2Map.set(target.id, newId);
       const part2 = {
         ...target,
@@ -440,7 +440,7 @@ export function useEntityActions({
  
         // Primary entity slice
         const isFirst = i === 0;
-        const primaryId = isFirst ? primaryEntity.id : `go-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+        const primaryId = isFirst ? primaryEntity.id : `go-${crypto.randomUUID()}`;
  
         const primaryComponents = primaryEntity.components?.map((c) => {
           if (c.type === 'VideoRenderer' || c.type === 'AudioSource') {
@@ -468,7 +468,7 @@ export function useEntityActions({
  
         // Child entities slices (e.g. linked audio or callouts)
         for (const child of childEntities) {
-          const childId = isFirst ? child.id : `go-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+          const childId = isFirst ? child.id : `go-${crypto.randomUUID()}`;
           const childComponents = child.components?.map((c) => {
             if (c.type === 'VideoRenderer' || c.type === 'AudioSource') {
               const origOffset = c.mediaOffset || 0;
@@ -566,7 +566,7 @@ export function useEntityActions({
             const segDur = seg.duration;
             accum += segDur;
             const isFirst = i === 0;
-            const primaryId = isFirst ? liveClip.id : `go-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+            const primaryId = isFirst ? liveClip.id : `go-${crypto.randomUUID()}`;
  
             const compPrim = liveClip.components?.map((c) => {
               if (c.type === 'VideoRenderer' || c.type === 'AudioSource') {
@@ -590,7 +590,7 @@ export function useEntityActions({
             else toAdd.push(pSlice);
  
             for (const ch of childEntities) {
-              const chId = isFirst ? ch.id : `go-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+              const chId = isFirst ? ch.id : `go-${crypto.randomUUID()}`;
               const compCh = ch.components?.map((c) => {
                 if (c.type === 'VideoRenderer' || c.type === 'AudioSource') {
                   const origOffset = c.mediaOffset || 0;
@@ -759,7 +759,7 @@ export function useEntityActions({
       ? prefab.entities
       : null;
  
-    const prefabInstanceId = `pinst-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+    const prefabInstanceId = `pinst-${crypto.randomUUID()}`;
  
     if (!snapshots) {
       const newGO = createGameObject({
@@ -786,7 +786,7 @@ export function useEntityActions({
  
     const oldToNew = new Map();
     snapshots.forEach((snap) => {
-      oldToNew.set(snap.id, `go-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`);
+      oldToNew.set(snap.id, `go-${crypto.randomUUID()}`);
     });
  
     const newClips = snapshots.map((snap) => {
@@ -821,7 +821,7 @@ export function useEntityActions({
  
     if (missingScripts.length > 0 && setProjectHistoryState) {
       const newScriptsToAdd = missingScripts.map((es) => ({
-        id: es.id || `script-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        id: es.id || `script-${crypto.randomUUID()}`,
         name: es.name,
         description: es.description || `Auto-imported from ${prefab.name}`,
         code: es.code || '',
@@ -1211,7 +1211,7 @@ export function useEntityActions({
     setTracks((prev) => [
       ...prev,
       {
-        id: `track-${Date.now()}`,
+        id: `track-${crypto.randomUUID()}`,
         name: `Track ${nextNum}`,
         type: 'layer',
         parentTrackId: null,

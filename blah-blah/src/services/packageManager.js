@@ -284,7 +284,7 @@ export async function importLocalModelFile({
 
   const fileName = filePath.split(/[/\\]/).pop() || 'model.bin';
   const name = displayName?.trim() || fileName.replace(/\.bin$/i, '');
-  const id = `custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const id = `custom-${crypto.randomUUID()}`;
 
   let sizeBytes = 0;
   if (isTauri()) {
@@ -449,7 +449,7 @@ export async function downloadPackage(packageId, { onProgress } = {}) {
   }
   const fullDestPath = joinPath(appDir, targetRelPath);
 
-  const sessionId = `pkg-dl-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const sessionId = `pkg-dl-${crypto.randomUUID()}`;
   activeDownloadSessions.set(pkg.id, sessionId);
   let unlisten = null;
 
@@ -575,7 +575,7 @@ export async function addCustomPackage({
   }
 
   const customPackages = await getCustomPackages();
-  const id = `custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const id = `custom-${crypto.randomUUID()}`;
   const fileName = url.split('/').pop().split('?')[0] || `${id}.bin`;
 
   const newPkg = {

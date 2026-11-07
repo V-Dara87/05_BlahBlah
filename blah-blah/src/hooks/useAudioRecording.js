@@ -89,7 +89,7 @@ export function useAudioRecording({
       const file = new File([blob], fileName, { type: mimeType });
  
       const asset = {
-        id: `asset-recording-${Date.now()}`,
+        id: `asset-recording-${crypto.randomUUID()}`,
         name: fileName,
         type: 'audio',
         url,

@@ -87,7 +87,7 @@ export function usePrefabScriptActions({
       }));
 
     const newPrefab = {
-      id: `prefab-${Date.now()}`,
+      id: `prefab-${crypto.randomUUID()}`,
       name: `${entity.name}.prefab`,
       type: entity.type,
       rootId: entity.id,
