@@ -101,12 +101,13 @@ export default class MyScript extends MotionScript {
 
 #### `CanvasComponent`
 
-Auto-creates and sizes a `<canvas>` element inside `container`. Handles resize in `onUpdate`, removes on unmount.
+Auto-creates and sizes a `<canvas>` element inside `container`. Handles resize in `onUpdate`, removes on unmount. Works transparently on both the main thread and in background Web Workers.
 
 | Property / Method | Type | Description |
 |---|---|---|
 | `canvas` | `HTMLCanvasElement` | The managed canvas element |
-| `ctx` | `CanvasRenderingContext2D` | 2D drawing context |
+| `ctx` | `CanvasRenderingContext2D` | 2D drawing context (use `this.ctx` — avoid bare undeclared `ctx`) |
+| `draw` | `DrawContext` | Fluent 2D drawing wrapper (CanvasKit) |
 | `canvasWidth` | `number` | Current canvas width in px |
 | `canvasHeight` | `number` | Current canvas height in px |
 | `aspect` | `number` | `canvasWidth / canvasHeight` |
@@ -119,27 +120,27 @@ Auto-creates and sizes a `<canvas>` element inside `container`. Handles resize i
 import { CanvasComponent } from '@blahblah/sdk';
 
 export default class MyCanvas extends CanvasComponent {
-  onMount({ props }) {
-    // this.canvas, this.ctx, this.canvasWidth, this.canvasHeight are ready
-  }
-  onUpdate({ time }) {
-    const { ctx, canvasWidth, canvasHeight } = this;
-    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+  // Recommended: Use the fluent `draw` helper passed to onUpdate (or this.draw)
+  onUpdate({ time, draw }) {
+    if (!draw) return;
+    draw.clear();
+    draw.center();
 
-    // Option A: use toScreen helper with (0,0) center origin
-    const { x, y } = this.toScreen(Math.sin(time * 2) * 100, 0);
-    ctx.fillStyle = '#38bdf8';
-    ctx.beginPath();
-    ctx.arc(x, y, 20, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Option B: center 2D context transform
-    this.centerOrigin();
-    // (0, 0) is now canvas center!
-    this.restoreOrigin();
+    draw.rect({ x: 0, y: 0, width: 220, height: 80, radius: 12, fill: '#1e293b' });
+    draw.text('Hello BlahBlah', { x: 0, y: 0, size: 24, color: '#38bdf8', weight: 700 });
   }
 }
 ```
+
+#### `DrawContext` (CanvasKit Fluent 2D API)
+
+Available via `{ draw }` in `onMount` / `onUpdate` args or as `this.draw`. Uses center-origin `(0, 0 = canvas center)` by default.
+
+- **Canvas state:** `draw.clear(color?)`, `draw.center()`, `draw.resetTransform()`, `draw.alpha(opacity)`, `draw.save()`, `draw.restore()`, `draw.translate(x, y)`, `draw.rotate(deg)`, `draw.scale(s)`
+- **Shapes:** `draw.rect({ x, y, width, height, radius, fill, stroke, anchor })`, `draw.circle({ x, y, radius, fill, stroke })`, `draw.line()`, `draw.arrow()`, `draw.polygon()`, `draw.grid()`
+- **Text & UI:** `draw.text(str, { x, y, size, color, font, weight, align })`, `draw.textWrap(...)`, `draw.badge('LABEL', { x, y, bg })`
+- **Video Overlays:** `draw.progressBar({ progress, fill, label })`, `draw.spotlight({ width, height, radius, backdrop })`, `draw.traceRect({ progress, stroke })`, `draw.traceCircle({ progress, stroke })`, `draw.callout({ fromX, fromY, toX, toY, text })`, `draw.counter({ value, prefix, suffix, label })`, `draw.windowBar(...)`, `draw.cornerBrackets(...)`
+- **Effects & Isolation:** `draw.glow(color, blur, fn)`, `draw.shadow(...)`, `draw.clipRect(...)`, `draw.isolate(fn)`
 
 ---
 
@@ -194,6 +195,7 @@ All args are also assigned as instance properties by `canvasRunner.js` — so `t
 | `fps` | `onUpdate`, `onSeek` | Project frames-per-second |
 | `duration` | all | Clip duration in seconds |
 | `progress` | all | Normalized progress `[0..1]` |
+| `draw` | `onMount`, `onUpdate` | Fluent 2D drawing context (`DrawContext` / CanvasKit) |
 | `signal` | `onMount` | `AbortSignal` — aborted on unmount |
 | `libs` | `onMount` | On-demand library loader (`await libs.load('THREE')`) |
 
