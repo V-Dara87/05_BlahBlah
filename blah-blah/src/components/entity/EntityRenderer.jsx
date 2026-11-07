@@ -13,6 +13,7 @@ import { useGizmoDrag } from '../../hooks/useGizmoDrag';
 import { useMediaSync } from '../../hooks/useMediaSync';
 import { useCanvasScriptDriver } from '../../hooks/useCanvasScriptDriver';
 import { VideoLayer } from '../preview/VideoLayer';
+import { findUpcomingMedia } from '../../engine/upcomingMedia';
 import { OverlayLayer } from '../preview/OverlayLayer';
 import { PlaybackTransportBar } from '../preview/PlaybackTransportBar';
 import './entity-renderer.css';
@@ -240,8 +241,18 @@ export function EntityRenderer({
     [entities, tracks]
   );
  
+  // Clips starting within the next fraction of a second (the second half of a
+  // cut, the next clip on a track). Their <video>/<audio> are mounted and parked
+  // on the in-point ahead of time so the cut shows no blank/stale frame.
+  const upcomingMedia = useMemo(
+    () => findUpcomingMedia({ entities, tracks, time: currentTime, activeIds: new Set(computedEntities.map(({ entity }) => entity.id)) }),
+    [entities, tracks, currentTime, computedEntities]
+  );
+
   const { videoRefs, audioRefs } = useMediaSync({
     entities,
+    upcomingVideoItems: upcomingMedia.video,
+    upcomingAudioEntities: upcomingMedia.audio,
     activeVideoItems,
     computedEntities,
     currentTime,
@@ -507,6 +518,7 @@ export function EntityRenderer({
             handleRotateGizmoPointerDown={handleRotateGizmoPointerDown}
             handleScaleGizmoPointerDown={handleScaleGizmoPointerDown}
             transitionPlan={transitionPlan}
+            preloadItems={upcomingMedia.video}
           />
  
           {/* 2. Foreground Overlay GameObjects (Scripts, Text, Shapes, Prefabs) */}

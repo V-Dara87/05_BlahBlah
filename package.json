@@ -1,0 +1,15 @@
+{
+  "name": "blahblah-root",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix blah-blah run dev",
+    "build": "npm --prefix blah-blah run build",
+    "test": "npm --prefix blah-blah test",
+    "sidecars": "npm --prefix blah-blah run sidecars",
+    "tauri": "npm --prefix blah-blah run tauri",
+    "tauri:dev": "npm --prefix blah-blah run tauri:dev",
+    "tauri:build": "npm --prefix blah-blah run tauri:build",
+    "cli": "npm --prefix blah-blah run cli",
+    "mcp": "npm --prefix blah-blah run mcp"
+  }
+}

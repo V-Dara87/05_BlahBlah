@@ -52,7 +52,7 @@ function applyRateIfChanged(el, rate) {
  * sound until something else happened to resume the context later. See
  * utils/mediaAudio.js for the full explanation.
  */
-export function useMediaSync({ entities, activeVideoItems, computedEntities, currentTime, isPlaying, tracks = [], transitionPlan = null, transitionAudioWindows = null }) {
+export function useMediaSync({ entities, activeVideoItems, computedEntities, currentTime, isPlaying, tracks = [], transitionPlan = null, transitionAudioWindows = null, upcomingVideoItems = [], upcomingAudioEntities = [] }) {
   const videoRefs = useRef({});
   const audioRefs = useRef({});
   const wasPlayingRef = useRef(isPlaying);
@@ -98,6 +98,15 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
       if (extra.length) syncItems = [...activeVideoItems, ...extra];
     }
  
+    // Pre-warm: video clips about to start (e.g. the second half of a cut)
+    // already have a mounted <video>; keep them paused on their in-point so the
+    // first frame is decoded before the cut arrives (see engine/upcomingMedia.js).
+    if (upcomingVideoItems.length > 0) {
+      const present = new Set(syncItems.map(({ entity }) => entity.id));
+      const preload = upcomingVideoItems.filter(({ entity }) => !present.has(entity.id));
+      if (preload.length) syncItems = [...syncItems, ...preload.map((p) => ({ ...p, preload: true }))];
+    }
+
     // Resume the shared AudioContext FIRST and wait for it to actually be
     // running before routing/playing anything this tick. Cheap no-op when
     // already running; see utils/mediaAudio.js for why the ordering matters.
@@ -107,12 +116,19 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
         if (cancelled) return;
       }
  
-      syncItems.forEach(({ entity, transform }) => {
+      syncItems.forEach(({ entity, transform, preload }) => {
         const videoComp = entity.components.find((c) => c.type === 'VideoRenderer') || { src: entity.src };
         const vidSrc = videoComp.src || entity.src;
         if (!vidSrc) return;
  
         const vidEl = videoRefs.current[entity.id];
+        if (vidEl && preload) {
+          // Parked, not playing: just sit on the first frame of the clip.
+          if (!vidEl.paused) vidEl.pause();
+          const inPoint = Math.max(0, videoComp.mediaOffset || 0);
+          if (Math.abs(vidEl.currentTime - inPoint) > 0.05) vidEl.currentTime = inPoint;
+          return;
+        }
         if (vidEl) {
           const ext = seekTimes?.get(entity.id);
           const speed = ext ? ext.rate : (videoComp.speed || 1) * (transform?.speed ?? 1);
@@ -140,8 +156,11 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
           applyRateIfChanged(vidEl, speed);
  
           if (isPlaying) {
-            if (vidEl.paused || isStateTransition || Math.abs(vidEl.currentTime - localTime) > 0.6) {
-              vidEl.currentTime = Math.max(0, localTime);
+            const drift = Math.abs(vidEl.currentTime - localTime);
+            if (vidEl.paused || isStateTransition || drift > 0.6) {
+              // A pre-warmed element is already on the right frame; seeking it
+              // again would throw that decoded frame away (the 1-frame gap).
+              if (drift > 0.05) vidEl.currentTime = Math.max(0, localTime);
               vidEl.play().catch(() => {});
             }
           } else {
@@ -176,7 +195,7 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
     return () => {
       cancelled = true;
     };
-  }, [currentTime, isPlaying, activeVideoItems, entities, tracks, transitionPlan, transitionAudioWindows]);
+  }, [currentTime, isPlaying, activeVideoItems, upcomingVideoItems, entities, tracks, transitionPlan, transitionAudioWindows]);
  
   // Audio — same rate/volume/seek treatment as video above, but audio
   // elements are created imperatively here (no <audio> in JSX) since
@@ -189,6 +208,31 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
         if (cancelled) return;
       }
  
+      // Pre-warm audio for clips starting within the look-ahead window: create
+      // the element, load it and park it on its in-point, without playing.
+      upcomingAudioEntities.forEach((entity) => {
+        const audioComp =
+          entity.components?.find((c) => c.type === 'AudioSource') ||
+          (entity.type === 'audio' ? { src: entity.src } : null);
+        if (!audioComp || !audioComp.src) return;
+        if (computedEntities.some((c) => c.entity.id === entity.id)) return;
+        let aud = audioRefs.current[entity.id];
+        if (!aud) {
+          aud = new Audio();
+          aud.crossOrigin = 'anonymous';
+          aud.src = audioComp.src;
+          aud.__bbSrc = audioComp.src;
+          audioRefs.current[entity.id] = aud;
+        } else if (aud.__bbSrc !== audioComp.src) {
+          aud.crossOrigin = 'anonymous';
+          aud.src = audioComp.src;
+          aud.__bbSrc = audioComp.src;
+        }
+        if (!aud.paused) aud.pause();
+        const inPoint = Math.max(0, audioComp.mediaOffset || 0);
+        if (Math.abs(aud.currentTime - inPoint) > 0.05) aud.currentTime = inPoint;
+      });
+
       computedEntities.forEach(({ entity, transform }) => {
         const audioComp =
           entity.components.find((c) => c.type === 'AudioSource') ||
@@ -228,8 +272,9 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
           applyRateIfChanged(aud, speed);
  
           if (isPlaying) {
-            if (aud.paused || Math.abs(aud.currentTime - localTime) > 0.6) {
-              aud.currentTime = Math.max(0, localTime);
+            const audDrift = Math.abs(aud.currentTime - localTime);
+            if (aud.paused || audDrift > 0.6) {
+              if (audDrift > 0.05) aud.currentTime = Math.max(0, localTime);
               aud.play().catch(() => {});
             }
           } else {
@@ -245,9 +290,14 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
     startPlayback();
  
     const activeIds = new Set(computedEntities.map(({ entity }) => entity.id));
+    // Clips about to start are kept (never released as "idle") and parked.
+    const upcomingIds = new Set(upcomingAudioEntities.map((e) => e.id));
     const idleIds = [];
     Object.keys(audioRefs.current).forEach((id) => {
-      if (!activeIds.has(id)) {
+      if (upcomingIds.has(id) && !activeIds.has(id)) {
+        const aud = audioRefs.current[id];
+        if (aud && !aud.paused) aud.pause();
+      } else if (!activeIds.has(id)) {
         const aud = audioRefs.current[id];
         if (aud && !aud.paused) aud.pause();
         idleIds.push(id);
@@ -281,7 +331,7 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
     return () => {
       cancelled = true;
     };
-  }, [currentTime, isPlaying, computedEntities, entities, tracks, transitionAudioWindows]);
+  }, [currentTime, isPlaying, computedEntities, upcomingAudioEntities, entities, tracks, transitionAudioWindows]);
  
   // Cleanup on unmount — stop and disconnect every element this hook
   // ever created/tracked (mirrors EntityRenderer's own unmount cleanup,

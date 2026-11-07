@@ -11,6 +11,16 @@ import { detectScriptKind, extractScriptProps } from '../engine/scriptRunner';
 import { computeTrimmedOffset } from '../utils/mediaOffset';
 
 /**
+ * Round a timeline time to the project's frame grid. A cut that lands
+ * mid-frame can leave one half starting/ending between two frames, which is
+ * what showed up as a 1-frame hiccup after cutting. Falls back to 30 fps.
+ */
+function snapTimeToFrame(t, fps) {
+  const f = Number(fps) > 0 ? Number(fps) : 30;
+  return Math.round(t * f) / f;
+}
+
+/**
  * Build a fresh ScriptComponent for a script, with every declared prop seeded
  * to its default. Shared by "attach script to clip" and "drop script on the
  * timeline" so the two can never drift apart again.
@@ -84,6 +94,7 @@ export function useEntityActions({
   setSelectedEntityId,
   getPlaybackTime,
   handleUpdatePrefab,
+  fps = 30,
 }) {
   // Latest entities for use INSIDE callbacks whose identity must not change
   // with every edit (selection clean-up after a delete). Reading it here keeps
@@ -195,7 +206,12 @@ export function useEntityActions({
  
     const start = target.startTime;
     const end = target.startTime + target.duration;
-    const playhead = getPlaybackTime();
+    const rawPlayhead = getPlaybackTime();
+    // Cut on a whole frame when that still leaves the playhead inside the clip.
+    const snappedPlayhead = snapTimeToFrame(rawPlayhead, fps);
+    const playhead = (snappedPlayhead > start + 0.001 && snappedPlayhead < end - 0.001)
+      ? snappedPlayhead
+      : rawPlayhead;
     if (playhead <= start + 0.001 || playhead >= end - 0.001) return;
  
     if (direction === 'before') {
@@ -220,7 +236,7 @@ export function useEntityActions({
         : e
       ));
     }
-  }, [entities, getPlaybackTime, setEntities]);
+  }, [entities, getPlaybackTime, setEntities, fps]);
  
   // Batch update multiple entities atomically
   const handleUpdateClips = useCallback((updatesList) => {
@@ -323,7 +339,9 @@ export function useEntityActions({
     }
     const ids = Array.from(splitSet);
  
-    const splitPoint = getPlaybackTime();
+    const splitPoint = snapTimeToFrame(getPlaybackTime(), fps);
+    // Only reject a cut that sits on (or within half a frame of) a clip edge.
+    const edgeGuard = 0.5 / (Number(fps) > 0 ? Number(fps) : 30);
     let anySplit = false;
     const toAdd = [];
     const updatedMap = new Map();
@@ -334,11 +352,15 @@ export function useEntityActions({
       if (!target) return;
       const start = target.startTime;
       const end = target.startTime + target.duration;
-      if (splitPoint <= start + 0.1 || splitPoint >= end - 0.1) return;
+      if (splitPoint <= start + edgeGuard || splitPoint >= end - edgeGuard) return;
  
       anySplit = true;
       const part1Dur = splitPoint - start;
-      const part2Dur = end - splitPoint;
+      // Part 2 starts at EXACTLY the number part 1 ends at (start + part1Dur,
+      // the same expression the renderer evaluates), so there is no
+      // floating-point sliver between the halves.
+      const part2Start = start + part1Dur;
+      const part2Dur = end - part2Start;
  
       // part1Dur is a TIMELINE delta; scale by each component's own speed
       // to get the correct SOURCE-time mediaOffset for the second half.
@@ -358,7 +380,7 @@ export function useEntityActions({
         ...target,
         id: newId,
         name: `${target.name}_002`,
-        startTime: splitPoint,
+        startTime: part2Start,
         duration: part2Dur,
         components: part2Components,
       };
@@ -379,7 +401,7 @@ export function useEntityActions({
     if (toAdd.length > 0) {
       setSelectedEntityId(toAdd[0].id);
     }
-  }, [entities, selectedEntityId, getPlaybackTime, setEntities, setSelectedEntityId]);
+  }, [entities, selectedEntityId, getPlaybackTime, setEntities, setSelectedEntityId, fps]);
  
   // Cut silence from a clip (or clips in a track), with ripple shift and video-audio sync
   const handleCutSilence = useCallback(({ targetType = 'clip', targetId, keptSegments, cutsByClipId, ripple = true }) => {

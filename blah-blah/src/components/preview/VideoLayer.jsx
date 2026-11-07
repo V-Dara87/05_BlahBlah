@@ -36,6 +36,9 @@ export function VideoLayer({
   // with no transition clips, in which case this component renders exactly
   // as before.
   transitionPlan = null,
+  // Video clips about to start (engine/upcomingMedia.js). Mounted hidden with the
+  // SAME key they will have once active, so the cut does not remount the <video>.
+  preloadItems = [],
 }) {
   const suppressedIds = transitionPlan?.suppressedIds;
   const blends = transitionPlan?.blends || [];
@@ -61,10 +64,16 @@ export function VideoLayer({
     }
     if (extra.length) all = [...items, ...extra];
   }
+  if (preloadItems.length > 0) {
+    const present = new Set(all.map((i) => i.entity.id));
+    const pre = preloadItems.filter((i) => !present.has(i.entity.id)).map((i) => ({ ...i, preload: true }));
+    if (pre.length) all = [...all, ...pre];
+  }
  
   const rendered = all.map((item) => {
     const { entity, transform, localTransform, transitionState: rawTransitionState } = item;
-    const hidden = Boolean(suppressedIds?.has(entity.id));
+    const preload = Boolean(item.preload);
+    const hidden = preload || Boolean(suppressedIds?.has(entity.id));
     // A hidden clip is only a frame source for the blend; the old per-clip
     // transition overlay must not also run on it.
     const transitionState = hidden ? null : rawTransitionState;
@@ -148,9 +157,10 @@ export function VideoLayer({
             ref={(el) => {
               if (el) {
                 videoRefs.current[entity.id] = el;
-                if (!isPlaying) {
-                  const localTime =
-                    (currentTime - entity.startTime) * rawClipSpeed + (videoComp.mediaOffset || 0);
+                if (!isPlaying || preload) {
+                  const localTime = preload
+                    ? (videoComp.mediaOffset || 0)
+                    : (currentTime - entity.startTime) * rawClipSpeed + (videoComp.mediaOffset || 0);
                   if (Math.abs(el.currentTime - localTime) > 0.05) {
                     el.currentTime = Math.max(0, localTime);
                   }
@@ -164,10 +174,11 @@ export function VideoLayer({
             playsInline
             style={transitionState ? { visibility: 'hidden' } : undefined}
             onLoadedMetadata={(e) => {
-              const localTime =
-                (currentTime - entity.startTime) * rawClipSpeed + (videoComp.mediaOffset || 0);
+              const localTime = preload
+                ? (videoComp.mediaOffset || 0)
+                : (currentTime - entity.startTime) * rawClipSpeed + (videoComp.mediaOffset || 0);
               e.target.currentTime = Math.max(0, localTime);
-              if (isPlaying) e.target.play().catch(() => {});
+              if (isPlaying && !preload) e.target.play().catch(() => {});
             }}
           />
           {transitionState && (
@@ -327,4 +338,3 @@ export function VideoLayer({
     </>
   );
 }
- 
