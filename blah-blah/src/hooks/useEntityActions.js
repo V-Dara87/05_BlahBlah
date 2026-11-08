@@ -1,3 +1,4 @@
+import { isTimelineDragging } from '../utils/dragState';
 import { useCallback, useRef } from 'react';
 import {
   createGameObject,
@@ -9,6 +10,11 @@ import {
 import { planTransitionPlacement, buildMediaDurationsFromAssets, TRANSITION_DEFAULT_DURATION } from '../engine/renderPipeline';
 import { detectScriptKind, extractScriptProps } from '../engine/scriptRunner';
 import { computeTrimmedOffset } from '../utils/mediaOffset';
+import { applyClipOverlapPolicy } from '../utils/overlapPolicy';
+import { getClipOverlapMode } from '../services/editorSettings';
+import { showNotice } from '../utils/notice';
+
+const OVERLAP_BLOCKED_MESSAGE = 'Clips can\'t overlap on the same track (Settings > System > Overlapping clips).';
 
 /**
  * Round a timeline time to the project's frame grid. A cut that lands
@@ -116,6 +122,25 @@ export function useEntityActions({
       setEntities((prev) => removeEntitiesByIds(prev, [entityId]));
       return;
     }
+    // Overlap policy for position/length edits (trim drags, Inspector start/duration,
+    // track changes). A speed change goes through the original path below, which also
+    // rescales children.
+    const overlapMode = getClipOverlapMode();
+    const touchesTiming = updates.startTime !== undefined || updates.duration !== undefined || updates.trackId !== undefined;
+    const newSpeedInUpdate = updates.speed !== undefined
+      || updates.components?.some((c) => c.type === 'Transform' && c.speed !== undefined);
+    if (overlapMode !== 'allow' && touchesTiming && !newSpeedInUpdate) {
+      setProjectHistoryState((prev) => {
+        if (!prev.entities.some((e) => e.id === entityId)) return prev;
+        const next = prev.entities.map((e) => (e.id === entityId ? { ...e, ...updates } : e));
+        const res = applyClipOverlapPolicy({
+          prevEntities: prev.entities, nextEntities: next, tracks: prev.tracks, mode: overlapMode, changedIds: [entityId],
+        });
+        if (res.blocked) { showNotice(OVERLAP_BLOCKED_MESSAGE); return prev; }
+        return res.tracksChanged ? { ...prev, entities: res.entities, tracks: res.tracks } : { ...prev, entities: res.entities };
+      }, { coalesce: `entity:${entityId}` });
+      return;
+    }
     setEntities((prev) => {
       const target = prev.find((e) => e.id === entityId);
       if (!target) return prev;
@@ -180,7 +205,7 @@ export function useEntityActions({
  
       return prev.map((e) => (e.id === entityId ? { ...e, ...updates } : e));
     }, { coalesce: `entity:${entityId}` });
-  }, [setEntities, selectedEntityId, setSelectedEntityId]);
+  }, [setEntities, setProjectHistoryState, selectedEntityId, setSelectedEntityId]);
  
   // Delete entity.
   const handleDeleteEntity = useCallback((entityIdOrIds) => {
@@ -241,12 +266,63 @@ export function useEntityActions({
   // Batch update multiple entities atomically
   const handleUpdateClips = useCallback((updatesList) => {
     if (!updatesList || updatesList.length === 0) return;
-    const updatesMap = new Map(updatesList.map(u => [u.id, u.updates !== undefined ? u.updates : u]));
-    setEntities(prev => prev.map(e => {
-      const u = updatesMap.get(e.id);
-      return u ? { ...e, ...u } : e;
-    }), { coalesce: `clips:${[...updatesMap.keys()].sort().join(',')}` });
-  }, [setEntities]);
+    const len = updatesList.length;
+
+    // Fast path: for single-clip updates (most frequent during drag/trim),
+    // skip Map allocation and key array sorting to reduce GC pressure.
+    let coalesceKey;
+    let applyUpdates;
+    let changedIds;
+
+    if (len === 1) {
+      const item = updatesList[0];
+      const singleId = item.id;
+      const singleUpd = item.updates !== undefined ? item.updates : item;
+      coalesceKey = `clip:${singleId}`;
+      changedIds = [singleId];
+      applyUpdates = (list) => list.map((e) => (e.id === singleId ? { ...e, ...singleUpd } : e));
+    } else {
+      const updatesMap = new Map();
+      let keyStr = '';
+      for (let i = 0; i < len; i++) {
+        const u = updatesList[i];
+        updatesMap.set(u.id, u.updates !== undefined ? u.updates : u);
+        keyStr += (i > 0 ? ',' : '') + u.id;
+      }
+      coalesceKey = `clips:${keyStr}`;
+      changedIds = updatesMap.keys();
+      applyUpdates = (list) => list.map((e) => {
+        const u = updatesMap.get(e.id);
+        return u ? { ...e, ...u } : e;
+      });
+    }
+
+    const coalesce = { coalesce: coalesceKey };
+    const overlapMode = getClipOverlapMode();
+    const touchesTiming = updatesList.some((u) => {
+      const upd = u.updates !== undefined ? u.updates : u;
+      return upd.startTime !== undefined || upd.duration !== undefined || upd.trackId !== undefined;
+    });
+
+    if (overlapMode === 'allow' || !touchesTiming) {
+      setEntities(applyUpdates, coalesce);
+      return;
+    }
+    // Move/trim of one or many clips: enforce the overlap policy atomically with
+    // any track it has to create, so one Ctrl+Z undoes both.
+    setProjectHistoryState((prev) => {
+      const next = applyUpdates(prev.entities);
+      const res = applyClipOverlapPolicy({
+        prevEntities: prev.entities, nextEntities: next, tracks: prev.tracks, mode: overlapMode, changedIds,
+      });
+      if (res.blocked) {
+        // Suppress notification popups on every intermediate tick of a drag
+        if (!isTimelineDragging()) showNotice(OVERLAP_BLOCKED_MESSAGE);
+        return prev;
+      }
+      return res.tracksChanged ? { ...prev, entities: res.entities, tracks: res.tracks } : { ...prev, entities: res.entities };
+    }, coalesce);
+  }, [setEntities, setProjectHistoryState]);
  
   // Duplicate one or more entities. Each copy gets a fresh id, cloned
   // components, and is offset by the extent of the selection so copies land
@@ -285,13 +361,24 @@ export function useEntityActions({
       };
     });
  
-    setEntities(prev => [...prev, ...newClips]);
     const newIds = newClips.map(c => c.id);
+    // 'up'/'down' also apply to copies. 'block' deliberately does not: an Alt-drag
+    // copy is created on top of its original and then moved, and that move is
+    // where the policy applies.
+    const overlapMode = getClipOverlapMode();
+    if (overlapMode === 'up' || overlapMode === 'down') {
+      const res = applyClipOverlapPolicy({
+        prevEntities: entities, nextEntities: [...entities, ...newClips], tracks, mode: overlapMode, changedIds: newIds,
+      });
+      setProjectHistoryState((prev) => ({ ...prev, entities: res.entities, tracks: res.tracks }));
+    } else {
+      setEntities(prev => [...prev, ...newClips]);
+    }
     if (newIds.length > 0) {
       setSelectedEntityId(newIds[0]);
     }
     return newIds;
-  }, [entities, setEntities, setSelectedEntityId]);
+  }, [entities, tracks, setEntities, setProjectHistoryState, setSelectedEntityId]);
  
   // Copy the given clips (plus their descendants — a Cut deletes children
   // along with the parent, so they must travel with it) to the clipboard.
@@ -310,11 +397,21 @@ export function useEntityActions({
     if (clips.length === 0) return [];
     const newClips = buildPastedClips(clips, getPlaybackTime(), tracks.map((t) => t.id));
     if (newClips.length === 0) return [];
-    setEntities((prev) => [...prev, ...newClips]);
     const newIds = newClips.map((c) => c.id);
+    const overlapMode = getClipOverlapMode();
+    if (overlapMode !== 'allow') {
+      const res = applyClipOverlapPolicy({
+        prevEntities: entities, nextEntities: [...entities, ...newClips], tracks, mode: overlapMode, changedIds: newIds,
+      });
+      if (res.blocked) { showNotice(OVERLAP_BLOCKED_MESSAGE); return []; }
+      setProjectHistoryState((prev) => ({ ...prev, entities: res.entities, tracks: res.tracks }));
+      setSelectedEntityId(newIds[0]);
+      return newIds;
+    }
+    setEntities((prev) => [...prev, ...newClips]);
     setSelectedEntityId(newIds[0]);
     return newIds;
-  }, [tracks, getPlaybackTime, setEntities, setSelectedEntityId]);
+  }, [entities, tracks, getPlaybackTime, setEntities, setProjectHistoryState, setSelectedEntityId]);
  
   // Split entity (or entities) at playhead
   const handleSplitEntity = useCallback((entityIdOrIds) => {

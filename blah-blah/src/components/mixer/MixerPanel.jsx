@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useRef } from 'react';
 import { Volume2, VolumeX, Plus } from 'lucide-react';
 import { resolveEffectiveVolume } from '../../utils/trackAudio';
 import { getTrackPeakDb, METER_FLOOR_DB } from '../../utils/mediaAudio';
+import { isTimelineDragging } from '../../utils/dragState';
 import {
   FADER_MAX_DB,
   FADER_MIN_DB,
@@ -55,7 +56,7 @@ const faderPosOfDb = (db) =>
  * requestAnimationFrame loop — putting a 60 fps signal through React state
  * would re-render every strip 60 times a second for no reason.
  */
-const Meter = memo(function Meter({ meterRef }) {
+const Meter = memo(function Meter({ meterRef, segsRef, peakRef }) {
   const segments = [];
   for (let i = 0; i < SEGMENT_COUNT; i++) {
     // Colour a segment by its BOTTOM edge: segment 30 spans 0..+2 dB, so it
@@ -69,8 +70,8 @@ const Meter = memo(function Meter({ meterRef }) {
  
   return (
     <div className="mixer-meter" ref={meterRef}>
-      <div className="mixer-meter-segs" data-el="segs">{segments}</div>
-      <div className="mixer-meter-peak" data-el="peak" />
+      <div className="mixer-meter-segs" data-el="segs" ref={segsRef}>{segments}</div>
+      <div className="mixer-meter-peak" data-el="peak" ref={peakRef} />
       <div
         className="mixer-meter-zero"
         style={{ bottom: `${METER_ZERO_POS * 100}%` }}
@@ -193,11 +194,14 @@ const MixerStrip = memo(function MixerStrip({
   const clipRef = useRef(null);
   const readoutRef = useRef(null);
   const clearClipRef = useRef(false);
+  // Pre-cached DOM nodes for the animation loop — avoids querySelector every frame.
+  const segsRef = useRef(null);
+  const peakRef = useRef(null);
  
   // Hand this strip's DOM nodes to the panel's animation loop, keyed by
   // track id, and unregister on unmount / id change.
   useEffect(() => {
-    registerStrip(track.id, { strip: stripRef, meter: meterRef, clip: clipRef, readout: readoutRef, clearClip: clearClipRef });
+    registerStrip(track.id, { strip: stripRef, meter: meterRef, clip: clipRef, readout: readoutRef, clearClip: clearClipRef, segs: segsRef, peak: peakRef });
     return () => registerStrip(track.id, null);
   }, [track.id, registerStrip]);
  
@@ -252,7 +256,7 @@ const MixerStrip = memo(function MixerStrip({
             </span>
           ))}
         </div>
-        <Meter meterRef={meterRef} />
+        <Meter meterRef={meterRef} segsRef={segsRef} peakRef={peakRef} />
         <Fader volume={volume} onChange={handleFader} />
       </div>
  
@@ -320,14 +324,30 @@ export const MixerPanel = memo(function MixerPanel({
     let last = performance.now();
     // Per-track animation state: { level, peak, peakAt, clipped }
     const states = new Map();
+    // Throttle state for drag: skip frames to avoid competing with timeline RAF.
+    const DRAG_THROTTLE_MS = 80; // ~12 fps during drag — meters still move visibly
+    let lastDragTick = 0;
  
     const tick = (now) => {
+      // During a timeline drag, throttle meter updates so the main thread is
+      // mostly free for the canvas draw pass. Meters at ~12fps are acceptable
+      // while the user is focused on clip positioning.
+      if (isTimelineDragging()) {
+        if (now - lastDragTick < DRAG_THROTTLE_MS) {
+          raf = requestAnimationFrame(tick);
+          return;
+        }
+        lastDragTick = now;
+      }
+
       const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
       last = now;
  
       for (const [trackId, refs] of stripsRef.current) {
-        const meterEl = refs.meter.current;
-        if (!meterEl) continue;
+        // Use pre-cached DOM refs instead of querySelector every frame.
+        const segsEl = refs.segs?.current;
+        const peakEl = refs.peak?.current;
+        if (!segsEl && !peakEl) continue;
  
         let st = states.get(trackId);
         if (!st) {
@@ -357,10 +377,9 @@ export const MixerPanel = memo(function MixerPanel({
         }
         if (raw >= 0) st.clipped = true;
  
-        // ---- write to the DOM ----
-        const segs = meterEl.querySelector('[data-el="segs"]');
-        if (segs) {
-          const kids = segs.children;
+        // ---- write to the DOM (using cached refs — no querySelector) ----
+        if (segsEl) {
+          const kids = segsEl.children;
           for (let i = 0; i < kids.length; i++) {
             // Lit once the level reaches the segment's bottom edge. (A
             // level of exactly 0 dBFS therefore lights segment 30, the
@@ -370,7 +389,6 @@ export const MixerPanel = memo(function MixerPanel({
           }
         }
  
-        const peakEl = meterEl.querySelector('[data-el="peak"]');
         if (peakEl) {
           const pPos = meterPosOfDb(st.peak);
           peakEl.style.bottom = `${pPos * 100}%`;

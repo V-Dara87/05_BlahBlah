@@ -1,0 +1,92 @@
+{
+  "name": "my-video-project",
+  "version": "1.0",
+  "schemaVersion": 1,
+  "lastModified": 1794062508930,
+  "resolution": {
+    "width": 1920,
+    "height": 1080
+  },
+  "tracks": [
+    {
+      "id": "track-1",
+      "name": "Track 1",
+      "type": "layer",
+      "parentTrackId": null,
+      "muted": false,
+      "solo": false,
+      "locked": false,
+      "visible": true,
+      "volume": 1
+    },
+    {
+      "id": "track-2",
+      "name": "Track 2",
+      "type": "layer",
+      "parentTrackId": null,
+      "muted": false,
+      "solo": false,
+      "locked": false,
+      "visible": true,
+      "volume": 1
+    },
+    {
+      "id": "track-3",
+      "name": "Track 3",
+      "type": "layer",
+      "parentTrackId": null,
+      "muted": false,
+      "solo": false,
+      "locked": false,
+      "visible": true,
+      "volume": 1
+    },
+    {
+      "id": "track-4",
+      "name": "Track 4",
+      "type": "layer",
+      "parentTrackId": null,
+      "muted": false,
+      "solo": false,
+      "locked": false,
+      "visible": true,
+      "volume": 1
+    }
+  ],
+  "entities": [
+    {
+      "id": "go-1f280208-20da-43fa-aab8-b69de4a22348",
+      "name": "New Clip",
+      "tag": "Untagged",
+      "layer": "Default",
+      "active": true,
+      "parentId": null,
+      "trackId": "track-2",
+      "startTime": 14.875,
+      "duration": 5,
+      "type": "empty",
+      "src": "",
+      "color": "#6366f1",
+      "components": [
+        {
+          "type": "Transform",
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "rotation": 0,
+          "rotationX": 0,
+          "rotationY": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "scaleZ": 1,
+          "opacity": 1,
+          "is3D": false,
+          "autoOrient": false,
+          "pivotX": 0,
+          "pivotY": 0
+        }
+      ]
+    }
+  ],
+  "scriptIndex": []
+}

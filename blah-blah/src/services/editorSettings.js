@@ -25,6 +25,11 @@ import { TRACK_HEIGHT, MIN_TRACK_HEIGHT, MAX_TRACK_HEIGHT } from '../utils/timel
  *                            (mouse position) or 'playhead' (seekbar
  *                            position). Was hard-coded to playhead-only
  *                            anchoring in Timeline.jsx.
+ *  - clipOverlapMode         What happens when an edit would make two clips on
+ *                            the SAME track overlap: 'allow' (default, the old
+ *                            sub-lane behaviour), 'block' (refuse + warn), 'up' /
+ *                            'down' (move the clip to the nearest free track above /
+ *                            below, creating one if needed). See utils/overlapPolicy.js.
  *  - defaultTrackHeight      Row height (px) of every timeline track that has
  *                            not been resized by hand (no `track.height`).
  *                            Was the hard-coded TRACK_HEIGHT in
@@ -55,7 +60,10 @@ export const EDITOR_DEFAULTS = Object.freeze({
   // is the older behavior of always centering on the seekbar instead.
   zoomAnchorMode: 'cursor',
   defaultTrackHeight: TRACK_HEIGHT,
+  clipOverlapMode: 'allow',
 });
+
+export const CLIP_OVERLAP_MODES = Object.freeze(['allow', 'block', 'up', 'down']);
  
 export const EDITOR_MIN_PIXELS_PER_SECOND = 10;
 export const EDITOR_MAX_PIXELS_PER_SECOND = 160;
@@ -117,6 +125,9 @@ export function sanitizeEditorSettings(candidate) {
       EDITOR_MAX_TRACK_HEIGHT,
       EDITOR_DEFAULTS.defaultTrackHeight
     ),
+    clipOverlapMode: CLIP_OVERLAP_MODES.includes(c.clipOverlapMode)
+      ? c.clipOverlapMode
+      : EDITOR_DEFAULTS.clipOverlapMode,
   };
 }
  
@@ -130,4 +141,13 @@ export function saveEditorSettings(settings) {
   const sanitized = sanitizeEditorSettings(settings);
   writeJson(STORAGE_KEY, sanitized);
   return sanitized;
+}
+
+/**
+ * The overlap mode as last saved. Read at the moment an edit happens (instead of
+ * threading the setting through every hook), so a change in Settings applies to
+ * the very next edit.
+ */
+export function getClipOverlapMode() {
+  return loadEditorSettings().clipOverlapMode;
 }

@@ -184,6 +184,33 @@ export function SystemTab({ onResetAll, editorSettings, onEditorSettingsChange }
         </div>
       )}
 
+      {/* Overlapping clips - global editor preference (services/editorSettings.js
+          -> clipOverlapMode, applied by utils/overlapPolicy.js). */}
+      {onEditorSettingsChange && (
+        <div className="form-field-group settings-group-spaced">
+          <label className="form-label">Overlapping clips</label>
+          <p className="hint-text-sm settings-hint-below">
+            What happens when moving, trimming or pasting a clip would make it overlap another clip on the same track.
+          </p>
+          {[
+            ['allow', 'Allow overlap (clips share the row)'],
+            ['block', 'Warn and do nothing'],
+            ['up', 'Move the clip to the track above (creates one if needed)'],
+            ['down', 'Move the clip to the track below (creates one if needed)'],
+          ].map(([value, label]) => (
+            <label className="settings-check-row" key={value}>
+              <input
+                type="radio"
+                name="clipOverlapMode"
+                checked={(editorSettings?.clipOverlapMode ?? EDITOR_DEFAULTS.clipOverlapMode) === value}
+                onChange={() => onEditorSettingsChange({ ...(editorSettings || {}), clipOverlapMode: value })}
+              />
+              <span>{label}</span>
+            </label>
+          ))}
+        </div>
+      )}
+
       {/* Default track height - global editor preference (services/editorSettings.js).
           Applies to every track that has not been resized by hand. A track the
           user dragged to a custom height keeps it (double-click its resize

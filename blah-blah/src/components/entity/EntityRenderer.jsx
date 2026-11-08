@@ -1,4 +1,5 @@
-import { useRef, useEffect, useMemo, useState, Fragment } from 'react';
+import { useRef, useEffect, useMemo, useState, Fragment, Profiler } from 'react';
+import { perfTime, perfProfilerOnRender } from '../../utils/perfLog';
 import { getCompiledReactComponent, detectScriptKind, extractScriptProps } from '../../engine/scriptRunner';
 import { resolveScriptProps } from '../../engine/referenceTypes';
 import { resolveTextRendererText, cssFontFamily, DEFAULT_TEXT_FONT_SIZE, DEFAULT_TEXT_FONT_COLOR, DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_WEIGHT } from '../../engine/textRenderer';
@@ -14,6 +15,9 @@ import { useMediaSync } from '../../hooks/useMediaSync';
 import { useCanvasScriptDriver } from '../../hooks/useCanvasScriptDriver';
 import { VideoLayer } from '../preview/VideoLayer';
 import { findUpcomingMedia } from '../../engine/upcomingMedia';
+
+// Stable empty result so hooks that depend on it don't re-run while paused.
+const NO_UPCOMING_MEDIA = Object.freeze({ video: Object.freeze([]), audio: Object.freeze([]) });
 import { OverlayLayer } from '../preview/OverlayLayer';
 import { PlaybackTransportBar } from '../preview/PlaybackTransportBar';
 import './entity-renderer.css';
@@ -141,7 +145,7 @@ export function EntityRenderer({
   // then re-runs transform resolution (keyframes + motion scripts) for just
   // the handful of entities the index says are live at this instant.
   const activeEntityIndex = useMemo(
-    () => buildActiveEntityIndex({ entities, tracks }),
+    () => perfTime('preview: buildActiveEntityIndex', () => buildActiveEntityIndex({ entities, tracks })),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- entities/tracks drive the geometry; `scripts` and `scriptsRecompiledTick` are included so a script edit still invalidates the downstream transform memo (the index itself is script-independent), exactly like the single memo this replaced. mediaAssets keeps the same invalidation surface as before.
     [entities, tracks, scripts, scriptsRecompiledTick, mediaAssets]
   );
@@ -156,7 +160,7 @@ export function EntityRenderer({
       width: resolution?.width > 0 ? resolution.width : FALLBACK_RESOLUTION.width,
       height: resolution?.height > 0 ? resolution.height : FALLBACK_RESOLUTION.height,
     };
-    return computeActiveEntitiesAtTime({ entities, tracks, scripts, time: currentTime, fps, allAssets: mediaAssets, index: activeEntityIndex, viewport });
+    return perfTime('preview: computeActiveEntities', () => computeActiveEntitiesAtTime({ entities, tracks, scripts, time: currentTime, fps, allAssets: mediaAssets, index: activeEntityIndex, viewport }));
     // NOTE -- clip-duration vs. tween-duration boundary: a non-looping
     // tween correctly clamps to 1 and settles once localTime passes the
     // tween's own duration, but the active-entity check only knows about
@@ -244,9 +248,14 @@ export function EntityRenderer({
   // Clips starting within the next fraction of a second (the second half of a
   // cut, the next clip on a track). Their <video>/<audio> are mounted and parked
   // on the in-point ahead of time so the cut shows no blank/stale frame.
+  // Only while PLAYING: that is when a cut can flash. Paused (editing, dragging
+  // clips) it would mount/unload <video> elements every time a dragged clip
+  // crosses the look-ahead window, which makes dragging heavy.
   const upcomingMedia = useMemo(
-    () => findUpcomingMedia({ entities, tracks, time: currentTime, activeIds: new Set(computedEntities.map(({ entity }) => entity.id)) }),
-    [entities, tracks, currentTime, computedEntities]
+    () => (isPlaying
+      ? findUpcomingMedia({ entities, tracks, time: currentTime, activeIds: new Set(computedEntities.map(({ entity }) => entity.id)) })
+      : NO_UPCOMING_MEDIA),
+    [isPlaying, entities, tracks, currentTime, computedEntities]
   );
 
   const { videoRefs, audioRefs } = useMediaSync({
@@ -378,6 +387,7 @@ export function EntityRenderer({
   const safeResHeight = resolution?.height > 0 ? resolution.height : FALLBACK_RESOLUTION.height;
  
   return (
+    <Profiler id="Preview(EntityRenderer)" onRender={perfProfilerOnRender}>
     <section
       className="preview-panel"
       ref={containerRef}
@@ -566,4 +576,5 @@ export function EntityRenderer({
         toggleFullscreen={toggleFullscreen}
       />
     </section>
+    </Profiler>
   );}

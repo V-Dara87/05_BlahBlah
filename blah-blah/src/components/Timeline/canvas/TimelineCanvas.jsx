@@ -1,4 +1,5 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, Profiler } from 'react';
+import { perfBegin, perfEnd, perfTime, perfProfilerOnRender } from '../../../utils/perfLog';
 import { Scissors, Copy, ClipboardPaste, ArrowLeftToLine, Unlink, Link2 } from 'lucide-react';
 import { buildTimelineScene, CLIP_ZONES } from '../../../utils/timelineScene';
 import { readTimelineTheme, drawTimelineScene, waveformRectFor, wantsWaveform, cursorForZone } from './drawTimeline';
@@ -21,6 +22,7 @@ import {
   resizeTransitionAboutCut,
   buildMediaDurationsFromAssets,
 } from '../../../engine/renderPipeline';
+import { setTimelineDragging } from '../../../utils/dragState';
 import './canvas-timeline.css';
 // .ctx-menu-item/.ctx-menu-row/.ctx-menu-label/.ctx-menu-hint/.ctx-menu-divider
 // (all scoped under .clip-context-menu) live in clip-item.css — a leftover
@@ -388,7 +390,7 @@ export const TimelineCanvas = memo(function TimelineCanvas({
   // whole project just to recolour one card. On a long project that is the
   // difference between one rAF redraw and a full re-layout per pointer move.
   const scene = useMemo(
-    () => buildTimelineScene({ tracks, clips, pixelsPerSecond, mediaAssets, defaultTrackHeight }),
+    () => perfTime('timeline: buildScene', () => buildTimelineScene({ tracks, clips, pixelsPerSecond, mediaAssets, defaultTrackHeight })),
     [tracks, clips, pixelsPerSecond, mediaAssets, defaultTrackHeight]
   );
  
@@ -636,7 +638,7 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     if (rafRef.current) return;
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = 0;
-      draw();
+      perfTime('timeline: canvas draw', draw);
     });
   }, [draw]);
  
@@ -730,22 +732,6 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     return { x: clientX - rect.left + scrollEl.scrollLeft, y: clientY - rect.top + scrollEl.scrollTop };
   }, [scrollRef]);
  
-  /**
-   * Same shape check the draw-time hover comparison needs: two hitTest
-   * results count as "the same hover" when they refer to the same clip AND
-   * the same zone on it (moving from a clip's body to its trim handle is a
-   * real hover change — the cursor differs), or when both are lane hits on
-   * the same track (moving along empty lane space is not a change worth a
-   * redraw for). Two nulls (pointer off any row) are also equal.
-   */
-  const sameHover = (a, b) => {
-    if (a === b) return true;
-    if (!a || !b) return false;
-    if (a.type !== b.type) return false;
-    if (a.type === 'clip') return a.clipId === b.clipId && a.zone === b.zone;
-    if (a.type === 'lane') return a.trackId === b.trackId;
-    return false;
-  };
  
   // Non-null while a lasso drag (started on empty space) is in progress —
   // checked by handlePointerMove/handlePointerLeave below so their hover
@@ -792,11 +778,12 @@ export const TimelineCanvas = memo(function TimelineCanvas({
   const startMoveDrag = useCallback((event, hit) => {
     const { tracks: currentTracks, clips: currentClips, selectedIds: currentSelectedIds, pixelsPerSecond: pps } = latestRef.current;
     const clip = hit.item.clip;
+    perfBegin('clip move drag');
     if (!clip || !pps) return;
- 
+
     const isSelectedMulti = currentSelectedIds.includes(clip.id);
     const ctrlHeldOnDown = event.ctrlKey || event.metaKey;
- 
+
     // ── Alt/Option + drag = duplicate ────────────────────────────────────
     let isAltDuplicate = false;
     let dupIds = [];
@@ -808,20 +795,17 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       const parkUpdates = newIds.map((newId) => ({ id: newId, updates: { startTime: clip.startTime } }));
       if (parkUpdates.length > 0 && onUpdateClips) onUpdateClips(parkUpdates);
     }
- 
+
     // Keep a multi-selection active when dragging a clip that's part of it
-    // (alt-drag always starts from just the pressed clip). Skipped when Ctrl
-    // is held on down: a Ctrl+drag must not disturb selection, and a plain
-    // Ctrl+click's toggle is handled in handlePointerUp instead.
     if (!isAltDuplicate && !isSelectedMulti && !ctrlHeldOnDown) {
       onSelectClip?.(clip.id);
     }
- 
+
     const startX = event.clientX;
     const startY = event.clientY;
     const origStartTime = clip.startTime;
     let draggedMoved = false;
- 
+
     const allSelectedIds = new Set(isAltDuplicate ? dupIds : (isSelectedMulti ? currentSelectedIds : [clip.id]));
     const moveIds = new Set(allSelectedIds);
     let expanded = true;
@@ -834,7 +818,7 @@ export const TimelineCanvas = memo(function TimelineCanvas({
         }
       }
     }
- 
+
     const moveOriginals = currentClips
       .filter((c) => moveIds.has(c.id))
       .map((c) => ({
@@ -845,7 +829,7 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       }));
     const minStartTime = Math.min(...moveOriginals.map((mo) => mo.origStartTime));
     const origTrackIdx = currentTracks.findIndex((t) => t.id === clip.trackId);
- 
+
     // ── Ctrl+drag = drag-to-parent ─────────────────────────────────────
     let ctrlParentTargetId = null;
     let ctrlParentBadge = null;
@@ -856,30 +840,18 @@ export const TimelineCanvas = memo(function TimelineCanvas({
         ctrlParentBadge.style.top = `${ev.clientY + 14}px`;
       }
     };
- 
-    let pendingMoveUpdates = null;
+
+    let latestMoveEvent = null;
     let moveFrameId = null;
-    const flushMoveUpdates = () => {
+
+    const processMove = () => {
       moveFrameId = null;
-      if (!pendingMoveUpdates) return;
-      const updates = pendingMoveUpdates;
-      pendingMoveUpdates = null;
-      if (onUpdateClips) onUpdateClips(updates);
-      else updates.forEach((u) => onUpdateClip?.(u.id, u.updates));
-    };
-    const scheduleMoveUpdates = (updates) => {
-      pendingMoveUpdates = updates;
-      if (moveFrameId == null) moveFrameId = requestAnimationFrame(flushMoveUpdates);
-    };
- 
-    const onMove = (moveEvent) => {
+      const moveEvent = latestMoveEvent;
+      if (!moveEvent) return;
+
       const deltaPx = moveEvent.clientX - startX;
       const deltaTime = deltaPx / pps;
- 
-      if (Math.abs(deltaPx) > 4 || Math.abs(moveEvent.clientY - startY) > 4) {
-        draggedMoved = true;
-      }
- 
+
       if (moveEvent.ctrlKey || moveEvent.metaKey) {
         ctrlParentActive = true;
         if (!ctrlParentBadge) {
@@ -888,10 +860,10 @@ export const TimelineCanvas = memo(function TimelineCanvas({
           document.body.appendChild(ctrlParentBadge);
         }
         updateCtrlParentBadgePos(moveEvent);
- 
+
         const targetHit = hitTestAtClientPoint(moveEvent.clientX, moveEvent.clientY);
         const targetId = targetHit?.type === 'clip' && targetHit.clipId !== clip.id ? targetHit.clipId : null;
- 
+
         if (targetId) {
           const isCycle = isDescendantOf(targetId, clip.id, currentClips);
           if (!isCycle) {
@@ -915,25 +887,21 @@ export const TimelineCanvas = memo(function TimelineCanvas({
         ctrlParentBadge = null;
         ctrlParentTargetId = null;
       }
- 
+
       applyEdgeAutoScroll(moveEvent.clientX, { lanesEl: scrollRef?.current, rulerEl: null, headerWidth: 0, edgeMargin: 60, scrollSpeed: 10 });
- 
+
       const clampedDeltaTime = Math.max(-minStartTime, deltaTime);
       let rawNewStart = origStartTime + clampedDeltaTime;
- 
+
       let finalNewStart = getSnappedTime(rawNewStart);
       const rightEdge = rawNewStart + clip.duration;
       const snappedRight = getSnappedTime(rightEdge);
       if (snappedRight !== rightEdge) {
         finalNewStart = Math.max(0, snappedRight - clip.duration);
       }
- 
+
       const timeDelta = Math.max(-minStartTime, finalNewStart - origStartTime);
- 
-      // Target track under the pointer, read from the scene's own hitTest
-      // (a 'lane' or 'clip' hit both carry a trackId) rather than
-      // elementsFromPoint('[data-track-id]') — the canvas draws no per-card
-      // DOM node for that query to find.
+
       const overHit = hitTestAtClientPoint(moveEvent.clientX, moveEvent.clientY);
       const overTrackId = overHit?.type === 'lane' ? overHit.trackId : overHit?.type === 'clip' ? overHit.item.trackId : null;
       let targetTrackIdx = origTrackIdx;
@@ -941,13 +909,13 @@ export const TimelineCanvas = memo(function TimelineCanvas({
         const idx = currentTracks.findIndex((t) => t.id === overTrackId);
         if (idx >= 0) targetTrackIdx = idx;
       }
- 
+
       const trackDelta = (targetTrackIdx >= 0 && origTrackIdx >= 0) ? (targetTrackIdx - origTrackIdx) : 0;
       const canShiftTracks = moveOriginals.every((mo) => {
         const newIdx = mo.trackIdx + trackDelta;
         return newIdx >= 0 && newIdx < currentTracks.length && !currentTracks[newIdx]?.locked;
       });
- 
+
       const batchUpdates = moveOriginals.map((mo) => {
         const newStart = Math.max(0, mo.origStartTime + timeDelta);
         const newTrackId = (canShiftTracks && trackDelta !== 0 && currentTracks[mo.trackIdx + trackDelta])
@@ -955,17 +923,33 @@ export const TimelineCanvas = memo(function TimelineCanvas({
           : mo.origTrackId;
         return { id: mo.id, updates: { startTime: newStart, trackId: newTrackId } };
       });
- 
-      scheduleMoveUpdates(batchUpdates);
+
+      perfTime('drag: commit move (onUpdateClips)', () => {
+        if (onUpdateClips) onUpdateClips(batchUpdates);
+        else batchUpdates.forEach((u) => onUpdateClip?.(u.id, u.updates));
+      });
     };
- 
+
+    const onMove = (moveEvent) => {
+      latestMoveEvent = moveEvent;
+      if (Math.abs(moveEvent.clientX - startX) > 4 || Math.abs(moveEvent.clientY - startY) > 4) {
+        draggedMoved = true;
+      }
+      if (moveFrameId == null) {
+        moveFrameId = requestAnimationFrame(processMove);
+      }
+    };
+
     const onUp = () => {
       if (moveFrameId != null) {
         cancelAnimationFrame(moveFrameId);
         moveFrameId = null;
       }
-      flushMoveUpdates();
- 
+      if (draggedMoved && latestMoveEvent) {
+        processMove();
+      }
+      perfEnd();
+
       if (ctrlParentBadge) {
         ctrlParentBadge.remove();
         ctrlParentBadge = null;
@@ -976,22 +960,23 @@ export const TimelineCanvas = memo(function TimelineCanvas({
         }
         ctrlParentTargetId = null;
       }
- 
+
       if (ctrlHeldOnDown && !ctrlParentActive && !draggedMoved) {
         onToggleSelect?.(clip.id);
       }
- 
+
       if (isAltDuplicate && !draggedMoved) {
-        // Alt+click with no actual drag: remove the copy parked on the original.
         dupIds.forEach((id) => onUpdateClip?.(id, { _delete: true }));
       }
- 
+
+      setTimelineDragging(false);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
     };
- 
-    window.addEventListener('pointermove', onMove);
+
+    setTimelineDragging(true);
+    window.addEventListener('pointermove', onMove, { passive: true });
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);
   }, [scrollRef, hitTestAtClientPoint, getSnappedTime, onSelectClip, onToggleSelect, onUpdateClip, onUpdateClips, onDuplicateClips]);
@@ -1007,6 +992,7 @@ export const TimelineCanvas = memo(function TimelineCanvas({
   const startTrimDrag = useCallback((event, hit, side) => {
     const clip = hit.item.clip;
     const { pixelsPerSecond: pps } = latestRef.current;
+    perfBegin('clip trim drag');
     if (!clip || !pps) return;
 
     onSelectClip?.(clip.id);
@@ -1015,25 +1001,14 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     const origStartTime = clip.startTime;
     const origDuration = clip.duration;
 
-    // Coalesce trim commits to at most one per animation frame (same
-    // rationale as startMoveDrag's scheduleMoveUpdates), flushed on release
-    // so the final size always sticks even if a scheduled frame hasn't
-    // fired yet.
-    let pendingTrimUpdate = null;
+    let latestTrimEvent = null;
     let trimFrameId = null;
-    const flushTrimUpdate = () => {
-      trimFrameId = null;
-      if (!pendingTrimUpdate) return;
-      const next = pendingTrimUpdate;
-      pendingTrimUpdate = null;
-      onUpdateClip?.(clip.id, next);
-    };
-    const scheduleTrimUpdate = (updates) => {
-      pendingTrimUpdate = updates;
-      if (trimFrameId == null) trimFrameId = requestAnimationFrame(flushTrimUpdate);
-    };
 
-    const onMove = (moveEvent) => {
+    const processTrim = () => {
+      trimFrameId = null;
+      const moveEvent = latestTrimEvent;
+      if (!moveEvent) return;
+
       applyEdgeAutoScroll(moveEvent.clientX, { lanesEl: scrollRef?.current, rulerEl: null, headerWidth: 0, edgeMargin: 60, scrollSpeed: 8 });
 
       const deltaPx = moveEvent.clientX - startX;
@@ -1047,10 +1022,6 @@ export const TimelineCanvas = memo(function TimelineCanvas({
         const newDuration = origDuration - appliedDeltaTime;
 
         if (newDuration >= 0.2) {
-          // Adjust mediaOffset for VideoRenderer / AudioSource components.
-          // appliedDeltaTime is a TIMELINE delta, so it must be scaled by the
-          // component's own speed to get the correct SOURCE-time offset —
-          // see utils/mediaOffset.js for why this matters.
           const updatedComps = clip.components?.map((c) => {
             if (c.type === 'VideoRenderer' || c.type === 'AudioSource') {
               const origOffset = c.mediaOffset || 0;
@@ -1062,10 +1033,12 @@ export const TimelineCanvas = memo(function TimelineCanvas({
             }
             return c;
           });
-          scheduleTrimUpdate({
-            startTime: newStartTime,
-            duration: newDuration,
-            components: updatedComps || clip.components,
+          perfTime('drag: commit trim (onUpdateClip)', () => {
+            onUpdateClip?.(clip.id, {
+              startTime: newStartTime,
+              duration: newDuration,
+              components: updatedComps || clip.components,
+            });
           });
         }
       } else {
@@ -1077,7 +1050,16 @@ export const TimelineCanvas = memo(function TimelineCanvas({
           rawNewDuration = Math.max(0.2, snappedEnd - origStartTime);
         }
 
-        scheduleTrimUpdate({ duration: rawNewDuration });
+        perfTime('drag: commit trim (onUpdateClip)', () => {
+          onUpdateClip?.(clip.id, { duration: rawNewDuration });
+        });
+      }
+    };
+
+    const onMove = (moveEvent) => {
+      latestTrimEvent = moveEvent;
+      if (trimFrameId == null) {
+        trimFrameId = requestAnimationFrame(processTrim);
       }
     };
 
@@ -1086,13 +1068,18 @@ export const TimelineCanvas = memo(function TimelineCanvas({
         cancelAnimationFrame(trimFrameId);
         trimFrameId = null;
       }
-      flushTrimUpdate();
+      if (latestTrimEvent) {
+        processTrim();
+      }
+      perfEnd();
+      setTimelineDragging(false);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
     };
 
-    window.addEventListener('pointermove', onMove);
+    setTimelineDragging(true);
+    window.addEventListener('pointermove', onMove, { passive: true });
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);
   }, [scrollRef, getSnappedTime, onSelectClip, onUpdateClip]);
@@ -1116,15 +1103,18 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     const origDuration = clip.duration;
     const startX = event.clientX;
     const edgeStartTime = edge === 'start' ? origStart : origStart + origDuration;
-    // The ceiling is fixed for the whole gesture: the neighbours are the ones
-    // that were there when the drag began (this clip's own geometry changing
-    // must not move the goalposts mid-drag) — same reasoning as
-    // TransitionClipItem.jsx's own makeEdgePointerDown.
     const mediaDurations = buildMediaDurationsFromAssets(currentClips, currentMediaAssets);
     const { a, b } = findTransitionNeighbours(clip, currentClips);
     const ceiling = a && b ? maxTransitionDuration(a, b, mediaDurations) : Infinity;
 
-    const onMove = (moveEvent) => {
+    let latestEdgeEvent = null;
+    let edgeFrameId = null;
+
+    const processEdge = () => {
+      edgeFrameId = null;
+      const moveEvent = latestEdgeEvent;
+      if (!moveEvent) return;
+
       applyEdgeAutoScroll(moveEvent.clientX, { lanesEl: scrollRef?.current, rulerEl: null, headerWidth: 0, edgeMargin: 60, scrollSpeed: 8 });
 
       const dx = moveEvent.clientX - startX;
@@ -1137,12 +1127,30 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       });
       onUpdateClip?.(clip.id, { startTime, duration });
     };
+
+    const onMove = (moveEvent) => {
+      latestEdgeEvent = moveEvent;
+      if (edgeFrameId == null) {
+        edgeFrameId = requestAnimationFrame(processEdge);
+      }
+    };
+
     const onUp = () => {
+      if (edgeFrameId != null) {
+        cancelAnimationFrame(edgeFrameId);
+        edgeFrameId = null;
+      }
+      if (latestEdgeEvent) {
+        processEdge();
+      }
+      setTimelineDragging(false);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
     };
-    window.addEventListener('pointermove', onMove);
+
+    setTimelineDragging(true);
+    window.addEventListener('pointermove', onMove, { passive: true });
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);
   }, [scrollRef, onSelectClip, onUpdateClip]);
@@ -1196,11 +1204,13 @@ export const TimelineCanvas = memo(function TimelineCanvas({
         onUpdateClip?.(clip.id, { parentId: pending.targetClipId });
       }
       setPickwhip(null);
+      setTimelineDragging(false);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
     };
 
+    setTimelineDragging(true);
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);
@@ -1257,8 +1267,18 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       // cursor in the canvas path.
       host.style.cursor = hit?.type === 'clip' ? cursorForZone(hit.zone) : 'default';
     }
-    if (!sameHover(hoverRef.current, hit)) {
-      hoverRef.current = hit && hit.type === 'clip' ? { clipId: hit.clipId, zone: hit.zone } : null;
+    // Compare the value that would be STORED (null, or { clipId, zone }) with what is
+    // stored. The old check compared the raw hit (it has `type`) with the stored shape
+    // (it has none), so it never matched: every pointer move over a clip or an empty
+    // lane bumped hoverVersion, re-rendered this component and re-ran the draw effect
+    // - hundreds of times per second, and the "Maximum update depth exceeded" error.
+    const nextHover = hit && hit.type === 'clip' ? { clipId: hit.clipId, zone: hit.zone } : null;
+    const prevHover = hoverRef.current;
+    const hoverChanged = nextHover
+      ? !prevHover || prevHover.clipId !== nextHover.clipId || prevHover.zone !== nextHover.zone
+      : prevHover !== null;
+    if (hoverChanged) {
+      hoverRef.current = nextHover;
       setHoverVersion((v) => v + 1);
     }
   }, [hitTestAtClientPoint, startMoveDrag, startTrimDrag, startTransitionEdgeDrag, startPickwhipDrag]);
@@ -1360,6 +1380,7 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     };
  
     const onUp = (upEvent) => {
+      setTimelineDragging(false);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
@@ -1393,6 +1414,7 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       }
     };
  
+    setTimelineDragging(true);
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);
@@ -1449,6 +1471,7 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       }
     };
     const onUp = () => {
+      setTimelineDragging(false);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
@@ -1461,6 +1484,7 @@ export const TimelineCanvas = memo(function TimelineCanvas({
         }, 0);
       }
     };
+    setTimelineDragging(true);
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);
@@ -1751,6 +1775,7 @@ export const TimelineCanvas = memo(function TimelineCanvas({
   }, [contentPointAtClientPoint, trackRowAtContentY, onAddMediaAsset, onDropItemOnTrack]);
 
   return (
+    <Profiler id="TimelineCanvas" onRender={perfProfilerOnRender}>
     <div
       ref={hostRef}
       className={`timeline-canvas-layer ${className}`.trim()}
@@ -1838,5 +1863,6 @@ export const TimelineCanvas = memo(function TimelineCanvas({
         </ContextMenu>
       )}
     </div>
+    </Profiler>
   );
 });

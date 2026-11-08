@@ -1,4 +1,5 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, startTransition } from 'react';
+import { isTimelineDragging } from '../utils/dragState';
 
 const HISTORY_LIMIT = 100;
 // Rapid-fire updates that land within this window of the previous one
@@ -44,26 +45,34 @@ export function useUndoableState(initialState) {
     const key = coalesce ? (coalesce === true ? '__default__' : String(coalesce)) : null;
     const now = Date.now();
 
-    setHistory((prev) => {
-      const nextPresent = typeof updater === 'function' ? updater(prev.present) : updater;
-      if (nextPresent === prev.present) return prev;
+    const commit = () => {
+      setHistory((prev) => {
+        const nextPresent = typeof updater === 'function' ? updater(prev.present) : updater;
+        if (nextPresent === prev.present) return prev;
 
-      const shouldCoalesce = key !== null
-        && prev.past.length > 0
-        && prev.stamp.key === key
-        && (now - prev.stamp.at) < COALESCE_MS;
+        const shouldCoalesce = key !== null
+          && prev.past.length > 0
+          && prev.stamp.key === key
+          && (now - prev.stamp.at) < COALESCE_MS;
 
-      const past = shouldCoalesce
-        ? prev.past
-        : [...prev.past, prev.present].slice(-HISTORY_LIMIT);
+        const past = shouldCoalesce
+          ? prev.past
+          : [...prev.past, prev.present].slice(-HISTORY_LIMIT);
 
-      return {
-        past,
-        present: nextPresent,
-        future: [],
-        stamp: { at: now, key },
-      };
-    });
+        return {
+          past,
+          present: nextPresent,
+          future: [],
+          stamp: { at: now, key },
+        };
+      });
+    };
+
+    if (isTimelineDragging() || options?.transition) {
+      startTransition(commit);
+    } else {
+      commit();
+    }
   }, []);
 
   const undo = useCallback(() => {
