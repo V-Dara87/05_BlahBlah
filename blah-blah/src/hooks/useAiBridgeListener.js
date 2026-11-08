@@ -70,7 +70,20 @@ export function useAiBridgeListener({
     })();
 
     // 2. File polling loop
-    const pollInterval = setInterval(async () => {
+    //
+    // A fixed 350ms interval kept waking the main thread (and the filesystem,
+    // through the Tauri plugin) even when the editor had been idle for minutes
+    // with nothing listening. The loop now backs off while it keeps finding
+    // nothing — and further while the window is hidden — and returns to the
+    // fast cadence as soon as a command shows up. A command is still picked up
+    // in the same way, just up to a second later after a long idle stretch.
+    const POLL_MS_ACTIVE = 350;
+    const POLL_MS_IDLE = 1000;
+    const POLL_MS_HIDDEN = 1500;
+    let idlePolls = 0;
+    let pollTimer = null;
+
+    const pollOnce = async () => {
       if (isProcessingRef.current || cancelled) return;
 
       const fs = await import('@tauri-apps/plugin-fs').catch(() => null);
@@ -87,7 +100,11 @@ export function useAiBridgeListener({
           .map((e) => e.name)
           .sort(); // Sorts chronologically due to timestamp prefix: 00017...-<id>.json
 
-        if (jsonFiles.length === 0) return;
+        if (jsonFiles.length === 0) {
+          idlePolls += 1;
+          return;
+        }
+        idlePolls = 0;
 
         isProcessingRef.current = true;
         const targetFileName = jsonFiles[0];
@@ -261,11 +278,29 @@ export function useAiBridgeListener({
       } finally {
         isProcessingRef.current = false;
       }
-    }, 350);
+    };
+
+    const schedulePoll = () => {
+      if (cancelled) return;
+      const delay = document.hidden
+        ? POLL_MS_HIDDEN
+        : (idlePolls >= 3 ? POLL_MS_IDLE : POLL_MS_ACTIVE);
+      pollTimer = setTimeout(runPoll, delay);
+    };
+
+    const runPoll = () => {
+      pollTimer = null;
+      if (cancelled) return;
+      // Always schedule the next poll, whatever this one decided to do.
+      pollOnce().finally(schedulePoll);
+    };
+
+    schedulePoll();
 
     return () => {
       cancelled = true;
-      clearInterval(pollInterval);
+      if (pollTimer) clearTimeout(pollTimer);
+      pollTimer = null;
       isProcessingRef.current = false;
     };
   }, [projectFolderHandle?.path, playbackStoreRef, setSelectedEntityId]);

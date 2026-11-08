@@ -3,6 +3,7 @@ import { Volume2, VolumeX, Plus } from 'lucide-react';
 import { resolveEffectiveVolume } from '../../utils/trackAudio';
 import { getTrackPeakDb, METER_FLOOR_DB } from '../../utils/mediaAudio';
 import { isTimelineDragging } from '../../utils/dragState';
+import { usePlaybackStore } from '../../hooks/PlaybackContext';
 import {
   FADER_MAX_DB,
   FADER_MIN_DB,
@@ -312,6 +313,9 @@ export const MixerPanel = memo(function MixerPanel({
 }) {
   // trackId -> { strip, meter, clip, readout } refs, plus per-strip meter
   // animation state (kept in a ref so it survives without re-rendering).
+  // Used only to answer "is anything playing?" — the loop below parks itself
+  // while the transport is stopped and every meter has settled.
+  const store = usePlaybackStore();
   const stripsRef = useRef(new Map());
  
   const registerStrip = useCallback((trackId, refs) => {
@@ -408,11 +412,23 @@ export const MixerPanel = memo(function MixerPanel({
           const text = formatPeakDb(st.peak);
           if (readEl.textContent !== text) readEl.textContent = text;
         }
+      }      if (isIdle()) {
+        stop();
+        return;
       }
- 
       raf = requestAnimationFrame(tick);
     };
- 
+
+    // True once every meter has settled back to silence with the transport
+    // stopped — a frame now would repaint exactly the same picture.
+    const isIdle = () => {
+      if (store.getIsPlaying()) return false;
+      for (const st of states.values()) {
+        if (st.level > METER_FLOOR_DB + 0.05 || st.peak > METER_FLOOR_DB + 0.05) return false;
+      }
+      return true;
+    };
+
     const start = () => {
       if (!raf) {
         last = performance.now();
@@ -422,17 +438,20 @@ export const MixerPanel = memo(function MixerPanel({
     const stop = () => {
       if (raf) cancelAnimationFrame(raf);
       raf = 0;
-    };
-    // Don't burn frames while the window is hidden.
+    };    // Don't burn frames while the window is hidden.
     const onVis = () => (document.hidden ? stop() : start());
     document.addEventListener('visibilitychange', onVis);
+    // The loop parks itself when there is nothing left to show, so play /
+    // pause / seek has to wake it back up.
+    const unsubscribe = store.subscribe(start);
     start();
- 
+
     return () => {
       document.removeEventListener('visibilitychange', onVis);
+      unsubscribe();
       stop();
     };
-  }, []);
+  }, [store]);
  
   if (!tracks || tracks.length === 0) {
     return <div className="mixer-panel-empty">No tracks yet — add a track to see it here.</div>;
