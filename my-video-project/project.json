@@ -2,7 +2,7 @@
   "name": "my-video-project",
   "version": "1.0",
   "schemaVersion": 1,
-  "lastModified": 1794062508930,
+  "lastModified": 1794111639749,
   "resolution": {
     "width": 1920,
     "height": 1080
@@ -61,8 +61,8 @@
       "layer": "Default",
       "active": true,
       "parentId": null,
-      "trackId": "track-2",
-      "startTime": 14.875,
+      "trackId": "track-4",
+      "startTime": 5.649999999999999,
       "duration": 5,
       "type": "empty",
       "src": "",
@@ -85,8 +85,245 @@
           "pivotX": 0,
           "pivotY": 0
         }
-      ]
+      ],
+      "keyframes": {}
+    },
+    {
+      "id": "go-8c3dda4d-0bfc-47c6-9937-1336c8e31e29",
+      "name": "New Clip",
+      "tag": "Untagged",
+      "layer": "Default",
+      "active": true,
+      "parentId": null,
+      "trackId": "track-3",
+      "startTime": 16.424999999999997,
+      "duration": 5,
+      "type": "empty",
+      "src": "",
+      "color": "#6366f1",
+      "components": [
+        {
+          "type": "Transform",
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "rotation": 0,
+          "rotationX": 0,
+          "rotationY": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "scaleZ": 1,
+          "opacity": 1,
+          "is3D": false,
+          "autoOrient": false,
+          "pivotX": 0,
+          "pivotY": 0
+        }
+      ],
+      "keyframes": {}
+    },
+    {
+      "id": "go-6fb2a176-cc6f-4e5e-8a7f-eab09f3cd843",
+      "name": "New Clip",
+      "tag": "Untagged",
+      "layer": "Default",
+      "active": true,
+      "parentId": null,
+      "trackId": "track-3",
+      "startTime": 10.899999999999995,
+      "duration": 5,
+      "type": "empty",
+      "src": "",
+      "color": "#6366f1",
+      "components": [
+        {
+          "type": "Transform",
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "rotation": 0,
+          "rotationX": 0,
+          "rotationY": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "scaleZ": 1,
+          "opacity": 1,
+          "is3D": false,
+          "autoOrient": false,
+          "pivotX": 0,
+          "pivotY": 0
+        }
+      ],
+      "keyframes": {}
+    },
+    {
+      "id": "go-693d6721-6c95-4b55-8522-7ca25dd52ab4",
+      "name": "New Clip",
+      "tag": "Untagged",
+      "layer": "Default",
+      "active": true,
+      "parentId": null,
+      "trackId": "track-2",
+      "startTime": 4.024999999999997,
+      "duration": 5,
+      "type": "empty",
+      "src": "",
+      "color": "#6366f1",
+      "components": [
+        {
+          "type": "Transform",
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "rotation": 0,
+          "rotationX": 0,
+          "rotationY": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "scaleZ": 1,
+          "opacity": 1,
+          "is3D": false,
+          "autoOrient": false,
+          "pivotX": 0,
+          "pivotY": 0
+        }
+      ],
+      "keyframes": {}
+    },
+    {
+      "id": "go-4b9ddf36-d1dd-4205-b546-dd48b44651e3",
+      "name": "CodeSnippet Clip",
+      "tag": "Untagged",
+      "layer": "Default",
+      "active": true,
+      "parentId": null,
+      "trackId": "track-1",
+      "startTime": 11.424999999999997,
+      "duration": 5,
+      "type": "empty",
+      "src": "",
+      "color": "#6366f1",
+      "components": [
+        {
+          "type": "Transform",
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "rotation": 0,
+          "rotationX": 0,
+          "rotationY": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "scaleZ": 1,
+          "opacity": 1,
+          "is3D": false,
+          "autoOrient": false,
+          "pivotX": 0,
+          "pivotY": 0
+        },
+        {
+          "type": "ScriptComponent",
+          "scriptId": "script-718e4e1e-e695-4e68-868f-acff75fedb89",
+          "scriptName": "CodeSnippet.jsx",
+          "enabled": true,
+          "props": {
+            "code": "const velocity = new Vec2(0, 0);\nconst GRAVITY = 9.8;\n\nfunction update(dt) {\n  velocity.y += GRAVITY * dt;\n  player.pos.add(velocity.scale(dt));\n  if (player.pos.y >= FLOOR) land();\n}",
+            "language": "javascript",
+            "title": "main.js",
+            "showTitleBar": true,
+            "showLineNumbers": true,
+            "theme": "dark",
+            "fontFamily": "JetBrains Mono",
+            "fontSize": 22,
+            "accentColor": "#a78bfa",
+            "cornerRadius": 12,
+            "panelOpacity": 0.92,
+            "panelScale": 1,
+            "useClipDuration": false,
+            "typeDuration": 3,
+            "typeDelay": 0.2,
+            "fadeInDuration": 0.25,
+            "cursorBlink": true,
+            "positionX": 0,
+            "positionY": 0
+          }
+        }
+      ],
+      "keyframes": {}
+    },
+    {
+      "id": "go-93e62697-85be-4029-b119-9ba2dfb984dc",
+      "name": "CodeSnippet Clip",
+      "tag": "Untagged",
+      "layer": "Default",
+      "active": true,
+      "parentId": null,
+      "trackId": "track-2",
+      "startTime": 19.424999999999997,
+      "duration": 5,
+      "type": "empty",
+      "src": "",
+      "color": "#6366f1",
+      "components": [
+        {
+          "type": "Transform",
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "rotation": 0,
+          "rotationX": 0,
+          "rotationY": 0,
+          "scaleX": 1,
+          "scaleY": 1,
+          "scaleZ": 1,
+          "opacity": 1,
+          "is3D": false,
+          "autoOrient": false,
+          "pivotX": 0,
+          "pivotY": 0
+        },
+        {
+          "type": "ScriptComponent",
+          "scriptId": "script-718e4e1e-e695-4e68-868f-acff75fedb89",
+          "scriptName": "CodeSnippet.jsx",
+          "enabled": true,
+          "props": {
+            "code": "const velocity = new Vec2(0, 0);\nconst GRAVITY = 9.8;\n\nfunction update(dt) {\n  velocity.y += GRAVITY * dt;\n  player.pos.add(velocity.scale(dt));\n  if (player.pos.y >= FLOOR) land();\n}",
+            "language": "javascript",
+            "title": "main.js",
+            "showTitleBar": true,
+            "showLineNumbers": true,
+            "theme": "dark",
+            "fontFamily": "JetBrains Mono",
+            "fontSize": 22,
+            "accentColor": "#a78bfa",
+            "cornerRadius": 12,
+            "panelOpacity": 0.92,
+            "panelScale": 1,
+            "useClipDuration": false,
+            "typeDuration": 3,
+            "typeDelay": 0.2,
+            "fadeInDuration": 0.25,
+            "cursorBlink": true,
+            "positionX": 0,
+            "positionY": 0
+          }
+        }
+      ],
+      "keyframes": {}
     }
   ],
-  "scriptIndex": []
+  "scriptIndex": [
+    {
+      "name": "CodeSnippet.jsx",
+      "id": "script-718e4e1e-e695-4e68-868f-acff75fedb89",
+      "description": "Imported from Shared Library",
+      "folder": null,
+      "createdAt": null,
+      "origin": {
+        "sharedName": "codesnippet",
+        "hash": "06efe912"
+      }
+    }
+  ]
 }
