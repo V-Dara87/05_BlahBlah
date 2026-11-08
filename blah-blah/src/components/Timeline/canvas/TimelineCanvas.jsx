@@ -23,6 +23,14 @@ import {
   buildMediaDurationsFromAssets,
 } from '../../../engine/renderPipeline';
 import { setTimelineDragging } from '../../../utils/dragState';
+import {
+  setDragPreview,
+  clearDragPreview,
+  getDragPreview,
+  dragPreviewUpdates,
+  buildDragPreviewOverrides,
+  subscribeDragPreview,
+} from '../../../utils/dragPreview';
 import './canvas-timeline.css';
 // .ctx-menu-item/.ctx-menu-row/.ctx-menu-label/.ctx-menu-hint/.ctx-menu-divider
 // (all scoped under .clip-context-menu) live in clip-item.css — a leftover
@@ -594,6 +602,11 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
+
+    // Pending drag geometry (utils/dragPreview.js), resolved here per drawn
+    // frame from the committed scene: a move/trim drag never rebuilds the
+    // scene and never goes through React at all.
+    const dragPreview = buildDragPreviewOverrides(currentScene, getDragPreview());
  
     drawTimelineScene(ctx, {
       scene: currentScene,
@@ -628,6 +641,9 @@ export const TimelineCanvas = memo(function TimelineCanvas({
         // paint the same blue `drag-target` highlight the DOM path gets from
         // `.track-lane-row.drag-target`.
         dragOverTrackId: latestRef.current.dragOverTrackId,
+        // Same pattern as hover/lasso/pickwhip: resolved geometry for an
+        // in-progress move/trim drag, or null.
+        dragPreview,
         peaksFor: (item) => (wantsWaveform(item) ? ensureEnvelope(item) : null),
         peaksPending: (item) => (wantsWaveform(item) ? isEnvelopePending(item) : false),
       },
@@ -655,6 +671,14 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     themeRef.current = null;
     schedule();
   }), [schedule]);
+
+  // A drag preview changes outside React (see utils/dragPreview.js), so this
+  // subscription is what turns every preview update into exactly one canvas
+  // frame instead of one App render.
+  useEffect(() => subscribeDragPreview(() => schedule()), [schedule]);
+
+  // Never leave a preview behind if this component goes away mid-drag.
+  useEffect(() => () => clearDragPreview(), []);
  
   // Redraw when anything structural changes, and keep the canvas sized to its
   // box (dockview shows/hides panels, so the size can change without a scroll).
@@ -924,10 +948,9 @@ export const TimelineCanvas = memo(function TimelineCanvas({
         return { id: mo.id, updates: { startTime: newStart, trackId: newTrackId } };
       });
 
-      perfTime('drag: commit move (onUpdateClips)', () => {
-        if (onUpdateClips) onUpdateClips(batchUpdates);
-        else batchUpdates.forEach((u) => onUpdateClip?.(u.id, u.updates));
-      });
+      // No state write per frame: the pending positions are drawn straight
+      // from the preview (utils/dragPreview.js) and committed once on release.
+      perfTime('drag: preview move', () => setDragPreview(batchUpdates));
     };
 
     const onMove = (moveEvent) => {
@@ -940,6 +963,40 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       }
     };
 
+    /** Turn the live preview into the gesture's single committed update. */
+    const commitPreview = () => {
+      const batch = dragPreviewUpdates(getDragPreview(), currentClips, moveIds);
+      clearDragPreview();
+      if (batch.length === 0) return;
+      perfTime('drag: commit move (onUpdateClips)', () => {
+        if (onUpdateClips) onUpdateClips(batch);
+        else batch.forEach((u) => onUpdateClip?.(u.id, u.updates));
+      });
+    };
+
+    const removeListeners = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+
+    // Esc cancels the gesture: nothing is committed, so every clip stays
+    // exactly where it was before the drag.
+    const onKeyDown = (keyEvent) => {
+      if (keyEvent.key !== 'Escape') return;
+      keyEvent.preventDefault();
+      if (ctrlParentBadge) {
+        ctrlParentBadge.remove();
+        ctrlParentBadge = null;
+      }
+      ctrlParentTargetId = null;
+      clearDragPreview();
+      setTimelineDragging(false);
+      removeListeners();
+      perfEnd();
+    };
+
     const onUp = () => {
       if (moveFrameId != null) {
         cancelAnimationFrame(moveFrameId);
@@ -948,18 +1005,13 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       if (draggedMoved && latestMoveEvent) {
         processMove();
       }
-      perfEnd();
 
       if (ctrlParentBadge) {
         ctrlParentBadge.remove();
         ctrlParentBadge = null;
       }
-      if (ctrlParentTargetId) {
-        if (ctrlParentTargetId !== clip.id && !isDescendantOf(ctrlParentTargetId, clip.id, currentClips)) {
-          onUpdateClip?.(clip.id, { parentId: ctrlParentTargetId });
-        }
-        ctrlParentTargetId = null;
-      }
+      const pendingParentId = ctrlParentTargetId;
+      ctrlParentTargetId = null;
 
       if (ctrlHeldOnDown && !ctrlParentActive && !draggedMoved) {
         onToggleSelect?.(clip.id);
@@ -969,16 +1021,26 @@ export const TimelineCanvas = memo(function TimelineCanvas({
         dupIds.forEach((id) => onUpdateClip?.(id, { _delete: true }));
       }
 
+      // Exactly one commit for the whole gesture, and therefore one Undo step.
+      // `isTimelineDragging` is cleared first so this lands as a normal update
+      // instead of a transition.
       setTimelineDragging(false);
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      window.removeEventListener('pointercancel', onUp);
+      if (draggedMoved) commitPreview();
+      else clearDragPreview();
+
+      if (pendingParentId && pendingParentId !== clip.id && !isDescendantOf(pendingParentId, clip.id, currentClips)) {
+        onUpdateClip?.(clip.id, { parentId: pendingParentId });
+      }
+
+      perfEnd();
+      removeListeners();
     };
 
     setTimelineDragging(true);
     window.addEventListener('pointermove', onMove, { passive: true });
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);
+    window.addEventListener('keydown', onKeyDown);
   }, [scrollRef, hitTestAtClientPoint, getSnappedTime, onSelectClip, onToggleSelect, onUpdateClip, onUpdateClips, onDuplicateClips]);
 
   /**
@@ -1033,12 +1095,16 @@ export const TimelineCanvas = memo(function TimelineCanvas({
             }
             return c;
           });
-          perfTime('drag: commit trim (onUpdateClip)', () => {
-            onUpdateClip?.(clip.id, {
-              startTime: newStartTime,
-              duration: newDuration,
-              components: updatedComps || clip.components,
-            });
+          // Preview only — committed once on release (see onUp below).
+          perfTime('drag: preview trim', () => {
+            setDragPreview([{
+              id: clip.id,
+              updates: {
+                startTime: newStartTime,
+                duration: newDuration,
+                components: updatedComps || clip.components,
+              },
+            }]);
           });
         }
       } else {
@@ -1050,8 +1116,8 @@ export const TimelineCanvas = memo(function TimelineCanvas({
           rawNewDuration = Math.max(0.2, snappedEnd - origStartTime);
         }
 
-        perfTime('drag: commit trim (onUpdateClip)', () => {
-          onUpdateClip?.(clip.id, { duration: rawNewDuration });
+        perfTime('drag: preview trim', () => {
+          setDragPreview([{ id: clip.id, updates: { duration: rawNewDuration } }]);
         });
       }
     };
@@ -1063,6 +1129,23 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       }
     };
 
+    const removeTrimListeners = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+
+    // Esc cancels: the preview is dropped without ever touching state.
+    const onKeyDown = (keyEvent) => {
+      if (keyEvent.key !== 'Escape') return;
+      keyEvent.preventDefault();
+      clearDragPreview();
+      setTimelineDragging(false);
+      removeTrimListeners();
+      perfEnd();
+    };
+
     const onUp = () => {
       if (trimFrameId != null) {
         cancelAnimationFrame(trimFrameId);
@@ -1071,17 +1154,24 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       if (latestTrimEvent) {
         processTrim();
       }
-      perfEnd();
+      // One commit per trim gesture, same rule as the move drag.
+      const batch = dragPreviewUpdates(getDragPreview(), [clip]);
+      clearDragPreview();
       setTimelineDragging(false);
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      window.removeEventListener('pointercancel', onUp);
+      if (batch.length > 0) {
+        perfTime('drag: commit trim (onUpdateClip)', () => {
+          batch.forEach((u) => onUpdateClip?.(u.id, u.updates));
+        });
+      }
+      perfEnd();
+      removeTrimListeners();
     };
 
     setTimelineDragging(true);
     window.addEventListener('pointermove', onMove, { passive: true });
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);
+    window.addEventListener('keydown', onKeyDown);
   }, [scrollRef, getSnappedTime, onSelectClip, onUpdateClip]);
 
   /**
@@ -1125,7 +1215,8 @@ export const TimelineCanvas = memo(function TimelineCanvas({
         rawEdgeTime: edgeStartTime + dx / pps,
         maxDuration: ceiling,
       });
-      onUpdateClip?.(clip.id, { startTime, duration });
+      // Preview only — committed once on release (see onUp below).
+      setDragPreview([{ id: clip.id, updates: { startTime, duration } }]);
     };
 
     const onMove = (moveEvent) => {
@@ -1133,6 +1224,22 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       if (edgeFrameId == null) {
         edgeFrameId = requestAnimationFrame(processEdge);
       }
+    };
+
+    const removeEdgeListeners = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+
+    // Esc cancels: the resized preview is dropped uncommitted.
+    const onKeyDown = (keyEvent) => {
+      if (keyEvent.key !== 'Escape') return;
+      keyEvent.preventDefault();
+      clearDragPreview();
+      setTimelineDragging(false);
+      removeEdgeListeners();
     };
 
     const onUp = () => {
@@ -1143,16 +1250,19 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       if (latestEdgeEvent) {
         processEdge();
       }
+      // One commit per resize gesture, same rule as the clip move drag.
+      const batch = dragPreviewUpdates(getDragPreview(), [clip]);
+      clearDragPreview();
       setTimelineDragging(false);
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      window.removeEventListener('pointercancel', onUp);
+      batch.forEach((u) => onUpdateClip?.(u.id, u.updates));
+      removeEdgeListeners();
     };
 
     setTimelineDragging(true);
     window.addEventListener('pointermove', onMove, { passive: true });
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);
+    window.addEventListener('keydown', onKeyDown);
   }, [scrollRef, onSelectClip, onUpdateClip]);
 
   /**

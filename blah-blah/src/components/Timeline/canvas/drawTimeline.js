@@ -222,6 +222,7 @@ export function readTimelineTheme(el) {
  * @param {object|null} [params.state.hover] {clipId, zone} | {trackId} | null
  * @param {string|null} [params.state.dragOverTrackId] lane an in-progress drop is over
  * @param {object|null} [params.state.recording] {trackId, startTime, level}
+ * @param {Map<string, object>|null} [params.state.dragPreview] drag-preview geometry per clip id (utils/dragPreview.js)
  * @param {Map<string, object>} [params.state.silenceCuts] clipId -> cuts[]
  * @param {(item: object) => object|null} [params.state.peaksFor] envelope lookup for a clip
  * @param {(item: object) => boolean} [params.state.peaksPending] true while THAT clip's peaks are still being built
@@ -267,6 +268,24 @@ export function drawTimelineScene(ctx, {
   const cards = visible.filter((i) => i.kind !== 'transition');
   const transitions = visible.filter((i) => i.kind === 'transition');
 
+  // Drag preview (see utils/dragPreview.js): an in-progress move/trim keeps its
+  // pending geometry OUTSIDE React state, so the scene above is never rebuilt
+  // mid-drag and the card is drawn where the pointer actually put it. A card
+  // dragged back into view has to be added by hand: the range query indexed it
+  // at its still-committed start time.
+  const dragPreview = state.dragPreview || null;
+  if (dragPreview) {
+    const seen = new Set(visible.map((item) => item.id));
+    for (const [id, geometry] of dragPreview) {
+      if (seen.has(id)) continue;
+      const item = scene.byId.get(id);
+      if (!item) continue;
+      if (geometry.x + geometry.width < scrollLeft || geometry.x > scrollLeft + width) continue;
+      if (item.kind === 'transition') transitions.push(item);
+      else cards.push(item);
+    }
+  }
+
   ctx.font = '11px system-ui, -apple-system, Segoe UI, sans-serif';
   ctx.textBaseline = 'middle';
 
@@ -286,7 +305,7 @@ export function drawTimelineScene(ctx, {
 
   for (const item of cards) {
     drawClipCard(ctx, {
-      item,
+      item: withDragPreview(item, dragPreview),
       theme,
       selected,
       parentIdsOfSelected,
@@ -301,7 +320,11 @@ export function drawTimelineScene(ctx, {
     });
   }
   for (const item of transitions) {
-    drawTransitionCard(ctx, { item, selected, hover: state.hover });
+    drawTransitionCard(ctx, {
+      item: withDragPreview(item, dragPreview),
+      selected,
+      hover: state.hover,
+    });
   }
 
   if (state.recording?.trackId) drawRecordingPreview(ctx, { recording: state.recording, scene, theme, pps });
@@ -309,6 +332,15 @@ export function drawTimelineScene(ctx, {
 
   ctx.restore();
   return { drawnClips: cards.length + transitions.length };
+}
+
+/**
+ * The item as the drag preview draws it, or the item itself when it is not
+ * being dragged (no copy in the common case — this runs per card per frame).
+ */
+function withDragPreview(item, dragPreview) {
+  const geometry = dragPreview ? dragPreview.get(item.id) : null;
+  return geometry ? { ...item, ...geometry } : item;
 }
 
 /** Lane rows + their divider lines + the locked-track hatching. */
@@ -583,7 +615,11 @@ function cardBorderFor({ item, isSelected, isHovered, parentIdsOfSelected, theme
 function drawCardText(ctx, { item, theme, category, x, y, w, h }) {
   if (w <= 24 || h < 12) return;
   const title = String(item.clip.name ?? '');
-  const duration = Number.isFinite(item.clip.duration) ? item.clip.duration : 0;
+  // `item.duration` only exists on a drag preview (the resolved preview
+  // geometry), where the card is being trimmed to a new length.
+  const duration = Number.isFinite(item.duration)
+    ? item.duration
+    : (Number.isFinite(item.clip.duration) ? item.clip.duration : 0);
 
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'left';
