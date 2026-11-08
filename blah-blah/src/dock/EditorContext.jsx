@@ -7,10 +7,60 @@ import { createContext, useContext } from 'react';
 // once per render in App.jsx, and each dock panel just reads what it needs.
 export const EditorContext = createContext(null);
 
+/**
+ * The STABLE half of the editor context: callbacks and state setters only.
+ *
+ * App builds this object with useMemo, and every value in it keeps its identity
+ * across renders (they come from useCallback / useState setters), so a consumer
+ * that subscribes here re-renders only when the prefab mode actually flips —
+ * never because a clip moved or a modal opened. Migrate a panel here when it
+ * only needs actions; use useEditorContext() when it needs data too.
+ */
+export const EditorActionsContext = createContext(null);
+
+/**
+ * The CHANGING half: project data (entities/tracks/scripts/...) and editor
+ * state (selection, recording level, export range, ...).
+ *
+ * Still one object, so every consumer of this context re-renders when any of
+ * those values change — that is strictly narrower than the old single context,
+ * but per-field subscription (a selector-based store) would be the next step.
+ */
+export const EditorDataContext = createContext(null);
+
+/**
+ * The merged view, unchanged for every caller that has not been migrated to
+ * the split contexts. Panels can keep destructuring it exactly as before.
+ */
 export function useEditorContext() {
   const ctx = useContext(EditorContext);
   if (!ctx) {
     throw new Error('useEditorContext must be used inside <EditorContext.Provider>');
   }
   return ctx;
+}
+
+/** Callbacks/setters only — no re-render when the project data changes. */
+export function useEditorActions() {
+  // Both hooks are called unconditionally (rules of hooks); the merged context
+  // is only the fallback for a caller mounted outside the split providers
+  // (older call sites, tests).
+  const actions = useContext(EditorActionsContext);
+  const merged = useContext(EditorContext);
+  if (actions) return actions;
+  if (!merged) {
+    throw new Error('useEditorActions must be used inside <EditorContext.Provider>');
+  }
+  return merged;
+}
+
+/** Project data / editor state only. */
+export function useEditorData() {
+  const data = useContext(EditorDataContext);
+  const merged = useContext(EditorContext);
+  if (data) return data;
+  if (!merged) {
+    throw new Error('useEditorData must be used inside <EditorContext.Provider>');
+  }
+  return merged;
 }

@@ -26,9 +26,10 @@ import { ExportModal } from './components/modals/ExportModal';
 import { NewProjectModal } from './components/modals/NewProjectModal';
 import { SettingsModal } from './components/modals/SettingsModal';
 import { PackageManagerModal } from './components/modals/PackageManagerModal';
+import { memoWhenClosed } from './components/modals/memoWhenClosed';
 import { HubScreen } from './components/shell/HubScreen';
 import { DockLayout } from './dock/DockLayout';
-import { EditorContext } from './dock/EditorContext';
+import { EditorContext, EditorActionsContext, EditorDataContext } from './dock/EditorContext';
 import { TimelineViewProvider } from './dock/TimelineViewContext';
 import { PlaybackProvider } from './hooks/PlaybackContext';
 import { EditorHeader } from './components/shell/EditorHeader';
@@ -47,6 +48,12 @@ import { OPEN_CONSOLE_EVENT } from './engine/scriptConsole';
 import './App.css';
 import './app-shell.css';
 import './styles/shared.css';
+
+// These modals stay mounted while closed; the wrappers skip re-rendering them
+// while they are closed (see components/modals/memoWhenClosed.js).
+const NewProjectModalMemo = memoWhenClosed(NewProjectModal);
+const ExportModalMemo = memoWhenClosed(ExportModal);
+const PackageManagerModalMemo = memoWhenClosed(PackageManagerModal);
  
 /**
  * App — composition shell.
@@ -334,10 +341,12 @@ export function App() {
     handleAddMediaToTimeline,
   });
  
-  const handleOpenScriptEditor = (script) => {
+  // useCallback so the stable half of the editor context (see the context
+  // split below) keeps its identity across renders.
+  const handleOpenScriptEditor = useCallback((script) => {
     setEditingScript(script);
     setIsScriptEditorOpen(true);
-  };
+  }, []);
  
   const handleOpenSilenceRemover = useCallback((clipId) => {
     setSilenceTarget({ type: 'clip', id: clipId });
@@ -585,6 +594,156 @@ export function App() {
     </>
   );
  
+  // ── Editor context split (perf: phase 3) ───────────────────────────────
+  // The dock panels used to receive ONE object literal built inline in the JSX
+  // below. A fresh literal every App render meant every useEditorContext()
+  // consumer re-rendered for any App state change at all — a modal opening, a
+  // save-status flip, a clip edit — which is a large part of the drag/scrub
+  // cost that was measured. The value is now two memoized halves:
+  //
+  //   actions — callbacks and state setters only. Everything in it keeps its
+  //             identity across renders, so <EditorActionsContext> is stable.
+  //   data    — project data + editor state. Still one object (per-field
+  //             subscription would be the next step), but a render that only
+  //             flips a modal or a save badge no longer reaches it.
+  //
+  // useEditorContext() still returns the merged object, so panels that have
+  // not been migrated behave exactly as before.
+  const editorActions = useMemo(() => ({
+    // setters
+    setSelectedEntityId,
+    setAutoKeyEnabled,
+    setSnappingEnabled,
+    // handlers
+    undo, redo,
+    handleUpdateEntity: isPrefabMode ? prefabEntityActions.handleUpdateEntity : handleUpdateEntity,
+    handleUpdateClips: isPrefabMode ? prefabEntityActions.handleUpdateClips : handleUpdateClips,
+    handleDuplicateClips: isPrefabMode ? prefabEntityActions.handleDuplicateClips : handleDuplicateClips,
+    // Copy / Cut / Paste for the Timeline right-click menus. These are
+    // the SAME handlers the Ctrl+C / Ctrl+X / Ctrl+V shortcuts use
+    // (they already handle prefab mode, multi-selection, children and
+    // paste-at-playhead), so the menu and the keyboard can never drift.
+    onCopySelected: editorPlaybackHandlers.onCopySelected,
+    onCutSelected: editorPlaybackHandlers.onCutSelected,
+    onPasteClips: editorPlaybackHandlers.onPasteClips,
+    handleDeleteEntity: isPrefabMode ? prefabEntityActions.handleDeleteEntity : handleDeleteEntity,
+    handleSplitEntity: isPrefabMode ? prefabEntityActions.handleSplitEntity : handleSplitEntity,
+    handleSaveAsPrefab,
+    handleUpdateTrack, handleDeleteTrack, handleAddTrack,
+    handleAddEmptyClip: isPrefabMode ? prefabEntityActions.handleAddEmptyClip : handleAddEmptyClip,
+    handleAddTransitionClip: isPrefabMode ? prefabEntityActions.handleAddTransitionClip : handleAddTransitionClip,
+    handleDropItemOnTrack: handleDropItemOnTrackAnySource,
+    handleAttachScriptToEntity: isPrefabMode ? prefabEntityActions.handleAttachScriptToEntity : handleAttachScriptToEntity,
+    onEnterPrefabMode: handleEnterPrefabMode,
+    onExitPrefabMode: handleExitPrefabMode,
+    onSaveCurrentPrefab: handleSaveCurrentPrefab,
+    onSyncPrefabToSceneInstances: handleSyncPrefabToSceneInstances,
+    onDetachPrefab: handleDetachPrefab,
+    onRevertToPrefab: handleRevertToPrefab,
+    onApplyToPrefab: handleApplyToPrefab,
+    setSelectedKeyId,
+    setSelectedIds,
+    onToggleRecordTrack: handleToggleRecordTrack,
+    onAddMediaAsset: handleAddMediaAsset,
+    onRemoveMediaAsset: handleRemoveMediaAsset,
+    onMoveMediaAsset: handleMoveMediaAsset,
+    onReplaceMediaAsset: handleReplaceMediaAsset,
+    onMovePrefab: handleMovePrefab,
+    onMoveScript: handleMoveScript,
+    onRemovePrefab: handleRemovePrefab,
+    onRenamePrefab: handleRenamePrefab,
+    onCreateScript: handleCreateScript,
+    onRemoveScript: handleRemoveScript,
+    onRenameScript: handleRenameScript,
+    onRenameMediaAsset: handleRenameMediaAsset,
+    onOpenScriptEditor: handleOpenScriptEditor,
+    onAddPrefabToTimeline: isPrefabMode ? prefabEntityActions.handleAddPrefabToTimeline : handleAddPrefabToTimeline,
+    onAddMediaToTimeline: isPrefabMode ? prefabEntityActions.handleAddMediaToTimeline : handleAddMediaToTimeline,
+    handleSplitVideoAndAudio: isPrefabMode ? prefabEntityActions.handleSplitVideoAndAudio : handleSplitVideoAndAudio,
+    onSplitVideoAndAudio: isPrefabMode ? prefabEntityActions.handleSplitVideoAndAudio : handleSplitVideoAndAudio,
+    onOpenSilenceRemover: handleOpenSilenceRemover,
+    onOpenSilenceRemoverForTrack: handleOpenSilenceRemoverForTrack,
+    handleCutSilence: isPrefabMode ? prefabEntityActions.handleCutSilence : handleCutSilence,
+    setSilenceTarget,
+    setSilencePreviewCuts: setSilencePreviewData,
+    // App-wide Shared Library (project-panel "shared" folder)
+    onSharePrefab: handleSharePrefab,
+    onShareScript: handleShareScript,
+    onShareMedia: handleShareMedia,
+    onRemoveSharedItem: handleRemoveSharedItem,
+    onMoveSharedItem: handleMoveSharedItem,
+    onImportSharedItem: handleImportSharedItem,
+    onUpdateScriptFromLibrary: handleUpdateScriptFromLibrary,
+    onExportSharedLibrary: handleExportSharedLibrary,
+    onImportSharedLibrary: handleImportSharedLibrary,
+    setExportRange,
+    setDockApi,
+    setResetLayout,
+    focusDockPanel,
+    onOpenPackageManager: handleOpenPackageManager,
+  }), [
+    setSelectedEntityId, setAutoKeyEnabled, setSnappingEnabled, undo, redo,
+    isPrefabMode, prefabEntityActions, handleUpdateEntity, handleUpdateClips, handleDuplicateClips,
+    editorPlaybackHandlers, handleDeleteEntity, handleSplitEntity, handleSaveAsPrefab,
+    handleUpdateTrack, handleDeleteTrack, handleAddTrack, handleAddEmptyClip, handleAddTransitionClip,
+    handleDropItemOnTrackAnySource, handleAttachScriptToEntity,
+    handleEnterPrefabMode, handleExitPrefabMode, handleSaveCurrentPrefab,
+    handleSyncPrefabToSceneInstances, handleDetachPrefab, handleRevertToPrefab, handleApplyToPrefab,
+    setSelectedKeyId, setSelectedIds, handleToggleRecordTrack,
+    handleAddMediaAsset, handleRemoveMediaAsset, handleMoveMediaAsset, handleReplaceMediaAsset,
+    handleMovePrefab, handleMoveScript, handleRemovePrefab, handleRenamePrefab,
+    handleCreateScript, handleRemoveScript, handleRenameScript, handleRenameMediaAsset,
+    handleOpenScriptEditor, handleAddPrefabToTimeline, handleAddMediaToTimeline,
+    handleSplitVideoAndAudio, handleOpenSilenceRemover, handleOpenSilenceRemoverForTrack,
+    handleCutSilence, setSilenceTarget, setSilencePreviewData,
+    handleSharePrefab, handleShareScript, handleShareMedia, handleRemoveSharedItem,
+    handleMoveSharedItem, handleImportSharedItem, handleUpdateScriptFromLibrary,
+    handleExportSharedLibrary, handleImportSharedLibrary,
+    setExportRange, setDockApi, setResetLayout, focusDockPanel, handleOpenPackageManager,
+  ]);
+
+  const editorData = useMemo(() => ({
+    entities: activeEntities,
+    tracks, scripts, prefabs, mediaAssets,
+    projectFolderHandle,
+    calculatedDuration: activeDuration,
+    selectedEntityId, snappingEnabled, resolution,
+    fps: projectState.fps,
+    autoKeyEnabled,
+    // Global editor preferences (services/editorSettings.js) — the timeline
+    // reads zoomAnchorMode from here (via the Timeline dock panel) and the
+    // Settings modal edits it.
+    editorSettings,
+    isPrefabMode,
+    editingPrefab,
+    isPrefabSaved,
+    isPrefabSynced,
+    canUndo, canRedo,
+    selectedKeyId,
+    selectedIds,
+    recordingTrackId,
+    recordingStartTime,
+    recordingLevel,
+    silenceTarget,
+    silencePreviewData,
+    // App-wide Shared Library (project-panel "shared" folder)
+    sharedLibraryItems: sharedLibrary.items,
+    exportRange,
+  }), [
+    activeEntities, tracks, scripts, prefabs, mediaAssets, projectFolderHandle,
+    activeDuration, selectedEntityId, snappingEnabled, resolution, projectState.fps,
+    autoKeyEnabled, editorSettings, isPrefabMode, editingPrefab, isPrefabSaved,
+    isPrefabSynced, canUndo, canRedo, selectedKeyId, selectedIds, recordingTrackId,
+    recordingStartTime, recordingLevel, silenceTarget, silencePreviewData,
+    sharedLibrary.items, exportRange,
+  ]);
+
+  // Merged view for the panels that still call useEditorContext().
+  const editorContextValue = useMemo(
+    () => ({ ...editorData, ...editorActions }),
+    [editorData, editorActions]
+  );
+
   if (screen === 'hub') {
     return (
       <>
@@ -611,7 +770,7 @@ export function App() {
             here (rather than duplicated inside HubScreen) so project
             creation always goes through the same handleProjectCreated
             path regardless of which screen launched it. */}
-        <NewProjectModal
+        <NewProjectModalMemo
           isOpen={isNewProjectOpen}
           onClose={() => setIsNewProjectOpen(false)}
           defaultTracks={INITIAL_TRACKS}
@@ -741,112 +900,20 @@ export function App() {
           split, or merged into tabs, same as Unity's editor windows.
           Panels read their props from EditorContext instead of being
           passed props directly, since dockview owns their mounting. */}
-      <EditorContext.Provider
-        value={{
-          // data
-          entities: activeEntities,
-          tracks, scripts, prefabs, mediaAssets,
-          projectFolderHandle,
-          calculatedDuration: activeDuration,
-          selectedEntityId, snappingEnabled, resolution,
-          fps: projectState.fps,
-          autoKeyEnabled,
-          // Global editor preferences (services/editorSettings.js) — the
-          // timeline reads zoomAnchorMode from here (via the Timeline dock
-          // panel) and the Settings modal edits it.
-          editorSettings,
-          isPrefabMode,
-          editingPrefab,
-          isPrefabSaved,
-          isPrefabSynced,
-          // setters
-          setSelectedEntityId,
-          setAutoKeyEnabled,
-          setSnappingEnabled,
-          // handlers
-          undo, redo, canUndo, canRedo,
-          handleUpdateEntity: isPrefabMode ? prefabEntityActions.handleUpdateEntity : handleUpdateEntity,
-          handleUpdateClips: isPrefabMode ? prefabEntityActions.handleUpdateClips : handleUpdateClips,
-          handleDuplicateClips: isPrefabMode ? prefabEntityActions.handleDuplicateClips : handleDuplicateClips,
-          // Copy / Cut / Paste for the Timeline right-click menus. These are
-          // the SAME handlers the Ctrl+C / Ctrl+X / Ctrl+V shortcuts use
-          // (they already handle prefab mode, multi-selection, children and
-          // paste-at-playhead), so the menu and the keyboard can never drift.
-          onCopySelected: editorPlaybackHandlers.onCopySelected,
-          onCutSelected: editorPlaybackHandlers.onCutSelected,
-          onPasteClips: editorPlaybackHandlers.onPasteClips,
-          handleDeleteEntity: isPrefabMode ? prefabEntityActions.handleDeleteEntity : handleDeleteEntity,
-          handleSplitEntity: isPrefabMode ? prefabEntityActions.handleSplitEntity : handleSplitEntity,
-          handleSaveAsPrefab,
-          handleUpdateTrack, handleDeleteTrack, handleAddTrack,
-          handleAddEmptyClip: isPrefabMode ? prefabEntityActions.handleAddEmptyClip : handleAddEmptyClip,
-          handleAddTransitionClip: isPrefabMode ? prefabEntityActions.handleAddTransitionClip : handleAddTransitionClip,
-          handleDropItemOnTrack: handleDropItemOnTrackAnySource,
-          handleAttachScriptToEntity: isPrefabMode ? prefabEntityActions.handleAttachScriptToEntity : handleAttachScriptToEntity,
-          onEnterPrefabMode: handleEnterPrefabMode,
-          onExitPrefabMode: handleExitPrefabMode,
-          onSaveCurrentPrefab: handleSaveCurrentPrefab,
-          onSyncPrefabToSceneInstances: handleSyncPrefabToSceneInstances,
-          onDetachPrefab: handleDetachPrefab,
-          onRevertToPrefab: handleRevertToPrefab,
-          onApplyToPrefab: handleApplyToPrefab,
-          selectedKeyId, setSelectedKeyId,
-          selectedIds, setSelectedIds,
-          recordingTrackId,
-          recordingStartTime,
-          recordingLevel,
-          onToggleRecordTrack: handleToggleRecordTrack,
-          onAddMediaAsset: handleAddMediaAsset,
-          onRemoveMediaAsset: handleRemoveMediaAsset,
-          onMoveMediaAsset: handleMoveMediaAsset,
-          onReplaceMediaAsset: handleReplaceMediaAsset,
-          onMovePrefab: handleMovePrefab,
-          onMoveScript: handleMoveScript,
-          onRemovePrefab: handleRemovePrefab,
-          onRenamePrefab: handleRenamePrefab,
-          onCreateScript: handleCreateScript,
-          onRemoveScript: handleRemoveScript,
-          onRenameScript: handleRenameScript,
-          onRenameMediaAsset: handleRenameMediaAsset,
-          onOpenScriptEditor: handleOpenScriptEditor,
-          onAddPrefabToTimeline: isPrefabMode ? prefabEntityActions.handleAddPrefabToTimeline : handleAddPrefabToTimeline,
-          onAddMediaToTimeline: isPrefabMode ? prefabEntityActions.handleAddMediaToTimeline : handleAddMediaToTimeline,
-          handleSplitVideoAndAudio: isPrefabMode ? prefabEntityActions.handleSplitVideoAndAudio : handleSplitVideoAndAudio,
-          onSplitVideoAndAudio: isPrefabMode ? prefabEntityActions.handleSplitVideoAndAudio : handleSplitVideoAndAudio,
-          onOpenSilenceRemover: handleOpenSilenceRemover,
-          onOpenSilenceRemoverForTrack: handleOpenSilenceRemoverForTrack,
-          handleCutSilence: isPrefabMode ? prefabEntityActions.handleCutSilence : handleCutSilence,
-          silenceTarget,
-          setSilenceTarget,
-          silencePreviewData,
-          setSilencePreviewCuts: setSilencePreviewData,
-          // App-wide Shared Library (project-panel "shared" folder)
-          sharedLibraryItems: sharedLibrary.items,
-          onSharePrefab: handleSharePrefab,
-          onShareScript: handleShareScript,
-          onShareMedia: handleShareMedia,
-          onRemoveSharedItem: handleRemoveSharedItem,
-          onMoveSharedItem: handleMoveSharedItem,
-          onImportSharedItem: handleImportSharedItem,
-          onUpdateScriptFromLibrary: handleUpdateScriptFromLibrary,
-          onExportSharedLibrary: handleExportSharedLibrary,
-          onImportSharedLibrary: handleImportSharedLibrary,
-          exportRange, setExportRange,
-          setDockApi,
-          setResetLayout,
-          focusDockPanel,
-          onOpenPackageManager: handleOpenPackageManager,
-        }}
-      >
-        <DockLayout />
-      </EditorContext.Provider>
+      <EditorActionsContext.Provider value={editorActions}>
+        <EditorDataContext.Provider value={editorData}>
+          <EditorContext.Provider value={editorContextValue}>
+            <DockLayout />
+          </EditorContext.Provider>
+        </EditorDataContext.Provider>
+      </EditorActionsContext.Provider>
  
       {/* Corner notice when a script throws, so errors don't go unnoticed
           while the Console panel is closed. */}
       <ScriptErrorToast />
  
       {/* Modals */}
-      <NewProjectModal
+      <NewProjectModalMemo
         isOpen={isNewProjectOpen}
         onClose={() => setIsNewProjectOpen(false)}
         defaultTracks={INITIAL_TRACKS}
@@ -872,7 +939,7 @@ export function App() {
         onClose={() => setIsScriptDocsOpen(false)}
       />
  
-      <ExportModal
+      <ExportModalMemo
         isOpen={isExportOpen}
         onClose={() => setIsExportOpen(false)}
         projectName={projectName}
@@ -908,7 +975,7 @@ export function App() {
         onPieSettingsChange={updatePieSettings}
       />
  
-      <PackageManagerModal
+      <PackageManagerModalMemo
         isOpen={isPackageManagerOpen}
         onClose={() => setIsPackageManagerOpen(false)}
         initialCategory={packageManagerCategory}

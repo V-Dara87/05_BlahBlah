@@ -19,7 +19,7 @@ import {
   QUICK_CURVE_PRESETS, setKeyframeCurve, evaluateField,
 } from '../../engine/keyframes';
 import { formatTimecode } from '../../utils/timeFormat';
-import { useEditorContext } from '../../dock/EditorContext';
+import { useEditorActions } from '../../dock/EditorContext';
 import { isScriptComponent } from '../../engine/ecs';
 import { loadKeybindSettings } from '../../services/keybindSettings';
 import { ContextMenu } from '../shared/ContextMenu';
@@ -131,7 +131,8 @@ export const Dopesheet = memo(function Dopesheet({
   onToggleSnapping,
   snappingEnabled,
 }) {
-  const { focusDockPanel } = useEditorContext();
+  // Actions only — see the context split in dock/EditorContext.jsx.
+  const { focusDockPanel } = useEditorActions();
 
   // Multi-selection state: Set of selected keyframe IDs
   const [selectedKeyIds, setSelectedKeyIds] = useState(() => new Set());

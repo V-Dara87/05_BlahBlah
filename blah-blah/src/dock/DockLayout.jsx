@@ -13,7 +13,7 @@ import {
   MixerDockPanel,
   ConsoleDockPanel,
 } from './panels';
-import { useEditorContext } from './EditorContext';
+import { useEditorActions } from './EditorContext';
 import { popoutGroup, closeEmptyPopoutGroups } from './popoutGroup';
 import { attachTabDoubleClickMaximize } from './tabMaximize';
 import { DockAddWindowButton } from './DockAddWindowButton';
@@ -219,7 +219,9 @@ export const DockLayout = memo(function DockLayout() {
   const apiRef = useRef(null);
   const rootRef = useRef(null);
   const detachTabMaximizeRef = useRef(null);
-  const { setDockApi, setResetLayout } = useEditorContext();
+  // Actions only: the dock tree does not read project data, so it must not
+  // re-render when a clip moves (see dock/EditorContext.jsx).
+  const { setDockApi, setResetLayout } = useEditorActions();
 
   const persistLayout = useCallback(() => {
     if (!apiRef.current) return;
