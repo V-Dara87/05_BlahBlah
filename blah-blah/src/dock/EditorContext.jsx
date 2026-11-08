@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react';
+import { createContext, use, useContext } from 'react';
 
 // Dockview panel components only receive `{ api, containerApi, params }` from
 // dockview itself — not arbitrary React props. So instead of threading every
@@ -48,12 +48,15 @@ export function useEditorContext() {
 
 /** Callbacks/setters only — no re-render when the project data changes. */
 export function useEditorActions() {
-  // Both hooks are called unconditionally (rules of hooks); the merged context
-  // is only the fallback for a caller mounted outside the split providers
-  // (older call sites, tests).
   const actions = useContext(EditorActionsContext);
-  const merged = useContext(EditorContext);
   if (actions) return actions;
+  // Fallback for a caller mounted outside the split providers (older call
+  // sites, tests) — and ONLY for it. `use()` is allowed after a conditional
+  // return (unlike useContext, which must run on every render), so a consumer
+  // under the split providers never subscribes to the merged context. Reading
+  // it unconditionally used to re-render every panel on every editorData
+  // change, which defeated the selector store.
+  const merged = use(EditorContext);
   if (!merged) {
     throw new Error('useEditorActions must be used inside <EditorContext.Provider>');
   }
@@ -63,8 +66,9 @@ export function useEditorActions() {
 /** Project data / editor state only. */
 export function useEditorData() {
   const data = useContext(EditorDataContext);
-  const merged = useContext(EditorContext);
   if (data) return data;
+  // Same conditional fallback as useEditorActions above.
+  const merged = use(EditorContext);
   if (!merged) {
     throw new Error('useEditorData must be used inside <EditorContext.Provider>');
   }
