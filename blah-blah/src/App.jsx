@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
 import { useProjectStore } from './hooks/useProjectStore';
 import { usePlaybackController } from './hooks/usePlaybackController';
 import { useMediaAssets } from './hooks/useMediaAssets';
@@ -14,6 +14,8 @@ import { useExportSettings } from './hooks/useExportSettings';
 import { useThemeSettings } from './hooks/useThemeSettings';
 import { usePieSettings } from './hooks/usePieSettings';
 import { useAudioRecording } from './hooks/useAudioRecording';
+import { createEditorStore, EditorStoreContext } from './hooks/editorStore';
+import { setSilencePreview } from './hooks/silencePreview';
 import { usePrefabEditing } from './hooks/usePrefabEditing';
 import { useOsFileDrop } from './hooks/useOsFileDrop';
 import { useMenuBarConfig } from './hooks/useMenuBarConfig';
@@ -207,7 +209,10 @@ export function App() {
   // <PieMenu /> below; it reads the same persisted settings.
   const { pieSettings, updatePieSettings } = usePieSettings();
   const [silenceTarget, setSilenceTarget] = useState({ type: 'clip', id: null });
-  const [silencePreviewData, setSilencePreviewData] = useState(null);
+  // The Silence Remover's transient preview is NOT App state: it changes while
+  // the panel's threshold is dragged, and it used to rebuild the whole editor
+  // context on each tick. It lives in hooks/silencePreview.js now; only the
+  // timeline panel subscribes to it.
  
   // Disk folder handle + save status + autosave (see ORDERING NOTE above
   // and useProjectPersistence's header for why this is called this early,
@@ -330,7 +335,6 @@ export function App() {
   const {
     recordingTrackId,
     recordingStartTime,
-    recordingLevel,
     handleToggleRecordTrack,
     handleAudioSettingsChanged,
   } = useAudioRecording({
@@ -666,7 +670,7 @@ export function App() {
     onOpenSilenceRemoverForTrack: handleOpenSilenceRemoverForTrack,
     handleCutSilence: isPrefabMode ? prefabEntityActions.handleCutSilence : handleCutSilence,
     setSilenceTarget,
-    setSilencePreviewCuts: setSilencePreviewData,
+    setSilencePreviewCuts: setSilencePreview,
     // App-wide Shared Library (project-panel "shared" folder)
     onSharePrefab: handleSharePrefab,
     onShareScript: handleShareScript,
@@ -696,7 +700,7 @@ export function App() {
     handleCreateScript, handleRemoveScript, handleRenameScript, handleRenameMediaAsset,
     handleOpenScriptEditor, handleAddPrefabToTimeline, handleAddMediaToTimeline,
     handleSplitVideoAndAudio, handleOpenSilenceRemover, handleOpenSilenceRemoverForTrack,
-    handleCutSilence, setSilenceTarget, setSilencePreviewData,
+    handleCutSilence, setSilenceTarget,
     handleSharePrefab, handleShareScript, handleShareMedia, handleRemoveSharedItem,
     handleMoveSharedItem, handleImportSharedItem, handleUpdateScriptFromLibrary,
     handleExportSharedLibrary, handleImportSharedLibrary,
@@ -724,9 +728,7 @@ export function App() {
     selectedIds,
     recordingTrackId,
     recordingStartTime,
-    recordingLevel,
     silenceTarget,
-    silencePreviewData,
     // App-wide Shared Library (project-panel "shared" folder)
     sharedLibraryItems: sharedLibrary.items,
     exportRange,
@@ -735,15 +737,33 @@ export function App() {
     activeDuration, selectedEntityId, snappingEnabled, resolution, projectState.fps,
     autoKeyEnabled, editorSettings, isPrefabMode, editingPrefab, isPrefabSaved,
     isPrefabSynced, canUndo, canRedo, selectedKeyId, selectedIds, recordingTrackId,
-    recordingStartTime, recordingLevel, silenceTarget, silencePreviewData,
+    recordingStartTime, silenceTarget,
     sharedLibrary.items, exportRange,
   ]);
 
-  // Merged view for the panels that still call useEditorContext().
+  // Merged view kept for anything that still calls useEditorContext() (the
+  // dock panels now use the selector store below; this stays so un-migrated
+  // call sites and tests behave exactly as before).
   const editorContextValue = useMemo(
     () => ({ ...editorData, ...editorActions }),
     [editorData, editorActions]
   );
+
+  // ── Selector store (see hooks/editorStore.js) ─────────────────────────────
+  // Dock panels subscribe to individual fields of `editorData` through this
+  // store instead of reading the whole object from context, so a clip edit no
+  // longer re-renders Project/Console/Mixer and friends.
+  //
+  // Publishing: the store is created with the first render's editorData, then
+  // re-published from a LAYOUT effect on every change. Layout effects run after
+  // the tree commits but before the browser paints, and setState notifies
+  // subscribers synchronously, so a subscriber can never paint a frame with a
+  // state older than the render that produced it. Publishing during render
+  // instead would notify a component that may be rendering in the same pass.
+  const [editorStore] = useState(() => createEditorStore(editorData));
+  useLayoutEffect(() => {
+    editorStore.setState(editorData);
+  }, [editorStore, editorData]);
 
   if (screen === 'hub') {
     return (
@@ -903,9 +923,11 @@ export function App() {
           passed props directly, since dockview owns their mounting. */}
       <EditorActionsContext.Provider value={editorActions}>
         <EditorDataContext.Provider value={editorData}>
-          <EditorContext.Provider value={editorContextValue}>
-            <DockLayout />
-          </EditorContext.Provider>
+          <EditorStoreContext.Provider value={editorStore}>
+            <EditorContext.Provider value={editorContextValue}>
+              <DockLayout />
+            </EditorContext.Provider>
+          </EditorStoreContext.Provider>
         </EditorDataContext.Provider>
       </EditorActionsContext.Provider>
  

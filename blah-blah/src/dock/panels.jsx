@@ -1,4 +1,4 @@
-import { memo, useState, useCallback, useMemo } from 'react';
+import { memo, useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { ProjectPanel } from '../components/ProjectPanel';
 import { EntityRenderer } from '../components/entity/EntityRenderer';
 import { UnityInspector } from '../components/UnityInspector';
@@ -11,15 +11,23 @@ import { SilenceRemoverPanel } from '../components/silence-remover/SilenceRemove
 import { MixerPanel } from '../components/mixer/MixerPanel';
 import { ConsolePanel } from '../components/shared/ConsolePanel';
 import { setKeyframeCurve, findKeyframeById, DEFAULT_CP1, DEFAULT_CP2 } from '../engine/keyframes';
-import { useEditorContext } from './EditorContext';
+import { useEditorActions } from './EditorContext';
+import { useEditorSelector, useEditorStore } from '../hooks/editorStore';
+import { useRecordingLevel } from '../hooks/recordingLevel';
+import { useSilencePreview } from '../hooks/silencePreview';
 import { useTimelineView } from './TimelineViewContext';
 import { useCurrentTime, useThrottledCurrentTime, useIsPlaying, useIsLooping, usePlaybackStore } from '../hooks/PlaybackContext';
  
 export const ProjectDockPanel = memo(function ProjectDockPanel() {
+  // Selector-based (see hooks/editorStore.js): this panel only shows the
+  // project's assets, prefabs, scripts and shared library, so a clip edit, a
+  // selection change or a recording tick no longer re-renders it.
+  const mediaAssets = useEditorSelector((s) => s.mediaAssets);
+  const prefabs = useEditorSelector((s) => s.prefabs);
+  const scripts = useEditorSelector((s) => s.scripts);
+  const projectFolderHandle = useEditorSelector((s) => s.projectFolderHandle);
+  const sharedLibraryItems = useEditorSelector((s) => s.sharedLibraryItems);
   const {
-    mediaAssets, prefabs, scripts,
-    projectFolderHandle,
-    sharedLibraryItems,
     onSharePrefab, onShareScript, onShareMedia, onRemoveSharedItem, onMoveSharedItem, onImportSharedItem,
     onUpdateScriptFromLibrary, onExportSharedLibrary, onImportSharedLibrary,
     onAddMediaAsset, onRemoveMediaAsset, onRemovePrefab, onRemoveScript,
@@ -29,7 +37,7 @@ export const ProjectDockPanel = memo(function ProjectDockPanel() {
     onMoveMediaAsset, onReplaceMediaAsset, onMovePrefab, onMoveScript,
     handleAddEmptyClip,
     onEnterPrefabMode,
-  } = useEditorContext();
+  } = useEditorActions();
  
   return (
     <ProjectPanel
@@ -69,20 +77,31 @@ export const ProjectDockPanel = memo(function ProjectDockPanel() {
 });
  
 export const PreviewDockPanel = memo(function PreviewDockPanel() {
-  const {
-    entities, tracks, scripts, calculatedDuration,
-    selectedEntityId, setSelectedEntityId,
-    handleUpdateEntity, resolution,
-    fps = 30,
-    mediaAssets,
-    autoKeyEnabled,
-  } = useEditorContext();
+  // The preview renders every clip, so it does need `entities`/`tracks` — but
+  // no longer the export range, the silence preview, the recording state or
+  // any of the other editor fields it never read.
+  const entities = useEditorSelector((s) => s.entities);
+  const tracks = useEditorSelector((s) => s.tracks);
+  const scripts = useEditorSelector((s) => s.scripts);
+  const calculatedDuration = useEditorSelector((s) => s.calculatedDuration);
+  const selectedEntityId = useEditorSelector((s) => s.selectedEntityId);
+  const resolution = useEditorSelector((s) => s.resolution);
+  const fps = useEditorSelector((s) => s.fps) ?? 30;
+  const mediaAssets = useEditorSelector((s) => s.mediaAssets);
+  const autoKeyEnabled = useEditorSelector((s) => s.autoKeyEnabled);
+  const { setSelectedEntityId, handleUpdateEntity } = useEditorActions();
  
   const currentTime = useCurrentTime();
   const isPlaying = useIsPlaying();
   const isLooping = useIsLooping();
   const store = usePlaybackStore();
- 
+  // Stable references (store is a singleton) so the preview's props don't
+  // change identity on every render. Wrapped, not passed as store.method, because
+  // the store's methods rely on `this`.
+  const handleTogglePlay = useCallback(() => store.togglePlay(), [store]);
+  const handleSeek = useCallback((t) => store.seek(t), [store]);
+  const handleToggleLoop = useCallback(() => store.toggleLoop(), [store]);
+
   return (
     <EntityRenderer
       entities={entities}
@@ -95,9 +114,9 @@ export const PreviewDockPanel = memo(function PreviewDockPanel() {
       selectedEntityId={selectedEntityId}
       onSelectEntity={setSelectedEntityId}
       onUpdateEntity={handleUpdateEntity}
-      onTogglePlay={() => store.togglePlay()}
-      onSeek={(t) => store.seek(t)}
-      onToggleLoop={() => store.toggleLoop()}
+      onTogglePlay={handleTogglePlay}
+      onSeek={handleSeek}
+      onToggleLoop={handleToggleLoop}
       resolution={resolution}
       fps={fps}
       mediaAssets={mediaAssets}
@@ -107,20 +126,32 @@ export const PreviewDockPanel = memo(function PreviewDockPanel() {
 });
  
 export const InspectorDockPanel = memo(function InspectorDockPanel() {
+  // `entities` is still needed here (UnityInspector/MultiInspector take the
+  // whole list), so a clip edit still re-renders this panel — but the derived
+  // selected entity below is a selector, and the recording level, silence
+  // preview and export range no longer reach it at all.
+  const entities = useEditorSelector((s) => s.entities);
+  const selectedEntityId = useEditorSelector((s) => s.selectedEntityId);
+  const selectedIds = useEditorSelector((s) => s.selectedIds);
+  const tracks = useEditorSelector((s) => s.tracks);
+  const scripts = useEditorSelector((s) => s.scripts);
+  const prefabs = useEditorSelector((s) => s.prefabs);
+  const mediaAssets = useEditorSelector((s) => s.mediaAssets);
+  const resolution = useEditorSelector((s) => s.resolution);
+  const fps = useEditorSelector((s) => s.fps) ?? 30;
+  const autoKeyEnabled = useEditorSelector((s) => s.autoKeyEnabled);
   const {
-    entities, selectedEntityId, selectedIds, setSelectedIds, setSelectedEntityId, tracks, scripts, prefabs,
+    setSelectedIds, setSelectedEntityId,
     handleUpdateEntity, handleUpdateClips, handleDeleteEntity,
     onOpenScriptEditor, handleSaveAsPrefab,
     handleAttachScriptToEntity,
-    autoKeyEnabled, setAutoKeyEnabled,    mediaAssets,
-    resolution,
-    fps = 30,
+    setAutoKeyEnabled,
     onEnterPrefabMode,
     onDetachPrefab,
     onRevertToPrefab,
     onApplyToPrefab,
     onOpenPackageManager,
-  } = useEditorContext();
+  } = useEditorActions();
 
   const [isLocked, setIsLocked] = useState(false);
   const [lockedEntityId, setLockedEntityId] = useState(null);
@@ -146,7 +177,11 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
  
   // Display-only: the Inspector is the heaviest panel, so cap it while playing.
   const currentTime = useThrottledCurrentTime(10);
-  const selectedEntity = entities.find((e) => e.id === activeEntityId);
+  // Derived by selector: the result only changes identity when THAT entity's
+  // object changes (structural sharing in the undo history keeps the others).
+  const selectedEntity = useEditorSelector(
+    (s) => (s.entities || []).find((e) => e.id === activeEntityId) || null
+  );
  
   // Multi-select: 2+ existing clips selected on the timeline (and the
   // Inspector isn't pinned to one entity via the lock) -> shared editing.
@@ -215,35 +250,50 @@ export const InspectorDockPanel = memo(function InspectorDockPanel() {
 });
  
 export const TimelineDockPanel = memo(function TimelineDockPanel() {
+  const tracks = useEditorSelector((s) => s.tracks);
+  const entities = useEditorSelector((s) => s.entities);
+  const mediaAssets = useEditorSelector((s) => s.mediaAssets);
+  const calculatedDuration = useEditorSelector((s) => s.calculatedDuration);
+  // Global editor preferences: the timeline's canvas renderer toggle lives
+  // in services/editorSettings.js and is exposed here via the settings modal
+  // (Settings -> System -> Timeline rendering).
+  const editorSettings = useEditorSelector((s) => s.editorSettings);
+  const selectedEntityId = useEditorSelector((s) => s.selectedEntityId);
+  const snappingEnabled = useEditorSelector((s) => s.snappingEnabled);
+  const selectedIds = useEditorSelector((s) => s.selectedIds);
+  const recordingTrackId = useEditorSelector((s) => s.recordingTrackId);
+  const recordingStartTime = useEditorSelector((s) => s.recordingStartTime);
+  const exportRange = useEditorSelector((s) => s.exportRange);
+  const isPrefabMode = useEditorSelector((s) => s.isPrefabMode);
+  const editingPrefab = useEditorSelector((s) => s.editingPrefab);
+  const isPrefabSaved = useEditorSelector((s) => s.isPrefabSaved);
+  const isPrefabSynced = useEditorSelector((s) => s.isPrefabSynced);
+  // Hot values, each in its own tiny store: a mic-level tick or a silence
+  // preview update re-renders only this panel, never the whole dock.
+  const recordingLevel = useRecordingLevel();
+  const silencePreviewData = useSilencePreview();
   const {
-    tracks, entities, mediaAssets, calculatedDuration,
-    // Global editor preferences: the timeline's canvas renderer toggle lives
-    // in services/editorSettings.js and is exposed here via the settings modal
-    // (Settings -> System -> Timeline rendering).
-    editorSettings,
-    selectedEntityId, setSelectedEntityId, snappingEnabled,
-    selectedIds, setSelectedIds,
+    setSelectedEntityId, setSelectedIds,
     handleUpdateEntity, handleUpdateClips, handleDuplicateClips, handleDeleteEntity,
     onCopySelected, onCutSelected, onPasteClips,
     handleUpdateTrack, handleDeleteTrack,
     handleAddTrack, handleAddEmptyClip, handleAddTransitionClip,
     handleDropItemOnTrack, handleAttachScriptToEntity,
     onAddMediaAsset,
-    recordingTrackId, recordingStartTime, recordingLevel, onToggleRecordTrack,
-    exportRange, setExportRange,
+    onToggleRecordTrack,
+    setExportRange,
     onSplitVideoAndAudio,
     onOpenSilenceRemover,
     onOpenSilenceRemoverForTrack,
-    silencePreviewData,
-    isPrefabMode,
-    editingPrefab,
     onExitPrefabMode,
     onSaveCurrentPrefab,
     onSyncPrefabToSceneInstances,
-    isPrefabSaved,
-    isPrefabSynced,  } = useEditorContext();
+  } = useEditorActions();
 
   const store = usePlaybackStore();
+  // Stable so the memo'd Timeline / TimeRuler / PlayheadHandle / PlayheadLine
+  // are not re-rendered just because this panel re-rendered.
+  const handleSeek = useCallback((t) => store.seek(t), [store]);
   // Hot zoom state comes from its own narrow context (see
   // dock/TimelineViewContext.jsx) so zoom only re-renders the timeline,
   // not every EditorContext consumer.
@@ -310,7 +360,7 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
         recordingTrackId={recordingTrackId}
         recordingStartTime={recordingStartTime}
         recordingLevel={recordingLevel}
-        onSeek={(t) => store.seek(t)}
+        onSeek={handleSeek}
         onSelectClip={handleSelectClip}
         onUpdateClip={handleUpdateEntity}
         onUpdateClips={handleUpdateClips}
@@ -351,30 +401,56 @@ export const TimelineDockPanel = memo(function TimelineDockPanel() {
 });
  
 export const DopesheetDockPanel = memo(function DopesheetDockPanel() {
+  const selectedEntityId = useEditorSelector((s) => s.selectedEntityId);
+  const scripts = useEditorSelector((s) => s.scripts);
+  const calculatedDuration = useEditorSelector((s) => s.calculatedDuration);
+  const selectedKeyId = useEditorSelector((s) => s.selectedKeyId);
+  const canUndo = useEditorSelector((s) => s.canUndo);
+  const canRedo = useEditorSelector((s) => s.canRedo);
+  const snappingEnabled = useEditorSelector((s) => s.snappingEnabled);
   const {
-    entities, selectedEntityId, scripts, calculatedDuration,
     handleUpdateEntity,
-    selectedKeyId, setSelectedKeyId,
+    setSelectedKeyId,
     // Timeline-parity shortcuts — same handlers App.jsx's Edit menu and
     // EditorPlaybackShortcuts already use, now also fed to the Dopesheet
     // toolbar (see Dopesheet.jsx's new onUndo/onSplitSelected/etc. props).
-    undo, redo, canUndo, canRedo,
+    undo, redo,
     handleSplitEntity, handleDeleteEntity, handleDuplicateClips,
     setSelectedIds,
-    snappingEnabled, setSnappingEnabled,
-  } = useEditorContext();
+    setSnappingEnabled,
+  } = useEditorActions();
  
   const currentTime = useThrottledCurrentTime(30);
   const store = usePlaybackStore();
-  const selectedEntity = entities.find((e) => e.id === selectedEntityId);
- 
+  // Only this entity's object, so an unrelated clip edit doesn't re-render the
+  // sheet's tracks.
+  const selectedEntity = useEditorSelector(
+    (s) => (s.entities || []).find((e) => e.id === selectedEntityId) || null
+  );
+
+  const handleSeek = useCallback((t) => store.seek(t), [store]);
+  const handleSplitSelected = useCallback(() => {
+    if (selectedEntityId) handleSplitEntity(selectedEntityId);
+  }, [selectedEntityId, handleSplitEntity]);
+  const handleDeleteSelected = useCallback(() => {
+    if (selectedEntityId) handleDeleteEntity(selectedEntityId);
+  }, [selectedEntityId, handleDeleteEntity]);
+  const handleDuplicateSelected = useCallback(() => {
+    if (!selectedEntityId) return;
+    const newIds = handleDuplicateClips([selectedEntityId]);
+    if (newIds && newIds.length > 0) setSelectedIds(newIds);
+  }, [selectedEntityId, handleDuplicateClips, setSelectedIds]);
+  // setSnappingEnabled is a React state setter (stable); the updater form
+  // means this never needs the current value.
+  const handleToggleSnapping = useCallback(() => setSnappingEnabled((v) => !v), [setSnappingEnabled]);
+
   return (
     <Dopesheet
       selectedEntity={selectedEntity}
       scripts={scripts}
       currentTime={currentTime}
       totalDuration={calculatedDuration}
-      onSeek={(t) => store.seek(t)}
+      onSeek={handleSeek}
       onUpdateEntity={handleUpdateEntity}
       selectedKeyId={selectedKeyId}
       onSelectedKeyChange={setSelectedKeyId}
@@ -382,14 +458,10 @@ export const DopesheetDockPanel = memo(function DopesheetDockPanel() {
       onRedo={redo}
       canUndo={canUndo}
       canRedo={canRedo}
-      onSplitSelected={() => selectedEntityId && handleSplitEntity(selectedEntityId)}
-      onDeleteSelected={() => selectedEntityId && handleDeleteEntity(selectedEntityId)}
-      onDuplicateSelected={() => {
-        if (!selectedEntityId) return;
-        const newIds = handleDuplicateClips([selectedEntityId]);
-        if (newIds && newIds.length > 0) setSelectedIds(newIds);
-      }}
-      onToggleSnapping={() => setSnappingEnabled((v) => !v)}
+      onSplitSelected={handleSplitSelected}
+      onDeleteSelected={handleDeleteSelected}
+      onDuplicateSelected={handleDuplicateSelected}
+      onToggleSnapping={handleToggleSnapping}
       snappingEnabled={snappingEnabled}
     />
   );
@@ -404,8 +476,11 @@ export const DopesheetDockPanel = memo(function DopesheetDockPanel() {
  * outgoing segment to curve).
  */
 export const CurveEditorDockPanel = memo(function CurveEditorDockPanel() {
-  const { entities, selectedEntityId, selectedKeyId, handleUpdateEntity } = useEditorContext();
-  const selectedEntity = entities.find((e) => e.id === selectedEntityId);
+  const selectedKeyId = useEditorSelector((s) => s.selectedKeyId);
+  const selectedEntity = useEditorSelector(
+    (s) => (s.entities || []).find((e) => e.id === s.selectedEntityId) || null
+  );
+  const { handleUpdateEntity } = useEditorActions();
  
   const found = useMemo(
     () => findKeyframeById(selectedEntity, selectedKeyId),
@@ -448,32 +523,69 @@ export const CurveEditorDockPanel = memo(function CurveEditorDockPanel() {
   );
 });
  
-export const SilenceRemoverDockPanel = memo(function SilenceRemoverDockPanel() {
-  const {
-    entities,
-    tracks,
-    mediaAssets,
-    selectedEntityId,
-    silenceTarget,
-    handleCutSilence,
-    setSilencePreviewCuts,
-  } = useEditorContext();
+/**
+ * Whether this dock panel's tab is currently visible. Dockview keeps hidden
+ * tabs mounted, so a panel has to ask. Falls back to "visible" when the panel
+ * API is missing (tests, older callers) so behaviour is unchanged there.
+ */
+function useDockPanelVisible(api) {
+  const [visible, setVisible] = useState(() => (api && typeof api.isVisible === 'boolean' ? api.isVisible : true));
+  useEffect(() => {
+    if (!api) return undefined;
+    if (typeof api.isVisible === 'boolean') setVisible(api.isVisible);
+    const sub = typeof api.onDidVisibilityChange === 'function'
+      ? api.onDidVisibilityChange((e) => setVisible(!!e?.isVisible))
+      : null;
+    return () => {
+      if (sub && typeof sub.dispose === 'function') sub.dispose();
+    };
+  }, [api]);
+  return visible;
+}
+
+export const SilenceRemoverDockPanel = memo(function SilenceRemoverDockPanel({ api } = {}) {
+  const isVisible = useDockPanelVisible(api);
+  const entities = useEditorSelector((s) => s.entities);
+  const tracks = useEditorSelector((s) => s.tracks);
+  const mediaAssets = useEditorSelector((s) => s.mediaAssets);
+  const selectedEntityId = useEditorSelector((s) => s.selectedEntityId);
+  const silenceTarget = useEditorSelector((s) => s.silenceTarget);
+  const { handleCutSilence, setSilencePreviewCuts } = useEditorActions();
  
+  // While the tab is hidden nothing is on screen, so keep feeding the panel the
+  // props it had when it was last visible. Its memo() then skips every render
+  // caused by clip edits / drags, and it gets fresh props the moment the tab is
+  // shown again.
+  const live = {
+    activeTargetType: silenceTarget?.type || 'clip',
+    activeTargetId: silenceTarget?.id || selectedEntityId,
+    allEntities: entities,
+    allTracks: tracks,
+    mediaAssets,
+    onApplyCutSilence: handleCutSilence,
+    onUpdatePreviewCuts: setSilencePreviewCuts,
+  };
+  const shownPropsRef = useRef(live);
+  if (isVisible) shownPropsRef.current = live;
+  const shown = shownPropsRef.current;
+
   return (
     <SilenceRemoverPanel
-      activeTargetType={silenceTarget?.type || 'clip'}
-      activeTargetId={silenceTarget?.id || selectedEntityId}
-      allEntities={entities}
-      allTracks={tracks}
-      mediaAssets={mediaAssets}
-      onApplyCutSilence={handleCutSilence}
-      onUpdatePreviewCuts={setSilencePreviewCuts}
+      activeTargetType={shown.activeTargetType}
+      activeTargetId={shown.activeTargetId}
+      allEntities={shown.allEntities}
+      allTracks={shown.allTracks}
+      mediaAssets={shown.mediaAssets}
+      onApplyCutSilence={shown.onApplyCutSilence}
+      onUpdatePreviewCuts={shown.onUpdatePreviewCuts}
+      isVisible={isVisible}
     />
   );
 });
 
 export const MixerDockPanel = memo(function MixerDockPanel() {
-  const { tracks, handleUpdateTrack } = useEditorContext();
+  const tracks = useEditorSelector((s) => s.tracks);
+  const { handleUpdateTrack } = useEditorActions();
 
   return (
     <MixerPanel
@@ -484,15 +596,17 @@ export const MixerDockPanel = memo(function MixerDockPanel() {
 });
 
 export const ConsoleDockPanel = memo(function ConsoleDockPanel() {
-  const { scripts, onOpenScriptEditor } = useEditorContext();
+  // Subscribes to nothing: the console shows log lines, and the script list is
+  // only needed when a log line is clicked — read on demand from the store.
+  const store = useEditorStore();
+  const { onOpenScriptEditor } = useEditorActions();
   // Console entries carry a script NAME; the editor opens a script OBJECT.
   // Only wire the click-through when both sides are available, so the panel
   // works unchanged when this prop is missing (e.g. tests, older callers).
-  const handleOpenScript = onOpenScriptEditor
-    ? (name) => {
-        const script = (scripts || []).find((s) => s.name === name);
-        if (script) onOpenScriptEditor(script);
-      }
-    : undefined;
-  return <ConsolePanel onOpenScript={handleOpenScript} />;
+  const handleOpenScript = useCallback((name) => {
+    if (!onOpenScriptEditor) return;
+    const script = (store.getState().scripts || []).find((s) => s.name === name);
+    if (script) onOpenScriptEditor(script);
+  }, [store, onOpenScriptEditor]);
+  return <ConsolePanel onOpenScript={onOpenScriptEditor ? handleOpenScript : undefined} />;
 });

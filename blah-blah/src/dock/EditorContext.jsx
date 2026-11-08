@@ -31,6 +31,12 @@ export const EditorDataContext = createContext(null);
 /**
  * The merged view, unchanged for every caller that has not been migrated to
  * the split contexts. Panels can keep destructuring it exactly as before.
+ *
+ * NEW CODE SHOULD NOT USE THIS: it reads the whole editor state, so the caller
+ * re-renders whenever ANY field changes. Use `useEditorSelector((s) => s.field)`
+ * from hooks/editorStore.js for data (one re-render per field you actually
+ * read) and `useEditorActions()` for callbacks. This still works for anything
+ * un-migrated and is what the store's initial state comes from.
  */
 export function useEditorContext() {
   const ctx = useContext(EditorContext);

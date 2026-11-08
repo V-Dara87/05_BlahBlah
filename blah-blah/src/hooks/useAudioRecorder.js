@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { encodeWav, mergeFloat32Chunks, mixToMono } from '../utils/wavEncoder';
+import { setRecordingLevel } from './recordingLevel';
  
 /**
  * Shared microphone + level-meter + MediaRecorder logic.
@@ -18,11 +19,15 @@ import { encodeWav, mergeFloat32Chunks, mixToMono } from '../utils/wavEncoder';
  * Level metering runs via Web Audio's AnalyserNode (time-domain RMS),
  * sampled with requestAnimationFrame — cheap enough to run continuously
  * while a device is "open" (monitoring) even when not recording.
+ *
+ * The level itself is NOT React state here: it changes on every animation
+ * frame, and App used to consume it, so the whole editor re-rendered ~60x a
+ * second while recording. It is published to hooks/recordingLevel.js instead,
+ * which only the components that draw the meter subscribe to.
  */
 export function useAudioRecorder({ inputDeviceId } = {}) {
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const [level, setLevel] = useState(0); // 0..1 RMS
   const [error, setError] = useState(null);
  
   const streamRef = useRef(null);
@@ -62,7 +67,7 @@ export function useAudioRecorder({ inputDeviceId } = {}) {
     analyserRef.current = null;
     sourceRef.current = null;
     setIsMonitoring(false);
-    setLevel(0);
+    setRecordingLevel(0);
   }, [stopMeter, teardownCapture]);
  
   const runMeterLoop = useCallback(() => {
@@ -77,7 +82,9 @@ export function useAudioRecorder({ inputDeviceId } = {}) {
         sumSquares += normalized * normalized;
       }
       const rms = Math.sqrt(sumSquares / data.length);
-      setLevel(Math.min(1, rms * 3.2)); // scaled up so normal speech isn't tiny
+      // scaled up so normal speech isn't tiny; goes to the level store, not
+      // React state (see the header).
+      setRecordingLevel(Math.min(1, rms * 3.2));
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
@@ -197,7 +204,6 @@ export function useAudioRecorder({ inputDeviceId } = {}) {
   return {
     isMonitoring,
     isRecording,
-    level,
     error,
     startMonitoring,
     stopMonitoring,

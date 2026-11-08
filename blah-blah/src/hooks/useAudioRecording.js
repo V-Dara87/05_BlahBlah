@@ -41,7 +41,9 @@ export function useAudioRecording({
   // (bogus/empty) clip per single recording. This ref is set the instant
   // a stop begins and checked immediately, independent of React state.
   const isStoppingRecordingRef = useRef(false);
-  const { startRecording, stopRecording, level: recordingLevel } = useAudioRecorder({ inputDeviceId: audioInputDeviceId });
+  // The live level is published to hooks/recordingLevel.js by useAudioRecorder
+  // (it changes every animation frame and must not re-render App).
+  const { startRecording, stopRecording } = useAudioRecorder({ inputDeviceId: audioInputDeviceId });
  
   const handleToggleRecordTrack = useCallback(async (trackId) => {
     if (recordingTrackId === trackId) {
@@ -164,7 +166,6 @@ export function useAudioRecording({
   return {
     recordingTrackId,
     recordingStartTime,
-    recordingLevel,
     handleToggleRecordTrack,
     handleAudioSettingsChanged,
   };

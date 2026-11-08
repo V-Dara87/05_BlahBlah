@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Mic, AlertCircle, AlertTriangle, RefreshCw } from 'lucide-react';
 import { loadAudioSettings, saveAudioSettings, listAudioInputDevices } from '../../../services/audioSettings';
 import { useAudioRecorder } from '../../../hooks/useAudioRecorder';
+import { useRecordingLevel } from '../../../hooks/recordingLevel';
 
 /**
  * Turns the browser's microphone error into something a person can act on.
@@ -49,7 +50,10 @@ export function AudioTab({ onSettingsChanged }) {
   const [devicesLoading, setDevicesLoading] = useState(false);
   const [devicesError, setDevicesError] = useState(null);
 
-  const { isMonitoring, level, error, startMonitoring, stopMonitoring } = useAudioRecorder({ inputDeviceId });
+  const { isMonitoring, error, startMonitoring, stopMonitoring } = useAudioRecorder({ inputDeviceId });
+  // The level lives in its own store now (hooks/recordingLevel.js) so the
+  // recorder's meter loop doesn't re-render its callers 60x a second.
+  const level = useRecordingLevel();
 
   // Only the newest device request may update state, so a slow earlier
   // request can never overwrite a fresher list (Refresh pressed twice, etc.).
