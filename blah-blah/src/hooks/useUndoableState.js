@@ -1,5 +1,6 @@
 import { useState, useCallback, startTransition } from 'react';
 import { isTimelineDragging } from '../utils/dragState';
+import { notifyDocumentChange } from '../utils/documentChange';
 
 const HISTORY_LIMIT = 100;
 // Rapid-fire updates that land within this window of the previous one
@@ -44,6 +45,11 @@ export function useUndoableState(initialState) {
     const coalesce = options && options.coalesce;
     const key = coalesce ? (coalesce === true ? '__default__' : String(coalesce)) : null;
     const now = Date.now();
+
+    // Tell the autosave hook NOW, while the originating event handler is still
+    // running, so "mark the project unsaved" batches with this update into one
+    // render pass instead of arriving as a second, cascading effect pass.
+    notifyDocumentChange();
 
     const commit = () => {
       setHistory((prev) => {

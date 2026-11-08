@@ -265,11 +265,18 @@ export function PieMenu({
   }, [slices]);
 
   // Remember where the cursor is so the wheel opens under it.
+  //
+  // This used to ride every pointermove in the app (a capture-phase window
+  // listener, so it ran before the timeline's own drag handling on every one of
+  // the ~370 moves in a drag trace). The wheel only needs a position to open
+  // AT, and it opens under the pointer the user last pressed with — so a
+  // pointerdown is enough to keep the spot current. While the wheel is open, the
+  // overlay's own onPointerMove tracks it.
   useEffect(() => {
     pointerRef.current = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
-    const onMove = (e) => { pointerRef.current = { x: e.clientX, y: e.clientY }; };
-    window.addEventListener('pointermove', onMove, { capture: true, passive: true });
-    return () => window.removeEventListener('pointermove', onMove, true);
+    const onDown = (e) => { pointerRef.current = { x: e.clientX, y: e.clientY }; };
+    window.addEventListener('pointerdown', onDown, { capture: true, passive: true });
+    return () => window.removeEventListener('pointerdown', onDown, true);
   }, []);
 
   // Close if the window loses focus (Alt+Tab and friends) or the feature is

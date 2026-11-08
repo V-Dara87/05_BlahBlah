@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { getAutosaveMaxWaitMs } from '../services/autosaveSettings';
+import { subscribeDocumentChange } from '../utils/documentChange';
  
 /**
  * useProjectAutosave — decides WHEN the project is written to disk.
@@ -41,6 +42,7 @@ import { getAutosaveMaxWaitMs } from '../services/autosaveSettings';
  * @param {FileSystemDirectoryHandle|null} args.projectFolderHandle
  * @param {object}   args.projectState  { projectName, resolution, tracks, entities, scripts, prefabs, ... }
  * @param {Function} args.requestSave   from useProjectPersistence
+ * @param {string}   args.saveStatus    current status (only used to skip redundant updates)
  * @param {Function} args.setSaveStatus from useProjectPersistence
  * @param {{ enabled: boolean, delayMs: number, saveOnBlur: boolean, skipUnchanged: boolean }} args.settings
  */
@@ -48,6 +50,7 @@ export function useProjectAutosave({
   projectFolderHandle,
   projectState,
   requestSave,
+  saveStatus,
   setSaveStatus,
   settings,
 }) {
@@ -63,6 +66,18 @@ export function useProjectAutosave({
   skipUnchangedRef.current = skipUnchanged;
   const setSaveStatusRef = useRef(setSaveStatus);
   setSaveStatusRef.current = setSaveStatus;
+  // Current status, so marking dirty twice in a row doesn't schedule a second
+  // (cascading) App render. Written through markUnsaved as well, so two edits
+  // in the same tick still only ask for one update.
+  const statusRef = useRef(saveStatus);
+  statusRef.current = saveStatus;
+
+  /** Mark the document dirty, unless it already is. */
+  const markUnsaved = useCallback(() => {
+    if (statusRef.current === 'unsaved') return;
+    statusRef.current = 'unsaved';
+    setSaveStatusRef.current?.('unsaved');
+  }, []);
  
   const clearTimer = useCallback(() => {
     if (timerRef.current) {
@@ -96,8 +111,23 @@ export function useProjectAutosave({
       return;
     }
     if (!dirtySinceRef.current) dirtySinceRef.current = Date.now();
-    setSaveStatusRef.current?.('unsaved');
-  }, [projectFolderHandle, projectName, resolution, tracks, entities, scripts, prefabs]);
+    markUnsaved();
+  }, [projectFolderHandle, projectName, resolution, tracks, entities, scripts, prefabs, markUnsaved]);
+
+  // 1b) Mark dirty from the edit itself. useUndoableState announces every
+  //     commit here while the originating event handler is still running, so
+  //     this status change batches with the edit into ONE render pass. The
+  //     effect above stays as the fallback for edits that don't go through
+  //     that history stack (and for the folder/baseline bookkeeping);
+  //     markUnsaved() is a no-op when this already ran.
+  useEffect(() => subscribeDocumentChange(() => {
+    if (!projectFolderHandle) return;
+    // Wait for the baseline snapshot of a freshly opened project, so loading
+    // never marks it dirty.
+    if (baselineHandleRef.current !== projectFolderHandle) return;
+    if (!dirtySinceRef.current) dirtySinceRef.current = Date.now();
+    markUnsaved();
+  }), [projectFolderHandle, markUnsaved]);
  
   // 2) Debounce: (re)arm the timer whenever the document or a setting changes.
   useEffect(() => {

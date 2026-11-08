@@ -75,6 +75,36 @@ export function clearDragPreview() {
   emit();
 }
 
+// ── Holding a committed preview until its scene renders ────────────────
+// A drop commits inside startTransition, so React may paint the old scene for a
+// frame after pointerup. Clearing the preview in the pointerup handler would
+// show the card jumping back to where it started for that frame, so the caller
+// holds it here and drops it when the new scene is built
+// (releaseCommittedPreview).
+let holdTimer = 0;
+
+/**
+ * Keep the current preview alive until the next scene rebuild, or `ms` at the
+ * latest. The fallback matters for a commit that changes nothing (e.g. the
+ * overlap policy rejecting a move): the scene never rebuilds, so a held preview
+ * would otherwise stay on screen forever.
+ */
+export function holdPreviewUntilNextScene(ms = 250) {
+  clearTimeout(holdTimer);
+  holdTimer = setTimeout(() => {
+    holdTimer = 0;
+    clearDragPreview();
+  }, ms);
+}
+
+/** The scene was rebuilt: drop a committed preview, if one is being held. */
+export function releaseCommittedPreview() {
+  if (!holdTimer) return;
+  clearTimeout(holdTimer);
+  holdTimer = 0;
+  clearDragPreview();
+}
+
 /**
  * Turn a preview into the batch `onUpdateClips` should receive on drop.
  *

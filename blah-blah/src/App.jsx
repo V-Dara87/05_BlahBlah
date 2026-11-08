@@ -523,6 +523,7 @@ export function App() {
     projectFolderHandle,
     projectState,
     requestSave,
+    saveStatus,
     setSaveStatus,
     settings: autosaveSettings,
   });

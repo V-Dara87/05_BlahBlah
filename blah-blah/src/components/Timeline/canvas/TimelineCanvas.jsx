@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, Profiler } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, startTransition, Profiler } from 'react';
 import { perfBegin, perfEnd, perfTime, perfProfilerOnRender } from '../../../utils/perfLog';
 import { Scissors, Copy, ClipboardPaste, ArrowLeftToLine, Unlink, Link2 } from 'lucide-react';
 import { buildTimelineScene, CLIP_ZONES } from '../../../utils/timelineScene';
@@ -30,6 +30,8 @@ import {
   dragPreviewUpdates,
   buildDragPreviewOverrides,
   subscribeDragPreview,
+  holdPreviewUntilNextScene,
+  releaseCommittedPreview,
 } from '../../../utils/dragPreview';
 import './canvas-timeline.css';
 // .ctx-menu-item/.ctx-menu-row/.ctx-menu-label/.ctx-menu-hint/.ctx-menu-divider
@@ -677,6 +679,16 @@ export const TimelineCanvas = memo(function TimelineCanvas({
   // frame instead of one App render.
   useEffect(() => subscribeDragPreview(() => schedule()), [schedule]);
 
+  // Drop the committed preview once the scene that contains the committed
+  // positions exists. A drop commits inside startTransition, so React may
+  // render a frame later; clearing the preview in the pointerup handler would
+  // make the card snap back to its old position for that one frame. Ordered
+  // after the draw effect above, so the first frame of the new scene is drawn
+  // with the preview already gone.
+  useEffect(() => {
+    releaseCommittedPreview();
+  }, [scene]);
+
   // Never leave a preview behind if this component goes away mid-drag.
   useEffect(() => () => clearDragPreview(), []);
  
@@ -762,6 +774,12 @@ export const TimelineCanvas = memo(function TimelineCanvas({
   // bookkeeping steps aside for the window-level drag listeners the lasso
   // installs (startLasso, further down).
   const lassoDragRef = useRef(false);
+  // True while one of the clip gestures below (move / trim / transition edge /
+  // pickwhip) owns the pointer. Those gestures track the pointer through their
+  // own window listeners and draw themselves from refs, so handlePointerMove's
+  // hover/cursor bookkeeping — which bumps hoverVersion and re-renders this
+  // component — is skipped for the duration of the drag.
+  const dragActiveRef = useRef(false);
   // Tracks a left-button press from pointerdown through to pointerup so a
   // click can be told apart from the start of a drag gesture (move, and in a
   // future step trim). Only the DISTANCE matters here, not time: ClipItem.jsx's
@@ -820,10 +838,12 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       if (parkUpdates.length > 0 && onUpdateClips) onUpdateClips(parkUpdates);
     }
 
-    // Keep a multi-selection active when dragging a clip that's part of it
-    if (!isAltDuplicate && !isSelectedMulti && !ctrlHeldOnDown) {
-      onSelectClip?.(clip.id);
-    }
+    // Selection is deliberately NOT touched here. Selecting the pressed clip
+    // is an App state update, and at drag start it re-rendered the whole editor
+    // tree (150ms in the trace, plus the Inspector's per-clip cards mounting) —
+    // for a gesture the user may cancel with Esc. It now happens in onUp below,
+    // batched with the commit. A plain click still selects via
+    // handlePointerUp; a multi-selection is still kept as-is.
 
     const startX = event.clientX;
     const startY = event.clientY;
@@ -966,11 +986,22 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     /** Turn the live preview into the gesture's single committed update. */
     const commitPreview = () => {
       const batch = dragPreviewUpdates(getDragPreview(), currentClips, moveIds);
-      clearDragPreview();
-      if (batch.length === 0) return;
+      if (batch.length === 0) {
+        clearDragPreview();
+        return;
+      }
+      // Keep drawing the preview until the committed scene is on screen (the
+      // `scene` effect above clears it). The commit itself is a transition: the
+      // canvas already shows the final position, and the React tree (Timeline,
+      // Inspector, Dopesheet, headers...) catches up without blocking the
+      // pointerup handler. History still gets exactly one entry — the batch is
+      // one setProjectHistoryState call with its usual coalesce key.
+      holdPreviewUntilNextScene();
       perfTime('drag: commit move (onUpdateClips)', () => {
-        if (onUpdateClips) onUpdateClips(batch);
-        else batch.forEach((u) => onUpdateClip?.(u.id, u.updates));
+        startTransition(() => {
+          if (onUpdateClips) onUpdateClips(batch);
+          else batch.forEach((u) => onUpdateClip?.(u.id, u.updates));
+        });
       });
     };
 
@@ -991,6 +1022,7 @@ export const TimelineCanvas = memo(function TimelineCanvas({
         ctrlParentBadge = null;
       }
       ctrlParentTargetId = null;
+      dragActiveRef.current = false;
       clearDragPreview();
       setTimelineDragging(false);
       removeListeners();
@@ -1021,10 +1053,18 @@ export const TimelineCanvas = memo(function TimelineCanvas({
         dupIds.forEach((id) => onUpdateClip?.(id, { _delete: true }));
       }
 
+      dragActiveRef.current = false;
       // Exactly one commit for the whole gesture, and therefore one Undo step.
-      // `isTimelineDragging` is cleared first so this lands as a normal update
-      // instead of a transition.
+      // `isTimelineDragging` is cleared first so the batch is treated as a
+      // normal edit; commitPreview uses startTransition explicitly.
       setTimelineDragging(false);
+
+      // Selection lands here, in the same handler as the commit, so the two
+      // render in ONE pass (see the note where the drag starts).
+      if (draggedMoved && !isAltDuplicate && !isSelectedMulti && !ctrlHeldOnDown) {
+        onSelectClip?.(clip.id);
+      }
+
       if (draggedMoved) commitPreview();
       else clearDragPreview();
 
@@ -1036,6 +1076,7 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       removeListeners();
     };
 
+    dragActiveRef.current = true;
     setTimelineDragging(true);
     window.addEventListener('pointermove', onMove, { passive: true });
     window.addEventListener('pointerup', onUp);
@@ -1057,7 +1098,8 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     perfBegin('clip trim drag');
     if (!clip || !pps) return;
 
-    onSelectClip?.(clip.id);
+    // Selected on release, not here — see startMoveDrag's note on why a
+    // selection update at gesture start costs a whole-tree render.
 
     const startX = event.clientX;
     const origStartTime = clip.startTime;
@@ -1140,6 +1182,7 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     const onKeyDown = (keyEvent) => {
       if (keyEvent.key !== 'Escape') return;
       keyEvent.preventDefault();
+      dragActiveRef.current = false;
       clearDragPreview();
       setTimelineDragging(false);
       removeTrimListeners();
@@ -1154,19 +1197,28 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       if (latestTrimEvent) {
         processTrim();
       }
-      // One commit per trim gesture, same rule as the move drag.
+      // One commit per trim gesture, same rules as the move drag: the batch is
+      // a transition, the preview stays until the committed scene renders, and
+      // the selection change batches with the commit.
       const batch = dragPreviewUpdates(getDragPreview(), [clip]);
-      clearDragPreview();
+      dragActiveRef.current = false;
       setTimelineDragging(false);
+      onSelectClip?.(clip.id);
       if (batch.length > 0) {
+        holdPreviewUntilNextScene();
         perfTime('drag: commit trim (onUpdateClip)', () => {
-          batch.forEach((u) => onUpdateClip?.(u.id, u.updates));
+          startTransition(() => {
+            batch.forEach((u) => onUpdateClip?.(u.id, u.updates));
+          });
         });
+      } else {
+        clearDragPreview();
       }
       perfEnd();
       removeTrimListeners();
     };
 
+    dragActiveRef.current = true;
     setTimelineDragging(true);
     window.addEventListener('pointermove', onMove, { passive: true });
     window.addEventListener('pointerup', onUp);
@@ -1187,7 +1239,7 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     const { pixelsPerSecond: pps, clips: currentClips, mediaAssets: currentMediaAssets } = latestRef.current;
     if (!clip || !pps) return;
 
-    onSelectClip?.(clip.id);
+    // Selected on release, same reasoning as the move drag.
 
     const origStart = clip.startTime;
     const origDuration = clip.duration;
@@ -1237,6 +1289,7 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     const onKeyDown = (keyEvent) => {
       if (keyEvent.key !== 'Escape') return;
       keyEvent.preventDefault();
+      dragActiveRef.current = false;
       clearDragPreview();
       setTimelineDragging(false);
       removeEdgeListeners();
@@ -1250,14 +1303,23 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       if (latestEdgeEvent) {
         processEdge();
       }
-      // One commit per resize gesture, same rule as the clip move drag.
+      // One commit per resize gesture, same rules as the clip move drag.
       const batch = dragPreviewUpdates(getDragPreview(), [clip]);
-      clearDragPreview();
+      dragActiveRef.current = false;
       setTimelineDragging(false);
-      batch.forEach((u) => onUpdateClip?.(u.id, u.updates));
+      onSelectClip?.(clip.id);
+      if (batch.length > 0) {
+        holdPreviewUntilNextScene();
+        startTransition(() => {
+          batch.forEach((u) => onUpdateClip?.(u.id, u.updates));
+        });
+      } else {
+        clearDragPreview();
+      }
       removeEdgeListeners();
     };
 
+    dragActiveRef.current = true;
     setTimelineDragging(true);
     window.addEventListener('pointermove', onMove, { passive: true });
     window.addEventListener('pointerup', onUp);
@@ -1283,7 +1345,8 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     const clip = hit.item.clip;
     if (!clip) return;
 
-    onSelectClip?.(clip.id);
+    // Selected on release, same reasoning as the move drag: the link gesture
+    // itself writes nothing but refs + the draw-time pickwhip overlay.
 
     const setPickwhip = (next) => {
       pickwhipRef.current = next;
@@ -1314,12 +1377,15 @@ export const TimelineCanvas = memo(function TimelineCanvas({
         onUpdateClip?.(clip.id, { parentId: pending.targetClipId });
       }
       setPickwhip(null);
+      dragActiveRef.current = false;
       setTimelineDragging(false);
+      onSelectClip?.(clip.id);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
     };
 
+    dragActiveRef.current = true;
     setTimelineDragging(true);
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -1366,6 +1432,12 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       }
     }
  
+    // A clip gesture owns the pointer from here on. Its own window listeners
+    // track the drag and it draws itself from the preview/refs, so this hover
+    // bookkeeping (which bumps hoverVersion and re-renders this component —
+    // ~14 times per drag in the trace) is pure overhead while it runs.
+    if (dragActiveRef.current) return;
+
     const hit = hitTestAtClientPoint(event.clientX, event.clientY);
     const host = hostRef.current;
     if (host) {
@@ -1422,6 +1494,10 @@ export const TimelineCanvas = memo(function TimelineCanvas({
       }
     }
  
+    // Same as handlePointerMove: a live clip gesture owns the pointer, so its
+    // hover bookkeeping is skipped (the gesture keeps drawing itself).
+    if (dragActiveRef.current) return;
+
     const host = hostRef.current;
     if (host) host.style.cursor = 'default';
     if (hoverRef.current !== null) {

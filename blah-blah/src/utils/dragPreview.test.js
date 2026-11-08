@@ -8,6 +8,8 @@ import {
   subscribeDragPreview,
   dragPreviewUpdates,
   buildDragPreviewOverrides,
+  holdPreviewUntilNextScene,
+  releaseCommittedPreview,
 } from './dragPreview.js';
 
 const tracks = [
@@ -109,5 +111,28 @@ test('a trim preview shortens the card and the waveform window', () => {
   const a = overrides.get('a');
   assert.equal(a.width, 20);
   assert.equal(a.audioEndSec - a.audioStartSec, 2);
+});
+
+test('a committed preview is held until the scene rebuilds', () => {
+  setDragPreview([{ id: 'a', updates: { startTime: 3 } }]);
+  holdPreviewUntilNextScene(1000);
+  // Still drawn while the transition commit renders.
+  assert.equal(getDragPreview().size, 1);
+  releaseCommittedPreview();
+  assert.equal(getDragPreview().size, 0);
+});
+
+test('a held preview is dropped by its own fallback timer', async () => {
+  setDragPreview([{ id: 'a', updates: { startTime: 3 } }]);
+  holdPreviewUntilNextScene(1);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(getDragPreview().size, 0);
+});
+
+test('releasing with nothing held leaves the preview alone', () => {
+  setDragPreview([{ id: 'a', updates: { startTime: 3 } }]);
+  releaseCommittedPreview();
+  assert.equal(getDragPreview().size, 1);
+  clearDragPreview();
 });
 
