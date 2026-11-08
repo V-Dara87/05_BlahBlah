@@ -33,11 +33,19 @@ export function useCurrentTime() {
   return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
 }
 
+// While the playhead is being dragged, display-only panels never refresh faster
+// than this, even if they asked for a higher rate while playing (the Dopesheet
+// asks for 30 Hz). Keeps a scrub from re-rendering the Inspector / Dopesheet /
+// header on every pointermove.
+const SCRUB_MAX_HZ = 15;
+
 /**
  * Playback time for panels that only DISPLAY it (header timecode, Inspector
- * animated values, Dopesheet playhead). While playing, re-renders are limited
- * to `maxHz` per second instead of once per animation frame; when paused,
- * seeking / scrubbing / the final time after a stop update immediately.
+ * animated values, Dopesheet playhead). While playing OR scrubbing, re-renders
+ * are limited to `maxHz` per second instead of once per animation frame /
+ * pointermove; when neither (single click-seek, keyboard step, the final tick
+ * after a stop) the time applies immediately. When a scrub ends the latest
+ * time is flushed at once so nothing is left showing a stale value.
  *
  * The live preview must keep using useCurrentTime() — it needs every frame.
  */
@@ -46,7 +54,8 @@ export function useThrottledCurrentTime(maxHz = 10) {
   const [time, setTime] = useState(() => store.getCurrentTime());
 
   useEffect(() => {
-    const minGap = 1000 / Math.max(1, maxHz);
+    const playGap = 1000 / Math.max(1, maxHz);
+    const scrubGap = 1000 / Math.max(1, Math.min(maxHz, SCRUB_MAX_HZ));
     let last = 0;
     let timer = null;
 
@@ -56,18 +65,30 @@ export function useThrottledCurrentTime(maxHz = 10) {
       setTime(store.getCurrentTime());
     };
 
+    const flush = () => {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      sync();
+    };
+
     const onChange = () => {
-      if (!store.getIsPlaying()) {
-        // Paused: seeks, scrubs and the last tick after a stop apply at once.
+      const isPlaying = store.getIsPlaying();
+      const isScrubbing = store.getIsScrubbing();
+      if (!isPlaying && !isScrubbing) {
+        // Idle: click-seeks, keyboard steps and the last tick after a stop
+        // apply at once.
+        flush();
+        return;
+      }
+      const minGap = isScrubbing ? scrubGap : playGap;
+      const wait = minGap - (performance.now() - last);
+      if (wait <= 0) {
         if (timer !== null) {
           clearTimeout(timer);
           timer = null;
         }
-        sync();
-        return;
-      }
-      const wait = minGap - (performance.now() - last);
-      if (wait <= 0) {
         sync();
       } else if (timer === null) {
         timer = setTimeout(sync, wait);
@@ -77,8 +98,11 @@ export function useThrottledCurrentTime(maxHz = 10) {
     // Catch anything that changed between render and subscribe.
     sync();
     const unsubscribe = store.subscribe(onChange);
+    // Scrub released: show the exact final time right away.
+    const unsubscribeScrubEnd = store.subscribeScrubEnd(flush);
     return () => {
       unsubscribe();
+      unsubscribeScrubEnd();
       if (timer !== null) clearTimeout(timer);
     };
   }, [store, maxHz]);

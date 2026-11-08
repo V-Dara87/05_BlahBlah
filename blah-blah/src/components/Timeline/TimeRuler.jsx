@@ -1,8 +1,13 @@
-import { useRef, memo } from 'react';
+import { useRef, useEffect, memo } from 'react';
+import { usePlaybackStore } from '../../hooks/PlaybackContext';
 import { formatTimecode } from '../../utils/timeFormat';
 import { getTickIntervalSeconds } from '../../utils/timelineLayout';
 import { applyEdgeAutoScroll } from '../../utils/timelineAutoScroll';
 import './time-ruler.css';
+
+// Module-level so the default below keeps one identity across renders
+// (a `= []` default parameter creates a new array every render and defeats memo).
+const EMPTY_ARRAY = Object.freeze([]);
  
 export const TimeRuler = memo(function TimeRuler({
   totalDuration,
@@ -10,11 +15,18 @@ export const TimeRuler = memo(function TimeRuler({
   totalWidth: propTotalWidth,
   onSeek,
   exportRange,
-  snappingPoints = [],
+  snappingPoints = EMPTY_ARRAY,
   snappingEnabled = false,
 }) {
+  const store = usePlaybackStore();
   const rulerRef = useRef(null);
   const HEADER_WIDTH = 180;
+  // Ends the scrub in progress (if any): removes window listeners and clears
+  // the store's scrubbing flag. Also run on unmount so the flag can't stick.
+  const endScrubRef = useRef(null);
+  useEffect(() => () => {
+    if (endScrubRef.current) endScrubRef.current();
+  }, []);
  
   const getSnappedTime = (rawTime) => {
     if (!snappingEnabled || !snappingPoints || snappingPoints.length === 0) return rawTime;
@@ -31,6 +43,8 @@ export const TimeRuler = memo(function TimeRuler({
     if (!rulerRef.current) return;
     if (e.button !== 0) return;
     e.preventDefault();
+    if (endScrubRef.current) endScrubRef.current();
+    store.setScrubbing(true);
  
     const rect = rulerRef.current.getBoundingClientRect();
     // rect.left already accounts for horizontal scroll inside ruler-wrapper
@@ -60,10 +74,14 @@ export const TimeRuler = memo(function TimeRuler({
     };
  
     const handlePointerUp = () => {
+      endScrubRef.current = null;
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
       window.removeEventListener('pointercancel', handlePointerUp);
+      // Flushes display-only consumers to the final time.
+      store.setScrubbing(false);
     };
+    endScrubRef.current = handlePointerUp;
  
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);

@@ -19,10 +19,19 @@ function usePlayheadDrag({ pixelsPerSecond, onSeek, onDragPosition, isDraggingRe
     pixelsPerSecondRef.current = pixelsPerSecond;
   }, [pixelsPerSecond]);
   const dragStartRef = useRef({ x: 0, time: 0 });
+  // Ends the drag in progress (if any): removes the window listeners and
+  // clears the store's scrubbing flag. Also run on unmount so the flag can
+  // never be left stuck on.
+  const endDragRef = useRef(null);
+  useEffect(() => () => {
+    if (endDragRef.current) endDragRef.current();
+  }, []);
 
   const handlePointerDown = (e) => {
     e.stopPropagation();
+    if (endDragRef.current) endDragRef.current();
     isDraggingRef.current = true;
+    store.setScrubbing(true);
     dragStartRef.current = { x: e.clientX, time: store.getCurrentTime() };
 
     const handlePointerMove = (moveEvent) => {
@@ -51,10 +60,15 @@ function usePlayheadDrag({ pixelsPerSecond, onSeek, onDragPosition, isDraggingRe
 
     const handlePointerUp = () => {
       isDraggingRef.current = false;
+      endDragRef.current = null;
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
       window.removeEventListener('pointercancel', handlePointerUp);
+      // After the listeners are gone: the store flushes display-only
+      // consumers to the final time on this transition.
+      store.setScrubbing(false);
     };
+    endDragRef.current = handlePointerUp;
 
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);

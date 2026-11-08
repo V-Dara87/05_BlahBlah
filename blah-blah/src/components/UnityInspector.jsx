@@ -38,6 +38,10 @@ import { TransitionClipInspector } from './inspector/TransitionClipInspector';
 import { SubtitleTrackCard } from './inspector/SubtitleTrackCard';
 import { ScriptCard, scriptKindMeta } from './inspector/ScriptCard';
 import './unity-inspector.css';
+
+// Module-level so default props keep ONE identity across renders (a `= []`
+// default parameter is a new array every render and defeats memo/useMemo deps).
+const EMPTY_ARRAY = Object.freeze([]);
  
 /**
  * P0 #3 — Unified Inspector field rendering.
@@ -88,10 +92,10 @@ import './unity-inspector.css';
  
 export const UnityInspector = memo(function UnityInspector({
   selectedEntity,
-  entities = [],
-  tracks = [],
-  scripts = [],
-  prefabs = [],
+  entities = EMPTY_ARRAY,
+  tracks = EMPTY_ARRAY,
+  scripts = EMPTY_ARRAY,
+  prefabs = EMPTY_ARRAY,
   onUpdateEntity,
   onDeleteEntity,
   onOpenScriptEditor,
@@ -103,7 +107,7 @@ export const UnityInspector = memo(function UnityInspector({
   currentTime = 0,
   autoKeyEnabled = false,
   setAutoKeyEnabled,
-  mediaAssets = [],
+  mediaAssets = EMPTY_ARRAY,
   isLocked = false,
   onToggleLock,
   onOpenPackageManager,
@@ -129,6 +133,10 @@ export const UnityInspector = memo(function UnityInspector({
   // Footer buttons shrink (shorter names, smaller size, lighter footer) when the
   // Inspector panel is narrow or short. Measured on the sidebar itself.
   const [footerSize, setFooterSize] = useState('');
+  // The measured <aside> only exists while an entity is selected (the empty
+  // state renders a different, ref-less <aside>), so key the observer on that
+  // boolean instead of re-creating it after every render.
+  const hasSelectedEntity = !!selectedEntity;
   useEffect(() => {
     const el = sidebarRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return undefined;
@@ -142,7 +150,7 @@ export const UnityInspector = memo(function UnityInspector({
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();
-  });
+  }, [hasSelectedEntity]);
  
   const {
     showAddComponent,

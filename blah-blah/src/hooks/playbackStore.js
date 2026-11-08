@@ -18,6 +18,14 @@ export function createPlaybackStore(initialTotalDuration = 60) {
   const listeners = new Set();
   const frameCallbacks = new Set();
 
+  // True while the user is dragging the playhead (ruler handle, red line or
+  // ruler click-drag). Display-only consumers (useThrottledCurrentTime) use it
+  // to throttle their re-renders during a scrub. Setting it does NOT notify the
+  // regular listeners; only the dedicated scrub-end listeners below are called,
+  // and only on the true -> false transition so those consumers can flush.
+  let isScrubbing = false;
+  const scrubEndListeners = new Set();
+
   let intentionalJump = false;
 
   const notify = () => {
@@ -142,6 +150,25 @@ export function createPlaybackStore(initialTotalDuration = 60) {
 
     getIsPlaying() {
       return isPlaying;
+    },
+
+    setScrubbing(scrubbing) {
+      const next = !!scrubbing;
+      if (isScrubbing === next) return;
+      isScrubbing = next;
+      if (!next) {
+        scrubEndListeners.forEach((l) => l());
+      }
+    },
+
+    getIsScrubbing() {
+      return isScrubbing;
+    },
+
+    // Called once each time a scrub ends (after setScrubbing(false)).
+    subscribeScrubEnd(listener) {
+      scrubEndListeners.add(listener);
+      return () => scrubEndListeners.delete(listener);
     },
 
     setTotalDuration(dur) {

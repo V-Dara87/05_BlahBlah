@@ -29,6 +29,26 @@ import {
 } from '../../dock/TimelineViewContext';
 const HEADER_WIDTH = 180;
 
+// Module-level so default props keep ONE identity across renders. A `= []`
+// default parameter is a new array every render, which breaks the memo()
+// bail-out of every child it is passed to.
+const EMPTY_ARRAY = Object.freeze([]);
+
+/**
+ * Returns the previous array when `next` has the same elements (===, in the
+ * same order), so a memoised value that is recomputed on every clip edit but
+ * rarely actually changes keeps a stable identity for memo'd children.
+ */
+function useStableArray(next) {
+  const ref = useRef(next);
+  const prev = ref.current;
+  if (prev !== next) {
+    const same = prev.length === next.length && prev.every((v, i) => v === next[i]);
+    if (!same) ref.current = next;
+  }
+  return ref.current;
+}
+
 /**
  * Eased zoom. A wheel notch (or a toolbar +/- click) adds its step to a TARGET
  * zoom level, and the ease loop walks pixelsPerSecond toward it over the next
@@ -57,7 +77,7 @@ import './timeline.css';
 export const Timeline = memo(function Timeline({
   tracks,
   clips,
-  mediaAssets = [],
+  mediaAssets = EMPTY_ARRAY,
   totalDuration,
   pixelsPerSecond,
   snappingEnabled,
@@ -88,7 +108,7 @@ export const Timeline = memo(function Timeline({
   onSetPixelsPerSecond,
   exportRange,
   onSetExportRange,
-  selectedIds = [],
+  selectedIds = EMPTY_ARRAY,
   onToggleSelect,
   onRangeSelect,
   onClearSelection,
@@ -282,8 +302,8 @@ export const Timeline = memo(function Timeline({
     };
   }, [restoreScrollPosition, updateScrollMetrics]);
  
-  const snappingPoints = useMemo(() => {
-    if (!snappingEnabled) return [];
+  const rawSnappingPoints = useMemo(() => {
+    if (!snappingEnabled) return EMPTY_ARRAY;
     const points = new Set();
     points.add(0);
     points.add(playbackStore.getCurrentTime());
@@ -297,6 +317,10 @@ export const Timeline = memo(function Timeline({
     });
     return Array.from(points);
   }, [clips, snappingEnabled, playbackStore]);
+  // `clips` changes on every edit, but the snap points only change when a clip
+  // edge actually moves. Keep the same array otherwise so TimeRuler (memo'd)
+  // is not re-rendered by unrelated clip changes.
+  const snappingPoints = useStableArray(rawSnappingPoints);
  
   const handleSetIn = useCallback(() => {
     const t = playbackStore.getCurrentTime();

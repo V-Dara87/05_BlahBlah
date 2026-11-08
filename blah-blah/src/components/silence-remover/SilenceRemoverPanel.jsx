@@ -30,6 +30,29 @@ import './silence-remover-panel.css';
 // `silencedetect` path instead. The in-memory Web Audio analyzer stays for
 // short clips and the browser build, where it is fast and needs no sidecar.
 const LONG_CLIP_DECODE_LIMIT_SEC = 10 * 60;
+
+// Module-level so default props / "empty" state values keep ONE identity.
+// A fresh `[]` / `{}` every time makes setState and memo bail-outs fail and
+// turns an effect that "clears" state into a render loop trigger.
+const EMPTY_ARRAY = Object.freeze([]);
+const EMPTY_OBJECT = Object.freeze({});
+
+function shallowEqualObjects(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const keysA = Object.keys(a);
+  if (keysA.length !== Object.keys(b).length) return false;
+  return keysA.every((k) => a[k] === b[k]);
+}
+
+/** Returns the previous object while the new one is shallow-equal to it. */
+function useStableShallow(next) {
+  const ref = useRef(next);
+  if (ref.current !== next && !shallowEqualObjects(ref.current, next)) {
+    ref.current = next;
+  }
+  return ref.current;
+}
  
 /**
  * SilenceRemoverPanel — Dockable Panel for Audio Silence Detection & Cutting
@@ -42,11 +65,14 @@ const LONG_CLIP_DECODE_LIMIT_SEC = 10 * 60;
 export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
   activeTargetType = 'clip', // 'clip' | 'track'
   activeTargetId = null,
-  allEntities = [],
-  allTracks = [],
-  mediaAssets = [],
+  allEntities = EMPTY_ARRAY,
+  allTracks = EMPTY_ARRAY,
+  mediaAssets = EMPTY_ARRAY,
   onApplyCutSilence,
   onUpdatePreviewCuts, // (previewData: { targetType, targetId, cuts: [] }) => void
+  // False while the dock tab holding this panel is hidden. A hidden panel does
+  // no decode / detection / preview broadcast / audition (see dock/panels.jsx).
+  isVisible = true,
 }) {
   // Master on/off switch for the whole panel. Starts OFF: previously
   // this panel ran audio decode + silence detection + live timeline-cut
@@ -68,7 +94,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
   const [minSpeechDuration, setMinSpeechDuration] = useState(0.15);
   const [rippleMode, setRippleMode] = useState(true);
   const [useFfmpegEngine, setUseFfmpegEngine] = useState(false);
-  const [disabledCutIds, setDisabledCutIds] = useState(new Set());
+  const [disabledCutIds, setDisabledCutIds] = useState(() => new Set());
   // Manual edge overrides for auto-detected cuts, keyed by cut.id (see
   // computeAudibleAndSilentSegments — cut ids are stable across a given
   // detection run since they're derived from index + rounded start time).
@@ -78,13 +104,13 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
   // time anything re-triggers detection. This map is applied ON TOP of
   // computed.cutSegments (see `displayCutSegments` below) and is the
   // source of truth once the user has manually adjusted a given cut.
-  const [manualCutOverrides, setManualCutOverrides] = useState({}); // { [cutId]: { start, end } }
+  const [manualCutOverrides, setManualCutOverrides] = useState(EMPTY_OBJECT); // { [cutId]: { start, end } }
  
   // Audio / Detection state
   const [audioBuffer, setAudioBuffer] = useState(null);
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
   const [isDetecting, setIsDetecting] = useState(false);
-  const [rawSilenceIntervals, setRawSilenceIntervals] = useState([]);
+  const [rawSilenceIntervals, setRawSilenceIntervals] = useState(EMPTY_ARRAY);
   const [ffmpegSupported, setFfmpegSupported] = useState(false);
  
   // Live Audition Player
@@ -95,6 +121,11 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
   const auditionRafRef = useRef(null);
   const auditionStartWallTimeRef = useRef(0);
   const auditionStartAudioTimeRef = useRef(0);
+  // URL the current audioBuffer was decoded from, and the inputs of the last
+  // COMPLETED detection run. They let a hide -> show (or any effect re-run with
+  // unchanged inputs) skip the decode / detection instead of redoing it.
+  const decodedUrlRef = useRef(null);
+  const lastDetectionRef = useRef(null);
  
   // Check FFmpeg availability on mount
   useEffect(() => {
@@ -111,7 +142,9 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
         setTargetType('clip');
         setSelectedClipId(activeTargetId);
       }
-      setDisabledCutIds(new Set());
+      // Only replace the Set when it actually has entries; a fresh empty Set
+      // is a state change and forced a needless extra render.
+      setDisabledCutIds((prev) => (prev.size === 0 ? prev : new Set()));
     }
   }, [activeTargetId, activeTargetType]);
  
@@ -146,7 +179,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
   }, [allEntities]);
  
   // Audio source resolution
-  const audioSourceInfo = useMemo(() => {
+  const rawAudioSourceInfo = useMemo(() => {
     if (!activeClip) return null;
     let url = activeClip.src;
     let filePath = null;
@@ -167,6 +200,14 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
  
     return { url, filePath, mediaOffset, duration, assetDuration: asset?.duration || 0 };
   }, [activeClip, mediaAssets]);
+  // activeClip gets a new identity on every edit of that clip (and while it is
+  // dragged), but these five values almost never change. Keep one object so the
+  // decode / detection effects below don't re-run for unrelated clip edits.
+  const audioSourceInfo = useStableShallow(rawAudioSourceInfo);
+  // Primitives for everything downstream that only needs these two facts.
+  const hasActiveClip = !!activeClip;
+  const activeClipId = activeClip?.id;
+  const activeClipDuration = activeClip?.duration;
 
   // Long media (by SOURCE duration, not trimmed clip duration — that is what
   // a whole-file decode would cost) forces the native FFmpeg engine and
@@ -177,24 +218,38 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
   // Load AudioBuffer for client-side preview, Web Audio detection, and auditioning
   useEffect(() => {
     if (!isEnabled || !audioSourceInfo?.url) {
+      decodedUrlRef.current = null;
       setAudioBuffer(null);
       return;
     }
- 
+
     // Desktop + long source: don't decode the whole file. Detection below
     // uses FFmpeg, and the in-memory audition player is unavailable for it.
     if (longClipNeedsFfmpeg) {
+      decodedUrlRef.current = null;
       setAudioBuffer(null);
       setIsLoadingAudio(false);
       return;
     }
- 
+
+    // Hidden dock tab: no decode. (An in-flight one was cancelled by the
+    // cleanup below; the effect re-runs when the tab is shown again.)
+    if (!isVisible) {
+      setIsLoadingAudio(false);
+      return;
+    }
+
+    // Already decoded for this URL (e.g. the tab was hidden and shown again).
+    if (decodedUrlRef.current === audioSourceInfo.url) return;
+
     let cancelled = false;
     setIsLoadingAudio(true);
- 
-    decodeAudio(audioSourceInfo.url)
+    const url = audioSourceInfo.url;
+
+    decodeAudio(url)
       .then((buf) => {
         if (!cancelled) {
+          decodedUrlRef.current = url;
           setAudioBuffer(buf);
           setIsLoadingAudio(false);
         }
@@ -209,21 +264,45 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
     return () => {
       cancelled = true;
     };
-  }, [isEnabled, audioSourceInfo?.url, longClipNeedsFfmpeg]);
+  }, [isEnabled, isVisible, audioSourceInfo?.url, longClipNeedsFfmpeg]);
  
   // Detection execution
   useEffect(() => {
-    if (!isEnabled || !activeClip) {
-      setRawSilenceIntervals([]);
+    if (!isEnabled || !hasActiveClip) {
+      lastDetectionRef.current = null;
+      // Same empty array every time -> no state change, no extra render. (A new
+      // `[]` here re-rendered the panel on every clip edit while disabled and
+      // then re-triggered the manual-override reset effect below.)
+      setRawSilenceIntervals((prev) => (prev.length === 0 ? prev : EMPTY_ARRAY));
+      setIsDetecting(false);
       return;
     }
- 
+
+    // Hidden dock tab: no detection (an in-flight FFmpeg run was cancelled by
+    // the cleanup below). It re-runs when the tab is shown, unless the inputs
+    // are unchanged since the last completed run.
+    if (!isVisible) {
+      setIsDetecting(false);
+      return;
+    }
+
     // The native engine is used when the user opted in, OR when a long
     // source makes the in-memory analyzer impossible (desktop build).
     const useNativeEngine =
       (useFfmpegEngine || longClipNeedsFfmpeg)
       && ffmpegSupported
       && Boolean(audioSourceInfo?.filePath);
+
+    const detectionInputs = {
+      audioBuffer: useNativeEngine ? null : audioBuffer,
+      filePath: useNativeEngine ? audioSourceInfo?.filePath : null,
+      mediaOffset: audioSourceInfo?.mediaOffset || 0,
+      duration: audioSourceInfo?.duration || activeClipDuration,
+      thresholdDb,
+      minSilenceDuration,
+      useNativeEngine,
+    };
+    if (shallowEqualObjects(lastDetectionRef.current, detectionInputs)) return;
 
     if (useNativeEngine) {
       let cancelled = false;
@@ -237,6 +316,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
       })
         .then((intervals) => {
           if (!cancelled) {
+            lastDetectionRef.current = detectionInputs;
             setRawSilenceIntervals(intervals);
             setIsDetecting(false);
           }
@@ -267,13 +347,16 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
         thresholdDb,
         minSilenceDuration,
         mediaOffset: audioSourceInfo?.mediaOffset || 0,
-        duration: audioSourceInfo?.duration || activeClip.duration,
+        duration: audioSourceInfo?.duration || activeClipDuration,
       });
+      lastDetectionRef.current = detectionInputs;
       setRawSilenceIntervals(intervals);
     }
   }, [
     isEnabled,
-    activeClip,
+    isVisible,
+    hasActiveClip,
+    activeClipDuration,
     audioBuffer,
     audioSourceInfo,
     thresholdDb,
@@ -285,21 +368,23 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
  
   // Calculate audible & silent segments with padding
   const computed = useMemo(() => {
-    if (!activeClip) {
+    if (!hasActiveClip) {
       return { cutSegments: [], keptSegments: [], originalDuration: 0, newDuration: 0, savedDuration: 0, savedPercent: 0 };
     }
     const filteredRaw = rawSilenceIntervals.filter((_, idx) => !disabledCutIds.has(idx));
-    return computeAudibleAndSilentSegments(filteredRaw, activeClip.duration, {
+    return computeAudibleAndSilentSegments(filteredRaw, activeClipDuration, {
       padding,
       minSpeechDuration,
     });
-  }, [activeClip, rawSilenceIntervals, disabledCutIds, padding, minSpeechDuration]);
+  }, [hasActiveClip, activeClipDuration, rawSilenceIntervals, disabledCutIds, padding, minSpeechDuration]);
  
   // A fresh detection run (new raw intervals) invalidates any manual edge
   // drags from before — those overrides were keyed to the previous run's
   // cut ids/positions and no longer correspond to anything meaningful.
   useEffect(() => {
-    setManualCutOverrides({});
+    // Keep the existing object when there is nothing to reset (a fresh `{}` is
+    // a state change and cost an extra render after every detection pass).
+    setManualCutOverrides((prev) => (Object.keys(prev).length === 0 ? prev : EMPTY_OBJECT));
   }, [rawSilenceIntervals]);
  
   // Cuts actually shown/used everywhere below: computed.cutSegments with
@@ -307,7 +392,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
   // clip and never invert (end before start).
   const displayCutSegments = useMemo(() => {
     if (Object.keys(manualCutOverrides).length === 0) return computed.cutSegments;
-    const clipDur = activeClip?.duration || 0;
+    const clipDur = activeClipDuration || 0;
     return computed.cutSegments.map((cut) => {
       const override = manualCutOverrides[cut.id];
       if (!override) return cut;
@@ -315,7 +400,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
       const end = Math.max(start + 0.02, Math.min(override.end, clipDur));
       return { ...cut, start, end, duration: Math.round((end - start) * 1000) / 1000 };
     });
-  }, [computed.cutSegments, manualCutOverrides, activeClip]);
+  }, [computed.cutSegments, manualCutOverrides, activeClipDuration]);
  
   // Called by the timeline's cut-edge drag handles (ClipItem) as the user
   // drags a cut region's left/right edge. Merges into manualCutOverrides
@@ -341,14 +426,17 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
   // stop running just because the panel happened to be open.
   useEffect(() => {
     if (onUpdatePreviewCuts) {
-      if (isEnabled && targetType === 'clip' && activeClip) {
+      // A hidden dock tab broadcasts nothing (it clears the overlay) and puts
+      // it back when shown again.
+      const isLive = isEnabled && isVisible;
+      if (isLive && targetType === 'clip' && hasActiveClip) {
         onUpdatePreviewCuts({
           targetType: 'clip',
-          targetId: activeClip.id,
+          targetId: activeClipId,
           cuts: displayCutSegments,
           onAdjustCutEdge: handleAdjustCutEdge,
         });
-      } else if (isEnabled && targetType === 'track' && selectedTrackId) {
+      } else if (isLive && targetType === 'track' && selectedTrackId) {
         onUpdatePreviewCuts({
           targetType: 'track',
           targetId: selectedTrackId,
@@ -359,7 +447,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
         onUpdatePreviewCuts(null);
       }
     }
-  }, [isEnabled, onUpdatePreviewCuts, targetType, activeClip, selectedTrackId, displayCutSegments, handleAdjustCutEdge]);
+  }, [isEnabled, isVisible, onUpdatePreviewCuts, targetType, hasActiveClip, activeClipId, selectedTrackId, displayCutSegments, handleAdjustCutEdge]);
  
   // Clean up on unmount
   useEffect(() => {
@@ -403,7 +491,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
       }
  
       const mediaOffset = audioSourceInfo?.mediaOffset || 0;
-      const clipDuration = activeClip?.duration || audioBuffer.duration;
+      const clipDuration = activeClipDuration || audioBuffer.duration;
       const safeStart = Math.max(0, Math.min(startTime, clipDuration - 0.1));
  
       const source = ctx.createBufferSource();
@@ -452,7 +540,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
         setIsAuditioning(false);
       };
     },
-    [audioBuffer, audioSourceInfo, activeClip, displayCutSegments, stopAudition]
+    [audioBuffer, audioSourceInfo, activeClipDuration, displayCutSegments, stopAudition]
   );
  
   const toggleAudition = () => {
@@ -467,7 +555,13 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
   useEffect(() => {
     stopAudition();
     setAuditionCurrentTime(0);
-  }, [activeClip?.id, stopAudition]);
+  }, [activeClipId, stopAudition]);
+
+  // Switched off or tab hidden: stop the audition (its rAF loop sets state on
+  // every frame) so a hidden / disabled panel does no work at all.
+  useEffect(() => {
+    if (!isEnabled || !isVisible) stopAudition();
+  }, [isEnabled, isVisible, stopAudition]);
  
   // Toggle individual cut checkbox
   const handleToggleCut = useCallback((idx) => {
@@ -501,7 +595,7 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
   // edge drags actually change what handleApply cuts, not just the
   // preview overlay on the timeline.
   const displayKeptSegments = useMemo(() => {
-    const clipDur = activeClip?.duration || 0;
+    const clipDur = activeClipDuration || 0;
     if (clipDur <= 0) return [];
     const sorted = [...displayCutSegments].sort((a, b) => a.start - b.start);
     const kept = [];
@@ -524,8 +618,8 @@ export const SilenceRemoverPanel = memo(function SilenceRemoverPanel({
       });
     }
     return kept;
-  }, [displayCutSegments, activeClip]);
- 
+  }, [displayCutSegments, activeClipDuration]);
+
   const handleApply = () => {
     if (!isEnabled) return;
     stopAudition();

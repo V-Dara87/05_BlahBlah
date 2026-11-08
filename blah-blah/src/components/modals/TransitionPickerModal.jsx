@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo, memo } from 'react';
+import { areModalPropsEqual } from './memoWhenClosed';
 import {
   X,
   Search,
@@ -401,4 +402,4 @@ export const TransitionPickerModal = memo(function TransitionPickerModal({
       </div>
     </div>
   );
-});
+}, areModalPropsEqual);
