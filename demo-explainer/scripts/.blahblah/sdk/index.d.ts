@@ -55,6 +55,12 @@ export interface MotionScriptMountArgs extends ClipTimingArgs {
   canvasWidth?: number;
   /** Resolved effective canvas height — see resolveCanvasSize in canvasRunner.js. */
   canvasHeight?: number;
+  /**
+   * Fluent 2D drawing context (DrawContext / CanvasKit) — available on
+   * CanvasComponent scripts after the canvas is created in onMount.
+   * Use `this.draw` or destructure `{ draw }` from the args object.
+   */
+  draw?: DrawContext | null;
   /** Stateless timeline helpers; supplied directly to Canvas lifecycle hooks. */
   tween?: typeof Tween;
   Tween?: typeof Tween;
@@ -75,6 +81,13 @@ export interface MotionScriptUpdateArgs extends ClipTimingArgs {
   canvasWidth?: number;
   /** Resolved effective canvas height. */
   canvasHeight?: number;
+  /**
+   * Fluent 2D drawing context (DrawContext / CanvasKit).
+   * Available on CanvasComponent scripts. Synced every frame with the latest
+   * canvas size. `draw.clear()` and `draw.center()` replace the common
+   * `ctx.clearRect` + `centerOrigin()` boilerplate.
+   */
+  draw?: DrawContext | null;
   /** Stateless timeline helpers; use `tween.between(...)` for deterministic values. */
   tween?: typeof Tween;
   Tween?: typeof Tween;
@@ -100,6 +113,332 @@ export interface MotionScriptSeekArgs extends ClipTimingArgs {
 export interface MotionScriptUnmountArgs {
   /** The same host element passed to onMount. */
   container?: HTMLElement;
+}
+
+// ─── DrawContext / CanvasKit ──────────────────────────────────────────────────
+
+export interface RectResult {
+  x: number; y: number; width: number; height: number; right: number; bottom: number;
+}
+export interface TextResult {
+  x: number; y: number; width: number; height: number;
+}
+export interface RowResult {
+  x: number; y: number; width: number; height: number;
+}
+export interface ProgressBarResult {
+  x: number; y: number; width: number; height: number; progress: number;
+}
+
+export interface DrawStyleOptions {
+  fill?: string;
+  stroke?: string;
+  lineWidth?: number;
+  dash?: number[];
+  shadow?: { color?: string; blur?: number; x?: number; y?: number };
+  alpha?: number;
+}
+
+export interface DrawRectOptions extends DrawStyleOptions {
+  x?: number; y?: number; width?: number; height?: number; radius?: number | { tl?: number; tr?: number; br?: number; bl?: number };
+  anchor?: 'center' | 'top-left';
+}
+export interface DrawCircleOptions extends DrawStyleOptions {
+  x?: number; y?: number; radius?: number;
+}
+export interface DrawEllipseOptions extends DrawStyleOptions {
+  x?: number; y?: number; radiusX?: number; radiusY?: number; rotation?: number;
+}
+export interface DrawLineOptions extends DrawStyleOptions {
+  from?: [number, number]; to?: [number, number]; cap?: CanvasLineCap;
+}
+export interface DrawArrowOptions extends DrawStyleOptions {
+  from?: [number, number]; to?: [number, number]; fillHead?: boolean; headSize?: number; headAngle?: number;
+}
+export interface DrawPolygonOptions extends DrawStyleOptions {
+  points?: [number, number][]; closed?: boolean;
+}
+export interface DrawTextOptions extends DrawStyleOptions {
+  x?: number; y?: number; font?: string; size?: number; weight?: number; family?: string; style?: string;
+  color?: string; strokeWidth?: number; align?: CanvasTextAlign; baseline?: CanvasTextBaseline; maxWidth?: number;
+}
+export interface DrawTextWrapOptions extends DrawTextOptions {
+  maxWidth?: number; lineHeight?: number; maxLines?: number;
+}
+export interface DrawBadgeOptions {
+  x?: number; y?: number; bg?: string; color?: string; radius?: number; padding?: number | [number, number];
+  size?: number; weight?: number; family?: string; border?: { color?: string; width?: number };
+  shadow?: DrawStyleOptions['shadow']; alpha?: number; anchor?: 'center' | 'top-left';
+}
+export interface DrawProgressBarOptions {
+  x?: number; y?: number; width?: number; height?: number; progress?: number;
+  fill?: string; bg?: string; border?: string; radius?: number;
+  label?: string; showPercentage?: boolean; font?: string; textColor?: string;
+  anchor?: 'center' | 'top-left'; alpha?: number;
+}
+export interface DrawRowColumnItem {
+  type?: 'text' | 'badge' | 'circle' | 'rect';
+  width?: number; height?: number;
+  render?: (draw: DrawContext, x: number, y: number, w: number, h: number) => void;
+  [key: string]: any;
+}
+export interface DrawRowOptions {
+  x?: number; y?: number; gap?: number; align?: 'center' | 'start' | 'end';
+  anchor?: 'center' | 'top-left'; items?: DrawRowColumnItem[];
+}
+
+/**
+ * Motion Canvas-style fluent 2D drawing wrapper. Available as `this.draw` on
+ * any `CanvasComponent` and also passed as `draw` in `onMount` / `onUpdate` args.
+ *
+ * All coordinate space uses center-origin (0,0 = canvas center) by default —
+ * matching `centerOrigin()` / `toScreen()` behaviour from `CanvasComponent`.
+ *
+ * @example
+ * ```js
+ * onUpdate({ draw }) {
+ *   draw.clear();
+ *   draw.center();
+ *   draw.rect({ x: 0, y: 0, width: 300, height: 60, radius: 8, fill: '#1e293b' });
+ *   draw.text('Hello World', { x: 0, y: 0, size: 28, color: '#fff' });
+ * }
+ * ```
+ */
+export class DrawContext {
+  ctx: CanvasRenderingContext2D;
+  width: number;
+  height: number;
+  aspect: number;
+  component: any;
+
+  constructor(ctx: CanvasRenderingContext2D, options?: { width?: number; height?: number; component?: any });
+  _sync(ctx: CanvasRenderingContext2D, width: number, height: number): this;
+
+  /** Clears the full canvas. Pass a color to fill instead of clearing. */
+  clear(color?: string): this;
+  /** Translates origin to canvas center so (0,0) is the center. */
+  center(): this;
+  /** Resets the 2D transform to the identity matrix. */
+  resetTransform(): this;
+  /** Converts center-origin coordinates to top-left canvas pixel coordinates. */
+  toScreen(x: number, y: number): { x: number; y: number };
+  /** Converts top-left canvas pixel coordinates to center-origin coordinates. */
+  fromScreen(x: number, y: number): { x: number; y: number };
+  /** Runs `fn` inside a save/restore pair. Returns fn's return value. */
+  isolate(fn: (draw: DrawContext) => any): any;
+  save(): this;
+  restore(): this;
+  translate(x: number, y: number): this;
+  /** @param unit 'deg' (default) or 'rad' */
+  rotate(angle: number, unit?: 'deg' | 'rad'): this;
+  scale(sx: number, sy?: number): this;
+  /** Sets globalAlpha (clamped 0–1). */
+  alpha(opacity: number): this;
+
+  // ── Shapes ──
+  rect(options?: DrawRectOptions): RectResult;
+  circle(options?: DrawCircleOptions): { x: number; y: number; width: number; height: number; radius: number };
+  ellipse(options?: DrawEllipseOptions): { x: number; y: number; width: number; height: number };
+  line(options?: DrawLineOptions): { from: [number, number]; to: [number, number] };
+  arrow(options?: DrawArrowOptions): { from: [number, number]; to: [number, number] };
+  polygon(options?: DrawPolygonOptions): this;
+  /** Draws a background grid centered at current origin. */
+  grid(options?: { size?: number; stroke?: string; lineWidth?: number }): this;
+
+  // ── Text ──
+  /** Measures text without drawing it. */
+  measureText(content: string, options?: DrawTextOptions): { width: number; height: number; font: string };
+  /** Draws a single line of text. Returns bounding info. */
+  text(content: string | number, options?: DrawTextOptions): TextResult;
+  /** Draws word-wrapped text. Returns lines info. */
+  textWrap(content: string, options?: DrawTextWrapOptions): { lines: string[]; count: number; totalHeight: number; maxWidth: number };
+  /** Draws a filled pill/badge (bg rect + centered text). */
+  badge(text: string, options?: DrawBadgeOptions): RectResult;
+
+  // ── Composite ──
+  /**
+   * Draws a fully featured progress bar with optional label and percentage.
+   * `progress` can be 0–1 or 0–100.
+   */
+  progressBar(options?: DrawProgressBarOptions): ProgressBarResult;
+
+  // ── Clipping ──
+  clipRect(region: { x?: number; y?: number; width?: number; height?: number; radius?: number; anchor?: 'center' | 'top-left' }, fn: (draw: DrawContext) => any): any;
+  clipCircle(region: { x?: number; y?: number; radius?: number }, fn: (draw: DrawContext) => any): any;
+
+  // ── Effects ──
+  /** Wraps `fn` in a neon-glow shadow. */
+  glow(color?: string, blur?: number, fn?: (draw: DrawContext) => any): any;
+  /** Wraps `fn` with a drop shadow. */
+  shadow(options: { color?: string; blur?: number; x?: number; y?: number }, fn: (draw: DrawContext) => any): any;
+
+  // ── Auto-Layout ──
+  /**
+   * Lays out items horizontally (Row). Renders them and returns total bounds.
+   * Items can specify `type: 'text' | 'badge' | 'circle' | 'rect'` or provide a
+   * custom `render(draw, x, y, w, h)` function.
+   */
+  row(options?: DrawRowOptions): RowResult;
+  /** Lays out items vertically (Column). Same item syntax as `row`. */
+  column(options?: DrawRowOptions): RowResult;
+
+  // ── High-Level Motion / Video Primitives ──
+  /** Dims everything outside the specified spotlight area and cuts out a hole (destination-out). */
+  spotlight(options?: {
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
+    radius?: number | [number, number, number, number];
+    shape?: 'rect' | 'circle';
+    backdrop?: string;
+    stroke?: string | null;
+    lineWidth?: number;
+    anchor?: 'top-left' | 'center';
+  }): this;
+
+  /** Progressively strokes the perimeter of a rectangle (0 to 1). */
+  traceRect(options?: {
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
+    radius?: number;
+    progress?: number;
+    stroke?: string;
+    lineWidth?: number;
+    anchor?: 'top-left' | 'center';
+  }): this;
+
+  /** Progressively strokes a circular arc (0 to 1). */
+  traceCircle(options?: {
+    x?: number;
+    y?: number;
+    radius?: number;
+    progress?: number;
+    stroke?: string;
+    lineWidth?: number;
+    startAngle?: number;
+    clockwise?: boolean;
+  }): this;
+
+  /** Renders an arrow pointing from label position to target, optional target ping ring, and label card. */
+  callout(options?: {
+    fromX?: number;
+    fromY?: number;
+    toX?: number;
+    toY?: number;
+    text?: string;
+    color?: string;
+    textColor?: string;
+    fontFamily?: string;
+    fontSize?: number;
+    fontWeight?: number | string;
+    lineWidth?: number;
+    scale?: number;
+    ping?: boolean;
+    pingRadius?: number;
+    cardBackground?: string;
+  }): this;
+
+  /** Renders an animated formatted number with optional prefix, suffix, uppercase label, and underline bar. */
+  counter(options?: {
+    x?: number;
+    y?: number;
+    value?: number;
+    decimals?: number;
+    prefix?: string;
+    suffix?: string;
+    label?: string;
+    labelColor?: string;
+    labelSize?: number;
+    valueColor?: string;
+    valueSize?: number;
+    fontFamily?: string;
+    underline?: boolean;
+    underlineColor?: string;
+    underlineWidth?: number | null;
+    underlineThickness?: number;
+  }): this;
+
+  /** Renders a macOS-style window header bar with traffic light buttons and centered title. */
+  windowBar(options?: {
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
+    title?: string;
+    controls?: boolean;
+    background?: string;
+    border?: string;
+    titleColor?: string;
+    radius?: number | [number, number, number, number];
+    anchor?: 'top-left' | 'center';
+  }): this;
+
+  /** Renders 4 L-shaped corner brackets (e.g. for reticles, HUDs, or video borders). */
+  cornerBrackets(options?: {
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
+    length?: number;
+    progress?: number;
+    stroke?: string;
+    lineWidth?: number;
+    anchor?: 'top-left' | 'center';
+  }): this;
+}
+
+/** Alias for DrawContext — the CanvasKit API surface. */
+export const CanvasKit: typeof DrawContext;
+export function createDrawContext(ctx: CanvasRenderingContext2D, options?: { width?: number; height?: number; component?: any }): DrawContext;
+
+// ─── Scene Graph Nodes ────────────────────────────────────────────────────────
+
+/** Base class for Motion Canvas-style scene graph nodes. */
+export class CanvasNode {
+  x: number | (() => number);
+  y: number | (() => number);
+  scale: number | (() => number);
+  rotation: number | (() => number);
+  opacity: number | (() => number);
+  visible: boolean;
+  children: CanvasNode[];
+  parent: CanvasNode | null;
+
+  constructor(options?: Partial<CanvasNode>);
+  add(...children: CanvasNode[]): this;
+  remove(child: CanvasNode): this;
+  render(draw: DrawContext): void;
+  drawSelf(draw: DrawContext): void;
+}
+
+export class RectNode extends CanvasNode {
+  width: number | (() => number);
+  height: number | (() => number);
+  radius: number | (() => number);
+  fill: string | null | (() => string | null);
+  stroke: string | null | (() => string | null);
+  lineWidth: number;
+  anchor: 'center' | 'top-left';
+}
+
+export class TextNode extends CanvasNode {
+  text: string | (() => string);
+  size: number;
+  weight: number;
+  family: string;
+  color: string | (() => string);
+  align: CanvasTextAlign;
+  baseline: CanvasTextBaseline;
+}
+
+export class CircleNode extends CanvasNode {
+  radius: number | (() => number);
+  fill: string | null | (() => string | null);
+  stroke: string | null | (() => string | null);
+  lineWidth: number;
 }
 
 // ─── Script Gizmo Definitions ───────────────────────────────────────────────

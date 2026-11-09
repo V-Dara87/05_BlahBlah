@@ -24,6 +24,7 @@ import {
   selKey,
 } from './projectPanelConstants';
 import { detectScriptKind } from '../../engine/scriptRunner';
+import { CustomFolderEntries } from './CustomFolderEntries';
 import {
   ITEM_KIND_MEDIA,
   ITEM_KIND_PREFAB,
@@ -92,13 +93,14 @@ export const ExplorerContentView = memo(function ExplorerContentView({
   onShareMedia,
   onImportMedia,
   onNewScript,
+  projectFolderHandle,
 }) {
   const isGridView = viewMode === 'grid';
   const isRoot = currentLocation.section === null;
  
-  // The "This Project" root only lists the four system folders — there is
-  // nothing to create, import or rename here, so no custom context menu is
-  // offered. We still preventDefault so the WebView's native right-click menu
+  // The "This Project" root lists the four system folders and the project's
+  // own folders — creating those is done with the "New Folder" entry, so no
+  // custom context menu is offered. We still preventDefault so the WebView's native right-click menu
   // (Reload / Inspect) doesn't appear in its place, and we do NOT stopPropagation
   // so the panel's outside-click logic keeps working. Any custom menu that was
   // already open is dismissed by ContextMenu's own capture-phase pointerdown.
@@ -199,6 +201,12 @@ export const ExplorerContentView = memo(function ExplorerContentView({
               </div>
             );
           })}
+
+          {/* The project's own folders + "New Folder" */}
+          <CustomFolderEntries
+            projectFolderHandle={projectFolderHandle}
+            isGridView={isGridView}
+          />
         </div>
       </div>
     );
@@ -674,4 +682,3 @@ export const ExplorerContentView = memo(function ExplorerContentView({
     </div>
   );
 });
- 

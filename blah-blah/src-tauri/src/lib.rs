@@ -1057,9 +1057,60 @@ fn create_popout_window(
   Some(window)
 }
 
+// ─── Project files (.blahblah) ───────────────────────────────────────────────
+//
+// A `.blahblah` file is a marker that sits in a project folder; opening it
+// (double-click / "Open with") opens that folder. The OS passes the file path
+// as a launch argument (Windows, Linux) or an `Opened` event (macOS). The
+// webview asks for it once at startup through `take_launch_project_dir`.
+
+const PROJECT_FILE_EXT: &str = "blahblah";
+
+/// Folder to open for the project file launched with the app, until the
+/// frontend has picked it up.
+static LAUNCH_PROJECT_DIR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// The folder containing `path`, if `path` is an existing, absolute
+/// `.blahblah` file. Anything else (other extensions, relative or `..` paths,
+/// missing files) yields `None`, so an arbitrary launch argument can never
+/// make the app open an arbitrary folder.
+fn project_dir_from_file(path: &std::path::Path) -> Option<String> {
+  let is_project_file = path
+    .extension()
+    .and_then(|e| e.to_str())
+    .map_or(false, |e| e.eq_ignore_ascii_case(PROJECT_FILE_EXT));
+  if !is_project_file || !path.is_absolute() || !path.is_file() {
+    return None;
+  }
+  if path.components().any(|c| matches!(c, Component::ParentDir)) {
+    return None;
+  }
+  path.parent().map(|p| p.to_string_lossy().into_owned())
+}
+
+/// First `.blahblah` file among the command-line arguments (skipping argv[0]).
+fn project_dir_from_args<I: IntoIterator<Item = String>>(args: I) -> Option<String> {
+  args
+    .into_iter()
+    .skip(1)
+    .find_map(|arg| project_dir_from_file(&PathBuf::from(arg)))
+}
+
+fn set_launch_project_dir(dir: String) {
+  if let Ok(mut slot) = LAUNCH_PROJECT_DIR.lock() {
+    *slot = Some(dir);
+  }
+}
+
+/// Folder of the project file the app was launched with. Returns it once.
+#[tauri::command]
+fn take_launch_project_dir() -> Option<String> {
+  LAUNCH_PROJECT_DIR.lock().ok().and_then(|mut slot| slot.take())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  tauri::Builder::default()
+  let app = tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())
     .plugin(tauri_plugin_opener::init())
@@ -1076,7 +1127,8 @@ pub fn run() {
       get_app_data_dir,
       allow_project_dir,
       allow_user_path,
-      set_ui_zoom
+      set_ui_zoom,
+      take_launch_project_dir
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {
@@ -1087,12 +1139,36 @@ pub fn run() {
         )?;
       }
 
+      if let Some(dir) = project_dir_from_args(std::env::args()) {
+        set_launch_project_dir(dir);
+      }
+
       create_main_window(app.handle())?;
 
       Ok(())
     })
-    .run(tauri::generate_context!())
-    .expect("error while running tauri application");
+    .build(tauri::generate_context!())
+    .expect("error while building tauri application");
+
+  app.run(|app_handle, event| {
+    // macOS delivers "open this file" as an event, also while the app runs.
+    #[cfg(target_os = "macos")]
+    {
+      if let tauri::RunEvent::Opened { urls } = &event {
+        for url in urls {
+          let Ok(path) = url.to_file_path() else { continue };
+          if let Some(dir) = project_dir_from_file(&path) {
+            set_launch_project_dir(dir.clone());
+            let _ = app_handle.emit("project-file-opened", dir);
+          }
+        }
+      }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+      let _ = (app_handle, event);
+    }
+  });
 }
 #[cfg(test)]
 mod security_tests {
@@ -1147,6 +1223,25 @@ mod security_tests {
             .to_string_lossy()
             .into_owned();
         assert!(validate_output_prefix(&args(&["-of", &abs]), "-of", "whisper").is_ok());
+    }
+
+    #[test]
+    fn project_dir_from_file_accepts_only_existing_blahblah_files() {
+        let dir = std::env::temp_dir().join(format!("blahblah-projfile-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let project = dir.join("My Project.blahblah");
+        let other = dir.join("notes.txt");
+        std::fs::write(&project, b"{}").unwrap();
+        std::fs::write(&other, b"x").unwrap();
+
+        assert_eq!(
+            project_dir_from_file(&project),
+            Some(dir.to_string_lossy().into_owned())
+        );
+        assert!(project_dir_from_file(&other).is_none());
+        assert!(project_dir_from_file(&dir.join("missing.blahblah")).is_none());
+        assert!(project_dir_from_file(std::path::Path::new("relative.blahblah")).is_none());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

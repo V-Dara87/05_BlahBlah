@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { INITIAL_TRACKS, DEFAULT_RESOLUTION } from '../types';
 import {
-  pickProjectDirectory,
   loadProjectFromDirectory,
   checkScriptsForChanges,
   verifyPermission,
@@ -10,6 +9,12 @@ import {
   checkProjectJsonForChanges,
 } from '../services/projectFileSystem';
 import { recordProjectCreated, recordProjectOpened } from '../services/recentProjects';
+import {
+  pickProjectToOpen,
+  ensureProjectFile,
+  takeLaunchProjectHandle,
+  listenForOpenedProjects,
+} from '../services/projectFile';
 import { precompileAllProjectScripts } from '../engine/scriptRunner';
 
 // Project folders the user has explicitly trusted this session. A project may
@@ -113,6 +118,7 @@ export function useProjectFileActions({
     recordProjectCreated(result.dirHandle, result.projectName, null).catch((err) => {
       console.warn('Could not record project in recent list:', err);
     });
+    ensureProjectFile(result.dirHandle, result.projectName);
   };
  
   // Shared by "Open Folder" (hub + in-editor header) — loads a directory
@@ -156,6 +162,10 @@ export function useProjectFileActions({
     recordProjectOpened(dirHandle, loaded.projectName, null).catch((err) => {
       console.warn('Could not record project in recent list:', err);
     });
+
+    // Give the folder its .blahblah file (older projects don't have one yet)
+    // so it can be opened by double-click next time.
+    ensureProjectFile(dirHandle, loaded.projectName);
   }, [resetProjectHistoryState]);
  
   // Open & Load an existing Project Folder from Disk via the native picker
@@ -163,7 +173,7 @@ export function useProjectFileActions({
   // action once it has a handle from its own picker call).
   const handleOpenProjectFolder = useCallback(async (dirHandleFromCaller) => {
     try {
-      const dirHandle = dirHandleFromCaller || (await pickProjectDirectory());
+      const dirHandle = dirHandleFromCaller || (await pickProjectToOpen());
       await openProjectFromHandle(dirHandle);
     } catch (err) {
       if (err.name !== 'AbortError') {
@@ -172,6 +182,43 @@ export function useProjectFileActions({
     }
   }, [openProjectFromHandle]);
  
+  // Double-clicking a .blahblah file in the OS starts the app with that file
+  // (Rust hands us its folder once), or — on macOS, if the app is already
+  // running — emits an event. Either way it opens like any other project.
+  const openProjectFromHandleRef = useRef(openProjectFromHandle);
+  useEffect(() => {
+    openProjectFromHandleRef.current = openProjectFromHandle;
+  }, [openProjectFromHandle]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten = null;
+
+    const openFromOs = async (dirHandle) => {
+      if (!dirHandle) return;
+      try {
+        await openProjectFromHandleRef.current(dirHandle);
+      } catch (err) {
+        alert(`Failed to open project: ${err.message}`);
+      }
+    };
+
+    takeLaunchProjectHandle().then(openFromOs).catch((err) => {
+      console.warn('Could not read the project the app was launched with:', err);
+    });
+    listenForOpenedProjects(openFromOs)
+      .then((fn) => {
+        if (disposed) fn?.();
+        else unlisten = fn;
+      })
+      .catch(() => {});
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   // Reopen a project directly from a Hub "recent" entry — it already has a
   // stored dirHandle, so this just needs to re-confirm permission (browsers
   // don't persist FS Access permission grants across app restarts even

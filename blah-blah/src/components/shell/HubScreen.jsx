@@ -23,7 +23,7 @@ import {
   deleteProjectFolder,
   assignProjectToFolder,
 } from '../../services/recentProjects';
-import { pickProjectDirectory } from '../../services/projectFileSystem';
+import { pickProjectToOpen } from '../../services/projectFile';
 import { ContextMenu } from '../shared/ContextMenu';
 import {
   ALL_PROJECTS_ID,
@@ -154,7 +154,7 @@ export function HubScreen({ onNewProject, onOpenProjectFolder, onOpenRecentProje
   const handleBrowseOpen = async () => {
     setErrorMsg('');
     try {
-      const dirHandle = await pickProjectDirectory();
+      const dirHandle = await pickProjectToOpen();
       await onOpenProjectFolder(dirHandle);
     } catch (err) {
       if (err?.name !== 'AbortError') {
@@ -311,8 +311,8 @@ export function HubScreen({ onNewProject, onOpenProjectFolder, onOpenRecentProje
 
           <button className="hub-action-card" onClick={handleBrowseOpen}>
             <FolderOpen size={20} className="text-amber" />
-            <span className="hub-action-title">Open Folder</span>
-            <span className="hub-action-sub">Browse to an existing project</span>
+            <span className="hub-action-title">Open Project</span>
+            <span className="hub-action-sub">Pick a .blahblah project file</span>
           </button>
         </div>
 

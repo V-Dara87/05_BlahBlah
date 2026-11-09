@@ -546,6 +546,7 @@ export const ProjectPanel = memo(function ProjectPanel({
         )}
  
         <ExplorerContentView
+          projectFolderHandle={projectFolderHandle}
           currentLocation={currentLocation}
           onNavigate={navigateTo}
           viewMode={viewMode}

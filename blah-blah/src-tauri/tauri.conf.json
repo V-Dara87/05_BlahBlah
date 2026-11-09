@@ -62,6 +62,15 @@
     "resources": {
       "../public/esbuild.wasm": "esbuild.wasm"
     },
+    "fileAssociations": [
+      {
+        "ext": ["blahblah"],
+        "name": "blahblah Project",
+        "description": "blahblah Project",
+        "mimeType": "application/x-blahblah-project",
+        "role": "Editor"
+      }
+    ],
     "externalBin": [
       "binaries/ffmpeg",
       "binaries/whisper-cli"
