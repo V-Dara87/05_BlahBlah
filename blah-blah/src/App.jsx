@@ -40,6 +40,8 @@ import { PieMenu } from './components/pie/PieMenu';
 import { PlaybackStoreBridge } from './components/shell/PlaybackStoreBridge';
 import { INITIAL_TRACKS, DEFAULT_RESOLUTION } from './types';
 import { loadKeybindSettings } from './services/keybindSettings';
+import { loadAudioSettings } from './services/audioSettings';
+import { useTrackFx } from './hooks/useTrackFx';
 import { precompileAllProjectScripts } from './engine/scriptRunner';
 import { isTauri } from './services/tauriFsAdapter';
 import { WindowControls } from './components/shell/WindowControls';
@@ -302,6 +304,25 @@ export function App() {
     getPlaybackTime,
   });
  
+  // Experimental VST3 inserts: live flag from Settings > Audio > Plugins.
+  // The hook is mounted at App level so preview works even when the Mixer
+  // panel is closed; it uses the playback store's frame loop, not React state.
+  const [vstEnabled, setVstEnabled] = useState(() => loadAudioSettings().vstEnabled);
+  useEffect(() => {
+    const onChange = () => setVstEnabled(loadAudioSettings().vstEnabled);
+    window.addEventListener('blahblah:audio-settings-changed', onChange);
+    return () => window.removeEventListener('blahblah:audio-settings-changed', onChange);
+  }, []);
+  useTrackFx({
+    tracks,
+    entities,
+    mediaAssets,
+    projectFolderHandle,
+    vstEnabled,
+    playbackStoreRef,
+    onUpdateTrack: handleUpdateTrack,
+  });
+
   // Populate reconcileAssetUrlRef (see its declaration above): re-point
   // any entity/component whose src still matches a stale blob: URL at
   // the fresh on-disk URL, the moment an asset finishes saving to disk —
@@ -973,6 +994,7 @@ export function App() {
         resolution={resolution}
         exportRange={exportRange}
         mediaAssets={mediaAssets}
+        projectFolderHandle={projectFolderHandle}
         onBeforeExport={async () => {
           if (projectFolderHandle) {
             await precompileAllProjectScripts(scripts, projectFolderHandle);

@@ -124,6 +124,29 @@ const WHISPER_ALLOWED_OPTIONS: &[&str] = &[
     "-sow", "-owts", "-nt",
 ];
 
+/// vsthost options this app builds commands with. Every path is also checked
+/// below; the allowlist only bounds the option names a compromised page can
+/// pass to the helper.
+const VSTHOST_ALLOWED_OPTIONS: &[&str] = &[
+    "--log-file",
+    "--dir",
+    "--out",
+    "--per-plugin-timeout-ms",
+    "--chain",
+    "--plugin",
+    "--class-id",
+    "--state-in",
+    "--state-out",
+    "--in",
+    "--sample-rate",
+    "--block-size",
+    "--tail-max-ms",
+    "--discard-head-ms",
+    "--title",
+    "--auto-close-ms",
+    "--editor-parent",
+];
+
 const MAX_ARG_COUNT: usize = 512;
 const MAX_ARG_BYTES: usize = 4096;
 const MAX_ARGS_TOTAL_BYTES: usize = 64 * 1024;
@@ -188,6 +211,95 @@ fn validate_absolute_file_arg(args: &[String], option: &str, label: &str) -> Res
             index += 1;
         }
     }
+    Ok(())
+}
+
+/// Like `validate_absolute_file_arg`, but accepts the literal `none` used by
+/// vsthost to mean "no saved plugin state".
+fn validate_absolute_file_or_none_arg(
+    args: &[String],
+    option: &str,
+    label: &str,
+) -> Result<(), String> {
+    let filtered: Vec<String> = args
+        .windows(2)
+        .filter_map(|pair| {
+            if pair[0] != option || pair[1] == "none" {
+                None
+            } else {
+                Some(vec![pair[0].clone(), pair[1].clone()])
+            }
+        })
+        .flatten()
+        .collect();
+    validate_absolute_file_arg(&filtered, option, label)
+}
+
+/// An absolute path that must already exist and be a directory (VST3 bundles
+/// and scan folders are directories, not files).
+fn validate_absolute_existing_dir_arg(
+    args: &[String],
+    option: &str,
+    label: &str,
+) -> Result<(), String> {
+    let mut index = 0;
+    while index < args.len() {
+        if args[index] == option {
+            let value = args
+                .get(index + 1)
+                .ok_or_else(|| format!("{label}: \"{option}\" has no value."))?;
+            let path = PathBuf::from(value);
+            if !path.is_absolute()
+                || path.components().any(|c| matches!(c, Component::ParentDir))
+            {
+                return Err(format!("{label}: \"{option}\" must be an absolute path."));
+            }
+            if !path.is_dir() {
+                return Err(format!("{label}: folder does not exist: {value}"));
+            }
+            index += 2;
+        } else {
+            index += 1;
+        }
+    }
+    Ok(())
+}
+
+/// An absolute path that may not exist yet (outputs, logs, state files).
+fn validate_absolute_output_arg(
+    args: &[String],
+    option: &str,
+    label: &str,
+) -> Result<(), String> {
+    let mut index = 0;
+    while index < args.len() {
+        if args[index] == option {
+            let value = args
+                .get(index + 1)
+                .ok_or_else(|| format!("{label}: \"{option}\" has no value."))?;
+            let path = PathBuf::from(value);
+            if !path.is_absolute()
+                || path.components().any(|c| matches!(c, Component::ParentDir))
+            {
+                return Err(format!("{label}: \"{option}\" must be an absolute path."));
+            }
+            index += 2;
+        } else {
+            index += 1;
+        }
+    }
+    Ok(())
+}
+
+fn validate_vsthost_paths(args: &[String]) -> Result<(), String> {
+    validate_absolute_file_arg(args, "--chain", "vsthost")?;
+    validate_absolute_file_arg(args, "--in", "vsthost")?;
+    validate_absolute_file_or_none_arg(args, "--state-in", "vsthost")?;
+    validate_absolute_existing_dir_arg(args, "--plugin", "vsthost")?;
+    validate_absolute_existing_dir_arg(args, "--dir", "vsthost")?;
+    validate_absolute_output_arg(args, "--out", "vsthost")?;
+    validate_absolute_output_arg(args, "--state-out", "vsthost")?;
+    validate_absolute_output_arg(args, "--log-file", "vsthost")?;
     Ok(())
 }
 
@@ -409,6 +521,124 @@ async fn run_whisper(
     if exit_code != Some(0) {
         return Err(format!(
             "whisper process exited with code {:?}: {}",
+            exit_code,
+            if !stderr.is_empty() { stderr } else { stdout }
+        ));
+    }
+
+    if stdout.trim().is_empty() && !stderr.trim().is_empty() {
+        Ok(stderr)
+    } else {
+        Ok(stdout)
+    }
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct VstHostProgressEvent {
+    pub session_id: String,
+    pub line: String,
+}
+
+#[tauri::command]
+async fn vsthost_info(app: tauri::AppHandle) -> Result<String, String> {
+    let sidecar_command = app
+        .shell()
+        .sidecar("vsthost")
+        .map_err(|e| format!("Failed to configure vsthost sidecar: {e}"))?;
+
+    let output = sidecar_command
+        .args(["info"])
+        .output()
+        .await
+        .map_err(|e| format!("Failed to execute vsthost sidecar (info): {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        return Err(format!(
+            "vsthost info exited with code {:?}: {}",
+            output.status.code(),
+            if !stderr.is_empty() { stderr } else { stdout }
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    if stdout.trim().is_empty() {
+        return Err("vsthost info returned empty output".to_string());
+    }
+    Ok(stdout)
+}
+
+#[tauri::command]
+async fn run_vsthost(
+    app: tauri::AppHandle,
+    args: Vec<String>,
+    session_id: Option<String>,
+) -> Result<String, String> {
+    validate_sidecar_args(&args, VSTHOST_ALLOWED_OPTIONS, "vsthost")?;
+    validate_vsthost_paths(&args)?;
+
+    let sess_id = session_id.unwrap_or_default();
+    let sidecar_command = app
+        .shell()
+        .sidecar("vsthost")
+        .map_err(|e| format!("Failed to configure vsthost sidecar: {e}"))?;
+
+    let (mut rx, child) = sidecar_command
+        .args(args)
+        .spawn()
+        .map_err(|e| format!("Failed to spawn vsthost sidecar: {e}"))?;
+    register_process(&sess_id, child);
+
+    let mut stdout_accum = Vec::new();
+    let mut stderr_accum = Vec::new();
+    let mut exit_code = None;
+
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stdout(line_bytes) => {
+                let line = String::from_utf8_lossy(&line_bytes).to_string();
+                let _ = app.emit(
+                    "vsthost-progress",
+                    VstHostProgressEvent {
+                        session_id: sess_id.clone(),
+                        line: line.clone(),
+                    },
+                );
+                push_capped(&mut stdout_accum, &line_bytes);
+            }
+            CommandEvent::Stderr(line_bytes) => {
+                let line = String::from_utf8_lossy(&line_bytes).to_string();
+                let _ = app.emit(
+                    "vsthost-progress",
+                    VstHostProgressEvent {
+                        session_id: sess_id.clone(),
+                        line,
+                    },
+                );
+                push_capped(&mut stderr_accum, &line_bytes);
+            }
+            CommandEvent::Terminated(payload) => {
+                exit_code = payload.code;
+            }
+            CommandEvent::Error(err) => {
+                unregister_process(&sess_id);
+                return Err(format!("vsthost process error: {err}"));
+            }
+            _ => {}
+        }
+    }
+
+    if !unregister_process(&sess_id) {
+        return Err("vsthost process cancelled by user".to_string());
+    }
+
+    let stdout = String::from_utf8_lossy(&stdout_accum).to_string();
+    let stderr = String::from_utf8_lossy(&stderr_accum).to_string();
+
+    if exit_code != Some(0) {
+        return Err(format!(
+            "vsthost process exited with code {:?}: {}",
             exit_code,
             if !stderr.is_empty() { stderr } else { stdout }
         ));
@@ -1120,6 +1350,8 @@ pub fn run() {
       run_ffmpeg,
       whisper_version,
       run_whisper,
+      vsthost_info,
+      run_vsthost,
       download_package,
       cancel_download,
       cancel_process,
@@ -1191,6 +1423,18 @@ mod security_tests {
     #[test]
     fn sidecar_args_reject_control_characters() {
         assert!(validate_sidecar_args(&args(&["-i", "a\nb"]), &["-i"], "ffmpeg").is_err());
+    }
+
+    #[test]
+    fn vsthost_args_reject_unknown_options_and_relative_paths() {
+        assert!(validate_sidecar_args(
+            &args(&["process", "--chain", "C:/x/chain.json", "--evil"]),
+            VSTHOST_ALLOWED_OPTIONS,
+            "vsthost"
+        )
+        .is_err());
+        assert!(validate_vsthost_paths(&args(&["process", "--in", "relative.wav"]))
+            .is_err());
     }
 
     #[test]

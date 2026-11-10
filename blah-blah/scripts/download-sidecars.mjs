@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 /**
- * Downloads (or builds) the FFmpeg and whisper-cli sidecar binaries that Tauri
- * bundles, and puts them in src-tauri/binaries/ under the name Tauri expects:
+ * Prepares the FFmpeg, whisper-cli, and VST host sidecar binaries for Tauri.
+ * FFmpeg and whisper-cli are downloaded or built; the VST host is built from
+ * src-tauri/vsthost-spike on Windows. Each lands in src-tauri/binaries/ under
+ * the name Tauri expects:
  *
  *     <name>-<target-triple>[.exe]      e.g. ffmpeg-x86_64-pc-windows-msvc.exe
  *
@@ -9,7 +11,7 @@
  *
  *     node scripts/download-sidecars.mjs                 # host platform, skips files that exist
  *     node scripts/download-sidecars.mjs --force         # re-download everything
- *     node scripts/download-sidecars.mjs --only ffmpeg   # or: --only whisper
+ *     node scripts/download-sidecars.mjs --only ffmpeg   # or: --only whisper | vst
  *     node scripts/download-sidecars.mjs --target aarch64-apple-darwin
  *     node scripts/download-sidecars.mjs --whisper-tag v1.8.2
  *
@@ -24,6 +26,8 @@
  *               macOS / Linux: there is no official prebuilt CLI, so it is
  *               built from the release source tarball with cmake as a static,
  *               portable binary (needs cmake + a C/C++ compiler).
+ *   VST host    built from src-tauri/vsthost-spike with Cargo. Windows only;
+ *               on macOS/Linux this step is skipped.
  *
  * Set SKIP_SIDECAR_DOWNLOAD=1 to make this script a no-op (CI that provides
  * its own binaries).
@@ -64,6 +68,9 @@ const TAURI_DIR = path.join(ROOT, 'src-tauri');
 const BIN_DIR = path.join(TAURI_DIR, 'binaries');
 const DLL_DIR = path.join(BIN_DIR, 'windows-dlls');
 const WINDOWS_CONF = path.join(TAURI_DIR, 'tauri.windows.conf.json');
+const VST_CRATE_DIR = path.join(TAURI_DIR, 'vsthost-spike');
+const VST_MANIFEST = path.join(VST_CRATE_DIR, 'Cargo.toml');
+const VST_BUILT = path.join(VST_CRATE_DIR, 'target', 'release', 'vsthost-spike.exe');
 
 // ─── CLI ─────────────────────────────────────────────────────────────────────
 
@@ -84,8 +91,8 @@ function parseArgs(argv) {
     else if (arg === '--help' || arg === '-h') opts.help = true;
     else throw new Error(`Unknown option: ${arg} (try --help)`);
   }
-  if (opts.only && !['ffmpeg', 'whisper'].includes(opts.only)) {
-    throw new Error('--only must be "ffmpeg" or "whisper"');
+  if (opts.only && !['ffmpeg', 'whisper', 'vst'].includes(opts.only)) {
+    throw new Error('--only must be "ffmpeg", "whisper", or "vst"');
   }
   return opts;
 }
@@ -93,7 +100,7 @@ function parseArgs(argv) {
 const HELP = `Usage: node scripts/download-sidecars.mjs [options]
 
   --force               Re-download / rebuild even if the file already exists
-  --only ffmpeg|whisper Only handle one of the two binaries
+  --only ffmpeg|whisper|vst Only handle one binary
   --target <triple>     Rust target triple (default: the host from \`rustc -vV\`)
   --whisper-tag <tag>   whisper.cpp release tag (default: ${DEFAULT_WHISPER_TAG})
   --no-verify           Skip SHA-256 checks (they only apply to the pinned versions anyway)
@@ -282,15 +289,33 @@ async function installWhisperWindows(target, opts, dest) {
  * resource (same "source": "target" form already used for esbuild.wasm). The
  * file is merged into tauri.conf.json on Windows only.
  */
+function windowsExternalBins() {
+  return ['binaries/ffmpeg', 'binaries/whisper-cli', 'binaries/vsthost'];
+}
+
 function writeWindowsConf(dllNames) {
   const resources = {};
   for (const name of [...dllNames].sort()) resources[`binaries/windows-dlls/${name}`] = name;
-  const text = `${JSON.stringify({ bundle: { resources } }, null, 2)}\n`;
+  const text = `${JSON.stringify({ bundle: { externalBin: windowsExternalBins(), resources } }, null, 2)}\n`;
   const existing = fs.existsSync(WINDOWS_CONF) ? fs.readFileSync(WINDOWS_CONF, 'utf8').replace(/\r\n/g, '\n') : null;
   if (existing !== text) {
     fs.writeFileSync(WINDOWS_CONF, text);
     log(`updated ${path.relative(ROOT, WINDOWS_CONF)} (commit it)`);
   }
+}
+
+/** Ensure the Windows-only vsthost sidecar is declared even with --only vst. */
+function ensureWindowsExternalBins() {
+  let config = { bundle: { resources: {} } };
+  try {
+    if (fs.existsSync(WINDOWS_CONF)) config = JSON.parse(fs.readFileSync(WINDOWS_CONF, 'utf8'));
+  } catch {
+    // Corrupt config is replaced below with the known-good shape.
+  }
+  config.bundle = config.bundle && typeof config.bundle === 'object' ? config.bundle : {};
+  config.bundle.externalBin = windowsExternalBins();
+  fs.writeFileSync(WINDOWS_CONF, `${JSON.stringify(config, null, 2)}\n`);
+  log(`ensured vsthost in ${path.relative(ROOT, WINDOWS_CONF)} (commit it)`);
 }
 
 function findFile(dir, fileName) {
@@ -366,6 +391,31 @@ async function installWhisper(target, opts) {
   return dest;
 }
 
+// ─── VST host ────────────────────────────────────────────────────────────────
+
+function installVstHost(target) {
+  if (target.os !== 'win32') {
+    log('vsthost: Windows-only, skipping');
+    return null;
+  }
+
+  const host = hostTriple();
+  if (target.triple !== host) {
+    throw new Error(`vsthost: only host builds are supported (host ${host}, requested ${target.triple})`);
+  }
+
+  const dest = path.join(BIN_DIR, `vsthost-${target.triple}${target.exe}`);
+  log('vsthost: building (cargo build --release)...');
+  run('cargo', ['build', '--release', '--manifest-path', VST_MANIFEST]);
+  if (!fs.existsSync(VST_BUILT)) {
+    throw new Error(`Build finished but ${path.relative(ROOT, VST_BUILT)} was not found`);
+  }
+
+  fs.copyFileSync(VST_BUILT, dest);
+  log(`vsthost: wrote ${path.relative(ROOT, dest)}`);
+  return dest;
+}
+
 // ─── Smoke test ──────────────────────────────────────────────────────────────
 
 function canRunOnThisMachine(target) {
@@ -402,14 +452,18 @@ async function main() {
   const target = describeTarget(opts.target ?? hostTriple());
   log(`target: ${target.triple}`);
   fs.mkdirSync(BIN_DIR, { recursive: true });
+  if (target.os === 'win32') ensureWindowsExternalBins();
 
   let ffmpeg = null;
   let whisper = null;
-  if (opts.only !== 'whisper') ffmpeg = await installFfmpeg(target, opts);
-  if (opts.only !== 'ffmpeg') whisper = await installWhisper(target, opts);
+  let vst = null;
+  if (!opts.only || opts.only === 'ffmpeg') ffmpeg = await installFfmpeg(target, opts);
+  if (!opts.only || opts.only === 'whisper') whisper = await installWhisper(target, opts);
+  if (!opts.only || opts.only === 'vst') vst = installVstHost(target);
 
-  smokeTest(ffmpeg, ['-version'], 'ffmpeg', target);
-  smokeTest(whisper, ['--help'], 'whisper-cli', target);
+  if (ffmpeg) smokeTest(ffmpeg, ['-version'], 'ffmpeg', target);
+  if (whisper) smokeTest(whisper, ['--help'], 'whisper-cli', target);
+  if (vst) smokeTest(vst, ['info'], 'vsthost', target);
   log('done');
 }
 

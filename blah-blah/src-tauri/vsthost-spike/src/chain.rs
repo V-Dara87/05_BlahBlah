@@ -112,6 +112,7 @@ impl<B: PluginBackend> Chain<B> {
 
         let mut slots = Vec::with_capacity(specs.len());
         let mut latency_samples = 0usize;
+        let mut warnings = Vec::new();
         for spec in specs {
             let descriptor = spec.descriptor()?;
             if spec.bypass {
@@ -130,12 +131,34 @@ impl<B: PluginBackend> Chain<B> {
                 Some(path) => Some(read_state(path)?),
                 None => None,
             };
-            let plugin = backend.load(
+            let plugin = match backend.load(
                 &descriptor,
                 state.as_deref(),
                 sample_rate,
                 block_size,
-            )?;
+            ) {
+                Ok(plugin) => plugin,
+                // A missing install must not stop playback or export. Keep the
+                // slot in the chain as a bypassed pass-through and report it in
+                // the result warnings so the UI can show what is missing.
+                Err(error) if error.code == ErrorCode::PluginMissing => {
+                    warnings.push(format!(
+                        "{} bypassed: {}",
+                        descriptor.path.display(),
+                        error.message
+                    ));
+                    slots.push(ChainSlot {
+                        summary: SlotSummary {
+                            name: descriptor.name,
+                            bypass: true,
+                            latency_samples: 0,
+                        },
+                        plugin: None,
+                    });
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
             let slot_latency = backend.latency_samples(&plugin);
             latency_samples = latency_samples.saturating_add(slot_latency);
             slots.push(ChainSlot {
@@ -153,7 +176,7 @@ impl<B: PluginBackend> Chain<B> {
             latency_samples,
             sample_rate,
             max_block_size: block_size,
-            warnings: Vec::new(),
+            warnings,
         })
     }
 

@@ -13,6 +13,7 @@ import {
   Scissors,
   ArrowLeftToLine,
   ChevronsLeft,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { TRACK_HEIGHT, clampTrackHeight } from '../../utils/timelineLayout';
 import { usePlaybackStore } from '../../hooks/PlaybackContext';
@@ -223,6 +224,16 @@ export const TrackHeader = memo(function TrackHeader({
             )}
           </div>
  
+          {Array.isArray(track.fx) && track.fx.length > 0 && (
+            <span
+              className={`track-fx-badge ${track.fxBypassAll ? 'is-bypassed' : ''}`}
+              title={`${track.fx.length} VST3 insert${track.fx.length === 1 ? '' : 's'}${track.fxBypassAll ? ' (bypassed)' : ''}`}
+            >
+              <SlidersHorizontal size={8} />
+              {track.fx.length}
+            </span>
+          )}
+
           {canDeleteTrack && onDeleteTrack && (
             <button
               className="track-btn delete-track-btn"

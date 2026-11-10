@@ -7,16 +7,36 @@
 import { readJson, writeJson } from '../utils/appStorage.js';
 
 const STORAGE_KEY = 'blahblah.audioSettings.v1';
- 
-export function loadAudioSettings() {
-  const parsed = readJson(STORAGE_KEY, null);
+
+function sanitizeSettings(value) {
+  const parsed = value && typeof value === 'object' ? value : {};
+  const cacheMb = Number(parsed.vstCacheLimitMb);
   return {
-    inputDeviceId: parsed?.inputDeviceId || 'default',
+    inputDeviceId: parsed.inputDeviceId || 'default',
+    // VST3 inserts are an experimental, Windows-desktop-only feature.
+    vstEnabled: parsed.vstEnabled === true,
+    vstScanDirs: Array.isArray(parsed.vstScanDirs)
+      ? [...new Set(parsed.vstScanDirs.filter((dir) => typeof dir === 'string' && dir.trim()).map((dir) => dir.trim()))]
+      : [],
+    vstCacheLimitMb: Number.isFinite(cacheMb) ? Math.min(8192, Math.max(128, Math.round(cacheMb))) : 2048,
   };
 }
- 
+
+export function loadAudioSettings() {
+  return sanitizeSettings(readJson(STORAGE_KEY, null));
+}
+
 export function saveAudioSettings(settings) {
-  writeJson(STORAGE_KEY, settings);
+  const next = sanitizeSettings({ ...loadAudioSettings(), ...settings });
+  writeJson(STORAGE_KEY, next);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('blahblah:audio-settings-changed', { detail: next }));
+  }
+  return next;
+}
+
+export function updateAudioSettings(patch) {
+  return saveAudioSettings({ ...loadAudioSettings(), ...patch });
 }
  
 /**
@@ -35,4 +55,5 @@ export async function listAudioInputDevices() {
       label: d.label || `Microphone ${i + 1}`,
     }));
 }
+
  

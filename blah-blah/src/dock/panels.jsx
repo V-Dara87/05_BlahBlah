@@ -17,6 +17,8 @@ import { useRecordingLevel } from '../hooks/recordingLevel';
 import { useSilencePreview } from '../hooks/silencePreview';
 import { useTimelineView } from './TimelineViewContext';
 import { useCurrentTime, useThrottledCurrentTime, useIsPlaying, useIsLooping, usePlaybackStore } from '../hooks/PlaybackContext';
+import { loadAudioSettings } from '../services/audioSettings';
+import { getTrackFxActions, useTrackFxRevision } from '../utils/trackFxStore';
  
 export const ProjectDockPanel = memo(function ProjectDockPanel() {
   // Selector-based (see hooks/editorStore.js): this panel only shows the
@@ -585,12 +587,29 @@ export const SilenceRemoverDockPanel = memo(function SilenceRemoverDockPanel({ a
 
 export const MixerDockPanel = memo(function MixerDockPanel() {
   const tracks = useEditorSelector((s) => s.tracks);
+  const projectFolderHandle = useEditorSelector((s) => s.projectFolderHandle);
   const { handleUpdateTrack } = useEditorActions();
+  const [vstEnabled, setVstEnabled] = useState(() => loadAudioSettings().vstEnabled);
+  // Re-render when a bounce status changes; the per-frame wet playback stays
+  // entirely outside React (see utils/trackFxStore.js).
+  useTrackFxRevision();
+  const fxActions = getTrackFxActions();
+
+  useEffect(() => {
+    const onChange = () => setVstEnabled(loadAudioSettings().vstEnabled);
+    window.addEventListener('blahblah:audio-settings-changed', onChange);
+    return () => window.removeEventListener('blahblah:audio-settings-changed', onChange);
+  }, []);
 
   return (
     <MixerPanel
       tracks={tracks}
       onUpdateTrack={handleUpdateTrack}
+      vstEnabled={vstEnabled}
+      projectFolderHandle={projectFolderHandle}
+      onOpenFxEditor={fxActions?.openEditor}
+      onBounceFx={fxActions?.bounceNow}
+      onAuditionFx={fxActions?.audition}
     />
   );
 });

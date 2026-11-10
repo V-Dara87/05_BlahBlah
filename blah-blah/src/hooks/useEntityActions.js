@@ -1338,6 +1338,8 @@ export function useEntityActions({
         locked: false,
         visible: true,
         volume: 1.0,
+        fx: [],
+        fxBypassAll: false,
       },
     ]);
   };

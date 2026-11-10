@@ -36,6 +36,8 @@ export function addTrack(project, {
     locked,
     visible,
     volume,
+    fx: [],
+    fxBypassAll: false,
   };
 
   project.tracks = [...tracks, newTrack];

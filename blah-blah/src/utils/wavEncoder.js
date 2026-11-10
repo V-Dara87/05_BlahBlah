@@ -72,3 +72,45 @@ export function encodeWav(samples, sampleRate) {
   }
   return new Blob([buffer], { type: 'audio/wav' });
 }
+
+/**
+ * Encode interleaved stereo Float32 samples as a 32-bit IEEE-float WAV.
+ * The VST host accepts float WAV and the intermediate dry signal needs more
+ * than 16-bit headroom before a plugin chain processes it.
+ *
+ * @param {Float32Array[]} channels two equal-length channel arrays
+ * @param {number} sampleRate
+ * @returns {Uint8Array}
+ */
+export function encodeWavFloat32(channels, sampleRate) {
+  const left = channels[0] || new Float32Array(0);
+  const right = channels[1] || left;
+  const frames = Math.min(left.length, right.length);
+  const numChannels = 2;
+  const bytesPerSample = 4;
+  const dataSize = frames * numChannels * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  writeAscii(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeAscii(view, 8, 'WAVE');
+  writeAscii(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 3, true); // WAVE_FORMAT_IEEE_FLOAT
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * numChannels * bytesPerSample, true);
+  view.setUint16(32, numChannels * bytesPerSample, true);
+  view.setUint16(34, 32, true);
+  writeAscii(view, 36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  let offset = 44;
+  for (let i = 0; i < frames; i++) {
+    view.setFloat32(offset, left[i] || 0, true);
+    view.setFloat32(offset + 4, right[i] || 0, true);
+    offset += 8;
+  }
+  return new Uint8Array(buffer);
+}

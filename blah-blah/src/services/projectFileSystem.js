@@ -531,9 +531,18 @@ export async function loadProjectFromDirectory(dirHandle, fallbackTracks = []) {
     const fromVersion = readProjectSchemaVersion(parsed);
     schemaWarning = warnIfSchemaVersionTooNew(parsed);
     const schemaProject = migrateProjectSchema(parsed, fromVersion, CURRENT_SCHEMA_VERSION);
+    const loadedTracks = schemaProject.tracks && schemaProject.tracks.length > 0
+      ? schemaProject.tracks
+      : fallbackTracks;
     projectMeta = {
       name: schemaProject.name || dirHandle.name,
-      tracks: schemaProject.tracks && schemaProject.tracks.length > 0 ? schemaProject.tracks : fallbackTracks,
+      // FX chains are additive: projects predating VST support have no `fx`
+      // field, and a hand-edited track must not crash the mixer.
+      tracks: loadedTracks.map((track) => ({
+        ...track,
+        fx: Array.isArray(track.fx) ? track.fx : [],
+        fxBypassAll: track.fxBypassAll === true,
+      })),
       entities: migrateEntities(Array.isArray(schemaProject.entities) ? schemaProject.entities : []),
       // Older projects saved before resolution existed (or a hand-edited
       // project.json missing/mangling it) fall back to the default rather

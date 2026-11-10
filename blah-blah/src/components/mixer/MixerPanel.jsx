@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef } from 'react';
-import { Volume2, VolumeX, Plus } from 'lucide-react';
+import { Volume2, VolumeX } from 'lucide-react';
 import { resolveEffectiveVolume } from '../../utils/trackAudio';
 import { getTrackPeakDb, METER_FLOOR_DB } from '../../utils/mediaAudio';
 import { isTimelineDragging } from '../../utils/dragState';
@@ -16,6 +16,7 @@ import {
   meterZone,
   snapToUnity,
 } from '../../utils/mixerMath';
+import { FxSlots } from './FxSlots';
 import './mixer-panel.css';
  
 // Meter geometry. The scale runs from METER_FLOOR_DB (-60) up to +6 dBFS so
@@ -186,6 +187,11 @@ const MixerStrip = memo(function MixerStrip({
   allTracks,
   onUpdateTrack,
   registerStrip,
+  vstEnabled,
+  projectFolderHandle,
+  onOpenFxEditor,
+  onBounceFx,
+  onAuditionFx,
 }) {
   const volume = Number.isFinite(track.volume) ? track.volume : 1;
   const isSilenced = resolveEffectiveVolume(1, track, allTracks) <= 0;
@@ -223,17 +229,15 @@ const MixerStrip = memo(function MixerStrip({
     <div ref={stripRef} className={`mixer-strip ${isSilenced ? 'is-silenced' : ''}`}>
       <div className="mixer-strip-name" title={track.name}>{track.name}</div>
  
-      {/* VST/effects slot — future scope. Placeholder only: not wired to
-          anything, shows where plugins will eventually slot in without
-          promising functionality that doesn't exist yet. */}
-      <button
-        type="button"
-        className="mixer-strip-plugin-slot"
-        title="Plugin slots (VST support planned — not available yet)"
-        disabled
-      >
-        <Plus size={10} />
-      </button>
+      <FxSlots
+        track={track}
+        vstEnabled={vstEnabled}
+        projectFolderHandle={projectFolderHandle}
+        onUpdateTrack={onUpdateTrack}
+        onOpenEditor={onOpenFxEditor}
+        onBounce={onBounceFx}
+        onAudition={onAuditionFx}
+      />
  
       <button
         type="button"
@@ -310,6 +314,11 @@ const MixerStrip = memo(function MixerStrip({
 export const MixerPanel = memo(function MixerPanel({
   tracks = [],
   onUpdateTrack,
+  vstEnabled = false,
+  projectFolderHandle = null,
+  onOpenFxEditor,
+  onBounceFx,
+  onAuditionFx,
 }) {
   // trackId -> { strip, meter, clip, readout } refs, plus per-strip meter
   // animation state (kept in a ref so it survives without re-rendering).
@@ -466,6 +475,11 @@ export const MixerPanel = memo(function MixerPanel({
           allTracks={tracks}
           onUpdateTrack={onUpdateTrack}
           registerStrip={registerStrip}
+          vstEnabled={vstEnabled}
+          projectFolderHandle={projectFolderHandle}
+          onOpenFxEditor={onOpenFxEditor}
+          onBounceFx={onBounceFx}
+          onAuditionFx={onAuditionFx}
         />
       ))}
     </div>

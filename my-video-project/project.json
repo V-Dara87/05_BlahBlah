@@ -2,7 +2,7 @@
   "name": "my-video-project",
   "version": "1.0",
   "schemaVersion": 1,
-  "lastModified": 1794111639749,
+  "lastModified": 1794298869294,
   "resolution": {
     "width": 1920,
     "height": 1080
@@ -17,7 +17,9 @@
       "solo": false,
       "locked": false,
       "visible": true,
-      "volume": 1
+      "volume": 1,
+      "fx": [],
+      "fxBypassAll": false
     },
     {
       "id": "track-2",
@@ -28,7 +30,9 @@
       "solo": false,
       "locked": false,
       "visible": true,
-      "volume": 1
+      "volume": 1,
+      "fx": [],
+      "fxBypassAll": false
     },
     {
       "id": "track-3",
@@ -39,7 +43,9 @@
       "solo": false,
       "locked": false,
       "visible": true,
-      "volume": 1
+      "volume": 1,
+      "fx": [],
+      "fxBypassAll": false
     },
     {
       "id": "track-4",
@@ -50,7 +56,9 @@
       "solo": false,
       "locked": false,
       "visible": true,
-      "volume": 1
+      "volume": 1,
+      "fx": [],
+      "fxBypassAll": false
     }
   ],
   "entities": [
@@ -198,7 +206,7 @@
       "active": true,
       "parentId": null,
       "trackId": "track-1",
-      "startTime": 11.424999999999997,
+      "startTime": 10.899999999999995,
       "duration": 5,
       "type": "empty",
       "src": "",

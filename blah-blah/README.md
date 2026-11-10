@@ -16,6 +16,20 @@ npm run dev
 
 Requires a Chromium browser with File System Access API (Chrome, Edge, Brave) for on-disk projects.
 
+## Desktop sidecars
+
+FFmpeg and whisper-cli live in `src-tauri/binaries`; the VST host is built from
+`src-tauri/vsthost-spike`. Prepare everything for this machine with one command:
+
+```bash
+npm run sidecars
+```
+
+Use `--force` to re-download/rebuild, or `--only ffmpeg|whisper|vst` to handle
+one binary. The VST host is Windows-only; on macOS/Linux that step is skipped.
+The VST binary is staged for the upcoming app wiring and is not yet listed in
+`externalBin`.
+
 ## AI Agent Automation & CLI (`@blahblah/cli` & `@blahblah/mcp`)
 
 BlahBlah is fully automatable by AI agents (Cursor, Claude Desktop, Antigravity, custom scripts) via its CLI and MCP Server:

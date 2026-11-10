@@ -3,6 +3,7 @@ import { Mic, AlertCircle, AlertTriangle, RefreshCw } from 'lucide-react';
 import { loadAudioSettings, saveAudioSettings, listAudioInputDevices } from '../../../services/audioSettings';
 import { useAudioRecorder } from '../../../hooks/useAudioRecorder';
 import { useRecordingLevel } from '../../../hooks/recordingLevel';
+import { VstSettingsSection } from './VstSettingsSection';
 
 /**
  * Turns the browser's microphone error into something a person can act on.
@@ -201,6 +202,8 @@ export function AudioTab({ onSettingsChanged }) {
         </div>
         <p className="hint-text-sm">{statusHint}</p>
       </div>
+
+      <VstSettingsSection />
     </div>
   );
 }

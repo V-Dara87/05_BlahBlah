@@ -11,7 +11,9 @@ export const INITIAL_TRACKS = [
     solo: false,
     locked: false,
     visible: true,
-    volume: 1.0
+    volume: 1.0,
+    fx: [],
+    fxBypassAll: false
   },
   {
     id: 'track-2',
@@ -22,7 +24,9 @@ export const INITIAL_TRACKS = [
     solo: false,
     locked: false,
     visible: true,
-    volume: 1.0
+    volume: 1.0,
+    fx: [],
+    fxBypassAll: false
   },
   {
     id: 'track-3',
@@ -33,7 +37,9 @@ export const INITIAL_TRACKS = [
     solo: false,
     locked: false,
     visible: true,
-    volume: 1.0
+    volume: 1.0,
+    fx: [],
+    fxBypassAll: false
   },
   {
     id: 'track-4',

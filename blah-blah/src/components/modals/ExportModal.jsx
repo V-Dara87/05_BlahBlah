@@ -20,6 +20,8 @@ import { formatTimecode } from '../../utils/timeFormat';
 import { isVideoEntity, isTransitionClipEntity } from '../../engine/ecs';
 import { auditTransitionClips, buildMediaDurationsFromAssets } from '../../engine/renderPipeline';
 import { isTauri } from '../../services/tauriFsAdapter';
+import { isFxChainActive } from '../../utils/fxChain';
+import { bounceTracksForExport, mixTrackFxBounces } from '../../services/trackFxBounce';
 import { openExportFileStream } from '../../services/exportFileStream';
 import {
   drawExportFrame,
@@ -98,6 +100,7 @@ export function ExportModal({
   // prop) rendered blank specifically during export, even though the
   // live preview showed it correctly.
   mediaAssets = [],
+  projectFolderHandle = null,
   // Real-import support: awaited once at export start so every script's
   // async bundle has landed before the (synchronous) frame loop reads the
   // compile cache — a script using `import` would otherwise render in its
@@ -378,6 +381,32 @@ export function ExportModal({
           // cut — empty for a project with no transition clips, so this changes
           // nothing for existing projects.
           const transitionAudioWindows = getTransitionAudioWindows({ entities: clips, tracks });
+          // VST inserts are rendered once per track before the main mixdown.
+          // A successful wet bounce replaces that track's dry sources (so the
+          // plugin is not applied twice). A failed bounce stays dry.
+          const fxTracks = (tracks || []).filter(isFxChainActive);
+          let fxBounces = [];
+          let skipTrackIds = null;
+          if (fxTracks.length > 0 && projectFolderHandle && isTauri()) {
+            try {
+              const fxResult = await bounceTracksForExport({
+                tracks,
+                entities: clips,
+                mediaAssets,
+                projectFolderHandle,
+                sampleRate: AUDIO_SAMPLE_RATE,
+                onProgress: ({ track, index, total }) => {
+                  console.log(`FX export bounce ${index + 1}/${total}: ${track.name}`);
+                },
+              });
+              fxBounces = fxResult.bounces;
+              if (fxBounces.length > 0) {
+                skipTrackIds = new Set(fxBounces.map((bounce) => bounce.trackId));
+              }
+            } catch (fxError) {
+              console.warn('Export audio: FX bounce failed, using dry tracks:', fxError);
+            }
+          }
           mixedAudioBuffer = await mixdownAudio({
             entities: clips,
             exportStartTime,
@@ -391,7 +420,18 @@ export function ExportModal({
             // has no on-disk paths (browser): the fallback decodes whole and
             // warns for long sources.
             mediaAssets,
+            skipTrackIds,
           });
+          if (fxBounces.length > 0) {
+            mixedAudioBuffer = await mixTrackFxBounces({
+              baseBuffer: mixedAudioBuffer,
+              bounces: fxBounces,
+              tracks,
+              exportStartTime,
+              exportDuration,
+              sampleRate: AUDIO_SAMPLE_RATE,
+            });
+          }
         } catch (err) {
           console.warn('Export audio: mixdown failed, exporting video only:', err);
           mixedAudioBuffer = null;

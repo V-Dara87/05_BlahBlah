@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { setMediaElementVolume, setMediaElementRate, resumeAudioContext, disconnectMediaGainChain } from '../utils/mediaAudio';
 import { resolveEffectiveVolume, findEntityTrack } from '../utils/trackAudio';
 import { resolveTransitionAudioForEntity } from '../engine/renderPipeline';
+import { isTrackFxPreviewActive } from '../utils/trackFxStore';
  
 /** Idle (inactive) audio elements kept alive for quick re-entry; older ones are released. */
 const MAX_IDLE_AUDIO_ELEMENTS = 8;
@@ -144,6 +145,7 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
           // on the video clip never silently does nothing.
           const track = findEntityTrack(entity, tracks);
           let effectiveVolume = resolveEffectiveVolume(videoComp.volume ?? 0, track, tracks);
+          if (track?.id && isTrackFxPreviewActive(track.id)) effectiveVolume = 0;
           // Step 5: crossfade A/B's own gain across a transition window
           // touching this clip, same 0..1 envelope the export mixdown
           // applies (getTransitionAudioWindows in renderPipeline.js) — so
@@ -259,6 +261,11 @@ export function useMediaSync({ entities, activeVideoItems, computedEntities, cur
           const offset = audioComp.mediaOffset || 0;
           const localTime = (currentTime - entity.startTime) * speed + offset;
           const track = findEntityTrack(entity, tracks);
+          if (track?.id && isTrackFxPreviewActive(track.id)) {
+            const dry = audioRefs.current[entity.id];
+            if (dry && !dry.paused) dry.pause();
+            return;
+          }
           let effectiveVolume = resolveEffectiveVolume(audioComp.volume ?? 1, track, tracks);
           // Step 5: same crossfade as the video branch above. This entity
           // may itself be an AudioSource child of a video clip that is the

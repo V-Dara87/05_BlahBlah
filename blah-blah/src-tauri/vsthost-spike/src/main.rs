@@ -149,7 +149,25 @@ fn cmd_info(args: &Args) -> CliResult<()> {
 }
 
 fn cmd_scan(args: &Args, log: &mut Log) -> CliResult<()> {
-    args.ensure_known(&["log-file", "dir", "out"])?;
+    args.ensure_known(&["log-file", "dir", "out", "per-plugin-timeout-ms"])?;
+    if let Some(raw) = args.get("per-plugin-timeout-ms") {
+        let timeout = parse_u32(raw, "per-plugin-timeout-ms")?;
+        if timeout == 0 || timeout > 600_000 {
+            return Err(CliError::bad_args(
+                "per-plugin-timeout-ms must be between 1 and 600000",
+            ));
+        }
+        // The scan runs in this process so there is no child probe to time out
+        // here. The app enforces this budget by cancelling the whole scan
+        // sidecar when it elapses; accepting the option keeps one CLI contract.
+        log.event(
+            "info",
+            &format!("scan: per-plugin timeout {timeout} ms (host-enforced)"),
+            None,
+            None,
+            None,
+        );
+    }
     let dirs = args
         .all("dir")
         .iter()
@@ -776,7 +794,7 @@ fn print_help() {
          \n\
          Usage:\n\
            vsthost-spike info\n\
-           vsthost-spike scan [--dir <abs folder>]... [--out <abs json>]\n\
+           vsthost scan [--dir <abs folder>]... [--out <abs json>] [--per-plugin-timeout-ms 30000]\n\
            vsthost-spike process --plugin <abs .vst3> --class-id <cid> --in <abs wav> --out <abs wav>\n\
                                  [--sample-rate <n>] [--block-size 1024] [--tail-max-ms 5000]\n\
                                  [--discard-head-ms 0] [--state-in <abs file|none>]\n\

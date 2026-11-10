@@ -1971,7 +1971,7 @@ function resolveAudibleWindow(entity, entityMap, trackMap, transitionAudioWindow
  * no transition clips in the project pass an empty map and every source's
  * `gainAt` is null, matching prior behaviour exactly.
  */
-function collectAudioSources({ entities, exportStartTime, exportDuration, tracks = [], transitionAudioWindows = new Map() }) {
+function collectAudioSources({ entities, exportStartTime, exportDuration, tracks = [], transitionAudioWindows = new Map(), skipTrackIds = null }) {
   const exportEndTime = exportStartTime + exportDuration;
   const entityMap = new Map((entities || []).map((e) => [e.id, e]));
   const trackMap = new Map((tracks || []).map((t) => [t.id, t]));
@@ -1983,6 +1983,7 @@ function collectAudioSources({ entities, exportStartTime, exportDuration, tracks
     if (window.end <= exportStartTime || window.start >= exportEndTime) continue;
  
     const track = findEntityTrack(entity, tracks);
+    if (track && skipTrackIds?.has(track.id)) continue;
     if (resolveEffectiveVolume(1, track, tracks) <= 0) continue;
  
     const audioComp = entity.components?.find((c) => c.type === 'AudioSource');
@@ -2036,8 +2037,12 @@ export async function mixdownAudio({
   // FFmpeg. Omitted/empty simply means every source decodes whole, exactly as
   // before this change.
   mediaAssets = [],
+  // Tracks whose wet VST bounce replaces their dry mix in this export. The
+  // caller supplies the bounce buffer separately (mixTrackFxBounces) so the
+  // regular mixdown never double-counts a processed track.
+  skipTrackIds = null,
 }) {
-  const sources = collectAudioSources({ entities, exportStartTime, exportDuration, tracks, transitionAudioWindows });
+  const sources = collectAudioSources({ entities, exportStartTime, exportDuration, tracks, transitionAudioWindows, skipTrackIds });
   if (sources.length === 0) return null;
  
   const totalFrames = Math.max(1, Math.ceil(exportDuration * sampleRate));
