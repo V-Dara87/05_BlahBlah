@@ -1,3 +1,4 @@
+import { ASR_DEFAULTS } from '../../../services/asrSettings';
 import { AUTOSAVE_DEFAULTS } from '../../../services/autosaveSettings';
 import { EDITOR_DEFAULTS } from '../../../services/editorSettings';
 import { saveAudioSettings } from '../../../services/audioSettings';
@@ -65,6 +66,11 @@ export const RESETTABLE_SETTINGS = [
       saveAudioSettings(defaults);
       ctx.onSettingsChanged?.(defaults);
     },
+  },
+  {
+    id: 'speechRecognition',
+    label: 'Speech recognition interpreter',
+    reset: (ctx) => ctx.onAsrSettingsChange?.({ ...ASR_DEFAULTS }),
   },
   {
     id: 'editor',

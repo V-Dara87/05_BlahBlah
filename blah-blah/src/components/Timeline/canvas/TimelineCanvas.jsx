@@ -1,6 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, startTransition, Profiler } from 'react';
 import { perfBegin, perfEnd, perfTime, perfProfilerOnRender } from '../../../utils/perfLog';
-import { Scissors, Copy, ClipboardPaste, ArrowLeftToLine, Unlink, Link2 } from 'lucide-react';
+import { Scissors, Copy, ClipboardPaste, ArrowLeftToLine, Unlink, Link2, MessageSquarePlus } from 'lucide-react';
+import { addNoteAt } from '../../../hooks/notesStore';
+import { DEFAULT_RANGE_SECONDS } from '../../../services/notesCore';
 import { buildTimelineScene, CLIP_ZONES } from '../../../utils/timelineScene';
 import { readTimelineTheme, drawTimelineScene, waveformRectFor, wantsWaveform, cursorForZone } from './drawTimeline';
 import { bucketsForCard } from './drawWaveform';
@@ -1893,6 +1895,23 @@ export const TimelineCanvas = memo(function TimelineCanvas({
     setTimeout(() => onPasteClips?.(), 0);
   };
 
+  // Frame notes for AI agents (see hooks/notesStore.js). A lane note pins to the
+  // clicked time; a clip note pins to the clip's start, or covers the clip (or
+  // the whole selection) as a time range.
+  const handleLaneAddNote = (range) => {
+    const at = laneMenu?.time;
+    closeLaneMenu();
+    void addNoteAt({ time: Number.isFinite(at) ? at : undefined, duration: range ? DEFAULT_RANGE_SECONDS : 0 });
+  };
+  const handleCtxAddNote = (range) => {
+    const targets = ctxActiveTargetIds.map((id) => scene?.byId?.get(id)).filter(Boolean);
+    closeCtxMenu();
+    if (targets.length === 0) return;
+    const start = Math.min(...targets.map((t) => t.startTime));
+    const end = Math.max(...targets.map((t) => t.endTime));
+    void addNoteAt({ time: start, duration: range ? Math.max(0, end - start) : 0 });
+  };
+
   // ── Drag & drop onto a lane ───────────────────────────────────────────
   // The canvas layer is the topmost surface over the lanes, so in this mode a
   // dragged media asset / project item lands here — Timeline.jsx's per-row
@@ -1985,6 +2004,15 @@ export const TimelineCanvas = memo(function TimelineCanvas({
             <span className="ctx-menu-label"><ClipboardPaste size={12} /> Paste</span>
             <span className="ctx-menu-hint">Ctrl+V</span>
           </button>
+          <div className="ctx-menu-divider" />
+          <button className="ctx-menu-item ctx-menu-row" onClick={() => handleLaneAddNote(false)}>
+            <span className="ctx-menu-label"><MessageSquarePlus size={12} /> Add Note Here</span>
+            <span className="ctx-menu-hint">M</span>
+          </button>
+          <button className="ctx-menu-item ctx-menu-row" onClick={() => handleLaneAddNote(true)}>
+            <span className="ctx-menu-label"><MessageSquarePlus size={12} /> Add Range Note Here</span>
+            <span className="ctx-menu-hint">{DEFAULT_RANGE_SECONDS}s</span>
+          </button>
         </ContextMenu>
       )}
       {ctxMenu && ctxClip && (
@@ -2046,6 +2074,13 @@ export const TimelineCanvas = memo(function TimelineCanvas({
               <Link2 size={12} /> Set Parent: {p.name}
             </button>
           ))}
+          <div className="ctx-menu-divider" />
+          <button className="ctx-menu-item" onClick={() => handleCtxAddNote(false)}>
+            <MessageSquarePlus size={12} /> Add Note at {ctxIsMulti ? 'Selection' : 'Clip'} Start
+          </button>
+          <button className="ctx-menu-item" onClick={() => handleCtxAddNote(true)}>
+            <MessageSquarePlus size={12} /> Add Note for {ctxIsMulti ? 'Selection' : 'Clip'} (Range)
+          </button>
         </ContextMenu>
       )}
     </div>

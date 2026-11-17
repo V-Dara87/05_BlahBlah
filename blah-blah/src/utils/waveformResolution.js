@@ -16,19 +16,20 @@
 /**
  * Envelope buckets per pixel of box width, as a function of the box's HEIGHT.
  *
- * A short/collapsed track (the default ~48px clip height) only needs ~1
- * bucket/px — any finer and the shape looks identical but costs more CPU. A
- * track the user has resized tall gets progressively more buckets/px, so
- * expanding a track keeps revealing real sample-level detail instead of just
- * scaling up the same coarse shape (the "make it very detailed like DaVinci
- * Resolve" ask).
+ * The horizontal resolution of a waveform can never be finer than the screen's
+ * device pixels, and a track's HEIGHT has nothing to do with that. This used to
+ * climb to 6 buckets/px for a tall track, which asked for (and sliced, and
+ * stored, and walked in the draw path) up to 6x more buckets than a screen can
+ * show: dragging a track tall made the waveform lag for no visible gain.
+ *
+ * It is now capped at 2 buckets/px — enough for a 2x (retina) display — and the
+ * draw pass additionally merges buckets that land in the same device-pixel
+ * column (see drawWaveformEnvelope), so a 3x display or a stale finer envelope
+ * costs nothing extra either.
  */
 export function detailForHeight(height) {
   if (height <= 56) return 1; // compact/default clip height
-  if (height <= 90) return 1.5;
-  if (height <= 140) return 2.5;
-  if (height <= 220) return 4;
-  return 6; // fully expanded track — maximum envelope resolution
+  return 2; // taller tracks / high-DPI screens: 2 buckets per CSS pixel is the useful maximum
 }
 
 /** Smallest envelope any box asks for. */

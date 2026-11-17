@@ -1,8 +1,9 @@
-import { MonitorPlay, Save, Mic, Keyboard, Cpu, Palette, CircleDot } from 'lucide-react';
+import { MonitorPlay, Save, Mic, AudioLines, Keyboard, Cpu, Palette, CircleDot } from 'lucide-react';
 import { ProjectTab } from './ProjectTab';
 import { AutosaveTab } from './AutosaveTab';
 import { AppearanceTab } from './AppearanceTab';
 import { AudioTab } from './AudioTab';
+import { SpeechRecognitionTab } from './SpeechRecognitionTab';
 import { KeyboardShortcutsTab } from './KeyboardShortcutsTab';
 import { PieMenuTab } from './PieMenuTab';
 import { SystemTab } from './SystemTab';
@@ -221,6 +222,20 @@ export const SETTINGS_TABS = [
     keywords: ['microphone', 'mic', 'input', 'device', 'recording', 'level'],
     Component: AudioTab,
     getProps: (ctx) => ({ onSettingsChanged: ctx.onSettingsChanged }),
+  },
+  {
+    id: 'speechRecognition',
+    label: 'Speech Recognition',
+    icon: AudioLines,
+    section: 'media',
+    scope: 'global',
+    subtitle: 'Local speech-to-text engines used by auto-subtitles',
+    keywords: ['whisper', 'qwen', 'qwen3-asr', 'asr', 'subtitle', 'transcription', 'python', 'torch', 'cuda', 'gpu'],
+    Component: SpeechRecognitionTab,
+    getProps: (ctx) => ({
+      settings: ctx.asrSettings,
+      onChange: ctx.onAsrSettingsChange,
+    }),
   },
 
   // ---- System --------------------------------------------------------------

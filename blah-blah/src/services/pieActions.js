@@ -4,6 +4,7 @@ import {
   MousePointer2, Layers, Download, Settings, Code, FilePlus, FolderOpen, Sliders,
   PlaySquare, Clock, Activity, Volume2, Terminal, Package, X,
 } from 'lucide-react';
+import { DOCK_WINDOW_TITLES } from '../dock/dockWindows';
 
 /**
  * The catalog of everything a radial-menu slice can run.
@@ -97,14 +98,5 @@ export function groupPieActions() {
 }
 
 // Which dock panel each `panel-*` action opens, and the tab title to give it.
-export const PIE_PANEL_TITLES = {
-  inspector: 'Inspector',
-  preview: 'Preview',
-  project: 'Project',
-  timeline: 'Timeline',
-  dopesheet: 'Dopesheet',
-  curveEditor: 'Curves',
-  silenceRemover: 'Silence Remover',
-  mixer: 'Mixer',
-  console: 'Console',
-};
+// Titles come from the dock window registry (dock/dockWindows.js).
+export const PIE_PANEL_TITLES = DOCK_WINDOW_TITLES;

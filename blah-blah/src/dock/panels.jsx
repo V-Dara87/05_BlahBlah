@@ -10,6 +10,7 @@ import { CurveEditorTab } from '../components/shared/CurveEditor';
 import { SilenceRemoverPanel } from '../components/silence-remover/SilenceRemoverPanel';
 import { MixerPanel } from '../components/mixer/MixerPanel';
 import { ConsolePanel } from '../components/shared/ConsolePanel';
+import { PackageManagerPanel } from '../components/modals/PackageManagerModal';
 import { setKeyframeCurve, findKeyframeById, DEFAULT_CP1, DEFAULT_CP2 } from '../engine/keyframes';
 import { useEditorActions } from './EditorContext';
 import { useEditorSelector, useEditorStore } from '../hooks/editorStore';
@@ -410,6 +411,7 @@ export const DopesheetDockPanel = memo(function DopesheetDockPanel() {
   const canUndo = useEditorSelector((s) => s.canUndo);
   const canRedo = useEditorSelector((s) => s.canRedo);
   const snappingEnabled = useEditorSelector((s) => s.snappingEnabled);
+  const autoKeyEnabled = useEditorSelector((s) => s.autoKeyEnabled);
   const {
     handleUpdateEntity,
     setSelectedKeyId,
@@ -465,6 +467,7 @@ export const DopesheetDockPanel = memo(function DopesheetDockPanel() {
       onDuplicateSelected={handleDuplicateSelected}
       onToggleSnapping={handleToggleSnapping}
       snappingEnabled={snappingEnabled}
+      autoKeyEnabled={autoKeyEnabled}
     />
   );
 });
@@ -628,4 +631,17 @@ export const ConsoleDockPanel = memo(function ConsoleDockPanel() {
     if (script) onOpenScriptEditor(script);
   }, [store, onOpenScriptEditor]);
   return <ConsolePanel onOpenScript={onOpenScriptEditor ? handleOpenScript : undefined} />;
+});
+
+export const PackageManagerDockPanel = memo(function PackageManagerDockPanel() {
+  const { onCreateScript, onOpenScriptEditor } = useEditorActions();
+  return (
+    <div className="dock-panel-root">
+      <PackageManagerPanel
+        initialCategory="all"
+        onCreateScript={onCreateScript}
+        onOpenScriptEditor={onOpenScriptEditor}
+      />
+    </div>
+  );
 });

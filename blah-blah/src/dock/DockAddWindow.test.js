@@ -18,9 +18,11 @@ test('AVAILABLE_DOCK_WINDOWS - contains all standard BlahBlah panels', () => {
     'silenceRemover',
     'mixer',
     'console',
+    'packageManager',
+    'notes',
   ];
   assert.deepEqual(ids, expected);
-  assert.equal(AVAILABLE_DOCK_WINDOWS.length, 9);
+  assert.equal(AVAILABLE_DOCK_WINDOWS.length, 11);
 });
 
 test('openOrAddWindowToGroup - focuses window if already present in target group', () => {

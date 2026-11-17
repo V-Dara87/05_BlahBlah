@@ -1,4 +1,50 @@
-/* Package Manager Modal — Unity Pro Dark Styling */
+/* Package Manager — Unity Pro Dark Styling */
+
+/* ── Dock Panel root (fills its dock container) ── */
+.pkg-panel-root {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  color: #e2e8f0;
+  font-family: inherit;
+  background: #11131a;
+  container-type: inline-size;
+}
+
+@container (max-width: 640px) {
+  .pkg-tab-bar {
+    flex-wrap: wrap;
+    height: auto;
+    padding: 6px 10px;
+    gap: 6px;
+  }
+  .pkg-tab-bar-right {
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+  .pkg-search-input {
+    width: 110px;
+  }
+  .pkg-panel-body {
+    grid-template-columns: 200px 1fr;
+  }
+}
+
+@container (max-width: 480px) {
+  .pkg-panel-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: 170px 1fr;
+  }
+  .pkg-sidebar {
+    border-right: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  }
+}
+
+/* ── Modal backdrop + wrapper (legacy/fallback modal usage) ── */
 .pkg-modal-backdrop {
   position: fixed;
   inset: 0;
@@ -16,129 +62,101 @@
   to { opacity: 1; }
 }
 
-.pkg-modal {
+.pkg-modal-wrap {
   width: 92%;
-  max-width: 990px;
-  height: 640px;
+  max-width: 1020px;
+  height: 660px;
   max-height: 92vh;
   background: #14161f;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 10px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.05);
-  display: flex;
-  flex-direction: column;
   overflow: hidden;
-  color: #e2e8f0;
-  font-family: inherit;
-}
-
-/* Header */
-.pkg-modal-header {
-  padding: 12px 18px;
-  background: #1a1c26;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.pkg-header-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.pkg-modal-icon-badge {
-  width: 30px;
-  height: 30px;
-  border-radius: 7px;
-  background: linear-gradient(135deg, rgba(56, 189, 248, 0.2), rgba(99, 102, 241, 0.25));
-  border: 1px solid rgba(56, 189, 248, 0.35);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #38bdf8;
-}
-
-.pkg-modal-titles {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.pkg-modal-title {
-  font-size: 13px;
-  font-weight: 700;
-  color: #f8fafc;
-  letter-spacing: -0.01em;
-}
-
-.pkg-modal-subtitle {
-  font-size: 10.5px;
-  color: #94a3b8;
-}
-
-.pkg-header-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
 }
 
 .pkg-storage-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  padding: 4px 9px;
-  border-radius: 14px;
+  gap: 5px;
+  font-size: 10px;
+  padding: 3px 7px;
+  border-radius: 10px;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  color: #cbd5e1;
+  color: #94a3b8;
 }
 
-.pkg-modal-close-btn {
-  background: transparent;
-  border: none;
-  color: #94a3b8;
-  cursor: pointer;
-  padding: 5px;
-  border-radius: 6px;
+/* ── Tab Bar ── */
+.pkg-tab-bar {
   display: flex;
   align-items: center;
-  justify-content: center;
-  transition: all 0.15s ease;
-}
-
-.pkg-modal-close-btn:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
-}
-
-/* Modal Body */
-.pkg-modal-body {
-  flex: 1;
-  display: grid;
-  grid-template-columns: 290px 1fr;
-  min-height: 0;
-  background: #11131a;
-}
-
-/* Sidebar */
-.pkg-sidebar {
-  border-right: 1px solid rgba(255, 255, 255, 0.07);
-  display: flex;
-  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 14px;
   background: #161822;
-  overflow: hidden;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  flex-shrink: 0;
+  min-height: 40px;
 }
 
-.pkg-sidebar-top {
-  padding: 10px 12px;
+.pkg-tabs {
   display: flex;
-  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  height: 100%;
+}
+
+.pkg-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 13px;
+  height: 40px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #64748b;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.14s ease;
+  white-space: nowrap;
+  position: relative;
+}
+
+.pkg-tab:hover {
+  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.pkg-tab.active {
+  color: #38bdf8;
+  font-weight: 700;
+  border-bottom-color: #38bdf8;
+  background: rgba(56, 189, 248, 0.07);
+}
+
+.pkg-tab-count {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #64748b;
+  line-height: 1.4;
+}
+
+.pkg-tab.active .pkg-tab-count {
+  background: rgba(56, 189, 248, 0.2);
+  color: #38bdf8;
+}
+
+/* Tab bar right side — search + filters */
+.pkg-tab-bar-right {
+  display: flex;
+  align-items: center;
   gap: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
 }
 
 .pkg-search-wrapper {
@@ -149,18 +167,18 @@
 
 .pkg-search-icon {
   position: absolute;
-  left: 8px;
+  left: 7px;
   color: #64748b;
   pointer-events: none;
 }
 
 .pkg-search-input {
-  width: 100%;
+  width: 170px;
   background: #0f1118;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 6px;
-  padding: 6px 26px 6px 26px;
-  font-size: 11.5px;
+  padding: 5px 24px 5px 24px;
+  font-size: 11px;
   color: #f1f5f9;
   transition: border-color 0.15s ease;
 }
@@ -169,6 +187,7 @@
   outline: none;
   border-color: #38bdf8;
   box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.15);
+  width: 200px;
 }
 
 .pkg-search-clear {
@@ -187,76 +206,10 @@
   color: #cbd5e1;
 }
 
-/* Categories List */
-.pkg-categories-nav {
-  padding: 6px 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.pkg-nav-btn {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  background: transparent;
-  border: none;
-  border-radius: 6px;
-  padding: 5px 8px;
-  color: #94a3b8;
-  font-size: 11px;
-  cursor: pointer;
-  transition: all 0.12s ease;
-  text-align: left;
-}
-
-.pkg-nav-btn-content {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.pkg-nav-btn:hover {
-  background: rgba(255, 255, 255, 0.04);
-  color: #e2e8f0;
-}
-
-.pkg-nav-btn.active {
-  background: rgba(56, 189, 248, 0.12);
-  color: #38bdf8;
-  font-weight: 600;
-}
-
-.pkg-nav-count {
-  font-size: 9.5px;
-  padding: 1px 5px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.07);
-  color: #94a3b8;
-}
-
-.pkg-nav-btn.active .pkg-nav-count {
-  background: rgba(56, 189, 248, 0.25);
-  color: #38bdf8;
-  font-weight: 700;
-}
-
-/* Filter & Sort Controls */
-.pkg-controls-row {
-  padding: 6px 12px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  background: rgba(0, 0, 0, 0.12);
-}
-
+/* Status pills */
 .pkg-status-filters {
   display: flex;
-  gap: 3px;
+  gap: 2px;
 }
 
 .pkg-filter-pill {
@@ -264,7 +217,7 @@
   border: 1px solid transparent;
   color: #64748b;
   font-size: 9.5px;
-  padding: 2px 6px;
+  padding: 3px 7px;
   border-radius: 4px;
   cursor: pointer;
   font-weight: 600;
@@ -287,13 +240,31 @@
   color: #94a3b8;
   font-size: 9.5px;
   border-radius: 4px;
-  padding: 2px 4px;
+  padding: 3px 5px;
   cursor: pointer;
 }
 
 .pkg-sort-select:focus {
   outline: none;
   border-color: #38bdf8;
+}
+
+/* ── Panel Body (flex fill for the dock panel) ── */
+.pkg-panel-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  min-height: 0;
+  background: #11131a;
+}
+
+/* ── Sidebar (package list only) ── */
+.pkg-sidebar {
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
+  display: flex;
+  flex-direction: column;
+  background: #161822;
+  overflow: hidden;
 }
 
 /* Package List Items */
@@ -437,9 +408,10 @@
   grid-template-columns: 1fr 1fr;
   gap: 6px;
   background: #141620;
+  flex-shrink: 0;
 }
 
-/* Detail Area */
+/* ── Detail Area ── */
 .pkg-detail-pane {
   padding: 22px 24px;
   overflow-y: auto;
@@ -642,7 +614,7 @@
   overflow-x: auto;
 }
 
-/* Technical Details Collapsible */
+/* Technical Details */
 .pkg-tech-box {
   background: rgba(0, 0, 0, 0.2);
   border: 1px solid rgba(255, 255, 255, 0.05);
@@ -674,7 +646,7 @@
   font-size: 10px;
 }
 
-/* Custom Model Modal / Form */
+/* ── Custom Package Form ── */
 .pkg-custom-tabs {
   display: flex;
   gap: 6px;
@@ -734,4 +706,26 @@
 .pkg-form-input:focus {
   outline: none;
   border-color: #38bdf8;
+}
+
+/* ── Scrollbar styling ── */
+.pkg-items-list::-webkit-scrollbar,
+.pkg-detail-pane::-webkit-scrollbar {
+  width: 4px;
+}
+
+.pkg-items-list::-webkit-scrollbar-track,
+.pkg-detail-pane::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.pkg-items-list::-webkit-scrollbar-thumb,
+.pkg-detail-pane::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}
+
+.pkg-items-list::-webkit-scrollbar-thumb:hover,
+.pkg-detail-pane::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.18);
 }

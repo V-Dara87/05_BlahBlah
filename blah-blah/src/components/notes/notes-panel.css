@@ -1,0 +1,321 @@
+/* Notes dock tab (components/notes/NotesPanel.jsx).
+   Colours resolve to the editor's theme variables (index.css / themeSettings.js). */
+
+.notes-panel {
+  --notes-amber: var(--unity-accent-amber, #f59e0b);
+  --notes-red: var(--unity-accent-red, #ef4444);
+  --notes-green: #22c55e;
+
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--unity-dark);
+  color: var(--unity-text);
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 11px;
+  overflow: hidden;
+}
+
+.notes-panel.notes-empty {
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  text-align: center;
+  color: var(--unity-text-dim);
+}
+
+.notes-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  min-height: 30px;
+  background: var(--unity-panel);
+  border-bottom: 1px solid var(--unity-border);
+  flex-shrink: 0;
+}
+
+.notes-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--unity-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.notes-badge {
+  font-size: 10px;
+  color: var(--unity-text-dim);
+}
+
+.notes-busy {
+  font-size: 10px;
+  color: var(--notes-amber);
+}
+
+.notes-spacer {
+  flex: 1;
+}
+
+.notes-btn,
+.notes-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--unity-border);
+  border-radius: 3px;
+  background: var(--unity-subtle, transparent);
+  color: var(--unity-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.notes-icon-btn {
+  padding: 0 6px;
+  justify-content: center;
+}
+
+.notes-btn:hover,
+.notes-icon-btn:hover {
+  background: var(--unity-hover);
+}
+
+.notes-icon-btn.is-danger:hover {
+  color: var(--notes-red);
+  border-color: var(--notes-red);
+}
+
+.notes-filters {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--unity-border);
+  flex-shrink: 0;
+}
+
+.notes-filter {
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--unity-text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.notes-filter span {
+  color: var(--unity-text-dim);
+}
+
+.notes-filter.is-on {
+  background: rgba(var(--unity-accent-rgb), 0.16);
+  border-color: rgba(var(--unity-accent-rgb), 0.5);
+  color: var(--unity-text);
+}
+
+.notes-banner {
+  margin: 6px 8px 0;
+  padding: 5px 8px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--notes-amber) 12%, transparent);
+  color: var(--unity-text);
+  flex-shrink: 0;
+}
+
+.notes-banner.is-error {
+  background: color-mix(in srgb, var(--notes-red) 16%, transparent);
+}
+
+.notes-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.notes-list > .notes-empty {
+  padding: 18px 8px;
+  text-align: center;
+  color: var(--unity-text-dim);
+  line-height: 1.5;
+}
+
+.notes-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--unity-border);
+  border-left: 3px solid var(--notes-amber);
+  border-radius: 4px;
+  background: var(--unity-panel);
+  flex-shrink: 0;
+}
+
+.notes-card.is-done {
+  border-left-color: var(--notes-green);
+  opacity: 0.72;
+}
+
+.notes-card.is-active {
+  border-color: rgba(var(--unity-accent-rgb), 0.7);
+  border-left-color: var(--unity-accent-blue, #3b82f6);
+  opacity: 1;
+}
+
+.notes-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.notes-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.notes-time {
+  padding: 1px 6px;
+  border: 1px solid var(--unity-border);
+  border-radius: 3px;
+  background: var(--unity-darkest, var(--unity-dark));
+  color: var(--unity-accent-blue, #60a5fa);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.notes-time:hover {
+  background: var(--unity-hover);
+}
+
+.notes-text {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 48px;
+  padding: 6px;
+  border: 1px solid var(--unity-border);
+  border-radius: 3px;
+  background: var(--unity-darkest, var(--unity-dark));
+  color: var(--unity-text);
+  font: inherit;
+  line-height: 1.4;
+}
+
+.notes-text:focus {
+  outline: none;
+  border-color: var(--unity-accent-blue, #3b82f6);
+}
+
+.notes-timing {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--unity-text-muted);
+}
+
+.notes-timing label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.notes-timing input {
+  width: 62px;
+  padding: 1px 4px;
+  border: 1px solid var(--unity-border);
+  border-radius: 3px;
+  background: var(--unity-darkest, var(--unity-dark));
+  color: var(--unity-text);
+  font: inherit;
+}
+
+.notes-frames {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.notes-frame {
+  margin: 0;
+  width: 120px;
+}
+
+.notes-frame img {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--unity-border);
+  border-radius: 3px;
+  cursor: zoom-in;
+}
+
+.notes-frame.is-expanded {
+  width: 100%;
+}
+
+.notes-frame.is-expanded img {
+  cursor: zoom-out;
+}
+
+.notes-frame figcaption {
+  margin-top: 2px;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--unity-text-dim);
+}
+
+.notes-frame-missing {
+  padding: 12px 4px;
+  border: 1px dashed var(--unity-border);
+  border-radius: 3px;
+  text-align: center;
+  color: var(--unity-text-dim);
+}
+
+.notes-reply {
+  padding: 5px 8px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--notes-green) 10%, transparent);
+  color: var(--unity-text);
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
+.notes-footer {
+  padding: 4px 8px;
+  border-top: 1px solid var(--unity-border);
+  color: var(--unity-text-dim);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.notes-marks {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--notes-red);
+}
+
+.notes-link-btn {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--unity-text-muted);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.notes-link-btn:hover {
+  color: var(--notes-red);
+}

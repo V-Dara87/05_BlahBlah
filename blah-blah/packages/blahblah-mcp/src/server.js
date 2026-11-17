@@ -32,6 +32,7 @@ import {
   evaluateTimelineAtTime,
   renderFrameSvg,
   renderFramePng,
+  diagnoseFrameLayout,
   exportWithFfmpeg,
   sendFileCommand,
   sendHttpCommand,
@@ -649,6 +650,7 @@ export async function handleToolCall(name, args = {}) {
       }
       const { project } = await loadProject(dir);
       const evaluated = evaluateTimelineAtTime(project, time);
+      const diagnostics = diagnoseFrameLayout(project, time);
       const isExplicitSvg = args.format === 'svg' || (!args.format && /\.svg$/i.test(args.outFile || ''));
       const source = args.source || (isExplicitSvg ? 'schematic' : 'editor');
       const timeoutMs = Math.min(Math.max(numberOr(args.timeoutMs, 500, 'timeoutMs'), 50), 30000);
@@ -690,6 +692,7 @@ export async function handleToolCall(name, args = {}) {
                 height: result.height,
                 pngBase64,
                 pngFile,
+                diagnostics,
               };
             }
           }
@@ -713,15 +716,15 @@ export async function handleToolCall(name, args = {}) {
           pngFile = resolveOutFile(dir, args.outFile, ['.png']);
           await atomicWriteFile(pngFile, buf);
         }
-        return { ...evaluated, ...fidelity, format: 'png', pngBase64: buf.toString('base64'), pngFile };
+        return { ...evaluated, ...fidelity, format: 'png', pngBase64: buf.toString('base64'), pngFile, diagnostics };
       }
       const svg = renderFrameSvg(project, time);
       if (args.outFile) {
         const svgFile = resolveOutFile(dir, args.outFile, ['.svg']);
         await atomicWriteFile(svgFile, svg);
-        return { ...evaluated, ...fidelity, format: 'svg', svgFile };
+        return { ...evaluated, ...fidelity, format: 'svg', svgFile, diagnostics };
       }
-      return { ...evaluated, ...fidelity };
+      return { ...evaluated, ...fidelity, diagnostics };
     }
     case 'blahblah_export_plan': {
       const dir = requireDir(args);

@@ -124,6 +124,23 @@ const WHISPER_ALLOWED_OPTIONS: &[&str] = &[
     "-sow", "-owts", "-nt",
 ];
 
+/// qwen-asr helper options this app builds commands with. The Python script is
+/// always the bundled resource (resolved in Rust), never a page-supplied path.
+const QWEN_ASR_ALLOWED_OPTIONS: &[&str] = &[
+    "--check",
+    "--download",
+    "--audio",
+    "--chunks-file",
+    "--model",
+    "--repo",
+    "--cache-dir",
+    "--language",
+    "--device",
+    "--max-new-tokens-cap",
+    "--time-stamps",
+    "--aligner",
+];
+
 /// vsthost options this app builds commands with. Every path is also checked
 /// below; the allowlist only bounds the option names a compromised page can
 /// pass to the helper.
@@ -265,6 +282,38 @@ fn validate_absolute_existing_dir_arg(
     Ok(())
 }
 
+/// An absolute path that must already exist and be a file OR a directory.
+/// A VST3 plugin is a bundle FOLDER on macOS/Linux and for many Windows
+/// plugins, but a single `.vst3` FILE for others — both are valid `--plugin`
+/// values, so only requiring a directory rejected every single-file plugin.
+fn validate_absolute_existing_path_arg(
+    args: &[String],
+    option: &str,
+    label: &str,
+) -> Result<(), String> {
+    let mut index = 0;
+    while index < args.len() {
+        if args[index] == option {
+            let value = args
+                .get(index + 1)
+                .ok_or_else(|| format!("{label}: \"{option}\" has no value."))?;
+            let path = PathBuf::from(value);
+            if !path.is_absolute()
+                || path.components().any(|c| matches!(c, Component::ParentDir))
+            {
+                return Err(format!("{label}: \"{option}\" must be an absolute path."));
+            }
+            if !path.exists() {
+                return Err(format!("{label}: plugin does not exist: {value}"));
+            }
+            index += 2;
+        } else {
+            index += 1;
+        }
+    }
+    Ok(())
+}
+
 /// An absolute path that may not exist yet (outputs, logs, state files).
 fn validate_absolute_output_arg(
     args: &[String],
@@ -295,7 +344,7 @@ fn validate_vsthost_paths(args: &[String]) -> Result<(), String> {
     validate_absolute_file_arg(args, "--chain", "vsthost")?;
     validate_absolute_file_arg(args, "--in", "vsthost")?;
     validate_absolute_file_or_none_arg(args, "--state-in", "vsthost")?;
-    validate_absolute_existing_dir_arg(args, "--plugin", "vsthost")?;
+    validate_absolute_existing_path_arg(args, "--plugin", "vsthost")?;
     validate_absolute_existing_dir_arg(args, "--dir", "vsthost")?;
     validate_absolute_output_arg(args, "--out", "vsthost")?;
     validate_absolute_output_arg(args, "--state-out", "vsthost")?;
@@ -531,6 +580,180 @@ async fn run_whisper(
     } else {
         Ok(stdout)
     }
+}
+
+// ─── Qwen3-ASR (Khmer) ───────────────────────────────────────────────────────
+//
+// Qwen3-ASR cannot run through whisper.cpp: it is a PyTorch model driven by the
+// user's own Python interpreter (resources/qwen_asr_khmer.py). Nothing is
+// bundled into the installer except that script, so this command spawns Python
+// exactly like run_whisper spawns whisper-cli: streamed stdout lines become
+// "qwen-asr-progress" events and the child is cancellable by session id.
+
+#[derive(Clone, serde::Serialize)]
+pub struct QwenAsrProgressEvent {
+    pub session_id: String,
+    pub line: String,
+}
+
+/// Accepts a bare executable name resolved on PATH (the default, `python`) or
+/// an absolute path to an existing interpreter (a venv's python.exe), and
+/// nothing that could smuggle extra arguments into the command line.
+fn validate_python_path(path: &str) -> Result<(), String> {
+    if path.trim().is_empty() {
+        return Err("qwen-asr: the Python executable is not configured.".to_string());
+    }
+    if path.contains('\0') || path.contains('\n') || path.contains('\r') {
+        return Err("qwen-asr: the Python path contains a forbidden character.".to_string());
+    }
+
+    let looks_like_a_path = path.contains('/') || path.contains('\\') || path.contains(':');
+    if looks_like_a_path {
+        let candidate = PathBuf::from(path);
+        if !candidate.is_absolute()
+            || candidate.components().any(|c| matches!(c, Component::ParentDir))
+        {
+            return Err(
+                "qwen-asr: the Python executable must be an absolute path or a command name on PATH."
+                    .to_string(),
+            );
+        }
+        if !candidate.is_file() {
+            return Err(format!("qwen-asr: Python executable not found: {path}"));
+        }
+    } else if !path
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+    {
+        return Err(format!(
+            "qwen-asr: \"{path}\" is not a valid Python command name."
+        ));
+    }
+
+    Ok(())
+}
+
+/// Locates the helper script that ships with the app. In a packaged build it is
+/// a bundle resource; in `tauri dev` (and the Rust test run) it is read straight
+/// from the source tree.
+fn resolve_qwen_asr_script(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    use tauri::path::BaseDirectory;
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(path) = app
+        .path()
+        .resolve("qwen_asr_khmer.py", BaseDirectory::Resource)
+    {
+        candidates.push(path);
+    }
+    if let Ok(dir) = app.path().resource_dir() {
+        candidates.push(dir.join("qwen_asr_khmer.py"));
+        candidates.push(dir.join("resources").join("qwen_asr_khmer.py"));
+    }
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join("qwen_asr_khmer.py"),
+    );
+
+    for candidate in &candidates {
+        if candidate.is_file() {
+            return Ok(candidate.clone());
+        }
+    }
+
+    Err(format!(
+        "qwen-asr: bundled helper script qwen_asr_khmer.py was not found ({} location(s) checked).",
+        candidates.len()
+    ))
+}
+
+#[tauri::command]
+async fn run_qwen_asr(
+    app: tauri::AppHandle,
+    python_path: String,
+    args: Vec<String>,
+    session_id: Option<String>,
+) -> Result<String, String> {
+    validate_python_path(&python_path)?;
+    validate_sidecar_args(&args, QWEN_ASR_ALLOWED_OPTIONS, "qwen-asr")?;
+    validate_absolute_file_arg(&args, "--audio", "qwen-asr")?;
+    validate_absolute_file_arg(&args, "--chunks-file", "qwen-asr")?;
+    validate_absolute_output_arg(&args, "--cache-dir", "qwen-asr")?;
+    // `--model` is a local snapshot directory or a Hugging Face repo id, so it
+    // is intentionally not validated as a path here.
+
+    let script = resolve_qwen_asr_script(&app)?;
+    let sess_id = session_id.unwrap_or_default();
+
+    let (mut rx, child) = app
+        .shell()
+        .command(python_path)
+        .arg(script.to_string_lossy().to_string())
+        .args(args)
+        .env("PYTHONUNBUFFERED", "1")
+        .env("PYTHONIOENCODING", "utf-8")
+        .spawn()
+        .map_err(|e| format!("Failed to spawn the Qwen3-ASR Python helper: {e}"))?;
+    register_process(&sess_id, child);
+
+    let mut stdout_accum = Vec::new();
+    let mut stderr_accum = Vec::new();
+    let mut exit_code = None;
+
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stdout(line_bytes) => {
+                let line_str = String::from_utf8_lossy(&line_bytes).to_string();
+                let _ = app.emit(
+                    "qwen-asr-progress",
+                    QwenAsrProgressEvent {
+                        session_id: sess_id.clone(),
+                        line: line_str,
+                    },
+                );
+                push_capped(&mut stdout_accum, &line_bytes);
+            }
+            CommandEvent::Stderr(line_bytes) => {
+                // torch/transformers are chatty; forward the line as progress
+                // but only surface stderr if the process actually fails.
+                let line_str = String::from_utf8_lossy(&line_bytes).to_string();
+                let _ = app.emit(
+                    "qwen-asr-progress",
+                    QwenAsrProgressEvent {
+                        session_id: sess_id.clone(),
+                        line: line_str,
+                    },
+                );
+                push_capped(&mut stderr_accum, &line_bytes);
+            }
+            CommandEvent::Terminated(payload) => {
+                exit_code = payload.code;
+            }
+            CommandEvent::Error(err) => {
+                unregister_process(&sess_id);
+                return Err(format!("qwen-asr process error: {err}"));
+            }
+            _ => {}
+        }
+    }
+
+    if !unregister_process(&sess_id) {
+        return Err("qwen-asr process cancelled by user".to_string());
+    }
+
+    let stdout = String::from_utf8_lossy(&stdout_accum).to_string();
+    let stderr = String::from_utf8_lossy(&stderr_accum).to_string();
+
+    if exit_code != Some(0) {
+        return Err(format!(
+            "qwen-asr process exited with code {:?}: {}",
+            exit_code,
+            if !stdout.trim().is_empty() { stdout } else { stderr }
+        ));
+    }
+
+    Ok(stdout)
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -1350,6 +1573,7 @@ pub fn run() {
       run_ffmpeg,
       whisper_version,
       run_whisper,
+      run_qwen_asr,
       vsthost_info,
       run_vsthost,
       download_package,
@@ -1485,6 +1709,51 @@ mod security_tests {
         assert!(project_dir_from_file(&other).is_none());
         assert!(project_dir_from_file(&dir.join("missing.blahblah")).is_none());
         assert!(project_dir_from_file(std::path::Path::new("relative.blahblah")).is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn qwen_asr_args_allow_only_known_options() {
+        assert!(validate_sidecar_args(&args(&["--check"]), QWEN_ASR_ALLOWED_OPTIONS, "qwen-asr")
+            .is_ok());
+        assert!(validate_sidecar_args(
+            &args(&[
+                "--audio",
+                "C:/tmp/a.wav",
+                "--chunks-file",
+                "C:/tmp/a.json",
+                "--time-stamps",
+                "--aligner",
+                "C:/models/qwen3-asr/aligner"
+            ]),
+            QWEN_ASR_ALLOWED_OPTIONS,
+            "qwen-asr"
+        )
+        .is_ok());
+        assert!(validate_sidecar_args(&args(&["--check", "--evil"]), QWEN_ASR_ALLOWED_OPTIONS, "qwen-asr")
+            .is_err());
+    }
+
+    #[test]
+    fn python_path_accepts_command_names_and_absolute_files_only() {
+        // Command names are resolved on PATH.
+        assert!(validate_python_path("python").is_ok());
+        assert!(validate_python_path("python3.12").is_ok());
+
+        let dir = std::env::temp_dir().join(format!("blahblah-python-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let interpreter = dir.join("python.exe");
+        std::fs::write(&interpreter, b"").unwrap();
+        assert!(validate_python_path(&interpreter.to_string_lossy()).is_ok());
+
+        // Missing file, relative path, traversal, argument smuggling.
+        assert!(validate_python_path(&dir.join("missing.exe").to_string_lossy()).is_err());
+        assert!(validate_python_path("venv/Scripts/python.exe").is_err());
+        assert!(validate_python_path("C:/tmp/../python.exe").is_err());
+        assert!(validate_python_path("python -c print(1)").is_err());
+        assert!(validate_python_path("").is_err());
+        assert!(validate_python_path("python\n--evil").is_err());
+
         std::fs::remove_dir_all(&dir).ok();
     }
 

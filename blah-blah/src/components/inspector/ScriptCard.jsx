@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Clock, Trash2, Sparkles, Boxes, FileCode, Check, Copy, ClipboardPaste, RotateCcw } from 'lucide-react';
+import { AlertCircle, Clock, Trash2, FileCode, Check, Copy, ClipboardPaste, RotateCcw } from 'lucide-react';
 import {
   extractScriptProps,
   getScriptError,
@@ -16,16 +16,11 @@ import { InspectorFieldList, getFieldDefault } from './InspectorField';
 import { InspectorCardHeader } from './InspectorCardHeader';
 import './script-card.css';
  
-// Per-kind display metadata for script cards (icon + color + label). The
-// kind comes from detectScriptKind at runtime — there is ONE component type
-// (ScriptComponent) and the script's own code decides how it executes.
-const SCRIPT_KIND_META = {
-  react: { icon: Sparkles, className: 'text-cyan', label: 'React Component' },
-  canvas: { icon: Boxes, className: 'text-violet', label: 'Canvas Component' },
-  motion: { icon: FileCode, className: 'text-emerald', label: 'Motion Script' },
-  shader: { icon: Sparkles, className: 'text-amber', label: 'GL Transition' },
-};
-export const scriptKindMeta = (kind) => SCRIPT_KIND_META[kind] || SCRIPT_KIND_META.motion;
+// Every script is shown to the user simply as a "Script" — the runtime kind
+// (react / canvas / motion / shader) is detected from the code by
+// detectScriptKind and used for LOGIC only, never surfaced in the UI.
+const SCRIPT_META = { icon: FileCode, className: 'text-emerald', label: 'Script' };
+export const scriptKindMeta = () => SCRIPT_META;
  
 const cloneValue = (v) => (v !== null && typeof v === 'object' ? JSON.parse(JSON.stringify(v)) : v);
  
@@ -342,11 +337,10 @@ export function ScriptCard({
             </div>
           )}
  
-          {/* Script-level settings: kind + the two ScriptComponent fields
+          {/* Script-level settings: the two ScriptComponent fields
               (not script props), kept apart from the props below. */}
           <div className="script-settings">
             <div className="script-setting">
-              <span className={`script-kind-pill ${Meta.className}`}>{Meta.label}</span>
               <label className="script-switch-label" title="Run this script on the clip">
                 <span>Enabled</span>
                 <input
@@ -422,4 +416,3 @@ export function ScriptCard({
     </div>
   );
 }
- 

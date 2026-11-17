@@ -47,6 +47,10 @@ export function getTickIntervalSeconds(pixelsPerSecond) {
  * @returns {Array<{ track, clips, rowHeight }>}
  */
 export function computeTrackLanes(tracks = [], clips = [], defaultHeight = TRACK_HEIGHT) {
+  const fallbackHeight = typeof defaultHeight === 'number' && !Number.isNaN(defaultHeight)
+    ? defaultHeight
+    : TRACK_HEIGHT;
+
   // ONE pass over `clips` into per-track buckets, instead of re-filtering the
   // whole array once per track. The result is identical (each row's `clips`
   // keeps the array's own order) but the cost drops from O(tracks x clips) to
@@ -66,7 +70,7 @@ export function computeTrackLanes(tracks = [], clips = [], defaultHeight = TRACK
     return {
       track,
       clips: trackClips,
-      rowHeight: clampTrackHeight(track.height || defaultHeight),
+      rowHeight: clampTrackHeight(track.height || fallbackHeight),
       depth: 0,
     };
   });
@@ -120,48 +124,40 @@ export function getPackableClips(clips = []) {
 
 export function computeClipSubLanes(clips = []) {
   const result = new Map();
-  const valid = getPackableClips(clips).filter((c) => Number.isFinite(c?.startTime) && Number.isFinite(c?.duration));
-  if (valid.length === 0) return result;
- 
-  const sorted = [...valid].sort((a, b) => a.startTime - b.startTime);
- 
-  // 1. Partition into overlap groups via an interval-merge sweep.
-  const groups = [];
-  let currentGroup = [sorted[0]];
-  let groupEnd = sorted[0].startTime + sorted[0].duration;
- 
-  for (let i = 1; i < sorted.length; i++) {
-    const clip = sorted[i];
-    if (clip.startTime < groupEnd - OVERLAP_EPSILON) {
-      // Starts before the group's current furthest end: still part of it.
-      currentGroup.push(clip);
-      groupEnd = Math.max(groupEnd, clip.startTime + clip.duration);
-    } else {
-      groups.push(currentGroup);
-      currentGroup = [clip];
-      groupEnd = clip.startTime + clip.duration;
+  if (!clips || clips.length === 0) return result;
+
+  // Single pass filtering valid packable clips without multiple array copies
+  const sorted = [];
+  for (let i = 0; i < clips.length; i++) {
+    const c = clips[i];
+    if (c && !isTransitionClipLike(c) && Number.isFinite(c.startTime) && Number.isFinite(c.duration)) {
+      sorted.push(c);
     }
   }
-  groups.push(currentGroup);
- 
-  // 2. Within each group, greedily assign the fewest sub-lanes needed
-  //    (interval partitioning): track each open lane's current end time,
-  //    reuse the first lane that's already free, else open a new one.
-  for (const group of groups) {
-    if (group.length === 1) {
-      result.set(group[0].id, { laneIndex: 0, laneCount: 1 });
-      continue;
+  if (sorted.length === 0) return result;
+  if (sorted.length === 1) {
+    result.set(sorted[0].id, { laneIndex: 0, laneCount: 1 });
+    return result;
+  }
+
+  sorted.sort((a, b) => a.startTime - b.startTime);
+
+  // Greedily assign sub-lanes across overlap groups without intermediate group array allocations
+  function processGroup(startIdx, endIdx) {
+    const len = endIdx - startIdx + 1;
+    if (len === 1) {
+      result.set(sorted[startIdx].id, { laneIndex: 0, laneCount: 1 });
+      return;
     }
- 
-    const laneEnds = []; // laneEnds[i] = end time currently occupied in lane i
-    const assignment = new Map(); // clipId -> laneIndex
- 
-    for (const clip of group) {
+
+    const laneEnds = [];
+    for (let i = startIdx; i <= endIdx; i++) {
+      const clip = sorted[i];
       const start = clip.startTime;
       let placedLane = -1;
-      for (let i = 0; i < laneEnds.length; i++) {
-        if (laneEnds[i] <= start + OVERLAP_EPSILON) {
-          placedLane = i;
+      for (let j = 0; j < laneEnds.length; j++) {
+        if (laneEnds[j] <= start + OVERLAP_EPSILON) {
+          placedLane = j;
           break;
         }
       }
@@ -170,15 +166,30 @@ export function computeClipSubLanes(clips = []) {
         laneEnds.push(0);
       }
       laneEnds[placedLane] = start + clip.duration;
-      assignment.set(clip.id, placedLane);
+      result.set(clip.id, { laneIndex: placedLane, laneCount: 0 });
     }
- 
+
     const laneCount = laneEnds.length;
-    for (const clip of group) {
-      result.set(clip.id, { laneIndex: assignment.get(clip.id), laneCount });
+    for (let i = startIdx; i <= endIdx; i++) {
+      result.get(sorted[i].id).laneCount = laneCount;
     }
   }
- 
+
+  let groupStartIdx = 0;
+  let groupEnd = sorted[0].startTime + sorted[0].duration;
+
+  for (let i = 1; i < sorted.length; i++) {
+    const clip = sorted[i];
+    if (clip.startTime < groupEnd - OVERLAP_EPSILON) {
+      groupEnd = Math.max(groupEnd, clip.startTime + clip.duration);
+    } else {
+      processGroup(groupStartIdx, i - 1);
+      groupStartIdx = i;
+      groupEnd = clip.startTime + clip.duration;
+    }
+  }
+  processGroup(groupStartIdx, sorted.length - 1);
+
   return result;
 }
  

@@ -7,7 +7,8 @@
  */
 
 // Folders the app owns or tools create; they can't be created or deleted here.
-const RESERVED_NAMES = new Set(['scripts', 'prefabs', 'media', 'node_modules']);
+// ai-notes/ holds the frame notes for AI agents (services/notesStorage.js).
+const RESERVED_NAMES = new Set(['scripts', 'prefabs', 'media', 'node_modules', 'ai-notes']);
 
 // Names Windows refuses for a folder, whatever the extension.
 const WINDOWS_DEVICE_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;

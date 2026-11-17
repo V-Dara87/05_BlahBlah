@@ -329,10 +329,11 @@ export async function ensureFxStateFile({ projectFolderHandle, slot }) {
 
 /** Open the native editor and persist the state written on close. */
 export async function editFxSlot({ projectFolderHandle, track, slot }) {
+  if (!slot) return null;
   const root = projectPath(projectFolderHandle);
-  if (!root || !slot) return null;
+  if (!root) throw new Error('Save the project to a folder first — plugin state is stored in the project folder.');
   const statePath = absoluteStateFile(slot.stateFile, root);
-  if (!statePath) return null;
+  if (!statePath) throw new Error('This insert has no state file. Remove it and add the plugin again.');
   await ensureDir(dirname(statePath));
   await openPluginEditor({
     pluginPath: slot.pluginPath,

@@ -1,0 +1,46 @@
+[
+  {
+    "id": "project-file-1",
+    "type": "choice",
+    "prompt": "What is the revision that loadProject returns?",
+    "options": ["The last modification time of project.json", "A hash of the exact bytes that were read", "The schemaVersion stored in the file"],
+    "answer": 1,
+    "source": { "lesson": "project-file", "code_refs": ["blah-blah/packages/blahblah-core/src/project.js#L145-L150"] },
+    "schedule": { "state": "new", "step": 0, "due": null, "interval_days": 0, "ease": 2.5, "lapses": 0, "reps": 0, "history": [] }
+  },
+  {
+    "id": "project-file-2",
+    "type": "cloze",
+    "prompt": "When expectedRevision no longer matches the file, saveProject throws ____.",
+    "answer": "ProjectConflictError",
+    "source": { "lesson": "project-file", "code_refs": ["blah-blah/packages/blahblah-core/src/project.js#L161-L173"] },
+    "schedule": { "state": "new", "step": 0, "due": null, "interval_days": 0, "ease": 2.5, "lapses": 0, "reps": 0, "history": [] }
+  },
+  {
+    "id": "project-file-3",
+    "type": "choice",
+    "prompt": "Which helper should a read-modify-write use?",
+    "options": ["loadProject, then saveProject", "updateProject with a mutator", "Atomic write of a hand-built object"],
+    "answer": 1,
+    "source": { "lesson": "project-file", "code_refs": ["blah-blah/packages/blahblah-core/src/project.js#L186-L203"] },
+    "schedule": { "state": "new", "step": 0, "due": null, "interval_days": 0, "ease": 2.5, "lapses": 0, "reps": 0, "history": [] }
+  },
+  {
+    "id": "project-file-4",
+    "type": "qa",
+    "prompt": "Why does updateProject read the project inside the lock instead of reading it first?",
+    "rubric": "Mentions closing the window between read and write, so the revision belongs to the same window as the write.",
+    "answer": "A read before the lock leaves time for another process to save in between. Reading inside the lock ties the revision to the same window as the write.",
+    "source": { "lesson": "project-file", "code_refs": ["blah-blah/packages/blahblah-core/src/project.js#L190-L196"] },
+    "schedule": { "state": "new", "step": 0, "due": null, "interval_days": 0, "ease": 2.5, "lapses": 0, "reps": 0, "history": [] }
+  },
+  {
+    "id": "project-file-5",
+    "type": "explain",
+    "prompt": "Why does a save keep the previous project.json as a backup?",
+    "rubric": "Mentions recovery from a bad edit or a failed write; the backup is the previous version.",
+    "answer": "The previous file is the only copy if the new content is wrong or the process dies mid-write. The backup makes the last good version recoverable.",
+    "source": { "lesson": "project-file", "code_refs": ["blah-blah/packages/blahblah-core/src/project.js#L176"] },
+    "schedule": { "state": "new", "step": 0, "due": null, "interval_days": 0, "ease": 2.5, "lapses": 0, "reps": 0, "history": [] }
+  }
+]

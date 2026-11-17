@@ -1,9 +1,11 @@
 import { useMemo } from 'react';
 import {
   FilePlus, FolderOpen, Save, Download, Undo2, Redo2, Scissors, Trash2,
-  Code, MousePointer2, Settings, Sliders, PlaySquare, Clock, Layers,
-  Activity, Copy, ExternalLink, Maximize2, RotateCcw, BookOpen, Volume2, Terminal, Package,
+  Code, MousePointer2, Settings, Layers,
+  Copy, ExternalLink, Maximize2, RotateCcw, BookOpen, Package, Camera,
 } from 'lucide-react';
+import { AVAILABLE_DOCK_WINDOWS } from '../dock/dockWindows';
+import { getDockWindowIcon } from '../dock/dockWindowIcons';
 import { isTauri } from '../services/tauriFsAdapter';
 import { openProjectInExplorer, openProjectInVsCode, openProjectInCursor } from '../services/ideLauncher';
  
@@ -48,6 +50,7 @@ export function useMenuBarConfig({
   setIsScriptDocsOpen,
   setIsSettingsOpen,
   onOpenPackageManager,
+  onExportFrame,
 }) {
   return useMemo(() => [
     {
@@ -58,6 +61,7 @@ export function useMenuBarConfig({
         { label: isPrefabMode ? 'Save Prefab' : 'Save Project', shortcut: keybinds.saveProject, icon: <Save size={13} />, onClick: isPrefabMode ? handleSaveCurrentPrefab : handleSaveProjectToDisk, disabled: isPrefabMode ? false : !projectFolderHandle },
         { type: 'separator' },
         { label: 'Export Render...', shortcut: 'Ctrl+E', icon: <Download size={13} />, onClick: () => setIsExportOpen(true) },
+        { label: 'Export Current Frame as PNG...', shortcut: 'Ctrl+Shift+S', icon: <Camera size={13} />, onClick: onExportFrame, disabled: !onExportFrame },
         { type: 'separator' },
         { label: 'Open in VS Code', icon: <Code size={13} />, onClick: () => openProjectInVsCode(projectFolderHandle?.path), disabled: !isTauri() || !projectFolderHandle?.path },
         { label: 'Open in Cursor', icon: <MousePointer2 size={13} />, onClick: () => openProjectInCursor(projectFolderHandle?.path), disabled: !isTauri() || !projectFolderHandle?.path },
@@ -89,15 +93,16 @@ export function useMenuBarConfig({
     {
       label: 'Window',
       items: [
-        { label: 'Inspector', icon: <Sliders size={13} />, onClick: () => openOrFocusPanel('inspector', 'Inspector') },
-        { label: 'Preview', icon: <PlaySquare size={13} />, onClick: () => openOrFocusPanel('preview', 'Preview') },
-        { label: 'Project', icon: <FolderOpen size={13} />, onClick: () => openOrFocusPanel('project', 'Project') },
-        { label: 'Timeline', icon: <Clock size={13} />, onClick: () => openOrFocusPanel('timeline', 'Timeline') },
-        { label: 'Dopesheet', icon: <Layers size={13} />, onClick: () => openOrFocusPanel('dopesheet', 'Dopesheet') },
-        { label: 'Curves', icon: <Activity size={13} />, onClick: () => openOrFocusPanel('curveEditor', 'Curves') },
-        { label: 'Silence Remover', icon: <Scissors size={13} />, onClick: () => openOrFocusPanel('silenceRemover', 'Silence Remover') },
-        { label: 'Mixer', icon: <Volume2 size={13} />, onClick: () => openOrFocusPanel('mixer', 'Mixer') },
-        { label: 'Console', icon: <Terminal size={13} />, onClick: () => openOrFocusPanel('console', 'Console') },
+        // One entry per registered dock window (dock/dockWindows.js), so a new
+        // window shows up here automatically.
+        ...AVAILABLE_DOCK_WINDOWS.map((win) => {
+          const Icon = getDockWindowIcon(win.iconName);
+          return {
+            label: win.title,
+            icon: <Icon size={13} />,
+            onClick: () => openOrFocusPanel(win.component, win.title),
+          };
+        }),
         { type: 'separator' },
         { label: 'New Inspector Tab', icon: <Copy size={13} />, onClick: () => addNewPanelInstance('inspector', 'Inspector') },
         { label: 'New Preview Tab', icon: <Copy size={13} />, onClick: () => addNewPanelInstance('preview', 'Preview') },
@@ -115,6 +120,6 @@ export function useMenuBarConfig({
     projectFolderHandle, isPrefabMode,
     openOrFocusPanel, addNewPanelInstance, popoutActivePanel, floatActivePanel, handleResetLayout,
     setIsNewProjectOpen, setIsExportOpen, setIsProjectJsonOpen, setIsScriptDocsOpen, setIsSettingsOpen,
-    onOpenPackageManager,
+    onOpenPackageManager, onExportFrame,
   ]);
 }

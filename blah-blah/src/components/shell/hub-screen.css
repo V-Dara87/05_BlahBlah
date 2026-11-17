@@ -1,243 +1,160 @@
-/* Extracted from App.css (Step A4 of the App.css split) - styles owned by src/components/HubScreen.jsx and its markup.
-   A rule moves here when the narrowest class in its selector is used by this file
-   alone; generic modifier classes (.active/.danger/.disabled) travel with the
-   component that owns the rest of the selector.
-   App-wide base rules live in App.css; cross-component ones in styles/shared.css. */
+/* Hub screen — the landing page shown before the editor loads.
+   Owned by src/components/shell/HubScreen.jsx.
+
+   Design rules: flat surfaces, 1px borders, ONE solid accent for the primary
+   action. No gradients, no shadows, no motion beyond colour changes. Every
+   colour comes from the --unity-* theme tokens so Settings > Appearance
+   recolours the page. */
 
 .hub-screen {
   width: 100%;
   height: 100%;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  /* Both glows are theme-driven: the top-left one is the accent's HARMONY
-     PARTNER (--unity-accent-secondary), so picking a theme visibly changes the
-     Hub's ambient colour and not just its buttons. */
-  background:
-    radial-gradient(circle at 20% 15%, rgba(var(--unity-accent-secondary-rgb), 0.14), transparent 45%),
-    radial-gradient(circle at 80% 85%, rgba(var(--unity-accent-rgb), 0.1), transparent 45%),
-    var(--unity-darkest);
+  background: var(--unity-darkest);
   overflow-y: auto;
-  padding: 40px 20px;
+  /* The top padding clears the Hub's custom window bar (App.jsx). */
+  padding: calc(40px + 28px) 20px 40px;
+  box-sizing: border-box;
 }
- 
+
 .hub-container {
   width: 100%;
-  max-width: 560px;
-  /* Auto margins centre the card but, unlike align-items: center, stop it from
-     being clipped at the top when the window is shorter than the card. */
+  max-width: 640px;
+  /* Auto margins centre the page when it is short but, unlike
+     align-items: center, never clip the top when it is taller than the window. */
   margin: auto;
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 20px;
 }
- 
+
+/* ---------- Brand ---------- */
+
 .hub-brand {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
 }
- 
-.hub-icon-box {
-  width: 44px;
-  height: 44px;
-  border-radius: 10px;
-}
- 
-.hub-title {
-  font-size: 22px;
-  font-weight: 800;
+
+.hub-logo {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--unity-accent);
   color: #fff;
-  letter-spacing: -0.3px;
 }
- 
+
+.hub-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--unity-text);
+}
+
 .hub-subtitle {
+  margin: 2px 0 0;
   font-size: 12px;
   color: var(--unity-text-muted);
-  margin-top: 2px;
 }
- 
+
 .hub-alert {
   width: 100%;
 }
- 
+
+/* ---------- Primary actions ---------- */
+
 .hub-actions-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
- 
-.hub-action-card {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  background: var(--unity-panel);
-  border: 1px solid var(--unity-border-light);
-  border-radius: 10px;
-  padding: 16px 16px;
-  text-align: left;
-  transition: all 0.15s;
-}
- 
-.hub-action-card:hover {
-  border-color: var(--unity-accent-blue);
-  background: var(--unity-subtle);
-  transform: translateY(-1px);
-}
- 
-.hub-action-card.primary:hover {
-  border-color: var(--unity-accent-blue);
-  box-shadow: 0 0 0 1px rgba(var(--unity-accent-rgb), 0.35);
-}
- 
-.hub-action-title {
-  font-size: 13px;
-  font-weight: 700;
-  color: #fff;
-}
- 
-.hub-action-sub {
-  font-size: 10.5px;
-  color: var(--unity-text-dim);
-}
- 
-.hub-recent-section {
-  background: var(--unity-panel);
-  border: 1px solid var(--unity-border-light);
-  border-radius: 10px;
-  padding: 14px 16px 8px;
-}
- 
-.hub-recent-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--unity-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: 10px;
-}
- 
-.hub-empty-text {
-  font-size: 11.5px;
-  color: var(--unity-text-dim);
-  padding: 6px 0 14px;
-}
- 
-.hub-recent-list {
-  display: flex;
-  flex-direction: column;
-  max-height: 340px;
-  overflow-y: auto;
-}
- 
-.hub-recent-item {
-  display: flex;
-  align-items: center;
   gap: 10px;
-  width: 100%;
-  padding: 9px 4px;
-  border-bottom: 1px solid var(--unity-border);
-  text-align: left;
-  border-radius: 6px;
-}
- 
-.hub-recent-item:last-child {
-  border-bottom: none;
-}
- 
-.hub-recent-item:hover:not(:disabled) {
-  background: var(--unity-subtle);
-}
- 
-.hub-recent-icon {
-  width: 30px;
-  height: 30px;
-  border-radius: 7px;
-  background: var(--unity-dark);
-  border: 1px solid var(--unity-border-light);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #f59e0b;
-  flex-shrink: 0;
-}
- 
-.hub-recent-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1;
-  min-width: 0;
-}
- 
-.hub-recent-name {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: #fff;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
- 
-.hub-recent-path {
-  font-size: 10px;
-  color: var(--unity-text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-mono);
-  max-width: 480px;
-}
- 
-.hub-recent-dates {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 10px;
-  color: var(--unity-text-dim);
-}
- 
-.hub-recent-dates-sep {
-  margin: 0 2px;
-}
- 
-.hub-recent-status {
-  font-size: 10.5px;
-  color: var(--unity-accent-blue);
-  font-weight: 600;
-  flex-shrink: 0;
-}
- 
-.hub-recent-action {
-  width: 22px;
-  height: 22px;
-  border-radius: 5px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--unity-text-dim);
-  flex-shrink: 0;
-}
- 
-.hub-recent-action:hover {
-  background: rgba(var(--unity-accent-rgb), 0.15);
-  color: var(--unity-accent-blue);
-}
- 
-/* The remove action keeps the danger colour: it, not the folder action, is the
-   one that can surprise you. */
-.hub-recent-remove:hover {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
 }
 
-/* ==========================================================================
-   Toolbar: search, sort, new folder
-   ========================================================================== */
+.hub-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--unity-border-light);
+  border-radius: 6px;
+  background: var(--unity-panel);
+  color: var(--unity-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.hub-btn:hover {
+  background: var(--unity-hover);
+  border-color: var(--unity-text-dim);
+}
+
+.hub-btn-primary {
+  background: var(--unity-accent);
+  border-color: var(--unity-accent);
+  color: #fff;
+}
+
+.hub-btn-primary:hover {
+  background: var(--unity-accent-blue-strong);
+  border-color: var(--unity-accent-blue-strong);
+}
+
+.hub-btn:focus-visible,
+.hub-row-main:focus-visible,
+.hub-icon-btn:focus-visible,
+.hub-folder-chip:focus-visible,
+.hub-new-folder-btn:focus-visible,
+.hub-sort-select:focus-visible,
+.hub-folder-action:focus-visible,
+.hub-search-clear:focus-visible {
+  outline: 2px solid var(--unity-accent-blue);
+  outline-offset: 1px;
+}
+
+/* ---------- Projects panel ---------- */
+
+.hub-projects {
+  background: var(--unity-panel);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 8px;
+  padding: 14px 14px 10px;
+}
+
+.hub-projects-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.hub-section-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--unity-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hub-count {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--unity-text-dim);
+}
+
+/* ---------- Search + sort ---------- */
 
 .hub-toolbar {
   display: flex;
@@ -256,7 +173,7 @@
 
 .hub-search-icon {
   position: absolute;
-  left: 9px;
+  left: 10px;
   color: var(--unity-text-dim);
   pointer-events: none;
 }
@@ -264,12 +181,13 @@
 .hub-search-input {
   width: 100%;
   box-sizing: border-box;
-  padding: 7px 26px 7px 27px;
+  height: 34px;
+  padding: 0 30px 0 32px;
   background: var(--unity-darkest);
-  border: 1px solid var(--unity-border);
+  border: 1px solid var(--unity-border-light);
   border-radius: 6px;
   color: var(--unity-text);
-  font-size: 12px;
+  font-size: 13px;
   transition: border-color 0.12s;
 }
 
@@ -288,10 +206,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   border-radius: 4px;
   color: var(--unity-text-dim);
+  cursor: pointer;
 }
 
 .hub-search-clear:hover {
@@ -301,43 +220,17 @@
 
 .hub-sort-select {
   flex-shrink: 0;
-  padding: 7px 8px;
+  height: 34px;
+  padding: 0 8px;
   background: var(--unity-darkest);
-  border: 1px solid var(--unity-border);
+  border: 1px solid var(--unity-border-light);
   border-radius: 6px;
   color: var(--unity-text-muted);
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
 }
 
-.hub-sort-select:focus-visible {
-  outline: 1px solid var(--unity-accent-blue);
-  outline-offset: 1px;
-}
-
-.hub-new-folder-btn {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-shrink: 0;
-  padding: 7px 10px;
-  background: var(--unity-darkest);
-  border: 1px solid var(--unity-border);
-  border-radius: 6px;
-  color: var(--unity-text-muted);
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.hub-new-folder-btn:hover {
-  border-color: var(--unity-accent-blue);
-  color: var(--unity-accent-blue);
-}
-
-/* ==========================================================================
-   Folder filter chips
-   ========================================================================== */
+/* ---------- Folder chips ---------- */
 
 .hub-folder-chips {
   display: flex;
@@ -350,15 +243,14 @@
 .hub-folder-chip-wrap {
   display: inline-flex;
   align-items: center;
-  border-radius: 999px;
+  border-radius: 6px;
   background: var(--unity-darkest);
-  border: 1px solid var(--unity-border);
+  border: 1px solid var(--unity-border-light);
   overflow: hidden;
 }
 
 .hub-folder-chip-wrap.active {
   border-color: var(--unity-accent-blue);
-  background: rgba(var(--unity-accent-rgb), 0.08);
 }
 
 .hub-folder-chip {
@@ -367,10 +259,11 @@
   gap: 6px;
   padding: 5px 10px;
   color: var(--unity-text-muted);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 500;
   white-space: nowrap;
-  max-width: 180px;
+  max-width: 200px;
+  cursor: pointer;
 }
 
 .hub-folder-chip:hover {
@@ -380,7 +273,7 @@
 
 .hub-folder-chip.active,
 .hub-folder-chip.active:hover {
-  color: var(--unity-accent-blue);
+  color: var(--unity-accent-soft);
   background: transparent;
 }
 
@@ -390,17 +283,8 @@
 }
 
 .hub-folder-chip-count {
-  font-size: 9.5px;
-  font-weight: 700;
+  font-size: 11px;
   color: var(--unity-text-dim);
-  background: var(--unity-dark);
-  border-radius: 999px;
-  padding: 1px 6px;
-}
-
-.hub-folder-chip.active .hub-folder-chip-count {
-  color: var(--unity-accent-blue);
-  background: rgba(var(--unity-accent-rgb), 0.15);
 }
 
 /* Rename / delete live INSIDE the active chip, so the row never grows. */
@@ -408,17 +292,18 @@
   display: inline-flex;
   align-items: center;
   gap: 1px;
-  padding-right: 5px;
+  padding-right: 4px;
 }
 
 .hub-folder-action {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   border-radius: 4px;
   color: var(--unity-text-dim);
+  cursor: pointer;
 }
 
 .hub-folder-action:hover {
@@ -428,16 +313,17 @@
 
 .hub-folder-action.danger:hover {
   background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
+  color: var(--unity-accent-red, #ef4444);
 }
 
-/* The chip in its editing / confirming state (input or delete prompt). */
+/* The chip while renaming / confirming a delete (an input or a prompt). */
 .hub-folder-chip.editing {
   gap: 6px;
-  padding: 4px 6px;
+  padding: 3px 6px;
   background: var(--unity-darkest);
   border: 1px solid var(--unity-accent-blue);
-  border-radius: 999px;
+  border-radius: 6px;
+  cursor: default;
 }
 
 .hub-folder-input {
@@ -446,8 +332,7 @@
   background: transparent;
   border: none;
   color: var(--unity-text);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
 }
 
 .hub-folder-input:focus {
@@ -455,18 +340,19 @@
 }
 
 .hub-folder-confirm-text {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--unity-text-muted);
   white-space: nowrap;
 }
 
 .hub-folder-confirm {
   padding: 3px 9px;
-  border-radius: 999px;
+  border-radius: 4px;
   border: 1px solid var(--unity-border-light);
   color: var(--unity-text-muted);
-  font-size: 10.5px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .hub-folder-confirm:hover {
@@ -476,28 +362,33 @@
 
 .hub-folder-confirm.danger {
   border-color: rgba(239, 68, 68, 0.5);
-  color: #ef4444;
+  color: var(--unity-accent-red, #ef4444);
 }
 
 .hub-folder-confirm.danger:hover {
   background: rgba(239, 68, 68, 0.15);
 }
 
-/* ==========================================================================
-   Grouped list
-   ========================================================================== */
-
-.hub-recent-count {
-  margin-left: auto;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+.hub-new-folder-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  border: 1px dashed var(--unity-border-light);
+  border-radius: 6px;
+  background: transparent;
   color: var(--unity-text-dim);
-  background: var(--unity-darkest);
-  border: 1px solid var(--unity-border);
-  border-radius: 999px;
-  padding: 2px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
 }
+
+.hub-new-folder-btn:hover {
+  border-color: var(--unity-text-dim);
+  color: var(--unity-text);
+}
+
+/* ---------- Project list ---------- */
 
 .hub-group + .hub-group {
   margin-top: 6px;
@@ -507,37 +398,172 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 2px 4px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  padding: 8px 4px 4px;
+  font-size: 11px;
+  font-weight: 600;
   color: var(--unity-text-dim);
 }
 
 .hub-group-count {
-  color: var(--unity-text-dim);
   opacity: 0.7;
+}
+
+.hub-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.hub-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+}
+
+.hub-row:hover,
+.hub-row:focus-within {
+  background: var(--unity-subtle);
+}
+
+.hub-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 10px;
+  border-radius: 6px;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.hub-row-main:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.hub-row-icon {
+  flex-shrink: 0;
+  color: var(--unity-text-muted);
+}
+
+.hub-row-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hub-row-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--unity-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hub-row-path {
+  font-size: 11px;
+  color: var(--unity-text-dim);
+  font-family: var(--font-mono, ui-monospace, Consolas, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hub-row-date {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--unity-text-dim);
+}
+
+/* Row actions take no space until the row is hovered or focused, so each row
+   reads as just "name, path, date". They sit over the date's right edge. */
+.hub-row-actions {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 4px;
+  border-radius: 6px;
+  background: var(--unity-subtle);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.hub-row:hover .hub-row-actions,
+.hub-row:focus-within .hub-row-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.hub-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  color: var(--unity-text-muted);
+  cursor: pointer;
+}
+
+.hub-icon-btn:hover {
+  background: var(--unity-hover);
+  color: var(--unity-text);
+}
+
+.hub-icon-btn-danger:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--unity-accent-red, #ef4444);
+}
+
+/* ---------- Empty states ---------- */
+
+.hub-empty {
+  padding: 18px 4px 14px;
+  text-align: center;
+}
+
+.hub-empty-title {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--unity-text-muted);
+}
+
+.hub-empty-text {
+  margin: 0;
+  font-size: 12px;
+  color: var(--unity-text-dim);
+  padding: 6px 4px 12px;
+}
+
+.hub-empty .hub-empty-text {
+  padding: 0;
 }
 
 .hub-menu-empty {
   margin: 0;
   padding: 6px 12px;
-  font-size: 10.5px;
+  font-size: 11px;
   font-style: italic;
   color: var(--unity-text-dim);
 }
- 
-.hub-screen {
-  padding-top: calc(40px + 28px);
-}
 
-/* ==========================================================================
-   "Move to folder" menu
+/* ---------- "Move to folder" menu ----------
    The shared .ctx-menu-item is a plain block (the Project panel's menus put a
-   label/hint row inside it), so this scopes the icon + label + check layout to
-   the Hub's own menu rather than changing the shared one.
-   ========================================================================== */
+   label/hint row inside it), so the icon + label + check layout is scoped to
+   the Hub's own menu rather than changing the shared one. */
 
 .hub-move-menu .ctx-menu-item {
   display: flex;
@@ -561,4 +587,23 @@
 .hub-move-menu .ctx-menu-item svg:last-child:not(:first-child) {
   flex-shrink: 0;
   color: var(--unity-accent-blue);
+}
+
+/* ---------- Narrow windows ---------- */
+
+@media (max-width: 520px) {
+  .hub-actions-row {
+    grid-template-columns: 1fr;
+  }
+
+  .hub-row-date {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hub-btn,
+  .hub-search-input {
+    transition: none;
+  }
 }

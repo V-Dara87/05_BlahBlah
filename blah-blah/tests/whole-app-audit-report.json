@@ -1,0 +1,67 @@
+{
+  "timestamp": "2026-11-12T04:48:50.812Z",
+  "system": {
+    "platform": "win32",
+    "arch": "x64",
+    "cpus": 16,
+    "cpuModel": "12th Gen Intel(R) Core(TM) i7-12650H",
+    "totalMemoryMB": 32471,
+    "freeMemoryMB": 8844
+  },
+  "subsystems": {
+    "coreEngine": {
+      "projectInitMs": "15.40",
+      "add10TracksMs": "0.61",
+      "add200EntitiesWithKeyframesMs": "7.99",
+      "avgTimePerEntityMs": "0.040",
+      "saveProjectMs": "11.12",
+      "inspectProjectMs": "11.16",
+      "projectJsonSizeBytes": 318099,
+      "projectJsonSizeKB": "310.64 KB",
+      "entityCount": 200,
+      "trackCount": 14,
+      "totalDurationSeconds": 102.5
+    },
+    "scriptEngine": {
+      "scriptCreateMs": "0.50",
+      "validationMs": "622.883",
+      "isValid": true,
+      "detectedProps": [
+        "title",
+        "color",
+        "size"
+      ]
+    },
+    "renderPipeline": {
+      "evaluateTimelineAtTimeMs": "1.233",
+      "render1080pSvgFrameMs": "1.70",
+      "outputFormat": "svg",
+      "outputSizeBytes": 3094,
+      "outputSizeKB": "3.02",
+      "activeEntitiesCount": 5
+    },
+    "frontendBundle": {
+      "built": true,
+      "totalJsMB": "2.00",
+      "totalCssKB": "343.40",
+      "chunksCount": 6,
+      "largestChunk": {
+        "file": "index-BGSWF0p-.js",
+        "sizeKB": 2022.9
+      }
+    },
+    "tauriNativeBackend": {
+      "appIdentifier": "com.blahblah.app",
+      "version": "0.1.0",
+      "windowsConfig": {
+        "title": "blahblah",
+        "width": 1400,
+        "height": 900
+      },
+      "security": {
+        "csp": "Configured"
+      },
+      "rustCheckHealth": "Clean (0 errors, 0 warnings)"
+    }
+  }
+}

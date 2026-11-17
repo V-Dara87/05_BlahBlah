@@ -177,8 +177,15 @@ export const QUICK_CURVE_PRESETS = [
  * `props` merge in canvasRunner.js).
  */
 export function resolveKeyframedComponents(entity, t) {
-  if (!entity?.keyframes) return entity.components;
-  return entity.components.map((comp) => {
+  const kfs = entity?.keyframes;
+  if (!kfs) return entity?.components;
+  let hasAnyTrack = false;
+  for (const _ in kfs) {
+    hasAnyTrack = true;
+    break;
+  }
+  if (!hasAnyTrack) return entity?.components;
+  return (entity.components || []).map((comp) => {
     const trackKey = trackKeyFor(comp);
     const byField = entity.keyframes[trackKey];
     if (!byField) return comp;
@@ -222,6 +229,23 @@ export function setKeyframe(entity, trackKey, fieldName, time, value) {
   return { ...keyframes, [trackKey]: byField };
 }
  
+/**
+ * Write a value at `time`, UPDATING the keyframe already parked there (within
+ * `epsilon` seconds) instead of replacing it. Unlike setKeyframe this keeps the
+ * keyframe's id and its cp1/cp2 curve, so scrubbing a value (e.g. dragging a
+ * number in the Dopesheet) does not reset the easing or deselect the key on
+ * every tick. Falls back to setKeyframe when no keyframe is at `time`.
+ */
+export function setKeyframeValue(entity, trackKey, fieldName, time, value, epsilon = 1 / 60) {
+  const keyframes = entity.keyframes || {};
+  const existing = keyframes[trackKey]?.[fieldName] || [];
+  const hit = existing.find((k) => Math.abs(k.time - time) < epsilon);
+  if (!hit) return setKeyframe(entity, trackKey, fieldName, time, value);
+  const byField = { ...(keyframes[trackKey] || {}) };
+  byField[fieldName] = existing.map((k) => (k === hit ? { ...k, value } : k));
+  return { ...keyframes, [trackKey]: byField };
+}
+
 /** Remove a single keyframe by id. */
 export function removeKeyframe(entity, trackKey, fieldName, keyframeId) {
   const keyframes = entity.keyframes || {};

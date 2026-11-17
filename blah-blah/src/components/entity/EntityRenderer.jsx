@@ -19,7 +19,9 @@ import { findUpcomingMedia } from '../../engine/upcomingMedia';
 // Stable empty result so hooks that depend on it don't re-run while paused.
 const NO_UPCOMING_MEDIA = Object.freeze({ video: Object.freeze([]), audio: Object.freeze([]) });
 import { OverlayLayer } from '../preview/OverlayLayer';
+import { NoteDrawCanvas, NoteDrawToolbar } from '../notes/NoteDraw';
 import { PlaybackTransportBar } from '../preview/PlaybackTransportBar';
+import { captureAndExportScreenPng } from '../../services/frameSnapshot';
 import './entity-renderer.css';
  
 /**
@@ -328,8 +330,27 @@ export function EntityRenderer({
     selectedItem.entity?.components?.some((c) => c.type === 'ShapeRenderer' && is3DShape(c.shapeType))
   );
 
+  const handleExportActualFrame = async () => {
+    await captureAndExportScreenPng({
+      time: currentTime,
+      entities,
+      tracks,
+      scripts,
+      resolution,
+      mediaAssets,
+    });
+  };
+
   useEffect(() => {
     const handleKeyDown = (e) => {
+      // Global snapshot shortcut: Ctrl+Shift+S or Cmd+Shift+S
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'S' || e.key === 's')) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleExportActualFrame();
+        return;
+      }
+
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || e.target.isContentEditable) {
         return;
       }
@@ -399,6 +420,9 @@ export function EntityRenderer({
         }
       }}
     >
+      {/* Draw-on-preview marks for notes: toolbar (components/notes/NoteDraw.jsx) */}
+      <NoteDrawToolbar width={safeResWidth} height={safeResHeight} />
+
       {/* Viewport Screen Frame */}
       <div
         className="preview-viewport-box"
@@ -555,6 +579,10 @@ export function EntityRenderer({
             gizmoTool={gizmoTool}
             onGizmo3DPointerDown={handleGizmo3DPointerDown}
           />
+
+          {/* Marks drawn for notes. Preview-only annotation layer: export and frame
+              capture never draw it. Same project-pixel space as the entities. */}
+          <NoteDrawCanvas width={safeResWidth} height={safeResHeight} currentTime={currentTime} />
  
           </div>
  
@@ -574,6 +602,7 @@ export function EntityRenderer({
         previewMode={previewMode}
         setPreviewMode={setPreviewMode}
         toggleFullscreen={toggleFullscreen}
+        onExportFrame={handleExportActualFrame}
       />
     </section>
     </Profiler>

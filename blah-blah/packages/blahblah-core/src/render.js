@@ -263,6 +263,51 @@ function hexToRgb(hex, fallback = [56, 189, 248]) {
   return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
 }
 
+// ─── Pure-JS 5x7 ASCII Bitmap Font (ASCII 32..126) ───────────────────────────
+const FONT_5X7_B64 =
+  'AAAAAAAAAF8AAAAHAAcAFH8UfxQkKn8qEiMTCGRiNklVIlAABQMAAAAcIkEAAEEiHAAIKhwqCAgIPggIAFAwAAAICAgICABgYAAAIBAIBAI+UUlFPgBCf0AAQmFRSUYhQUVLMRgUEn8QJ0VFRTk8SklJMAFxCQUDNklJSTYGSUkpHgA2NgAAAFY2AAAACBQiQRQUFBQUQSIUCAACAVEJBjJJeUE+fhEREX5/SUlJNj5BQUEif0FBIhx/SUlJQX8JCQEBPkFBUTJ/CAgIfwBBf0EAIEBBPwF/CBQiQX9AQEBAfwIEAn9/BAgQfz5BQUE+fwkJCQY+QVEhXn8JGSlGRklJSTEBAX8BAT9AQEA/HyBAIB9/IBggf2MUCBRjAwR4BANhUUlFQwB/QUEAAgQIECAAQUF/AAQCAQIEQEBAQEAAAQIEACBUVFR4f0hERDg4REREIDhEREh/OFRUVBgIfgkBAggUVFQ8fwgEBHgARH1AACBARD0AAH8QKEQAQX9AAHwEGAR4fAgEBHg4REREOHwUFBQICBQUGHx8CAQECEhUVFQgBD9EQCA8QEAgfBwgQCAcPEAwQDxEKBAoRAxQUFA8RGRUTEQACDZBAAAAfwAAAEE2CAAICCocCA==';
+const FONT_DATA = Buffer.from(FONT_5X7_B64, 'base64');
+
+function drawGlyph(pixels, width, height, charCode, startX, startY, scale, r, g, b, a = 255) {
+  const glyphIdx = charCode >= 32 && charCode <= 126 ? charCode - 32 : 63 - 32; // fallback '?'
+  const offset = glyphIdx * 5;
+  for (let c = 0; c < 5; c++) {
+    const col = FONT_DATA[offset + c];
+    for (let row = 0; row < 7; row++) {
+      if (col & (1 << row)) {
+        for (let sy = 0; sy < scale; sy++) {
+          const py = startY + row * scale + sy;
+          if (py < 0 || py >= height) continue;
+          for (let sx = 0; sx < scale; sx++) {
+            const px = startX + c * scale + sx;
+            if (px < 0 || px >= width) continue;
+            blendPixel(pixels, width, height, px, py, r, g, b, a);
+          }
+        }
+      }
+    }
+  }
+}
+
+function drawText(pixels, width, height, text, x, y, scale = 1, r = 255, g = 255, b = 255, a = 255, align = 'left') {
+  const str = String(text ?? '');
+  const charSpacing = 1 * scale;
+  const charWidth = 5 * scale + charSpacing;
+  const totalWidth = str.length > 0 ? str.length * charWidth - charSpacing : 0;
+
+  let startX = x;
+  if (align === 'center') {
+    startX = Math.round(x - totalWidth / 2);
+  } else if (align === 'right') {
+    startX = Math.round(x - totalWidth);
+  }
+
+  for (let i = 0; i < str.length; i++) {
+    drawGlyph(pixels, width, height, str.charCodeAt(i), startX + i * charWidth, y, scale, r, g, b, a);
+  }
+  return totalWidth;
+}
+
 /** Alpha-blends a colour onto the (opaque) canvas. `a` is 0-255. */
 function blendPixel(pixels, width, height, x, y, r, g, b, a = 255) {
   if (x < 0 || y < 0 || x >= width || y >= height || a <= 0) return;
@@ -316,8 +361,129 @@ function drawEntityBox(pixels, width, height, cx, cy, hw, hh, rotationDeg, rgb, 
 }
 
 /**
+ * Computes bounding boxes, out-of-bounds overflow, and pairwise collision/overlaps
+ * between active entities at time `t`. Crucial for autonomous AI self-correction.
+ */
+export function diagnoseFrameLayout(project, time = 0) {
+  const evaluated = evaluateTimelineAtTime(project, time);
+  const { width, height } = evaluated.resolution;
+  const centerX = width / 2;
+  const centerY = height / 2;
+
+  const boxes = evaluated.activeEntities.map((ent) => {
+    const cx = centerX + (ent.transform.x || 0);
+    const cy = centerY + (ent.transform.y || 0);
+    const hw = Math.abs(100 * (ent.transform.scaleX ?? 1));
+    const hh = Math.abs(50 * (ent.transform.scaleY ?? 1));
+    const x1 = Math.round(cx - hw);
+    const y1 = Math.round(cy - hh);
+    const x2 = Math.round(cx + hw);
+    const y2 = Math.round(cy + hh);
+    const w = x2 - x1;
+    const h = y2 - y1;
+    const area = w * h;
+
+    const rawLabel = ent.scriptComponent?.props?.title || ent.scriptComponent?.scriptName || ent.name;
+    const label = String(rawLabel ?? ent.id);
+
+    // Overflow check
+    const overflow = {
+      left: x1 < 0 ? -x1 : 0,
+      right: x2 > width ? x2 - width : 0,
+      top: y1 < 0 ? -y1 : 0,
+      bottom: y2 > height ? y2 - height : 0,
+    };
+    const isOutOfBounds = overflow.left > 0 || overflow.right > 0 || overflow.top > 0 || overflow.bottom > 0;
+
+    return {
+      id: ent.id,
+      name: ent.name,
+      label,
+      type: ent.type,
+      color: ent.color,
+      opacity: ent.transform.opacity ?? 1,
+      bounds: { x1, y1, x2, y2, width: w, height: h, centerX: Math.round(cx), centerY: Math.round(cy) },
+      area,
+      isOutOfBounds,
+      overflow,
+    };
+  });
+
+  const overlaps = [];
+  const warnings = [];
+
+  // Out of bounds warnings
+  for (const b of boxes) {
+    if (b.isOutOfBounds) {
+      const parts = [];
+      if (b.overflow.left > 0) parts.push(`left edge by ${b.overflow.left}px`);
+      if (b.overflow.right > 0) parts.push(`right edge by ${b.overflow.right}px`);
+      if (b.overflow.top > 0) parts.push(`top edge by ${b.overflow.top}px`);
+      if (b.overflow.bottom > 0) parts.push(`bottom edge by ${b.overflow.bottom}px`);
+      warnings.push(`Entity "${b.label}" (${b.id}) is out of bounds: exceeds ${parts.join(', ')}.`);
+    }
+  }
+
+  // Pairwise overlap check
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      const a = boxes[i];
+      const b = boxes[j];
+      const ox1 = Math.max(a.bounds.x1, b.bounds.x1);
+      const oy1 = Math.max(a.bounds.y1, b.bounds.y1);
+      const ox2 = Math.min(a.bounds.x2, b.bounds.x2);
+      const oy2 = Math.min(a.bounds.y2, b.bounds.y2);
+
+      if (ox1 < ox2 && oy1 < oy2) {
+        const overlapWidth = ox2 - ox1;
+        const overlapHeight = oy2 - oy1;
+        const overlapArea = overlapWidth * overlapHeight;
+        const ratioA = a.area > 0 ? overlapArea / a.area : 0;
+        const ratioB = b.area > 0 ? overlapArea / b.area : 0;
+
+        overlaps.push({
+          entityA: { id: a.id, label: a.label },
+          entityB: { id: b.id, label: b.label },
+          intersection: { x1: ox1, y1: oy1, x2: ox2, y2: oy2, width: overlapWidth, height: overlapHeight, area: overlapArea },
+          percentOverlapA: Math.round(ratioA * 100),
+          percentOverlapB: Math.round(ratioB * 100),
+        });
+
+        warnings.push(
+          `Collision: "${a.label}" and "${b.label}" overlap by ${overlapArea}px (${Math.round(ratioA * 100)}% of "${a.label}", ${Math.round(ratioB * 100)}% of "${b.label}").`
+        );
+      }
+    }
+  }
+
+  const suggestions = [];
+  for (const ov of overlaps) {
+    if (ov.percentOverlapA > 20 || ov.percentOverlapB > 20) {
+      suggestions.push(
+        `Move "${ov.entityA.label}" or "${ov.entityB.label}" vertically or horizontally to avoid text collision.`
+      );
+    }
+  }
+  for (const b of boxes) {
+    if (b.isOutOfBounds) {
+      suggestions.push(`Adjust position or scale of "${b.label}" to stay within the canvas.`);
+    }
+  }
+
+  return {
+    time,
+    resolution: evaluated.resolution,
+    activeEntitiesCount: boxes.length,
+    entities: boxes,
+    overlaps,
+    warnings,
+    suggestions: [...new Set(suggestions)],
+  };
+}
+
+/**
  * Generates a PNG raster image of the project canvas at time `t`.
- * Uses a pure-JS PNG encoder (zlib deflateSync) — no native dependencies.
+ * Uses a pure-JS PNG encoder (zlib deflateSync) with built-in bitmap text rendering.
  *
  * NOTE: this is a SCHEMATIC preview. Every active entity is drawn as a box at
  * its evaluated transform; the output of the entity's script is not rendered.
@@ -347,21 +513,47 @@ export function renderFramePng(project, time = 0) {
   drawVLine(pixels, width, height, centerX, gR, gG, gB);
   drawHLine(pixels, width, height, centerY, gR, gG, gB);
 
-  // Draw entities as boxes
+  // Header info bar
+  const headerScale = Math.max(1, Math.min(3, Math.floor(width / 640)));
+  const headerText = `BlahBlah Frame Preview | Time: ${time.toFixed(2)}s | Res: ${width}x${height} | Active: ${activeEntities.length}`;
+  drawText(pixels, width, height, headerText, 24, 28, headerScale, 100, 116, 139, 230);
+
+  // Draw entities as boxes with labels
   for (const item of activeEntities) {
-    const { transform, color } = item;
+    const { transform, color, name, scriptComponent } = item;
+    const cx = centerX + (transform.x || 0);
+    const cy = centerY + (transform.y || 0);
+    const sx = transform.scaleX ?? 1;
+    const sy = transform.scaleY ?? 1;
+    const hw = Math.abs(100 * sx);
+    const hh = Math.abs(50 * sy);
+    const rgb = hexToRgb(color);
+    const op = transform.opacity ?? 1;
+
     drawEntityBox(
       pixels,
       width,
       height,
-      centerX + (transform.x || 0),
-      centerY + (transform.y || 0),
-      Math.abs(100 * (transform.scaleX ?? 1)),
-      Math.abs(50 * (transform.scaleY ?? 1)),
+      cx,
+      cy,
+      hw,
+      hh,
       transform.rotation || 0,
-      hexToRgb(color),
-      transform.opacity ?? 1
+      rgb,
+      op
     );
+
+    // Entity label and timestamp
+    const rawLabel = scriptComponent?.props?.title || scriptComponent?.scriptName || name;
+    const label = String(typeof rawLabel === 'string' || typeof rawLabel === 'number' ? rawLabel : name);
+    const fontScale = Math.max(1, Math.min(4, Math.floor(2 * Math.min(Math.abs(sx), Math.abs(sy)))));
+
+    // Center text vertically inside the box
+    const labelY = Math.round(cy - 10 * fontScale);
+    const timeY = Math.round(cy + 4 * fontScale);
+
+    drawText(pixels, width, height, label, cx, labelY, fontScale, 255, 255, 255, Math.round(255 * op), 'center');
+    drawText(pixels, width, height, `t=${time.toFixed(2)}s`, cx, timeY, Math.max(1, fontScale - 1), rgb[0], rgb[1], rgb[2], Math.round(220 * op), 'center');
   }
 
   const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);

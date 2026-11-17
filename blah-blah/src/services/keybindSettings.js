@@ -45,6 +45,10 @@ export const SHORTCUT_ACTIONS = [
   { id: 'centerOnPlayhead', label: 'Center View on Playhead', group: 'Timeline', default: 'Ctrl+Home' },
   { id: 'setInPoint', label: 'Set Export In Point', group: 'Timeline', default: 'I' },
   { id: 'setOutPoint', label: 'Set Export Out Point', group: 'Timeline', default: 'O' },
+  // Handled by components/notes/NotesSync.jsx (frame notes for AI agents).
+  { id: 'addNote', label: 'Add Note at Playhead', group: 'Timeline', default: 'M' },
+  { id: 'addRangeNote', label: 'Add Range Note (Export In/Out, else 3 s)', group: 'Timeline', default: 'Shift+M' },
+  { id: 'toggleNoteDraw', label: 'Draw Marks on Preview (save as note)', group: 'Timeline', default: 'B' },
  
   // Playback
   { id: 'togglePlay', label: 'Play / Pause', group: 'Playback', default: 'Space' },

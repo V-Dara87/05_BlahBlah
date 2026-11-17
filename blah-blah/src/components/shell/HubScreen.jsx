@@ -5,13 +5,12 @@ import {
   FolderOpen,
   FolderInput,
   Folder,
-  Clock,
-  FolderClock,
   Search,
   X,
   Check,
   Pencil,
   Trash2,
+  Plus,
   AlertCircle,
 } from 'lucide-react';
 import {
@@ -40,11 +39,12 @@ function formatDate(ts) {
   const d = new Date(ts);
   const now = new Date();
   const sameDay = d.toDateString() === now.toDateString();
-  const datePart = sameDay
-    ? 'Today'
-    : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
-  const timePart = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-  return `${datePart} · ${timePart}`;
+  if (sameDay) return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return d.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
+  });
 }
 
 /**
@@ -55,6 +55,12 @@ function formatDate(ts) {
  * it. Separate from NewProjectModal — this screen is what decides whether
  * NewProjectModal / an Open-folder picker / a recent entry gets used, it
  * doesn't replace any of them.
+ *
+ * DESIGN
+ *   Deliberately plain: flat surfaces, no gradients, one primary action. The
+ *   folder chips only appear once there is something to filter, rows reveal
+ *   their actions on hover/focus, and Enter in the search box opens the top
+ *   match.
  *
  * ORGANISING THE LIST
  *   The store keeps every folder ever created or opened, which stops being a
@@ -282,152 +288,168 @@ export function HubScreen({ onNewProject, onOpenProjectFolder, onOpenRecentProje
     );
   };
 
+  const handleSearchKeyDown = (e) => {
+    if (e.key === 'Escape' && query) {
+      e.preventDefault();
+      setQuery('');
+    } else if (e.key === 'Enter') {
+      const first = groups[0]?.projects?.[0];
+      if (first && openingId === null) handleOpenRecent(first);
+    }
+  };
+
+  const hasProjects = recents.length > 0;
+  // "Unfiled" only means something once there is a folder to be unfiled from.
+  const hasFolders = folders.length > 0;
+
   return (
     <div className="hub-screen">
       <div className="hub-container">
-        <div className="hub-brand">
-          <div className="unity-icon-box hub-icon-box">
-            <Layers size={22} />
+        <header className="hub-brand">
+          <div className="hub-logo" aria-hidden="true">
+            <Layers size={20} />
           </div>
           <div>
             <h1 className="hub-title">blahblah</h1>
-            <p className="hub-subtitle">Pick a project to keep working on, or start something new.</p>
+            <p className="hub-subtitle">Open a project or start a new one.</p>
           </div>
-        </div>
+        </header>
 
         {errorMsg && (
-          <div className="modal-alert-box error hub-alert">
+          <div className="modal-alert-box error hub-alert" role="alert">
             <AlertCircle size={14} />
             <span>{errorMsg}</span>
           </div>
         )}
 
         <div className="hub-actions-row">
-          <button className="hub-action-card primary" onClick={onNewProject}>
-            <FolderPlus size={20} className="text-emerald" />
-            <span className="hub-action-title">New Project</span>
-            <span className="hub-action-sub">Start from a template, or from scratch</span>
+          <button type="button" className="hub-btn hub-btn-primary" onClick={onNewProject}>
+            <FolderPlus size={16} />
+            New Project
           </button>
-
-          <button className="hub-action-card" onClick={handleBrowseOpen}>
-            <FolderOpen size={20} className="text-amber" />
-            <span className="hub-action-title">Open Project</span>
-            <span className="hub-action-sub">Pick a .blahblah project file</span>
+          <button type="button" className="hub-btn" onClick={handleBrowseOpen}>
+            <FolderOpen size={16} />
+            Open Project
           </button>
         </div>
 
-        <div className="hub-recent-section">
-          <div className="hub-recent-header">
-            <FolderClock size={14} className="text-dim" />
-            <span>{activeFolder ? activeFolder.name : 'Projects'}</span>
-            {!isLoadingRecents && recents.length > 0 && (
-              <span className="hub-recent-count">
+        <section className="hub-projects" aria-label="Projects">
+          <div className="hub-projects-head">
+            <h2 className="hub-section-title">{activeFolder ? activeFolder.name : 'Projects'}</h2>
+            {!isLoadingRecents && hasProjects && (
+              <span className="hub-count">
                 {query.trim() || activeFolder ? `${matchCount} of ${recents.length}` : recents.length}
               </span>
             )}
           </div>
 
-          <div className="hub-toolbar">
-            <div className="hub-search">
-              <Search size={12} className="hub-search-icon" />
-              <input
-                type="text"
-                className="hub-search-input"
-                placeholder="Search projects"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                aria-label="Search projects"
-              />
-              {query && (
-                <button
-                  type="button"
-                  className="hub-search-clear"
-                  title="Clear search"
-                  onClick={() => setQuery('')}
-                >
-                  <X size={12} />
-                </button>
-              )}
-            </div>
-
-            <select
-              className="hub-sort-select"
-              value={sort}
-              onChange={(e) => setSort(e.target.value)}
-              aria-label="Sort projects"
-            >
-              {PROJECT_SORTS.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-
-            {isCreatingFolder ? (
-              <span className="hub-folder-chip editing">
+          {hasProjects && (
+            <div className="hub-toolbar">
+              <div className="hub-search">
+                <Search size={14} className="hub-search-icon" />
                 <input
-                  className="hub-folder-input"
-                  value={newFolderName}
-                  autoFocus
-                  placeholder="Folder name"
-                  onChange={(e) => setNewFolderName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleCreateFolder();
-                    if (e.key === 'Escape') {
-                      setIsCreatingFolder(false);
-                      setNewFolderName('');
-                    }
-                  }}
-                  onBlur={() => setIsCreatingFolder(false)}
-                  aria-label="New folder name"
+                  type="text"
+                  className="hub-search-input"
+                  placeholder="Search projects"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={handleSearchKeyDown}
+                  aria-label="Search projects"
                 />
-              </span>
-            ) : (
-              <button
-                type="button"
-                className="hub-new-folder-btn"
-                onClick={() => setIsCreatingFolder(true)}
-              >
-                <FolderPlus size={12} />
-                New folder
-              </button>
-            )}
-          </div>
+                {query && (
+                  <button
+                    type="button"
+                    className="hub-search-clear"
+                    title="Clear search (Esc)"
+                    onClick={() => setQuery('')}
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
 
-          {recents.length > 0 && (
+              <select
+                className="hub-sort-select"
+                value={sort}
+                onChange={(e) => setSort(e.target.value)}
+                aria-label="Sort projects"
+              >
+                {PROJECT_SORTS.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {hasProjects && (
             <div className="hub-folder-chips" role="group" aria-label="Filter by folder">
-              {renderFolderChip(ALL_PROJECTS_ID, 'All', counts[ALL_PROJECTS_ID] ?? 0, {
-                icon: <Layers size={12} />,
-              })}
+              {hasFolders &&
+                renderFolderChip(ALL_PROJECTS_ID, 'All', counts[ALL_PROJECTS_ID] ?? 0, {
+                  icon: <Layers size={12} />,
+                })}
               {folders.map((folder) =>
                 renderFolderChip(folder.id, folder.name, counts[folder.id] ?? 0, { manageable: true })
               )}
-              {renderFolderChip(UNFILED_PROJECTS_ID, 'Unfiled', counts[UNFILED_PROJECTS_ID] ?? 0, {
-                icon: <FolderInput size={12} />,
-              })}
+              {hasFolders &&
+                renderFolderChip(UNFILED_PROJECTS_ID, 'Unfiled', counts[UNFILED_PROJECTS_ID] ?? 0, {
+                  icon: <FolderInput size={12} />,
+                })}
+
+              {isCreatingFolder ? (
+                <span className="hub-folder-chip editing">
+                  <input
+                    className="hub-folder-input"
+                    value={newFolderName}
+                    autoFocus
+                    placeholder="Folder name"
+                    onChange={(e) => setNewFolderName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleCreateFolder();
+                      if (e.key === 'Escape') {
+                        setIsCreatingFolder(false);
+                        setNewFolderName('');
+                      }
+                    }}
+                    onBlur={() => setIsCreatingFolder(false)}
+                    aria-label="New folder name"
+                  />
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="hub-new-folder-btn"
+                  onClick={() => setIsCreatingFolder(true)}
+                  title="Create a folder to organise your projects"
+                >
+                  <Plus size={12} />
+                  New folder
+                </button>
+              )}
             </div>
           )}
 
-          {isLoadingRecents && <p className="hub-empty-text">Loading...</p>}
+          {isLoadingRecents && <p className="hub-empty-text">Loading…</p>}
 
-          {!isLoadingRecents && recents.length === 0 && (
-            <p className="hub-empty-text">
-              Nothing here yet — folders you create or open will show up for next time.
-            </p>
+          {!isLoadingRecents && !hasProjects && (
+            <div className="hub-empty">
+              <p className="hub-empty-title">No projects yet</p>
+              <p className="hub-empty-text">Projects you create or open will show up here.</p>
+            </div>
           )}
 
-          {!isLoadingRecents && recents.length > 0 && groups.length === 0 && (
+          {!isLoadingRecents && hasProjects && groups.length === 0 && (
             <p className="hub-empty-text">
               {query.trim()
                 ? `No projects match “${query.trim()}”.`
-                : 'Nothing in this folder yet — use the folder button on a project to file it here.'}
+                : 'Nothing in this folder yet — use the folder button on a project to move it here.'}
             </p>
           )}
 
           {!isLoadingRecents && groups.map((group) => (
             <div className="hub-group" key={group.id}>
-              {/* Group headings only earn their space when the list is actually
-                  split; a single group renders flat, like the old list. */}
+              {/* A heading only earns its space when the list is actually split. */}
               {groups.length > 1 && (
                 <div className="hub-group-heading">
                   <span>{group.name}</span>
@@ -435,65 +457,54 @@ export function HubScreen({ onNewProject, onOpenProjectFolder, onOpenRecentProje
                 </div>
               )}
 
-              <div className="hub-recent-list">
+              <ul className="hub-list">
                 {group.projects.map((entry) => (
-                  <button
-                    key={entry.id}
-                    className="hub-recent-item"
-                    onClick={() => handleOpenRecent(entry)}
-                    disabled={openingId !== null}
-                  >
-                    <div className="hub-recent-icon">
-                      <FolderOpen size={16} />
-                    </div>
-                    <div className="hub-recent-info">
-                      <span className="hub-recent-name">{entry.name}</span>
-                      {entry.path && (
-                        <span className="hub-recent-path" title={entry.path}>
-                          {entry.path}
-                        </span>
-                      )}
-                      <span className="hub-recent-dates">
-                        <Clock size={10} />
-                        Opened {formatDate(entry.lastOpenedAt)}
-                        <span className="hub-recent-dates-sep">·</span>
-                        Created {formatDate(entry.createdAt)}
+                  <li key={entry.id} className="hub-row">
+                    <button
+                      type="button"
+                      className="hub-row-main"
+                      onClick={() => handleOpenRecent(entry)}
+                      disabled={openingId !== null}
+                      title={entry.path ? `${entry.path}\nCreated ${formatDate(entry.createdAt)}` : undefined}
+                    >
+                      <Folder size={18} className="hub-row-icon" />
+                      <span className="hub-row-text">
+                        <span className="hub-row-name">{entry.name}</span>
+                        {entry.path && <span className="hub-row-path">{entry.path}</span>}
                       </span>
-                    </div>
+                      <span className="hub-row-date">
+                        {openingId === entry.id ? 'Opening…' : formatDate(entry.lastOpenedAt)}
+                      </span>
+                    </button>
 
-                    {openingId === entry.id ? (
-                      <span className="hub-recent-status">Opening...</span>
-                    ) : (
-                      <>
-                        <span
-                          className="hub-recent-action"
-                          role="button"
-                          tabIndex={-1}
+                    {openingId !== entry.id && (
+                      <div className="hub-row-actions">
+                        <button
+                          type="button"
+                          className="hub-icon-btn"
                           title="Move to a folder"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setMoveMenu({ projectId: entry.id, x: e.clientX, y: e.clientY });
-                          }}
+                          aria-label={`Move ${entry.name} to a folder`}
+                          onClick={(e) => setMoveMenu({ projectId: entry.id, x: e.clientX, y: e.clientY })}
                         >
-                          <FolderInput size={13} />
-                        </span>
-                        <span
-                          className="hub-recent-action hub-recent-remove"
-                          role="button"
-                          tabIndex={-1}
-                          title="Remove from recent projects"
+                          <FolderInput size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          className="hub-icon-btn hub-icon-btn-danger"
+                          title="Remove from this list (the project files stay on disk)"
+                          aria-label={`Remove ${entry.name} from the list`}
                           onClick={(e) => handleForget(e, entry.id)}
                         >
-                          <X size={13} />
-                        </span>
-                      </>
+                          <X size={14} />
+                        </button>
+                      </div>
                     )}
-                  </button>
+                  </li>
                 ))}
-              </div>
+              </ul>
             </div>
           ))}
-        </div>
+        </section>
       </div>
 
       {moveMenu && (

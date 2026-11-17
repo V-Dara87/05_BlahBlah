@@ -1,36 +1,12 @@
 import { useState, useRef, useCallback, useEffect, memo } from 'react';
 import { createPortal } from 'react-dom';
-import {
-  Plus,
-  Sliders,
-  PlaySquare,
-  FolderOpen,
-  Clock,
-  Layers,
-  Activity,
-  Scissors,
-  Volume2,
-  Terminal,
-  Check,
-  Copy,
-} from 'lucide-react';
+import { Plus, Check, Copy } from 'lucide-react';
 import {
   AVAILABLE_DOCK_WINDOWS,
   openOrAddWindowToGroup,
   addNewWindowInstanceToGroup,
 } from './dockWindows';
-
-const ICON_MAP = {
-  FolderOpen,
-  PlaySquare,
-  Sliders,
-  Clock,
-  Layers,
-  Activity,
-  Scissors,
-  Volume2,
-  Terminal,
-};
+import { getDockWindowIcon } from './dockWindowIcons';
 
 /**
  * DockAddWindowButton
@@ -159,7 +135,7 @@ export const DockAddWindowButton = memo(function DockAddWindowButton({
           </div>
           <div className="dock-add-window-list">
             {AVAILABLE_DOCK_WINDOWS.map((win) => {
-              const Icon = ICON_MAP[win.iconName] || Plus;
+              const Icon = getDockWindowIcon(win.iconName);
               const inThisGroup = (containerApi?.panels || []).some(
                 (p) => p.component === win.component && (p.group?.id === group?.id || p.group === group)
               );

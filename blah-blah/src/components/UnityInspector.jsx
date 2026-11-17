@@ -27,7 +27,7 @@ import {
 import { getFieldKeyframes, setKeyframe, evaluateField } from '../engine/keyframes';
 import { isScriptComponent, isTransitionClipEntity, getCameraComponent } from '../engine/ecs';
 import { useReferencePicker } from './inspector/ReferencePickerHost';
-import { useComponentCardActions, scriptKindLabel, SCRIPT_KINDS } from '../hooks/useComponentCardActions';
+import { useComponentCardActions, SCRIPT_KINDS } from '../hooks/useComponentCardActions';
 import { TransformCard } from './inspector/TransformCard';
 import { CameraCard } from './inspector/CameraCard';
 import { TextRendererCard } from './inspector/TextRendererCard';
@@ -431,6 +431,8 @@ export const UnityInspector = memo(function UnityInspector({
   const visibleRendererItems = rendererItems.filter((it) => matchesSearch(it.label) || matchesSearch(it.type));
  
   const scriptKinds = SCRIPT_KINDS;
+  // Scripts are listed as one flat group — the runtime kind is internal.
+  const flatScripts = scriptKinds.flatMap((kind) => scriptsByKind(kind));
  
   return (
     <aside
@@ -869,37 +871,28 @@ export const UnityInspector = memo(function UnityInspector({
                       {allScripts.length === 0 && !searchTerm && (
                         <div className="popover-empty-hint">No scripts yet. Create one from the Project panel.</div>
                       )}
-                      {scriptKinds.map((kind) => {
-                        const kindScripts = scriptsByKind(kind);
-                        if (kindScripts.length === 0) return null;
-                        const Meta = scriptKindMeta(kind);
-                        return (
-                          <div key={kind} className="comp-kind-group">
-                            <div className="popover-kind-heading">
-                              <Meta.icon size={11} className={Meta.className} />
-                              <span>{scriptKindLabel(kind)}</span>
-                            </div>
-                            {kindScripts.map((s) => {
-                              const Meta2 = scriptKindMeta(s.kind);
-                              const attached = scriptComps.some((c) => c.scriptId === s.id);
-                              return (
-                                <button
-                                  key={s.id}
-                                  className="popover-item"
-                                  onClick={() => handleAttachScript(s.id)}
-                                  title={attached ? 'Already attached to this clip' : `Attach ${s.name}`}
-                                >
-                                  <Meta2.icon size={12} className={Meta2.className} />
-                                  <span className="popover-item-name">{s.name}</span>
-                                  {attached && <span className="popover-kind-tag">added</span>}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        );
-                      })}
+                      {flatScripts.length > 0 && (
+                        <div className="comp-kind-group">
+                          {flatScripts.map((s) => {
+                            const Meta2 = scriptKindMeta(s.kind);
+                            const attached = scriptComps.some((c) => c.scriptId === s.id);
+                            return (
+                              <button
+                                key={s.id}
+                                className="popover-item"
+                                onClick={() => handleAttachScript(s.id)}
+                                title={attached ? 'Already attached to this clip' : `Attach ${s.name}`}
+                              >
+                                <Meta2.icon size={12} className={Meta2.className} />
+                                <span className="popover-item-name">{s.name}</span>
+                                {attached && <span className="popover-kind-tag">added</span>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
                       {allScripts.length > 0 && searchTerm &&
-                        scriptKinds.every((kind) => scriptsByKind(kind).length === 0) && (
+                        flatScripts.length === 0 && (
                           <div className="popover-empty-hint">No scripts match your search.</div>
                         )}
                     </div>

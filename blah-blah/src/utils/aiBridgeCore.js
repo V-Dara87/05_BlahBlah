@@ -172,7 +172,7 @@ export function calculateDownscaleDimensions(width, height, maxLongSide = MAX_FR
 
   let targetW = w;
   let targetH = h;
-  if (longSide > maxLongSide) {
+  if (maxLongSide > 0 && longSide > maxLongSide) {
     const scale = maxLongSide / longSide;
     targetW = Math.round(w * scale);
     targetH = Math.round(h * scale);

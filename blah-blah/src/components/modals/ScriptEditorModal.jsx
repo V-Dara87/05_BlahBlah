@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { X, Check, Save, FileCode, AlertCircle } from 'lucide-react';
-import { detectScriptKind, getScriptError, isScriptBundlePending } from '../../engine/scriptRunner';
+import { getScriptError, isScriptBundlePending } from '../../engine/scriptRunner';
 import {
   countScriptErrors,
   errorLinesForScript,
@@ -9,13 +9,9 @@ import {
 } from '../../engine/scriptErrorInfo';
 import './script-editor-modal.css';
  
-// Per-kind display metadata for the editor header badge (see detectScriptKind).
-const SCRIPT_KIND_META = {
-  react: { label: 'React Component' },
-  canvas: { label: 'Canvas Component' },
-  motion: { label: 'JavaScript Motion Script' },
-};
-const scriptKindLabel = (kind) => SCRIPT_KIND_META[kind]?.label || 'Script';
+// The header badge always reads "Script" — the detected runtime kind is
+// internal (see detectScriptKind) and is not shown to the user.
+const SCRIPT_BADGE_LABEL = 'Script';
  
 /** Height of one editor line in px — must match .script-gutter-line / the textarea's line-height. */
 const LINE_HEIGHT_PX = 18;
@@ -181,7 +177,6 @@ function ScriptEditorModalContent({
     if (gutterRef.current) gutterRef.current.scrollTop = e.target.scrollTop;
   }, []);
  
-  const kindLabel = scriptKindLabel(detectScriptKind(code));
   const errorMessage = saveStatus && typeof saveStatus === 'object' ? saveStatus.error : null;
   const errorCount = errorMessage ? countScriptErrors(errorMessage) : 0;
  
@@ -239,7 +234,7 @@ function ScriptEditorModalContent({
                 onChange={(e) => handleNameChange(e.target.value)}
                 placeholder="MyComponent.jsx"
               />
-              <span className="script-badge">{kindLabel}</span>
+              <span className="script-badge">{SCRIPT_BADGE_LABEL}</span>
               {dirty && <span className="script-dirty-dot" title="Unsaved changes">●</span>}
             </div>
           </div>
@@ -340,4 +335,3 @@ function ScriptEditorModalContent({
     </div>
   );
 }
- 

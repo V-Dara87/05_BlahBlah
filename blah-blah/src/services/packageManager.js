@@ -155,6 +155,17 @@ export async function listInstalledPackages({ category } = {}) {
 }
 
 /**
+ * Finds one package by id (built-in or custom).
+ * @param {string} packageId
+ * @returns {Promise<object|null>}
+ */
+export async function getPackageById(packageId) {
+  if (!packageId) return null;
+  const manifest = await loadManifest();
+  return manifest.find((pkg) => pkg.id === packageId) || null;
+}
+
+/**
  * Checks if a specific package is installed.
  * @param {string} packageId
  * @returns {Promise<boolean>}
@@ -203,6 +214,20 @@ export async function cancelDownload(packageId) {
   if (!sessionId) return false;
 
   if (isTauri()) {
+    // Qwen3-ASR downloads run as a Python process, not as the native downloader,
+    // so they are cancelled through the shared process registry instead.
+    const pkg = await getPackageById(packageId);
+    if (pkg?.engine === 'qwen3-asr') {
+      try {
+        const { cancelQwenAsr } = await import('./qwenAsrRunner.js');
+        await cancelQwenAsr();
+      } catch (err) {
+        console.warn('[packageManager] Failed to cancel the Qwen3-ASR download:', err);
+      }
+      activeDownloadSessions.delete(packageId);
+      return true;
+    }
+
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('cancel_download', { sessionId });
@@ -357,6 +382,8 @@ export async function installPresetToProject(packageId, onCreateScript) {
  * Downloads and installs a package.
  * Supports:
  * - 'whisper-model' / 'whisper-model-official' / 'whisper-model-khmer' -> Tauri streaming download to app data dir
+ * - 'qwen3-asr' engine (category 'asr-model-khmer') -> Hugging Face snapshot into the
+ *   app data dir, fetched by the bundled Python helper (no PyTorch here)
  * - 'script-library' / 'npm-library' -> esm.sh fetch & IndexedDB moduleCache pre-cache
  * - 'component-pack' -> Shared Library import for cross-project reuse
  *
@@ -428,7 +455,72 @@ export async function downloadPackage(packageId, { onProgress } = {}) {
     return { id: pkg.id, sizeBytes: pkg.sizeBytes };
   }
 
-  // Case 3: Whisper model or binary asset -> Tauri native download
+  // Case 3: Qwen3-ASR model (multi-file PyTorch snapshot)
+  //
+  // A Whisper model is one hashed .bin file, so the native downloader can verify
+  // it. This engine ships a whole Hugging Face snapshot, so the download runs
+  // through the user's Python environment (huggingface_hub) and the folder is the
+  // installed artifact. PyTorch is not downloaded by this step.
+  if (pkg.engine === 'qwen3-asr') {
+    if (!isTauri()) {
+      throw new Error('Qwen3-ASR models can only be downloaded in the Tauri desktop app.');
+    }
+
+    const appDir = await getAppDataDirectory();
+    if (!appDir) {
+      throw new Error('Failed to resolve application directory.');
+    }
+
+    const targetRelPath = pkg.installPath || 'models/qwen3-asr/khmer';
+    if (/^([a-zA-Z]:)?[/\\]/.test(targetRelPath) || targetRelPath.split(/[/\\]/).includes('..')) {
+      throw new Error(`Invalid install path for package ${pkg.id}.`);
+    }
+    const fullDestPath = joinPath(appDir, targetRelPath);
+    await ensureDir(fullDestPath);
+
+    const { downloadQwenAsrModel } = await import('./qwenAsrRunner.js');
+    const totalBytes = Number(pkg.sizeBytes) || 0;
+    let bytesDownloaded = 0;
+
+    activeDownloadSessions.set(pkg.id, `pkg-dl-${crypto.randomUUID()}`);
+    try {
+      const result = await downloadQwenAsrModel({
+        modelDir: fullDestPath,
+        // A Qwen3-ASR install can be the ASR fine-tune or the forced aligner.
+        repo: pkg.engineModel || undefined,
+        cacheDir: joinPath(appDir, 'models', 'qwen3-asr', 'hf-cache'),
+        onProgress: (progress) => {
+          bytesDownloaded = Number(progress?.bytesDownloaded) || bytesDownloaded;
+          onProgress?.({
+            bytesDownloaded,
+            totalBytes,
+            percent: totalBytes > 0 ? Math.min(99, (bytesDownloaded / totalBytes) * 100) : 0,
+          });
+        },
+      });
+      bytesDownloaded = Number(result?.bytes) || bytesDownloaded;
+    } finally {
+      activeDownloadSessions.delete(pkg.id);
+    }
+
+    const registry = await getInstalledPackagesRegistry();
+    registry[pkg.id] = {
+      id: pkg.id,
+      displayName: pkg.displayName,
+      category: pkg.category,
+      version: pkg.version || '1.0.0',
+      installPath: targetRelPath,
+      sizeBytes: bytesDownloaded || totalBytes,
+      installedAt: Date.now(),
+      engine: pkg.engine,
+    };
+    await saveInstalledPackagesRegistry(registry);
+    onProgress?.({ bytesDownloaded: registry[pkg.id].sizeBytes, totalBytes, percent: 100 });
+
+    return { id: pkg.id, installPath: fullDestPath, sizeBytes: registry[pkg.id].sizeBytes };
+  }
+
+  // Case 4: Whisper model or binary asset -> Tauri native download
   if (!isTauri()) {
     throw new Error('Native model downloading is only supported in the Tauri desktop app.');
   }
@@ -541,7 +633,17 @@ export async function deletePackage(packageId) {
   if (isTauri() && info.installPath && !info.installPath.startsWith('indexeddb:') && !info.installPath.startsWith('sharedLibrary:') && !info.isLocalImport) {
     const appDir = await getAppDataDirectory();
     const fullPath = appDir ? joinPath(appDir, info.installPath) : info.installPath;
-    await removeFileIfExists(fullPath);
+    if (info.engine === 'qwen3-asr') {
+      // A Qwen3-ASR install is a snapshot FOLDER, so it has to be removed recursively.
+      try {
+        const fs = await import('@tauri-apps/plugin-fs');
+        if (await fs.exists(fullPath)) await fs.remove(fullPath, { recursive: true });
+      } catch (err) {
+        console.warn('[packageManager] Failed to remove the Qwen3-ASR model folder:', err);
+      }
+    } else {
+      await removeFileIfExists(fullPath);
+    }
   }
 
   delete registry[packageId];

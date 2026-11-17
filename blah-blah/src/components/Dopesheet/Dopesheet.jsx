@@ -7,6 +7,7 @@ import {
   Undo2, Redo2, Scissors, Trash2, Copy, Magnet,
   Activity, ClipboardPaste, Plus, Navigation, CornerDownRight,
   ArrowLeftRight, Clock, FastForward, Camera,
+  List, TrendingUp, Maximize2,
 } from 'lucide-react';
 import {
   TRANSFORM_FIELD_GROUPS, TEXT_RENDERER_FIELDS,
@@ -16,8 +17,12 @@ import { extractScriptProps } from '../../engine/scriptRunner';
 import {
   trackKeyFor, getFieldKeyframes, setKeyframe, removeKeyframe,
   removeKeyframesByIds, moveKeyframesDelta,
-  QUICK_CURVE_PRESETS, setKeyframeCurve, evaluateField,
+  QUICK_CURVE_PRESETS, setKeyframeCurve, evaluateField, setKeyframeValue,
 } from '../../engine/keyframes';
+import { isNumericCurve, curveId, curveColorAt } from '../../engine/keyframeGraph';
+import { DopesheetValueCell, hasDopesheetValueCell } from './DopesheetValueCell';
+import { GraphView } from './GraphView';
+import { buildTransformItems, buildFieldItems } from './dopesheetTree';
 import { formatTimecode } from '../../utils/timeFormat';
 import { useEditorActions } from '../../dock/EditorContext';
 import { isScriptComponent } from '../../engine/ecs';
@@ -39,6 +44,8 @@ import {
  * - Keyframe deletion via Delete/Backspace and toolbar
  * - Arrow-key frame nudging
  * - Zoom & pan navigation
+ * - Two views of the same keyframes: the Dopesheet (diamonds on lanes) and the
+ *   Graph (editable value curves + bezier handles, see GraphView.jsx)
  */
 
 const GROUP_ICONS = {
@@ -130,6 +137,9 @@ export const Dopesheet = memo(function Dopesheet({
   onDuplicateSelected,
   onToggleSnapping,
   snappingEnabled,
+  // Mirrors the Inspector's Auto Key toggle: when on, editing a parameter's
+  // value in the sheet keyframes it even if it has no keyframes yet.
+  autoKeyEnabled = false,
 }) {
   // Actions only — see the context split in dock/EditorContext.jsx.
   const { focusDockPanel } = useEditorActions();
@@ -153,9 +163,28 @@ export const Dopesheet = memo(function Dopesheet({
   const rulerRef = useRef(null);
   const [pixelsPerSecond, setPixelsPerSecond] = useState(PIXELS_PER_SECOND);
   const [collapsedGroups, setCollapsedGroups] = useState({});
+  // Width of the property-tree column; dragged via the splitter on its right edge.
+  const [labelsWidth, setLabelsWidth] = useState(260);
+  const [resizingLabels, setResizingLabels] = useState(false);
   const keybinds = useMemo(() => loadKeybindSettings(), []);
   const [showOnlyKeyframed, setShowOnlyKeyframed] = useState(false);
   const [snapToKeyframe, setSnapToKeyframe] = useState(false);
+
+  // 'dopesheet' = diamonds on lanes, 'graph' = editable value curves.
+  const [viewMode, setViewMode] = useState('dopesheet');
+  const isGraph = viewMode === 'graph';
+  // Graph: every curve on its own 0..1 scale (position vs. opacity stay comparable).
+  const [graphNormalized, setGraphNormalized] = useState(true);
+  // Graph: only draw the curves that contain a selected keyframe.
+  const [graphSelectedOnly, setGraphSelectedOnly] = useState(false);
+  const [hiddenCurves, setHiddenCurves] = useState(() => new Set());
+  // Parameter row picked in the property tree (a curveId). While set, ONLY that
+  // parameter is shown: its curve in Graph, its keyframes in the Dopesheet.
+  // Click the row again (or "Show All") to go back to everything.
+  const [soloId, setSoloId] = useState(null);
+  const rowDownRef = useRef(null);
+  // Bumped by the Fit button / F key; GraphView frames all curves when it changes.
+  const [fitToken, setFitToken] = useState(0);
 
   // Local clip time [0, clipDuration]
   const localTime = selectedEntity ? Math.max(0, currentTime - selectedEntity.startTime) : 0;
@@ -166,6 +195,12 @@ export const Dopesheet = memo(function Dopesheet({
   useEffect(() => {
     selectedEntityRef.current = selectedEntity;
   }, [selectedEntity]);
+
+  // A solo parameter belongs to one clip: drop it when another clip is selected.
+  const selectedEntityIdForSolo = selectedEntity?.id;
+  useEffect(() => {
+    setSoloId(null);
+  }, [selectedEntityIdForSolo]);
 
   // Keep single selectedKeyId in sync if selectedKeyIds changes
   const updateSelectedKeyIds = useCallback((newSet) => {
@@ -194,16 +229,26 @@ export const Dopesheet = memo(function Dopesheet({
       .filter((c) => c.type !== 'AudioSource' && c.type !== 'VideoRenderer')
       .map((component) => {
         const trackKey = trackKeyFor(component);
-        let fields = fieldSchemaForComponent(component, scripts);
-        
+        // Plain parameter list for this component: one { field, label } per
+        // animatable field. `fields` is the same list without labels, which the
+        // summary row, snapping and selection code below rely on.
+        let items = component.type === 'Transform'
+          ? buildTransformItems(TRANSFORM_FIELD_GROUPS)
+          : buildFieldItems(fieldSchemaForComponent(component, scripts));
+
         if (showOnlyKeyframed) {
-          fields = fields.filter((field) => {
-            const kfs = getFieldKeyframes(selectedEntity, trackKey, field.name);
-            return kfs.length > 0;
-          });
+          items = items.filter(
+            ({ field }) => getFieldKeyframes(selectedEntity, trackKey, field.name).length > 0,
+          );
         }
-        
-        return { trackKey, component, label: groupLabel(component, scripts), fields };
+
+        return {
+          trackKey,
+          component,
+          label: groupLabel(component, scripts),
+          items,
+          fields: items.map((i) => i.field),
+        };
       })
       .filter((g) => g.fields.length > 0);
   }, [selectedEntity, scripts, showOnlyKeyframed]);
@@ -230,6 +275,44 @@ export const Dopesheet = memo(function Dopesheet({
     });
     return [...times].sort((a, b) => a - b);
   }, [selectedEntity, groups]);
+
+  // Every numeric, keyframed parameter in tree order. Colours are handed out by
+  // position in THIS list, so hiding a curve never recolours the others.
+  const graphCurveList = useMemo(() => {
+    if (!selectedEntity) return [];
+    const list = [];
+    groups.forEach((group) => {
+      group.items.forEach(({ field, label }) => {
+        const kfs = getFieldKeyframes(selectedEntity, group.trackKey, field.name);
+        if (!isNumericCurve(kfs)) return;
+        list.push({
+          id: curveId(group.trackKey, field.name),
+          trackKey: group.trackKey,
+          fieldName: field.name,
+          label: `${group.label} \u00b7 ${label || field.label || field.name}`,
+          color: curveColorAt(list.length),
+        });
+      });
+    });
+    return list;
+  }, [selectedEntity, groups]);
+
+  const graphColorById = useMemo(
+    () => new Map(graphCurveList.map((c) => [c.id, c.color])),
+    [graphCurveList],
+  );
+
+  // The curves actually drawn: not hidden, and (optionally) holding a selected key.
+  const visibleCurves = useMemo(() => {
+    // Solo wins over hidden chips and "Selected Only": exactly the picked parameter.
+    if (soloId) return graphCurveList.filter((c) => c.id === soloId);
+    let list = graphCurveList.filter((c) => !hiddenCurves.has(c.id));
+    if (graphSelectedOnly && selectedKeyIds.size > 0 && selectedEntity) {
+      list = list.filter((c) =>
+        getFieldKeyframes(selectedEntity, c.trackKey, c.fieldName).some((k) => selectedKeyIds.has(k.id)));
+    }
+    return list;
+  }, [graphCurveList, hiddenCurves, graphSelectedOnly, selectedKeyIds, selectedEntity, soloId]);
 
   // Snap to nearest keyframe if enabled
   const snapToNearestKeyframe = useCallback((t) => {
@@ -314,20 +397,69 @@ export const Dopesheet = memo(function Dopesheet({
     if (rulerRef.current) {
       rulerRef.current.scrollLeft = scrollLeft;
     }
-    if (labelsScrollRef.current && labelsScrollRef.current.scrollTop !== scrollTop) {
+    // In Graph view the lanes never scroll vertically; the labels scroll on their own.
+    if (!isGraph && labelsScrollRef.current && labelsScrollRef.current.scrollTop !== scrollTop) {
       labelsScrollRef.current.scrollTop = scrollTop;
     }
-  }, []);
+  }, [isGraph]);
 
   const handleLabelsWheel = useCallback((e) => {
     if (e.ctrlKey || e.metaKey) {
       handleLanesWheel(e);
       return;
     }
+    // Graph view: the label column scrolls natively.
+    if (isGraph) return;
     if (lanesScrollRef.current) {
       lanesScrollRef.current.scrollTop += e.deltaY;
     }
-  }, [handleLanesWheel]);
+  }, [handleLanesWheel, isGraph]);
+
+  // ---- Graph view bridges (stable callbacks; GraphView reads them through a ref) ----
+  const toggleCurveHidden = useCallback((id) => {
+    setHiddenCurves((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleGraphCommit = useCallback((keyframes) => {
+    const entity = selectedEntityRef.current;
+    if (entity) onUpdateEntity(entity.id, { keyframes });
+  }, [onUpdateEntity]);
+
+  const handleGraphSeek = useCallback((localT) => {
+    const entity = selectedEntityRef.current;
+    if (entity) onSeek(entity.startTime + localT);
+  }, [onSeek]);
+
+  const handleGraphAddKey = useCallback((trackKey, fieldName, time, value) => {
+    const entity = selectedEntityRef.current;
+    if (!entity) return;
+    const keyframes = setKeyframe(entity, trackKey, fieldName, time, value);
+    onUpdateEntity(entity.id, { keyframes });
+    const added = (keyframes[trackKey]?.[fieldName] || []).find((k) => Math.abs(k.time - time) < 0.001);
+    if (added) updateSelectedKeyIds(new Set([added.id]));
+  }, [onUpdateEntity, updateSelectedKeyIds]);
+
+  const handleGraphKeyMenu = useCallback((info) => {
+    setCtxMenu({
+      x: info.x,
+      y: info.y,
+      type: 'keyframe',
+      trackKey: info.trackKey,
+      fieldName: info.fieldName,
+      fieldLabel: info.fieldLabel,
+      keyframe: info.keyframe,
+      keyTime: info.keyframe.time,
+    });
+  }, []);
+
+  const handleGraphKeyActivated = useCallback(() => {
+    focusDockPanel?.('curveEditor', { onlyIfOpen: true });
+  }, [focusDockPanel]);
 
   // Add keyframe at playhead
   const handleAddKeyAtPlayhead = (trackKey, fieldName, defaultVal) => {
@@ -341,6 +473,259 @@ export const Dopesheet = memo(function Dopesheet({
     const value = currentVal !== undefined ? currentVal : defaultVal;
     const keyframes = setKeyframe(selectedEntity, trackKey, fieldName, snapToFrame(localTime), value);
     onUpdateEntity(selectedEntity.id, { keyframes });
+  };
+
+  /**
+   * The parameter's actual value at the playhead: the keyframe-evaluated value
+   * if it is animated, else the static value stored on the component, else the
+   * schema default. Same precedence the renderer and the Inspector use.
+   */
+  const readFieldValue = (group, field) => {
+    const animated = evaluateField(selectedEntity, group.trackKey, field.name, localTime);
+    if (animated !== undefined) return animated;
+    const comp = group.component;
+    const stored = isScriptComponent(comp) ? comp.props?.[field.name] : comp?.[field.name];
+    return stored !== undefined ? stored : field.defaultVal;
+  };
+
+  /**
+   * Edit a parameter's value from its Dopesheet cell.
+   *  - Already animated (has keyframes) or Auto Key on: write the value as a
+   *    keyframe at the playhead (updating one parked there, keeping its curve).
+   *    Writing the static prop would be a silent no-op for an animated field —
+   *    the keyframe evaluator overrides it every frame.
+   *  - Otherwise: static write, exactly like editing it in the Inspector.
+   */
+  const writeFieldValue = (group, field, value) => {
+    if (!selectedEntity) return;
+    const hasKeys = getFieldKeyframes(selectedEntity, group.trackKey, field.name).length > 0;
+    if (hasKeys || autoKeyEnabled) {
+      const keyframes = setKeyframeValue(
+        selectedEntity, group.trackKey, field.name, snapToFrame(localTime), value,
+      );
+      onUpdateEntity(selectedEntity.id, { keyframes });
+      return;
+    }
+
+    const patch = {
+      components: selectedEntity.components.map((c) => {
+        if (trackKeyFor(c) !== group.trackKey) return c;
+        return isScriptComponent(c)
+          ? { ...c, props: { ...(c.props || {}), [field.name]: value } }
+          : { ...c, [field.name]: value };
+      }),
+    };
+    // Transform.speed also resizes the clip on the timeline (a 2× clip is half
+    // as long) — same rule as UnityInspector.updateTransform's static write.
+    if (group.component.type === 'Transform' && field.name === 'speed') {
+      const oldSpeed = Number(group.component.speed ?? 1) || 1;
+      const newSpeed = Number(value) || 1;
+      if (oldSpeed > 0 && newSpeed > 0 && oldSpeed !== newSpeed) {
+        patch.duration = Math.max(0.2, (selectedEntity.duration || 0) * (oldSpeed / newSpeed));
+      }
+    }
+    onUpdateEntity(selectedEntity.id, patch);
+  };
+
+  /** One parameter row in the label column: ◆ + the value control (name inside it). */
+  const renderLabelLeaf = (group, field, label) => {
+    const kfs = getFieldKeyframes(selectedEntity, group.trackKey, field.name);
+    const gid = curveId(group.trackKey, field.name);
+    const swatchColor = graphColorById.get(gid);
+    const curveHidden = hiddenCurves.has(gid);
+    const isSolo = soloId === gid;
+    const isDimmed = !!soloId && !isSolo;
+    return (
+      <div
+        key={field.name}
+        className={`dopesheet-field-row${isSolo ? ' is-solo' : ''}${isDimmed ? ' is-dimmed' : ''}`}
+        onPointerDown={(e) => { rowDownRef.current = { x: e.clientX, y: e.clientY }; }}
+        onClick={(e) => {
+          // Leave the controls alone (diamond, swatch, inputs); a scrub-drag of the
+          // number label also ends in a click, so ignore clicks that moved.
+          if (e.target.closest?.('input, select, textarea, button, .field-key-dot, .field-graph-swatch')) return;
+          const d = rowDownRef.current;
+          if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 3) return;
+          setSoloId((cur) => (cur === gid ? null : gid));
+        }}
+      >
+        <span
+          className={`field-key-dot ${kfs.length > 0 ? 'has-keys' : ''}`}
+          title={kfs.length > 0 ? 'Remove keyframe at playhead' : 'Add keyframe at playhead'}
+          onClick={() => {
+            const existing = kfs.find((k) => Math.abs(k.time - localTime) < 1 / 60);
+            if (existing) {
+              handleDeleteKey(group.trackKey, field.name, existing.id);
+            } else {
+              handleAddKeyAtPlayhead(group.trackKey, field.name, field.defaultVal);
+            }
+          }}
+        >
+          ◆
+        </span>
+        {isGraph && (swatchColor ? (
+          <button
+            type="button"
+            className={`field-graph-swatch ${curveHidden ? 'is-hidden' : ''}`}
+            style={{ '--swatch': swatchColor }}
+            title={curveHidden ? 'Show this curve in the graph' : 'Hide this curve in the graph'}
+            aria-pressed={!curveHidden}
+            onClick={() => toggleCurveHidden(gid)}
+          />
+        ) : (
+          <span className="field-graph-swatch-spacer" />
+        ))}
+        {hasDopesheetValueCell(field) ? (
+          <DopesheetValueCell
+            field={field}
+            label={label}
+            value={readFieldValue(group, field)}
+            onChange={(v) => writeFieldValue(group, field, v)}
+          />
+        ) : (
+          <span className="field-name" title={label}>{label}</span>
+        )}
+      </div>
+    );
+  };
+
+  /**
+   * Summary ticks (one ◆ per timestamp that any child has a key at) for a
+   * a component group row. `sgroup` = { trackKey, label, fields }.
+   */
+  const renderSummaryTicks = (sgroup) => {
+    const group = sgroup;
+    const allKeyTimes = new Set();
+    group.fields.forEach((f) => {
+      getFieldKeyframes(selectedEntity, group.trackKey, f.name).forEach((k) => allKeyTimes.add(k.time));
+    });
+    return (
+      <>
+        {[...allKeyTimes].sort((a, b) => a - b).map((t) => {
+          // Check if all child keys at this time are selected
+          const childKeysAtTime = [];
+          group.fields.forEach((f) => {
+            const kfs = getFieldKeyframes(selectedEntity, group.trackKey, f.name);
+            const m = kfs.find((k) => Math.abs(k.time - t) < 1 / 60);
+            if (m) childKeysAtTime.push(m.id);
+          });
+          const isAllSelected = childKeysAtTime.length > 0 && childKeysAtTime.every((id) => selectedKeyIds.has(id));
+
+          return (
+            <div
+              key={t}
+              className={`dopesheet-keyframe-tick group-summary ${isAllSelected ? 'selected' : ''}`}
+              style={{ left: `${timeToX(t)}px` }}
+              title={`Group Keyframes @ ${formatTimecode(t)}`}
+              onPointerDown={handleSummaryClickOrDrag(group, t)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (childKeysAtTime.length > 0) {
+                  updateSelectedKeyIds(new Set(childKeysAtTime));
+                }
+                setCtxMenu({
+                  x: e.clientX,
+                  y: e.clientY,
+                  type: 'summary',
+                  group,
+                  keyTime: t,
+                });
+              }}
+            />
+          );
+        })}
+      </>
+    );
+  };
+
+  /** The lane (keyframe diamonds + segments) of one leaf parameter. */
+  const renderFieldLane = (group, field) => {
+    const kfs = getFieldKeyframes(selectedEntity, group.trackKey, field.name);
+    const laneId = curveId(group.trackKey, field.name);
+    const laneSolo = soloId === laneId;
+    const laneDimmed = !!soloId && !laneSolo;
+    return (
+      <div
+        key={field.name}
+        className={`dopesheet-field-lane${laneSolo ? ' is-solo' : ''}${laneDimmed ? ' is-dimmed' : ''}`}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          const lanesRect = lanesInnerRef.current?.getBoundingClientRect();
+          const clickX = e.clientX - (lanesRect?.left || 0);
+          const clickTime = Math.min(clipDuration, Math.max(0, snapToFrame(xToTime(clickX))));
+          const val = evaluateField(selectedEntity, group.trackKey, field.name, clickTime) ?? field.defaultVal;
+          const keyframes = setKeyframe(selectedEntity, group.trackKey, field.name, clickTime, val);
+          onUpdateEntity(selectedEntity.id, { keyframes });
+          const added = (keyframes[group.trackKey]?.[field.name] || []).find((k) => Math.abs(k.time - clickTime) < 0.001);
+          if (added) {
+            updateSelectedKeyIds(new Set([added.id]));
+          }
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const lanesRect = lanesInnerRef.current?.getBoundingClientRect();
+          const clickX = e.clientX - (lanesRect?.left || 0);
+          const clickTime = Math.min(clipDuration, Math.max(0, snapToFrame(xToTime(clickX))));
+          setCtxMenu({
+            x: e.clientX,
+            y: e.clientY,
+            type: 'lane',
+            trackKey: group.trackKey,
+            fieldName: field.name,
+            fieldLabel: field.label || field.name,
+            defaultVal: field.defaultVal,
+            clickTime,
+          });
+        }}
+      >
+        {/* Segment connector lines */}
+        {kfs.slice(0, -1).map((k, i) => (
+          <div
+            key={`seg-${k.id}`}
+            className="dopesheet-keyframe-segment"
+            style={{ left: `${timeToX(k.time)}px`, width: `${timeToX(kfs[i + 1].time) - timeToX(k.time)}px` }}
+          />
+        ))}
+
+        {/* Keyframe diamonds */}
+        {kfs.map((k) => {
+          const isSelected = selectedKeyIds.has(k.id) || selectedKeyId === k.id;
+          return (
+            <div
+              key={k.id}
+              data-key-id={k.id}
+              className={`dopesheet-keyframe-tick ${isSelected ? 'selected' : ''}`}
+              style={{ left: `${timeToX(k.time)}px` }}
+              title={`${field.label || field.name} @ ${formatTimecode(k.time)} = ${typeof k.value === 'number' ? k.value.toFixed(2) : k.value}`}
+              onPointerDown={handleDragKey(group.trackKey, field.name, k.id, k.time)}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                handleDeleteKey(group.trackKey, field.name, k.id);
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!selectedKeyIds.has(k.id)) {
+                  updateSelectedKeyIds(new Set([k.id]));
+                }
+                setCtxMenu({
+                  x: e.clientX,
+                  y: e.clientY,
+                  type: 'keyframe',
+                  trackKey: group.trackKey,
+                  fieldName: field.name,
+                  fieldLabel: field.label || field.name,
+                  keyframe: k,
+                  keyTime: k.time,
+                });
+              }}
+            />
+          );
+        })}
+      </div>
+    );
   };
 
   // Delete single keyframe
@@ -888,6 +1273,9 @@ export const Dopesheet = memo(function Dopesheet({
     } else if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) {
       e.preventDefault();
       handleDuplicateSelected();
+    } else if (isGraph && (e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      setFitToken((n) => n + 1);
     } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       if (selectedKeyIds.size > 0 || selectedKeyId) {
         e.preventDefault();
@@ -902,6 +1290,7 @@ export const Dopesheet = memo(function Dopesheet({
     handleDeleteSelectedKeyframes, handleCopySelected, handleCutSelected,
     handlePasteAtTime, handleDuplicateSelected, localTime,
     selectedKeyIds, selectedKeyId, onUpdateEntity, updateSelectedKeyIds, setSelectedKeyId, snapToFrame,
+    isGraph,
   ]);
 
   // Keyframe navigation helpers
@@ -955,6 +1344,31 @@ export const Dopesheet = memo(function Dopesheet({
     >
       {/* Top Toolbar */}
       <div className="dopesheet-toolbar">
+        <div className="dopesheet-toolbar-group" role="tablist" aria-label="Keyframe view">
+          <button
+            role="tab"
+            aria-selected={!isGraph}
+            className={`dopesheet-tool-btn ${!isGraph ? 'active' : ''}`}
+            title="Dopesheet: keyframes as diamonds on lanes"
+            onClick={() => { setViewMode('dopesheet'); setCtxMenu(null); }}
+          >
+            <List size={12} />
+            <span>Dopesheet</span>
+          </button>
+          <button
+            role="tab"
+            aria-selected={isGraph}
+            className={`dopesheet-tool-btn ${isGraph ? 'active' : ''}`}
+            title="Graph: edit value curves and easing handles directly"
+            onClick={() => { setViewMode('graph'); setCtxMenu(null); }}
+          >
+            <TrendingUp size={12} />
+            <span>Graph</span>
+          </button>
+        </div>
+
+        <div className="dopesheet-toolbar-divider" />
+
         <div className="dopesheet-toolbar-group">
           <button
             className={`dopesheet-tool-btn ${showOnlyKeyframed ? 'active' : ''}`}
@@ -973,6 +1387,45 @@ export const Dopesheet = memo(function Dopesheet({
             <span>Snap Keys</span>
           </button>
         </div>
+
+        {isGraph && (
+          <div className="dopesheet-toolbar-group">
+            <button
+              className="dopesheet-tool-btn"
+              title="Frame all visible curves (F)"
+              onClick={() => setFitToken((n) => n + 1)}
+            >
+              <Maximize2 size={12} />
+              <span>Fit</span>
+            </button>
+            <button
+              className={`dopesheet-tool-btn ${graphNormalized ? 'active' : ''}`}
+              title="Normalize: draw every curve on its own 0–1 scale, so a position in pixels and an opacity can be read side by side"
+              onClick={() => setGraphNormalized((v) => !v)}
+            >
+              <span>Normalize</span>
+            </button>
+            <button
+              className={`dopesheet-tool-btn ${graphSelectedOnly ? 'active' : ''}`}
+              title="Only draw curves that have a selected keyframe"
+              onClick={() => setGraphSelectedOnly((v) => !v)}
+            >
+              <span>Selected Only</span>
+            </button>
+          </div>
+        )}
+
+        {soloId && (
+          <div className="dopesheet-toolbar-group">
+            <button
+              className="dopesheet-tool-btn active"
+              title="Only the selected parameter is shown — click to show everything again"
+              onClick={() => setSoloId(null)}
+            >
+              <span>Show All</span>
+            </button>
+          </div>
+        )}
 
         <div className="dopesheet-toolbar-divider" />
 
@@ -1080,9 +1533,31 @@ export const Dopesheet = memo(function Dopesheet({
 
       <div className="dopesheet-body">
         {/* Left column: Row labels */}
-        <div className="dopesheet-labels">
+        <div className="dopesheet-labels" style={{ width: `${labelsWidth}px` }}>
+          <div
+            className={`dopesheet-labels-resizer${resizingLabels ? ' is-dragging' : ''}`}
+            title="Drag to resize"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              const startX = e.clientX;
+              const startW = labelsWidth;
+              setResizingLabels(true);
+              const onMove = (ev) => {
+                setLabelsWidth(Math.min(520, Math.max(170, startW + ev.clientX - startX)));
+              };
+              const onUp = () => {
+                setResizingLabels(false);
+                window.removeEventListener('pointermove', onMove);
+                window.removeEventListener('pointerup', onUp);
+                window.removeEventListener('pointercancel', onUp);
+              };
+              window.addEventListener('pointermove', onMove);
+              window.addEventListener('pointerup', onUp);
+              window.addEventListener('pointercancel', onUp);
+            }}
+          />
           <div className="dopesheet-labels-spacer" />
-          <div className="dopesheet-labels-scroll" ref={labelsScrollRef} onWheel={handleLabelsWheel}>
+          <div className={`dopesheet-labels-scroll${isGraph ? ' graph-mode' : ''}`} ref={labelsScrollRef} onWheel={handleLabelsWheel}>
             {groups.length === 0 && (
               <p className="hint-text-sm" style={{ padding: '10px' }}>
                 This clip has no exposed parameters yet — add a component in the Inspector.
@@ -1100,28 +1575,7 @@ export const Dopesheet = memo(function Dopesheet({
                     <span className="group-icon"><Icon size={12} /></span>
                     <span className="group-name">{group.label}</span>
                   </div>
-                  {isOpen && group.fields.map((field) => {
-                    const kfs = getFieldKeyframes(selectedEntity, group.trackKey, field.name);
-                    return (
-                      <div key={field.name} className="dopesheet-field-row">
-                        <span
-                          className={`field-key-dot ${kfs.length > 0 ? 'has-keys' : ''}`}
-                          title={kfs.length > 0 ? 'Remove keyframe at playhead' : 'Add keyframe at playhead'}
-                          onClick={() => {
-                            const existing = kfs.find((k) => Math.abs(k.time - localTime) < 1 / 60);
-                            if (existing) {
-                              handleDeleteKey(group.trackKey, field.name, existing.id);
-                            } else {
-                              handleAddKeyAtPlayhead(group.trackKey, field.name, field.defaultVal);
-                            }
-                          }}
-                        >
-                          ◆
-                        </span>
-                        <span className="field-name">{field.label || field.name}</span>
-                      </div>
-                    );
-                  })}
+                  {isOpen && group.items.map(({ field, label }) => renderLabelLeaf(group, field, label))}
                 </div>
               );
             })}
@@ -1168,182 +1622,85 @@ export const Dopesheet = memo(function Dopesheet({
 
           {/* Lanes */}
           <div
-            className="dopesheet-lanes-scroll"
+            className={`dopesheet-lanes-scroll${isGraph ? ' graph-mode' : ''}`}
             ref={lanesScrollRef}
             onScroll={handleLanesScroll}
             onWheel={handleLanesWheel}
-            onPointerDown={handleLanesPointerDown}
+            onPointerDown={isGraph ? undefined : handleLanesPointerDown}
           >
             <div
               className="dopesheet-lanes-inner"
               ref={lanesInnerRef}
               style={{ width: `${laneWidth}px`, position: 'relative', minHeight: '100%' }}
             >
-              {/* Background grid */}
-              <div
-                className="dopesheet-grid-pattern"
-                style={{
-                  backgroundSize: `${tickPx * labelStride}px 100%`,
-                  backgroundPosition: '0 0',
-                }}
-              />
-
-              {/* Marquee / Lasso selection rectangle */}
-              {boxSelect && (
-                <div
-                  className="dopesheet-lasso-box"
-                  style={{
-                    left: `${Math.min(boxSelect.startX, boxSelect.endX)}px`,
-                    top: `${Math.min(boxSelect.startY, boxSelect.endY)}px`,
-                    width: `${Math.abs(boxSelect.endX - boxSelect.startX)}px`,
-                    height: `${Math.abs(boxSelect.endY - boxSelect.startY)}px`,
-                  }}
+              {isGraph ? (
+                <GraphView
+                  entity={selectedEntity}
+                  curves={visibleCurves}
+                  selectedKeyIds={selectedKeyIds}
+                  normalized={graphNormalized}
+                  pixelsPerSecond={pixelsPerSecond}
+                  clipDuration={clipDuration}
+                  gridStep={tickInterval * labelStride}
+                  scrollRef={lanesScrollRef}
+                  contentWidth={laneWidth}
+                  fitToken={fitToken}
+                  autoFitOnCurveChange={!graphSelectedOnly}
+                  snapToFrame={snapToFrame}
+                  onSelectKeys={updateSelectedKeyIds}
+                  onCommitKeyframes={handleGraphCommit}
+                  onSeekLocal={handleGraphSeek}
+                  onAddKey={handleGraphAddKey}
+                  onKeyContextMenu={handleGraphKeyMenu}
+                  onKeyActivated={handleGraphKeyActivated}
+                  onZoomTime={handleLanesWheel}
                 />
+              ) : (
+                <>
+                  {/* Background grid */}
+                  <div
+                    className="dopesheet-grid-pattern"
+                    style={{
+                      backgroundSize: `${tickPx * labelStride}px 100%`,
+                      backgroundPosition: '0 0',
+                    }}
+                  />
+
+                  {/* Marquee / Lasso selection rectangle */}
+                  {boxSelect && (
+                    <div
+                      className="dopesheet-lasso-box"
+                      style={{
+                        left: `${Math.min(boxSelect.startX, boxSelect.endX)}px`,
+                        top: `${Math.min(boxSelect.startY, boxSelect.endY)}px`,
+                        width: `${Math.abs(boxSelect.endX - boxSelect.startX)}px`,
+                        height: `${Math.abs(boxSelect.endY - boxSelect.startY)}px`,
+                      }}
+                    />
+                  )}
+
+                  {/* Groups & Fields (same `items` as the label column, so rows stay aligned) */}
+                  {groups.map((group) => {
+                    const isOpen = !collapsedGroups[group.trackKey];
+                    return (
+                      <div key={group.trackKey}>
+                        {/* Component summary row */}
+                        <div className="dopesheet-group-lane">{renderSummaryTicks(group)}</div>
+
+                        {isOpen && group.items.map(({ field }) => renderFieldLane(group, field))}
+                      </div>
+                    );
+                  })}
+
+                  {/* Clip end boundary line & dead space shading */}
+                  <div
+                    className="dopesheet-out-of-range"
+                    style={{ left: `${timeToX(clipDuration)}px`, width: `${Math.max(0, laneWidth - timeToX(clipDuration))}px`, top: 0, bottom: 0, height: 'auto' }}
+                  />
+                  <div className="dopesheet-clip-end-line" style={{ left: `${timeToX(clipDuration)}px`, top: 0, bottom: 0, height: 'auto' }} />
+
+                </>
               )}
-
-              {/* Groups & Fields */}
-              {groups.map((group) => {
-                const isOpen = !collapsedGroups[group.trackKey];
-                const allGroupKeyTimes = new Set();
-                group.fields.forEach((f) => {
-                  getFieldKeyframes(selectedEntity, group.trackKey, f.name).forEach((k) => allGroupKeyTimes.add(k.time));
-                });
-
-                return (
-                  <div key={group.trackKey}>
-                    {/* Summary row */}
-                    <div className="dopesheet-group-lane">
-                      {[...allGroupKeyTimes].sort((a, b) => a - b).map((t) => {
-                        // Check if all child keys at this time are selected
-                        const childKeysAtTime = [];
-                        group.fields.forEach((f) => {
-                          const kfs = getFieldKeyframes(selectedEntity, group.trackKey, f.name);
-                          const m = kfs.find((k) => Math.abs(k.time - t) < 1 / 60);
-                          if (m) childKeysAtTime.push(m.id);
-                        });
-                        const isAllSelected = childKeysAtTime.length > 0 && childKeysAtTime.every((id) => selectedKeyIds.has(id));
-
-                        return (
-                          <div
-                            key={t}
-                            className={`dopesheet-keyframe-tick group-summary ${isAllSelected ? 'selected' : ''}`}
-                            style={{ left: `${timeToX(t)}px` }}
-                            title={`Group Keyframes @ ${formatTimecode(t)}`}
-                            onPointerDown={handleSummaryClickOrDrag(group, t)}
-                            onContextMenu={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              if (childKeysAtTime.length > 0) {
-                                updateSelectedKeyIds(new Set(childKeysAtTime));
-                              }
-                              setCtxMenu({
-                                x: e.clientX,
-                                y: e.clientY,
-                                type: 'summary',
-                                group,
-                                keyTime: t,
-                              });
-                            }}
-                          />
-                        );
-                      })}
-                    </div>
-
-                    {/* Field rows */}
-                    {isOpen && group.fields.map((field) => {
-                      const kfs = getFieldKeyframes(selectedEntity, group.trackKey, field.name);
-                      return (
-                        <div
-                          key={field.name}
-                          className="dopesheet-field-lane"
-                          onDoubleClick={(e) => {
-                            e.stopPropagation();
-                            const lanesRect = lanesInnerRef.current?.getBoundingClientRect();
-                            const clickX = e.clientX - (lanesRect?.left || 0);
-                            const clickTime = Math.min(clipDuration, Math.max(0, snapToFrame(xToTime(clickX))));
-                            const val = evaluateField(selectedEntity, group.trackKey, field.name, clickTime) ?? field.defaultVal;
-                            const keyframes = setKeyframe(selectedEntity, group.trackKey, field.name, clickTime, val);
-                            onUpdateEntity(selectedEntity.id, { keyframes });
-                            const added = (keyframes[group.trackKey]?.[field.name] || []).find((k) => Math.abs(k.time - clickTime) < 0.001);
-                            if (added) {
-                              updateSelectedKeyIds(new Set([added.id]));
-                            }
-                          }}
-                          onContextMenu={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            const lanesRect = lanesInnerRef.current?.getBoundingClientRect();
-                            const clickX = e.clientX - (lanesRect?.left || 0);
-                            const clickTime = Math.min(clipDuration, Math.max(0, snapToFrame(xToTime(clickX))));
-                            setCtxMenu({
-                              x: e.clientX,
-                              y: e.clientY,
-                              type: 'lane',
-                              trackKey: group.trackKey,
-                              fieldName: field.name,
-                              fieldLabel: field.label || field.name,
-                              defaultVal: field.defaultVal,
-                              clickTime,
-                            });
-                          }}
-                        >
-                          {/* Segment connector lines */}
-                          {kfs.slice(0, -1).map((k, i) => (
-                            <div
-                              key={`seg-${k.id}`}
-                              className="dopesheet-keyframe-segment"
-                              style={{ left: `${timeToX(k.time)}px`, width: `${timeToX(kfs[i + 1].time) - timeToX(k.time)}px` }}
-                            />
-                          ))}
-
-                          {/* Keyframe diamonds */}
-                          {kfs.map((k) => {
-                            const isSelected = selectedKeyIds.has(k.id) || selectedKeyId === k.id;
-                            return (
-                              <div
-                                key={k.id}
-                                data-key-id={k.id}
-                                className={`dopesheet-keyframe-tick ${isSelected ? 'selected' : ''}`}
-                                style={{ left: `${timeToX(k.time)}px` }}
-                                title={`${field.label || field.name} @ ${formatTimecode(k.time)} = ${typeof k.value === 'number' ? k.value.toFixed(2) : k.value}`}
-                                onPointerDown={handleDragKey(group.trackKey, field.name, k.id, k.time)}
-                                onDoubleClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteKey(group.trackKey, field.name, k.id);
-                                }}
-                                onContextMenu={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  if (!selectedKeyIds.has(k.id)) {
-                                    updateSelectedKeyIds(new Set([k.id]));
-                                  }
-                                  setCtxMenu({
-                                    x: e.clientX,
-                                    y: e.clientY,
-                                    type: 'keyframe',
-                                    trackKey: group.trackKey,
-                                    fieldName: field.name,
-                                    fieldLabel: field.label || field.name,
-                                    keyframe: k,
-                                    keyTime: k.time,
-                                  });
-                                }}
-                              />
-                            );
-                          })}
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })}
-
-              {/* Clip end boundary line & dead space shading */}
-              <div
-                className="dopesheet-out-of-range"
-                style={{ left: `${timeToX(clipDuration)}px`, width: `${Math.max(0, laneWidth - timeToX(clipDuration))}px`, top: 0, bottom: 0, height: 'auto' }}
-              />
-              <div className="dopesheet-clip-end-line" style={{ left: `${timeToX(clipDuration)}px`, top: 0, bottom: 0, height: 'auto' }} />
 
               {/* Playhead scrub line */}
               <PlayheadLine x={playheadX} height="100%" />

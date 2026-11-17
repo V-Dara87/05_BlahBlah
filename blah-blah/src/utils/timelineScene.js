@@ -93,41 +93,56 @@ export function cursorForZone(zone) {
 
 /**
  * Everything ClipItem.jsx derives from a clip's media components, computed
- * ONCE per clip here so the drawing code and the waveform loader can never
- * disagree with the DOM path about it:
- *
- *   hasVideo/hasAudio — ecs.js isVideoEntity / isAudioEntity, INCLUDING the
- *     entity's own `type` field. Checking components only (which this file used
- *     to do) mis-coloured any clip saved with `type: 'video'` but an unusual
- *     component set, and dropped its waveform entirely.
- *   url — ClipItem's `audioUrl`: the entity's own `src` wins, then the first
- *     AudioSource/VideoRenderer component's (array order, not VideoRenderer
- *     first). Using a different precedence can resolve to a URL that is not the
- *     one playback uses, which showed a waveform for the wrong file.
- *   isMissingMedia — ClipItem's `isMissingSrc`: only video/audio entities can
- *     be missing, and blob: URLs are legitimately transient (a live recording
- *     still being persisted) so they are never flagged.
+ * in a SINGLE PASS per clip so drawing and waveform loading never disagree
+ * with the DOM path, avoiding repeated component scans and array iterations.
  */
-function mediaInfoFor(clip, mediaAssets) {
-  const comps = clip.components || [];
-  const hasAudio = clip.type === 'audio' || comps.some((c) => c.type === 'AudioSource');
-  const hasVideo = clip.type === 'video' || comps.some((c) => c.type === 'VideoRenderer');
-  const comp = comps.find((c) => c.type === 'AudioSource' || c.type === 'VideoRenderer');
+function resolveClipMedia(clip, mediaUrlSet) {
+  const comps = clip.components;
+  let hasAudioComp = false;
+  let hasVideoComp = false;
+  let comp = null;
+  let localTransformSpeed;
+  let hasText = false;
+  let hasShape = false;
+
+  if (comps) {
+    for (let i = 0; i < comps.length; i++) {
+      const c = comps[i];
+      if (!c) continue;
+      const t = c.type;
+      if (t === 'AudioSource') {
+        hasAudioComp = true;
+        if (!comp) comp = c;
+      } else if (t === 'VideoRenderer') {
+        hasVideoComp = true;
+        if (!comp) comp = c;
+      } else if (t === 'Transform') {
+        localTransformSpeed = c.speed;
+      } else if (t === 'TextRenderer') {
+        hasText = true;
+      } else if (t === 'ShapeRenderer') {
+        hasShape = true;
+      }
+    }
+  }
+
+  const hasAudio = clip.type === 'audio' || hasAudioComp;
+  const hasVideo = clip.type === 'video' || hasVideoComp;
   const url = clip.src || comp?.src || null;
   const isMissingMedia = Boolean(
-    url && (hasVideo || hasAudio) && !url.startsWith('blob:') && !(mediaAssets || []).some((a) => a?.url === url)
+    url &&
+    (hasVideo || hasAudio) &&
+    !url.startsWith('blob:') &&
+    (mediaUrlSet ? !mediaUrlSet.has(url) : true)
   );
-  return { hasAudio, hasVideo, comp, url, isMissingMedia };
-}
 
-/** Lightweight category used to pick the card's colour, matching ClipItem. */
-function categoryOf(clip) {
-  const has = (type) => Boolean(clip.components?.some((c) => c.type === type));
-  if (clip.type === 'video' || has('VideoRenderer')) return 'video';
-  if (clip.type === 'audio' || has('AudioSource')) return 'audio';
-  if (has('TextRenderer')) return 'text';
-  if (has('ShapeRenderer')) return 'shape';
-  return 'prefab';
+  const category = (clip.type === 'video' || hasVideoComp) ? 'video'
+    : (clip.type === 'audio' || hasAudioComp) ? 'audio'
+    : hasText ? 'text'
+    : hasShape ? 'shape'
+    : 'prefab';
+
+  return { hasAudio, hasVideo, comp, url, isMissingMedia, category, localTransformSpeed };
 }
 
 /**
@@ -137,15 +152,20 @@ function categoryOf(clip) {
  * consumes twice as much SOURCE per second of timeline, which is what the
  * waveform window (audioStartSec → audioEndSec) has to reflect.
  */
-function audioSpeedFor(clip, clipById) {
-  const comp = (clip.components || []).find(
-    (c) => c.type === 'AudioSource' || c.type === 'VideoRenderer'
-  );
+function audioSpeedFor(comp, localTransformSpeed, parentId, clipById) {
   const contentSpeed = comp?.speed || 1;
-  const localTransformSpeed = (clip.components || []).find((c) => c.type === 'Transform')?.speed;
-  const parentTransformSpeed = clip.parentId
-    ? (clipById.get(clip.parentId)?.components || []).find((c) => c.type === 'Transform')?.speed
-    : undefined;
+  let parentTransformSpeed;
+  if (parentId) {
+    const parent = clipById.get(parentId);
+    if (parent?.components) {
+      for (let i = 0; i < parent.components.length; i++) {
+        if (parent.components[i]?.type === 'Transform') {
+          parentTransformSpeed = parent.components[i].speed;
+          break;
+        }
+      }
+    }
+  }
   return contentSpeed * (localTransformSpeed ?? parentTransformSpeed ?? 1);
 }
 
@@ -190,6 +210,11 @@ export function buildTimelineScene({
   const clipById = new Map();
   for (const c of clips || []) if (c && !clipById.has(c.id)) clipById.set(c.id, c);
 
+  // Pre-index media asset URLs in a Set for O(1) missing-media lookups
+  const mediaUrlSet = mediaAssets?.length
+    ? new Set(mediaAssets.map((a) => a?.url).filter(Boolean))
+    : null;
+
   // One pass per row: row Y comes from computeTrackLanes (the same helper the
   // DOM path uses), sub-lanes from computeClipSubLanes.
   const lanes = computeTrackLanes(tracks, clips, defaultTrackHeight);
@@ -218,7 +243,7 @@ export function buildTimelineScene({
       );
       const startTime = Number.isFinite(clip.startTime) ? clip.startTime : 0;
       const duration = Number.isFinite(clip.duration) ? clip.duration : 0;
-      const media = mediaInfoFor(clip, mediaAssets);
+      const media = resolveClipMedia(clip, mediaUrlSet);
       const mediaOffset = media.comp?.mediaOffset || 0;
 
       const item = {
@@ -234,7 +259,7 @@ export function buildTimelineScene({
         laneCount,
         isLocked: Boolean(row.track?.locked),
         isMissingMedia: isTransition ? false : media.isMissingMedia,
-        category: categoryOf(clip),
+        category: media.category,
         startTime,
         endTime: startTime + duration,
         // Card geometry in content space. The transition card is a full-height
@@ -245,14 +270,14 @@ export function buildTimelineScene({
         y: y + CLIP_TOP_INSET + (isTransition ? 0 : laneIndex * cardHeight),
         height: cardHeight,
 
-        // ── Media, resolved once per clip (see mediaInfoFor) ──────────────
+        // ── Media, resolved once per clip (see resolveClipMedia) ──────────────
         hasAudio: media.hasAudio,
         hasVideo: media.hasVideo,
         audioUrl: media.url,
         // Source window the waveform shows (ClipItem -> WaveformCanvas): the
         // clip's in-point through the amount of SOURCE it consumes.
         audioStartSec: mediaOffset,
-        audioEndSec: duration > 0 ? mediaOffset + duration * audioSpeedFor(clip, clipById) : mediaOffset,
+        audioEndSec: duration > 0 ? mediaOffset + duration * audioSpeedFor(media.comp, media.localTransformSpeed, clip.parentId, clipById) : mediaOffset,
       };
 
       if (isTransition) {
@@ -281,7 +306,7 @@ export function buildTimelineScene({
   // renderPipeline.js buildActiveEntityIndex: entries before the binary-search
   // cursor can be skipped outright once no earlier entry can still overlap.
   const sorted = [...items].sort(
-    (a, b) => a.startTime - b.startTime || String(a.id).localeCompare(String(b.id))
+    (a, b) => a.startTime - b.startTime || (a.id < b.id ? -1 : (a.id > b.id ? 1 : 0))
   );
   const starts = new Float64Array(sorted.length);
   const prefixMaxEnd = new Float64Array(sorted.length);

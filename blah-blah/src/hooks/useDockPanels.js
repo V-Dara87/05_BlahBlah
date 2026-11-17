@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { popoutGroup } from '../dock/popoutGroup';
+import { getDockWindowTitle } from '../dock/dockWindows';
  
 /**
  * useDockPanels — dockview panel API + layout/open/focus/float/popout.
@@ -111,7 +112,7 @@ export function useDockPanels() {
         api.addPanel({
           id: panelId,
           component: panelId,
-          title: panelId === 'curveEditor' ? 'Curves' : panelId,
+          title: getDockWindowTitle(panelId),
           position: { direction: 'within', referencePanel: refPanel },
         });
       }

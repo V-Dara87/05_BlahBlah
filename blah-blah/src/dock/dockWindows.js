@@ -1,6 +1,8 @@
 /**
- * Registry of all available dock windows in BlahBlah.
- * Matches DOCK_COMPONENTS in DockLayout.jsx.
+ * Registry of all available dock windows in BlahBlah: the SINGLE source of truth.
+ * The Window menu, the tab-bar "+" dropdown, the radial menu titles and the
+ * panel-opening hooks all read from here. A new window needs an entry here, a
+ * component in DOCK_COMPONENTS (DockLayout.jsx) and an icon in dockWindowIcons.js.
  */
 export const AVAILABLE_DOCK_WINDOWS = [
   { id: 'project', component: 'project', title: 'Project', iconName: 'FolderOpen', desc: 'Media, prefabs & scripts' },
@@ -12,7 +14,19 @@ export const AVAILABLE_DOCK_WINDOWS = [
   { id: 'silenceRemover', component: 'silenceRemover', title: 'Silence Remover', iconName: 'Scissors', desc: 'Audio silence detection' },
   { id: 'mixer', component: 'mixer', title: 'Mixer', iconName: 'Volume2', desc: 'Audio track mixer' },
   { id: 'console', component: 'console', title: 'Console', iconName: 'Terminal', desc: 'Output logs & debug' },
+  { id: 'packageManager', component: 'packageManager', title: 'Package Manager', iconName: 'Package', desc: 'Models, presets & libraries' },
+  { id: 'notes', component: 'notes', title: 'Notes', iconName: 'MessageSquare', desc: 'Frame notes for AI agents' },
 ];
+
+/** component id -> tab title, derived from the registry above. */
+export const DOCK_WINDOW_TITLES = Object.fromEntries(
+  AVAILABLE_DOCK_WINDOWS.map((w) => [w.component, w.title])
+);
+
+/** Tab title for a component; falls back to the raw id for unknown ones. */
+export function getDockWindowTitle(component) {
+  return DOCK_WINDOW_TITLES[component] || component;
+}
 
 /**
  * Core logic to open or add a window to a specific dock group.

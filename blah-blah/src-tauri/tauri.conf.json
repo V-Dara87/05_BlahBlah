@@ -60,7 +60,8 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../public/esbuild.wasm": "esbuild.wasm"
+      "../public/esbuild.wasm": "esbuild.wasm",
+      "resources/qwen_asr_khmer.py": "qwen_asr_khmer.py"
     },
     "fileAssociations": [
       {

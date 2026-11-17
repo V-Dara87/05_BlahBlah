@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import {
   initProject,
   loadProject,
@@ -27,10 +28,12 @@ import {
   evaluateTimelineAtTime,
   renderFrameSvg,
   renderFramePng,
+  diagnoseFrameLayout,
   exportWithFfmpeg,
   atomicWriteFile,
   sendFileCommand,
   sendHttpCommand,
+  waitForResult,
   startBridgeServer,
   validateBridgeCommand,
   DEFAULT_BRIDGE_PORT,
@@ -113,7 +116,7 @@ Usage:
   blahblah script list [--dir <path>] [--json]
   blahblah script check <file> [--json]
 
-  blahblah render frame --time <sec> [--out <file.svg|file.png>] [--dir <path>] [--json]
+  blahblah render frame --time <sec> [--out <file>] [--format <png|svg>] [--source <editor|schematic|auto>] [--dir <path>] [--json]
   blahblah render export [--out <file.mp4>] [--quality <high|ultra>] [--dir <path>] [--json]
 
   blahblah bridge send --cmd <seek|reload|select> [--arg <val>] [--dir <path>]
@@ -352,28 +355,88 @@ Usage:
       if (subcommand === 'frame') {
         const time = numberOption(options, 'time', 0);
         const evaluated = evaluateTimelineAtTime(project, time);
+        const diagnostics = diagnoseFrameLayout(project, time);
+        const format = options.format ? String(options.format).toLowerCase() : (options.out && /\.png$/i.test(options.out) ? 'png' : 'svg');
+        const source = options.source ? String(options.source).toLowerCase() : 'auto';
+
+        let actualPngBuf = null;
+        let fidelity = 'schematic';
+
+        if (format === 'png' && source !== 'schematic') {
+          // Attempt to query the running editor via AI bridge for an actual composited screen frame
+          try {
+            const payload = validateBridgeCommand({
+              type: 'render_frame',
+              arg: { time, format: 'png' },
+            });
+            const sent = await sendFileCommand(projectDir, payload);
+            const port = Number(process.env.BLAHBLAH_BRIDGE_PORT) || DEFAULT_BRIDGE_PORT;
+            sendHttpCommand(payload, port, { projectDir }).catch(() => {});
+
+            const timeoutMs = options.timeout ? Number(options.timeout) : 800;
+            const result = await waitForResult(projectDir, sent.id, { timeoutMs, intervalMs: 30 });
+            if (result && result.ok) {
+              let b64 = result.pngBase64;
+              if (!b64) {
+                const p = path.resolve(projectDir, '.aibridge', 'outbox', `${sent.id}.png`);
+                try {
+                  const b = await fs.readFile(p);
+                  b64 = b.toString('base64');
+                } catch {}
+              }
+              if (b64) {
+                actualPngBuf = Buffer.from(b64, 'base64');
+                fidelity = 'editor';
+              }
+            }
+          } catch {
+            // editor bridge not responding or timeout
+          }
+
+          if (source === 'editor' && !actualPngBuf) {
+            throw new Error('Editor did not respond within timeout. Make sure BlahBlah editor is open and running.');
+          }
+        }
+
+        const pngBuf = actualPngBuf || (format === 'png' ? renderFramePng(project, time) : null);
 
         if (options.out) {
-          const outPath = path.resolve(options.out);
-          if (/\.png$/i.test(outPath)) {
-            const pngBuf = renderFramePng(project, time);
+          let outPath = path.resolve(options.out);
+          if (format === 'png' && !/\.png$/i.test(outPath)) outPath += '.png';
+          if (format === 'svg' && !/\.svg$/i.test(outPath)) outPath += '.svg';
+
+          if (format === 'png') {
             await atomicWriteFile(outPath, pngBuf);
+            let msg = fidelity === 'editor'
+              ? `✓ Actual composited screen frame at ${time}s rendered to ${outPath}`
+              : `✓ Frame at ${time}s rendered as PNG to ${outPath} (schematic preview)`;
+            if (diagnostics.warnings.length > 0) {
+              msg += `\n⚠ Layout diagnostics (${diagnostics.warnings.length} warning${diagnostics.warnings.length > 1 ? 's' : ''}):\n  - ` + diagnostics.warnings.join('\n  - ');
+            }
             printOutput(
-              { ...evaluated, out: outPath, format: 'png' },
+              { ...evaluated, out: outPath, format: 'png', fidelity, diagnostics },
               options,
-              `✓ Frame at ${time}s rendered as PNG to ${outPath}`
+              msg
             );
           } else {
             const svg = renderFrameSvg(project, time);
             await atomicWriteFile(outPath, svg);
+            let msg = `✓ Frame at ${time}s rendered to ${outPath}`;
+            if (diagnostics.warnings.length > 0) {
+              msg += `\n⚠ Layout diagnostics (${diagnostics.warnings.length} warning${diagnostics.warnings.length > 1 ? 's' : ''}):\n  - ` + diagnostics.warnings.join('\n  - ');
+            }
             printOutput(
-              { ...evaluated, out: outPath },
+              { ...evaluated, out: outPath, format: 'svg', diagnostics },
               options,
-              `✓ Frame at ${time}s rendered to ${outPath}`
+              msg
             );
           }
         } else {
-          printOutput(evaluated, options);
+          if (format === 'png') {
+            printOutput({ ...evaluated, format: 'png', fidelity, pngBase64: pngBuf.toString('base64'), diagnostics }, options);
+          } else {
+            printOutput({ ...evaluated, format: 'svg', diagnostics }, options);
+          }
         }
         return;
       }

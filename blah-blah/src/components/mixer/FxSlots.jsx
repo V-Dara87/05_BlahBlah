@@ -43,7 +43,13 @@ export function FxSlots({
   const [picker, setPicker] = useState(null);
   const [busy, setBusy] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  const [error, setError] = useState(null);
   const disabled = !vstEnabled || !projectFolderHandle;
+  const disabledReason = !projectFolderHandle
+    ? 'Save the project to a folder first (VST3 inserts need a project folder)'
+    : !vstEnabled
+      ? 'VST3 is turned off — enable it in Settings > Audio'
+      : '';
 
   const update = useCallback((patch) => {
     if (onUpdateTrack) onUpdateTrack(track.id, patch);
@@ -58,6 +64,11 @@ export function FxSlots({
       const slot = state ? { ...created, ...state } : created;
       update({ fx: [...slots, slot].slice(0, MAX_FX_SLOTS) });
       setPicker(null);
+      setError(null);
+    } catch (err) {
+      console.warn('Could not add VST3 insert:', err);
+      setPicker(null);
+      setError(`Could not add plugin: ${String(err?.message || err)}`);
     } finally {
       setBusy(false);
     }
@@ -83,10 +94,12 @@ export function FxSlots({
   const handleEdit = useCallback(async (slot) => {
     if (!onOpenEditor || disabled) return;
     setEditingId(slot.id);
+    setError(null);
     try {
       await onOpenEditor(track.id, slot.id);
-    } catch (error) {
-      console.warn('Could not open VST editor:', error);
+    } catch (err) {
+      console.warn('Could not open VST editor:', err);
+      setError(`Could not open editor: ${String(err?.message || err)}`);
     } finally {
       setEditingId(null);
     }
@@ -138,7 +151,7 @@ export function FxSlots({
               className="fx-slot-name"
               onClick={() => handleEdit(slot)}
               disabled={!onOpenEditor || disabled || editingId === slot.id}
-              title="Open plugin editor"
+              title={disabled ? disabledReason : !onOpenEditor ? 'Plugin editors only open in the desktop app' : 'Open plugin editor'}
             >
               {editingId === slot.id ? 'Editing…' : slot.name}
             </button>
@@ -156,7 +169,7 @@ export function FxSlots({
             type="button"
             className="fx-add-slot"
             disabled={disabled || busy}
-            title={disabled ? 'VST3 inserts require the desktop app and a saved project' : 'Add a VST3 insert'}
+            title={disabled ? (disabledReason || 'VST3 inserts require the desktop app and a saved project') : 'Add a VST3 insert'}
             onClick={(event) => setPicker(pickerPosition(event.currentTarget.getBoundingClientRect()))}
           >
             <Plus size={9} />
@@ -164,6 +177,18 @@ export function FxSlots({
           </button>
         )}
       </div>
+
+      {error && (
+        <div
+          className="fx-slots-error"
+          role="alert"
+          style={{ color: '#f87171', fontSize: 9, lineHeight: 1.3, padding: '2px 4px', wordBreak: 'break-word', cursor: 'pointer' }}
+          title="Click to dismiss"
+          onClick={() => setError(null)}
+        >
+          {error}
+        </div>
+      )}
 
       {picker && (
         <PluginPicker

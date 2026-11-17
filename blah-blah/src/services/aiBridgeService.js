@@ -31,7 +31,12 @@ import {
   formatBridgeResult,
   base64ToUint8Array,
 } from '../utils/aiBridgeCore';
-import { drawExportFrame, createCanvasContainerPool } from '../engine/exportRunner';
+import {
+  drawExportFrame,
+  createCanvasContainerPool,
+  createVideoFrameProvider,
+  prepareVideoFramesForTime,
+} from '../engine/exportRunner';
 import { createLogger } from '../utils/logger.js';
 
 const log = createLogger('bridge');
@@ -235,7 +240,20 @@ export async function renderEditorFrame({
   const ctx = canvas.getContext('2d');
 
   const pool = createCanvasContainerPool();
+  // Video clips are drawn from <video> elements held by this provider. Without
+  // one, drawExportFrame silently skips every video, so the frame would show
+  // only scripts, text and shapes instead of the whole composition.
+  const videoFrameProvider = createVideoFrameProvider();
   try {
+    await prepareVideoFramesForTime({
+      provider: videoFrameProvider,
+      entities,
+      tracks,
+      scripts,
+      time,
+      fps: 30,
+      mediaAssets,
+    });
     await drawExportFrame({
       ctx,
       width,
@@ -248,6 +266,7 @@ export async function renderEditorFrame({
       scripts,
       fps: 30,
       canvasContainers: pool,
+      videoFrameProvider,
       mediaAssets,
     });
 
@@ -264,6 +283,11 @@ export async function renderEditorFrame({
   } finally {
     try {
       pool.disposeAll();
+    } catch {
+      // Best-effort cleanup
+    }
+    try {
+      videoFrameProvider.disposeAll();
     } catch {
       // Best-effort cleanup
     }

@@ -1,9 +1,22 @@
-import { useRef, useEffect, memo } from 'react';
+import { useRef, useEffect, useState, useCallback, memo } from 'react';
+import { MessageSquarePlus, MessageSquare, Crosshair, Check, Undo2, Trash2 } from 'lucide-react';
+import { ContextMenu } from '../shared/ContextMenu';
 import { usePlaybackStore } from '../../hooks/PlaybackContext';
 import { formatTimecode } from '../../utils/timeFormat';
 import { getTickIntervalSeconds } from '../../utils/timelineLayout';
 import { applyEdgeAutoScroll } from '../../utils/timelineAutoScroll';
+import {
+  useNotes,
+  seekToNote,
+  addNoteAt,
+  setNoteDone,
+  removeNote,
+  updateNote,
+  openNoteInPanel,
+} from '../../hooks/notesStore';
+import { formatNoteRange, DEFAULT_RANGE_SECONDS } from '../../services/notesCore';
 import './time-ruler.css';
+import './notes-ruler.css';
 
 // Module-level so the default below keeps one identity across renders
 // (a `= []` default parameter creates a new array every render and defeats memo).
@@ -19,8 +32,47 @@ export const TimeRuler = memo(function TimeRuler({
   snappingEnabled = false,
 }) {
   const store = usePlaybackStore();
+  const { notes, activeNoteId } = useNotes();
   const rulerRef = useRef(null);
   const HEADER_WIDTH = 180;
+
+  // Right-click menu: { x, y, time, noteId } | null. `noteId` is set when the
+  // click landed on a note flag, otherwise the menu offers to add a note.
+  const [menu, setMenu] = useState(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
+  // Live preview while a note is being dragged: { id, time, duration } | null.
+  // The change is written to notes.json once, when the drag ends.
+  const [drag, setDrag] = useState(null);
+  const noteDragCleanupRef = useRef(null);
+  useEffect(() => () => {
+    if (noteDragCleanupRef.current) noteDragCleanupRef.current();
+  }, []);
+
+  const menuNote = menu?.noteId ? notes.find((n) => n.id === menu.noteId) || null : null;
+
+  const timeAtClientX = (clientX) => {
+    const rect = rulerRef.current?.getBoundingClientRect();
+    if (!rect) return 0;
+    return Math.max(0, (clientX - rect.left - HEADER_WIDTH) / pixelsPerSecond);
+  };
+  const handleContextMenu = (e) => {
+    e.preventDefault();
+    setMenu({ x: e.clientX, y: e.clientY, time: timeAtClientX(e.clientX), noteId: null });
+  };
+  const handleNoteContextMenu = (e, note) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu({ x: e.clientX, y: e.clientY, time: note.time, noteId: note.id });
+  };
+  const addHere = (range) => {
+    const at = menu?.time ?? 0;
+    closeMenu();
+    void addNoteAt({ time: at, duration: range ? DEFAULT_RANGE_SECONDS : 0 });
+  };
+  const addForExportRange = () => {
+    closeMenu();
+    if (exportRange) void addNoteAt({ time: exportRange.in, duration: Math.max(0, exportRange.out - exportRange.in) });
+  };
   // Ends the scrub in progress (if any): removes window listeners and clears
   // the store's scrubbing flag. Also run on unmount so the flag can't stick.
   const endScrubRef = useRef(null);
@@ -39,6 +91,61 @@ export const TimeRuler = memo(function TimeRuler({
     return rawTime;
   };
  
+  // Drag a note flag to move it; drag the handle at the end of a range note's
+  // bar to change its length. A press without movement is a click: jump to it.
+  const startNoteDrag = (e, note, mode) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (noteDragCleanupRef.current) noteDragCleanupRef.current();
+    const startX = e.clientX;
+    const origTime = note.time;
+    const origDuration = note.duration;
+    let moved = false;
+    let latest = { id: note.id, time: origTime, duration: origDuration };
+
+    const onMove = (ev) => {
+      const dx = ev.clientX - startX;
+      if (!moved && Math.abs(dx) < 3) return;
+      moved = true;
+      const delta = dx / pixelsPerSecond;
+      if (mode === 'move') {
+        latest = { id: note.id, time: Math.max(0, getSnappedTime(origTime + delta)), duration: origDuration };
+      } else {
+        const end = Math.max(origTime + 0.1, getSnappedTime(origTime + origDuration + delta));
+        latest = { id: note.id, time: origTime, duration: end - origTime };
+      }
+      setDrag(latest);
+    };
+    const detach = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+      noteDragCleanupRef.current = null;
+    };
+    const onUp = async () => {
+      detach();
+      if (!moved) {
+        setDrag(null);
+        seekToNote(note);
+        return;
+      }
+      try {
+        await updateNote(note.id, mode === 'move' ? { time: latest.time } : { duration: latest.duration });
+      } finally {
+        setDrag(null);
+      }
+    };
+    const onCancel = () => {
+      detach();
+      setDrag(null);
+    };
+    noteDragCleanupRef.current = onCancel;
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+  };
+
   const handlePointerDown = (e) => {
     if (!rulerRef.current) return;
     if (e.button !== 0) return;
@@ -100,6 +207,7 @@ export const TimeRuler = memo(function TimeRuler({
       className="time-ruler"
       ref={rulerRef}
       onPointerDown={handlePointerDown}
+      onContextMenu={handleContextMenu}
       style={{ width: `${totalWidth + HEADER_WIDTH}px` }}
     >
       {/* Export range bar & markers on ruler */}
@@ -129,6 +237,75 @@ export const TimeRuler = memo(function TimeRuler({
         </>
       )}
  
+      {/* Frame notes (ai-notes/notes.json): flag at the start, bar along the bottom for a range.
+          Drag the flag to move a note; drag the handle on a range bar to resize it. */}
+      {notes.map((rawNote) => {
+        const note = drag && drag.id === rawNote.id ? { ...rawNote, time: drag.time, duration: drag.duration } : rawNote;
+        const dragging = drag?.id === note.id;
+        return (
+          <div
+            key={note.id}
+            className={`ruler-note${note.done ? ' is-done' : ''}${activeNoteId === note.id ? ' is-active' : ''}${dragging ? ' is-dragging' : ''}`}
+            style={{ left: `${HEADER_WIDTH + note.time * pixelsPerSecond}px` }}
+            title={`${formatNoteRange(note)}${note.text ? ` — ${note.text.slice(0, 80)}` : ''}${note.done ? ' (done)' : ''} — drag to move`}
+            onPointerDown={(e) => startNoteDrag(e, rawNote, 'move')}
+            onContextMenu={(e) => handleNoteContextMenu(e, rawNote)}
+          >
+            <div className="ruler-note-flag" />
+            {note.duration > 0 && (
+              <div className="ruler-note-bar" style={{ width: `${Math.max(3, note.duration * pixelsPerSecond)}px` }}>
+                <div
+                  className="ruler-note-handle"
+                  title="Drag to change the length"
+                  onPointerDown={(e) => startNoteDrag(e, rawNote, 'resize')}
+                />
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {menu && !menuNote && (
+        <ContextMenu x={menu.x} y={menu.y} onClose={closeMenu} className="clip-context-menu" minWidth={200}>
+          <button className="ctx-menu-item ctx-menu-row" onClick={() => addHere(false)}>
+            <span className="ctx-menu-label"><MessageSquarePlus size={12} /> Add Note Here</span>
+            <span className="ctx-menu-hint">{formatTimecode(menu.time).slice(3)}</span>
+          </button>
+          <button className="ctx-menu-item ctx-menu-row" onClick={() => addHere(true)}>
+            <span className="ctx-menu-label"><MessageSquarePlus size={12} /> Add Range Note Here</span>
+            <span className="ctx-menu-hint">{DEFAULT_RANGE_SECONDS}s</span>
+          </button>
+          {exportRange && (
+            <button className="ctx-menu-item ctx-menu-row" onClick={addForExportRange}>
+              <span className="ctx-menu-label"><MessageSquarePlus size={12} /> Add Note for Export Range</span>
+            </button>
+          )}
+        </ContextMenu>
+      )}
+      {menu && menuNote && (
+        <ContextMenu x={menu.x} y={menu.y} onClose={closeMenu} className="clip-context-menu" minWidth={190}>
+          <button className="ctx-menu-item" onClick={() => { closeMenu(); openNoteInPanel(menuNote.id); }}>
+            <MessageSquare size={12} /> Open in Notes
+          </button>
+          <button className="ctx-menu-item" onClick={() => { closeMenu(); seekToNote(menuNote); }}>
+            <Crosshair size={12} /> Go to Note
+          </button>
+          <button className="ctx-menu-item" onClick={() => { closeMenu(); void setNoteDone(menuNote.id, !menuNote.done); }}>
+            {menuNote.done ? <Undo2 size={12} /> : <Check size={12} />} {menuNote.done ? 'Mark as To Do' : 'Mark as Implemented'}
+          </button>
+          <div className="ctx-menu-divider" />
+          <button
+            className="ctx-menu-item"
+            onClick={() => {
+              closeMenu();
+              if (window.confirm('Delete this note and its saved frames?')) void removeNote(menuNote.id);
+            }}
+          >
+            <Trash2 size={12} /> Delete Note
+          </button>
+        </ContextMenu>
+      )}
+
       {Array.from({ length: numTicks }).map((_, i) => {
         const timeSec = i * tickInterval;
         const leftPos = HEADER_WIDTH + timeSec * pixelsPerSecond;

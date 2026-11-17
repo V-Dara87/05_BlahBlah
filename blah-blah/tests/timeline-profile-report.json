@@ -1,0 +1,113 @@
+{
+  "timestamp": "2026-11-12T04:41:19.943Z",
+  "system": {
+    "platform": "win32",
+    "arch": "x64",
+    "nodeVersion": "v24.15.0",
+    "v8Version": "13.6.233.17-node.48"
+  },
+  "scales": {
+    "Normal": {
+      "config": {
+        "clips": 100,
+        "tracks": 4,
+        "durationSec": 3600
+      },
+      "cpu": {
+        "totalExecutionWallTimeMs": "8.80",
+        "userCpuTimeMs": "31.00",
+        "systemCpuTimeMs": "16.00",
+        "layoutMs": "0.146",
+        "sceneBuildMs": "1.535",
+        "playbackPerFrameMs": "0.0012",
+        "playbackFpsPotential": 22013,
+        "canvasDrawPerFrameMs": "0.0442",
+        "percentOf60FpsBudget": "0.27%"
+      },
+      "ram": {
+        "heapUsedBeforeMB": "9.77",
+        "heapUsedAfterMB": "12.68",
+        "heapDeltaMB": "2.91",
+        "bytesPerClip": 30471,
+        "rssMB": "64.05",
+        "heapLimitMB": "4288.00"
+      },
+      "gpuPipeline": {
+        "drawCallsPerFrame": 53,
+        "rectFillsPerFrame": 40,
+        "pathCurvesPerFrame": 24,
+        "textDrawsPerFrame": 9,
+        "renderedAreaMpxPerFrame": "1.725",
+        "viewportCullingRate": "97.0%"
+      }
+    },
+    "Large": {
+      "config": {
+        "clips": 1000,
+        "tracks": 8,
+        "durationSec": 3600
+      },
+      "cpu": {
+        "totalExecutionWallTimeMs": "25.32",
+        "userCpuTimeMs": "31.00",
+        "systemCpuTimeMs": "31.00",
+        "layoutMs": "0.116",
+        "sceneBuildMs": "3.927",
+        "playbackPerFrameMs": "0.0022",
+        "playbackFpsPotential": 15619,
+        "canvasDrawPerFrameMs": "0.0618",
+        "percentOf60FpsBudget": "0.38%"
+      },
+      "ram": {
+        "heapUsedBeforeMB": "10.12",
+        "heapUsedAfterMB": "16.10",
+        "heapDeltaMB": "5.98",
+        "bytesPerClip": 6269,
+        "rssMB": "70.13",
+        "heapLimitMB": "4288.00"
+      },
+      "gpuPipeline": {
+        "drawCallsPerFrame": 156,
+        "rectFillsPerFrame": 79,
+        "pathCurvesPerFrame": 152,
+        "textDrawsPerFrame": 57,
+        "renderedAreaMpxPerFrame": "2.686",
+        "viewportCullingRate": "98.1%"
+      }
+    },
+    "HeavyStress": {
+      "config": {
+        "clips": 5000,
+        "tracks": 16,
+        "durationSec": 3600
+      },
+      "cpu": {
+        "totalExecutionWallTimeMs": "120.52",
+        "userCpuTimeMs": "141.00",
+        "systemCpuTimeMs": "16.00",
+        "layoutMs": "0.553",
+        "sceneBuildMs": "18.119",
+        "playbackPerFrameMs": "0.0010",
+        "playbackFpsPotential": 8707,
+        "canvasDrawPerFrameMs": "0.1138",
+        "percentOf60FpsBudget": "0.69%"
+      },
+      "ram": {
+        "heapUsedBeforeMB": "11.04",
+        "heapUsedAfterMB": "19.14",
+        "heapDeltaMB": "8.10",
+        "bytesPerClip": 1698,
+        "rssMB": "99.97",
+        "heapLimitMB": "4288.00"
+      },
+      "gpuPipeline": {
+        "drawCallsPerFrame": 574,
+        "rectFillsPerFrame": 237,
+        "pathCurvesPerFrame": 720,
+        "textDrawsPerFrame": 246,
+        "renderedAreaMpxPerFrame": "5.748",
+        "viewportCullingRate": "98.2%"
+      }
+    }
+  }
+}

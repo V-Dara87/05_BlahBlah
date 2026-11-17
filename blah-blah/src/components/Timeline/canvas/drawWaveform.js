@@ -14,6 +14,77 @@
  * Keep the two in step when either changes.
  */
 
+// Reused between calls so merging buckets into pixel columns allocates nothing
+// per frame. Indexed by absolute column number; grown (never shrunk) on demand.
+let colMins = new Float32Array(2048);
+let colMaxs = new Float32Array(2048);
+let colRms = new Float32Array(2048);
+
+function ensureColumnCapacity(size) {
+  if (colMins.length >= size) return;
+  const cap = Math.max(size, colMins.length * 2);
+  colMins = new Float32Array(cap);
+  colMaxs = new Float32Array(cap);
+  colRms = new Float32Array(cap);
+}
+
+/** Device pixels per CSS pixel for the context's current transform (>= 1). */
+function deviceScale(ctx) {
+  try {
+    const t = typeof ctx.getTransform === 'function' ? ctx.getTransform() : null;
+    if (!t) return 1;
+    const s = Math.hypot(t.a, t.b || 0);
+    return Number.isFinite(s) && s >= 1 ? Math.min(s, 4) : 1;
+  } catch {
+    return 1;
+  }
+}
+
+/**
+ * Trace the outer envelope and (optionally) the inner RMS shape from arrays
+ * indexed `from..to`, where index i sits at x0 + i * step.
+ */
+function paintEnvelope(ctx, a) {
+  const { mins, maxs, rms, from, to, x0, step, mirror, y, height, midY, maxAmpH, color, rmsColor } = a;
+
+  // Outer envelope: max samples left-to-right, min samples right-to-left, as
+  // ONE closed path — a smooth continuous shape rather than per-bucket bars.
+  ctx.beginPath();
+  for (let i = from; i <= to; i++) {
+    const px = x0 + i * step;
+    const py = mirror ? midY - maxs[i] * maxAmpH : y + height - 1 - maxs[i] * maxAmpH;
+    if (i === from) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  for (let i = to; i >= from; i--) {
+    const px = x0 + i * step;
+    const py = mirror ? midY - mins[i] * maxAmpH : y + height - 1;
+    ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+
+  // Inner RMS fill: brighter, slimmer shape tracking perceived loudness.
+  if (rms) {
+    ctx.beginPath();
+    for (let i = from; i <= to; i++) {
+      const px = x0 + i * step;
+      const py = mirror ? midY - rms[i] * maxAmpH : y + height - 1 - rms[i] * maxAmpH;
+      if (i === from) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    for (let i = to; i >= from; i--) {
+      const px = x0 + i * step;
+      const py = mirror ? midY + rms[i] * maxAmpH : y + height - 1;
+      ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fillStyle = rmsColor || brighten(color);
+    ctx.fill();
+  }
+}
+
 /**
  * Draw a filled min/max envelope (mirrored about the mid-line) into a
  * sub-rectangle of the target context. The caller has already clipped to the
@@ -66,46 +137,64 @@ export function drawWaveformEnvelope(ctx, { x, y, width, height, envelope, color
     if (last < first) return; // entirely off screen
   }
 
+  const hasRms = Boolean(rms && rms.length >= n && maxAmpH > 6);
+
   ctx.save();
   ctx.beginPath();
   ctx.rect(x, y, width, height);
   ctx.clip();
 
-  // Outer envelope: max samples left-to-right, min samples right-to-left, as
-  // ONE closed path — a smooth continuous shape rather than per-bucket bars.
-  ctx.beginPath();
-  for (let i = first; i <= last; i++) {
-    const px = x + i * stepX;
-    const py = mirror ? midY - maxs[i] * maxAmpH : y + height - 1 - maxs[i] * maxAmpH;
-    if (i === first) ctx.moveTo(px, py);
-    else ctx.lineTo(px, py);
-  }
-  for (let i = last; i >= first; i--) {
-    const px = x + i * stepX;
-    const py = mirror ? midY - mins[i] * maxAmpH : y + height - 1;
-    ctx.lineTo(px, py);
-  }
-  ctx.closePath();
-  ctx.fillStyle = color;
-  ctx.fill();
+  const shape = { mirror, y, height, midY, maxAmpH, color, rmsColor };
 
-  // Inner RMS fill: brighter, slimmer shape tracking perceived loudness.
-  if (rms && rms.length >= n && maxAmpH > 6) {
-    ctx.beginPath();
+  // ── Pixel-column merging ─────────────────────────────────────────────
+  // A screen cannot show detail finer than one DEVICE pixel, but the envelope
+  // can hold more buckets than that (a tall track used to request 6 per pixel,
+  // and a stale finer envelope is kept while a new one loads). Walking
+  // sub-pixel segments cost path ops and fill work for no visible change, so
+  // when buckets are denser than the device-pixel grid they are merged into one
+  // column per device pixel (min of mins, max of maxs, max of rms) first. The
+  // grouping is by bucket index, not by screen position, so it does not shimmer
+  // while scrolling. When buckets are already sparser than a pixel, nothing is
+  // merged and the original path is drawn unchanged.
+  const colW = 1 / deviceScale(ctx);
+  const bucketsPerCol = colW / stepX;
+
+  if (bucketsPerCol > 1.0001) {
+    const cFirst = Math.floor(first / bucketsPerCol);
+    const cLast = Math.floor(last / bucketsPerCol);
+    ensureColumnCapacity(cLast + 1);
+    for (let c = cFirst; c <= cLast; c++) {
+      colMins[c] = Infinity;
+      colMaxs[c] = -Infinity;
+      colRms[c] = 0;
+    }
     for (let i = first; i <= last; i++) {
-      const px = x + i * stepX;
-      const py = mirror ? midY - rms[i] * maxAmpH : y + height - 1 - rms[i] * maxAmpH;
-      if (i === first) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
+      const c = Math.floor(i / bucketsPerCol);
+      if (mins[i] < colMins[c]) colMins[c] = mins[i];
+      if (maxs[i] > colMaxs[c]) colMaxs[c] = maxs[i];
+      if (hasRms && rms[i] > colRms[c]) colRms[c] = rms[i];
     }
-    for (let i = last; i >= first; i--) {
-      const px = x + i * stepX;
-      const py = mirror ? midY + rms[i] * maxAmpH : y + height - 1;
-      ctx.lineTo(px, py);
-    }
-    ctx.closePath();
-    ctx.fillStyle = rmsColor || brighten(color);
-    ctx.fill();
+    paintEnvelope(ctx, {
+      ...shape,
+      mins: colMins,
+      maxs: colMaxs,
+      rms: hasRms ? colRms : null,
+      from: cFirst,
+      to: cLast,
+      x0: x,
+      step: colW,
+    });
+  } else {
+    paintEnvelope(ctx, {
+      ...shape,
+      mins,
+      maxs,
+      rms: hasRms ? rms : null,
+      from: first,
+      to: last,
+      x0: x,
+      step: stepX,
+    });
   }
 
   if (mirror && maxAmpH > 10) {

@@ -1,18 +1,14 @@
-import { Sparkles, FileCode } from 'lucide-react';
+import { FileCode } from 'lucide-react';
 import { formatTimecode } from '../../utils/timeFormat';
  
 // Shared display metadata and small pure helpers for the Project panel.
 // Extracted from ProjectPanel.jsx so the panel, its cards and its hover
 // previews can all read the same tables without importing each other.
  
-// Per-kind display metadata for script cards (see detectScriptKind).
-export const SCRIPT_KIND_META = {
-  react: { icon: Sparkles, className: 'text-cyan', label: 'React Component' },
-  canvas: { icon: Sparkles, className: 'text-violet', label: 'Canvas Component' },
-  motion: { icon: FileCode, className: 'text-emerald', label: 'Motion Script' },
-};
- 
-export const scriptKindMeta = (kind) => SCRIPT_KIND_META[kind] || SCRIPT_KIND_META.motion;
+// Scripts are shown to the user as plain "Script" regardless of their detected
+// runtime kind (see detectScriptKind — used for logic only).
+export const SCRIPT_META = { icon: FileCode, className: 'text-emerald', label: 'Script' };
+export const scriptKindMeta = () => SCRIPT_META;
  
 export const COMPONENT_TYPE_LABEL = {
   TextRenderer: 'Text',

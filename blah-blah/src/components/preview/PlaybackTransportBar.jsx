@@ -9,6 +9,7 @@ import {
   Maximize,
   Crop,
   Expand,
+  Camera,
 } from 'lucide-react';
 import { formatSimpleTime } from '../../utils/timeFormat';
 import './playback-transport-bar.css';
@@ -34,6 +35,7 @@ export function PlaybackTransportBar({
   previewMode,
   setPreviewMode,
   toggleFullscreen,
+  onExportFrame,
 }) {
   return (
     <div className="preview-transport-bar">
@@ -72,6 +74,15 @@ export function PlaybackTransportBar({
       </div>
  
       <div className="transport-options">
+        {onExportFrame && (
+          <button
+            className="ctrl-icon-btn"
+            title="Snapshot Current Frame as PNG (Actual Screen)"
+            onClick={onExportFrame}
+          >
+            <Camera size={15} />
+          </button>
+        )}
         <button
           className={`ctrl-icon-btn ${previewMode === 'extended' ? 'active' : ''}`}
           title={

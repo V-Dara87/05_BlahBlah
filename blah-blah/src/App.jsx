@@ -8,6 +8,7 @@ import { useDockPanels } from './hooks/useDockPanels';
 import { useProjectPersistence } from './hooks/useProjectPersistence';
 import { useProjectAutosave } from './hooks/useProjectAutosave';
 import { useAiBridgeListener } from './hooks/useAiBridgeListener';
+import { useAsrSettings } from './hooks/useAsrSettings';
 import { useAutosaveSettings } from './hooks/useAutosaveSettings';
 import { useEditorSettings } from './hooks/useEditorSettings';
 import { useExportSettings } from './hooks/useExportSettings';
@@ -27,7 +28,6 @@ import { ScriptDocsModal } from './components/modals/ScriptDocsModal';
 import { ExportModal } from './components/modals/ExportModal';
 import { NewProjectModal } from './components/modals/NewProjectModal';
 import { SettingsModal } from './components/modals/SettingsModal';
-import { PackageManagerModal } from './components/modals/PackageManagerModal';
 import { memoWhenClosed } from './components/modals/memoWhenClosed';
 import { HubScreen } from './components/shell/HubScreen';
 import { DockLayout } from './dock/DockLayout';
@@ -49,6 +49,7 @@ import { toggleWindowMaximize } from './services/windowChrome';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import { ScriptErrorToast } from './components/shared/ScriptErrorToast';
 import { OPEN_CONSOLE_EVENT } from './engine/scriptConsole';
+import { captureAndExportScreenPng } from './services/frameSnapshot';
 import './App.css';
 import './app-shell.css';
 import './styles/shared.css';
@@ -57,7 +58,6 @@ import './styles/shared.css';
 // while they are closed (see components/modals/memoWhenClosed.js).
 const NewProjectModalMemo = memoWhenClosed(NewProjectModal);
 const ExportModalMemo = memoWhenClosed(ExportModal);
-const PackageManagerModalMemo = memoWhenClosed(PackageManagerModal);
  
 /**
  * App — composition shell.
@@ -190,14 +190,15 @@ export function App() {
   const [isScriptDocsOpen, setIsScriptDocsOpen] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isPackageManagerOpen, setIsPackageManagerOpen] = useState(false);
-  const [packageManagerCategory, setPackageManagerCategory] = useState('all');
   const handleOpenPackageManager = useCallback((category = 'all') => {
-    setPackageManagerCategory(category);
-    setIsPackageManagerOpen(true);
-  }, []);
+    openOrFocusPanel('packageManager', 'Package Manager');
+    window.dispatchEvent(new CustomEvent('blahblah:package-manager-tab', { detail: { category } }));
+  }, [openOrFocusPanel]);
   // Global autosave preferences (Settings > Autosave). Shared with the modal below.
   const { autosaveSettings, updateAutosaveSettings } = useAutosaveSettings();
+  // Speech-recognition interpreter (Settings > Speech Recognition). Read by the
+  // Qwen3-ASR runner at spawn time; shared with the modal so the tab sees edits.
+  const { asrSettings, updateAsrSettings } = useAsrSettings();
   // Global editor + export defaults (Settings > Timeline / Export). Called before
   // useProjectStore on purpose: the store creates its undo history, which needs
   // the undo depth.
@@ -570,6 +571,20 @@ export function App() {
   // Global keyboard shortcuts live in EditorPlaybackShortcuts (inside
   // PlaybackProvider) so App never re-renders on every playback frame.
  
+  // Export current playhead frame as full-resolution screen PNG
+  const handleExportCurrentFrame = useCallback(async () => {
+    const time = getPlaybackTime?.() ?? 0;
+    await captureAndExportScreenPng({
+      time,
+      entities: activeEntities,
+      tracks,
+      scripts,
+      resolution,
+      mediaAssets,
+      projectName,
+    });
+  }, [getPlaybackTime, activeEntities, tracks, scripts, resolution, mediaAssets, projectName]);
+
   // Menu bar configuration — Unity-style top menus (File/Edit/View/Window).
   // See hooks/useMenuBarConfig.js for the actual menu item definitions.
   const menuBarConfig = useMenuBarConfig({
@@ -600,6 +615,7 @@ export function App() {
     setIsScriptDocsOpen,
     setIsSettingsOpen,
     onOpenPackageManager: handleOpenPackageManager,
+    onExportFrame: handleExportCurrentFrame,
   });
  
   // window-controls chrome is environment-dependent but cheap to compute
@@ -1018,17 +1034,8 @@ export function App() {
         onThemeSettingsChange={updateThemeSettings}
         pieSettings={pieSettings}
         onPieSettingsChange={updatePieSettings}
-      />
- 
-      <PackageManagerModalMemo
-        isOpen={isPackageManagerOpen}
-        onClose={() => setIsPackageManagerOpen(false)}
-        initialCategory={packageManagerCategory}
-        onCreateScript={handleCreateScript}
-        onOpenScriptEditor={(script) => {
-          setEditingScript(script);
-          setIsScriptEditorOpen(true);
-        }}
+        asrSettings={asrSettings}
+        onAsrSettingsChange={updateAsrSettings}
       />
     </div>
       </TimelineViewProvider>

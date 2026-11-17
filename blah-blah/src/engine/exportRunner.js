@@ -399,6 +399,91 @@ export function createVideoFrameProvider() {
   };
 }
  
+/**
+ * Gets the <video> elements ready for ONE still frame at `time`: preloads the
+ * videos that are active then (plus transition neighbours, on demand), seeks
+ * them to the right source time and waits until a frame is decoded.
+ *
+ * The export loop does the same work inline for every frame it renders. A
+ * single-frame capture (notes, AI bridge, "Export Current Frame") has to do it
+ * too, otherwise drawExportFrame has no video elements to draw and the frame
+ * comes out with the videos missing (only scripts/text/shapes).
+ *
+ * Best-effort per video: one source that cannot load or seek is logged and
+ * skipped, so the rest of the frame still renders.
+ */
+export async function prepareVideoFramesForTime({
+  provider,
+  entities,
+  tracks,
+  scripts = [],
+  time,
+  fps = 30,
+  mediaAssets = [],
+}) {
+  const srcOfEntity = (id) => {
+    const e = entities.find((c) => c.id === id);
+    const vc = e?.components?.find((c) => c.type === 'VideoRenderer');
+    return vc?.src || e?.src || '';
+  };
+
+  const active = computeActiveEntitiesAtTime({
+    entities,
+    tracks,
+    scripts,
+    time,
+    fps,
+    allAssets: mediaAssets,
+  });
+  const activeVideos = active.filter(({ entity }) => isVideoEntity(entity));
+
+  await Promise.all(
+    activeVideos.map(async ({ entity }) => {
+      const src = srcOfEntity(entity.id);
+      if (!src) return;
+      try {
+        await provider.preload(entity.id, src);
+      } catch (err) {
+        console.warn(`Frame capture: could not load video for "${entity.name || entity.id}":`, err);
+      }
+    })
+  );
+
+  const plan = resolveTransitionFramePlan({
+    entities,
+    tracks,
+    time,
+    mediaDurations: provider.getMediaDurations(),
+  });
+  try {
+    await provider.seekMany(plan.seekTimes, srcOfEntity);
+  } catch (err) {
+    console.warn('Frame capture: transition seek failed:', err);
+  }
+
+  await Promise.all(
+    activeVideos.map(async ({ entity, transform }) => {
+      if (plan.suppressedIds.has(entity.id)) return;
+      const src = srcOfEntity(entity.id);
+      const video = provider.getVideoElement(entity.id);
+      if (!src || !video) return;
+      const videoComp = entity.components.find((c) => c.type === 'VideoRenderer') || { src: entity.src };
+      const effRate = (videoComp.speed || 1) * (transform?.speed ?? 1);
+      const localTime = (time - entity.startTime) * effRate + (videoComp.mediaOffset || 0);
+      try {
+        await provider.seekTo(entity.id, src, videoComp, localTime, effRate);
+        // A seek that was skipped as "already there" (e.g. t = 0 on a fresh
+        // element) can leave nothing decoded yet; drawImage would draw black.
+        if (video.readyState < 2) {
+          await waitForMediaEvent(video, 'loadeddata', VIDEO_SEEK_TIMEOUT_MS, 'Video frame was not ready');
+        }
+      } catch (err) {
+        console.warn(`Frame capture: could not seek video "${entity.name || entity.id}":`, err);
+      }
+    })
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Per-frame draw
 // ---------------------------------------------------------------------------

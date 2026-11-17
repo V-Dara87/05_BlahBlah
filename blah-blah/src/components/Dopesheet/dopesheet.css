@@ -186,7 +186,9 @@
  
 .dopesheet-labels {
   flex-shrink: 0;
-  width: 190px;
+  /* default width; the user drags .dopesheet-labels-resizer to change it (inline style) */
+  width: 260px;
+  position: relative;
   border-right: 1px solid var(--unity-border);
   background: var(--unity-panel);
   overflow-y: hidden;
@@ -294,11 +296,106 @@
 }
  
 .dopesheet-field-row .field-name {
+  flex: 1;
+  min-width: 0;
   font-size: 10.5px;
   color: var(--unity-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Parameter rows are a plain list under their component. */
+.dopesheet-field-row { padding-right: 6px; }
+
+/* Parameter row = diamond + ONE control that fills the row. The parameter's
+   name lives inside the control (number: its left drag-label cell; others: a
+   name span before the control) — nothing sits beside it. */
+.dopesheet-field-row .dopesheet-value-cell {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dopesheet-field-row .dopesheet-value-cell .drag-number-field {
+  height: 18px;
+}
+
+/* Named number fields: give the label cell a steady width so values line up. */
+.dopesheet-field-row .dopesheet-value-cell.is-number .drag-number-label {
+  min-width: 62px;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  font-size: 10px;
+}
+
+.dopesheet-value-name {
+  flex: 0 1 auto;
+  min-width: 48px;
+  max-width: 45%;
+  font-size: 10.5px;
+  color: var(--unity-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- Draggable edge between labels and lanes ---------- */
+
+.dopesheet-labels-resizer {
+  position: absolute;
+  top: 0;
+  right: 0; /* inside the box: .dopesheet-labels clips overflow */
+  width: 5px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+}
+
+.dopesheet-labels-resizer:hover,
+.dopesheet-labels-resizer.is-dragging {
+  background: rgba(var(--unity-accent-rgb), 0.35);
+}
+
+.dopesheet-value-select,
+.dopesheet-value-text {
+  width: 100%;
+  height: 18px;
+  box-sizing: border-box;
+  background: var(--unity-dark);
+  border: 1px solid var(--unity-border-light);
+  border-radius: 3px;
+  color: var(--unity-text);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  padding: 0 4px;
+  min-width: 0;
+}
+
+.dopesheet-value-select:focus,
+.dopesheet-value-text:focus {
+  outline: none;
+  border-color: var(--unity-accent-blue);
+}
+
+.dopesheet-value-color {
+  width: 100%;
+  height: 18px;
+  box-sizing: border-box;
+  padding: 0;
+  border: 1px solid var(--unity-border-light);
+  border-radius: 3px;
+  background: var(--unity-dark);
+  cursor: pointer;
+}
+
+.dopesheet-value-color.is-readonly {
+  display: block;
+  cursor: default;
 }
  
 .dopesheet-field-lane {
@@ -654,4 +751,128 @@
   color: #fff;
 }
 
- 
+/* ---------- Graph view (curve editor inside the Dopesheet) ---------- */
+
+/* View toggle: Dopesheet | Graph */
+.dopesheet-toolbar-group[role='tablist'] .dopesheet-tool-btn {
+  padding: 4px 10px;
+}
+
+/* In Graph view the lanes never scroll vertically (the canvas fills them),
+   and the property tree scrolls on its own instead of following the lanes. */
+.dopesheet-lanes-scroll.graph-mode {
+  overflow-y: hidden;
+}
+
+.dopesheet-labels-scroll.graph-mode {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.dopesheet-graph-inner {
+  position: relative;
+}
+
+/* The canvas only paints the visible viewport: it stays pinned to the left edge
+   while the lanes scroll underneath, and the painter offsets by scrollLeft. */
+.dopesheet-graph-sticky {
+  position: sticky;
+  left: 0;
+  top: 0;
+  overflow: hidden;
+}
+
+.dopesheet-graph-canvas {
+  display: block;
+  touch-action: none;
+  cursor: default;
+}
+
+.dopesheet-graph-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 24px;
+  text-align: center;
+  color: var(--unity-text-dim);
+  font-size: 11px;
+  line-height: 1.5;
+  pointer-events: none;
+}
+
+.dopesheet-graph-empty strong {
+  color: var(--unity-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.dopesheet-graph-empty span {
+  max-width: 300px;
+}
+
+/* Curve colour chip in the property tree: click to hide / show that curve. */
+.dopesheet-field-row .field-graph-swatch,
+.dopesheet-field-row .field-graph-swatch-spacer {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  margin-left: -2px;
+}
+
+.dopesheet-field-row .field-graph-swatch {
+  box-sizing: border-box;
+  padding: 0;
+  border-radius: 3px;
+  border: 1px solid var(--swatch);
+  background: var(--swatch);
+  cursor: pointer;
+  transition: background 0.1s ease, opacity 0.1s ease;
+}
+
+.dopesheet-field-row .field-graph-swatch:hover {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.18);
+}
+
+.dopesheet-field-row .field-graph-swatch.is-hidden {
+  background: transparent;
+  opacity: 0.55;
+}
+
+.dopesheet-field-row .field-graph-swatch:focus-visible {
+  outline: 2px solid var(--unity-accent-blue, #38bdf8);
+  outline-offset: 1px;
+}
+
+/* ---------- Solo parameter (click a row in the property tree) ---------- */
+
+/* The picked row. */
+.dopesheet-field-row.is-solo {
+  background: rgba(245, 158, 11, 0.14);
+  box-shadow: inset 2px 0 0 var(--unity-accent-amber, #f59e0b);
+}
+
+/* Every other row recedes while one parameter is soloed. */
+.dopesheet-field-row.is-dimmed {
+  opacity: 0.45;
+}
+
+.dopesheet-field-row.is-dimmed:hover {
+  opacity: 0.85;
+}
+
+/* Dopesheet: other parameters' keyframes and segments are hidden entirely. */
+.dopesheet-field-lane.is-solo {
+  background: rgba(245, 158, 11, 0.06);
+}
+
+.dopesheet-field-lane.is-dimmed {
+  pointer-events: none;
+}
+
+.dopesheet-field-lane.is-dimmed > * {
+  visibility: hidden;
+}

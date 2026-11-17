@@ -1,4 +1,3 @@
- 
 import { useCallback, useRef, memo, useEffect } from 'react';
 import { DockviewReact } from 'dockview-react';
 import { ExternalLink, Layers, Maximize2, Minimize2, X } from 'lucide-react';
@@ -12,8 +11,11 @@ import {
   SilenceRemoverDockPanel,
   MixerDockPanel,
   ConsoleDockPanel,
+  PackageManagerDockPanel,
 } from './panels';
 import { useEditorActions } from './EditorContext';
+import { NotesDockPanel } from '../components/notes/NotesPanel';
+import { NotesSync } from '../components/notes/NotesSync';
 import { popoutGroup, closeEmptyPopoutGroups } from './popoutGroup';
 import { attachTabDoubleClickMaximize } from './tabMaximize';
 import { DockAddWindowButton } from './DockAddWindowButton';
@@ -22,6 +24,7 @@ import './dockview-unity-theme.css';
  
 const LAYOUT_STORAGE_KEY = 'blahblah-dock-layout-v2';
 const LEGACY_STORAGE_KEY = 'blahblah-dock-layout-v1';
+const NOTES_TAB_FLAG_KEY = 'blahblah-notes-tab-added';
 
 // Empty fallback panel so unknown/removed panels from old saved layouts
 // never cause dockview-react to crash with undefined component.
@@ -37,6 +40,8 @@ const DOCK_COMPONENTS = {
   silenceRemover: SilenceRemoverDockPanel,
   mixer: MixerDockPanel,
   console: ConsoleDockPanel,
+  packageManager: PackageManagerDockPanel,
+  notes: NotesDockPanel,
   // Fallbacks for removed tabs from previous builds
   clips: FallbackPanel,
 };
@@ -117,6 +122,21 @@ function buildDefaultLayout(api) {
     id: 'console',
     component: 'console',
     title: 'Console',
+    position: { direction: 'within', referencePanel: dopesheetPanel },
+  });
+
+  api.addPanel({
+    id: 'packageManager',
+    component: 'packageManager',
+    title: 'Package Manager',
+    position: { direction: 'within', referencePanel: dopesheetPanel },
+  });
+
+  // Frame notes for AI agents (see components/notes/NotesPanel.jsx).
+  api.addPanel({
+    id: 'notes',
+    component: 'notes',
+    title: 'Notes',
     position: { direction: 'within', referencePanel: dopesheetPanel },
   });
 }
@@ -269,6 +289,24 @@ export const DockLayout = memo(function DockLayout() {
     if (!restored) {
       buildDefaultLayout(api);
     }
+
+    // Layouts saved before the Notes tab existed never get it from
+    // buildDefaultLayout, so add it once to restored layouts. The flag keeps it
+    // from coming back if the user closes it on purpose.
+    try {
+      if (!api.getPanel('notes') && !localStorage.getItem(NOTES_TAB_FLAG_KEY)) {
+        const ref = api.getPanel('dopesheet') || api.getPanel('timeline');
+        api.addPanel({
+          id: 'notes',
+          component: 'notes',
+          title: 'Notes',
+          position: ref ? { direction: 'within', referencePanel: ref } : undefined,
+        });
+        localStorage.setItem(NOTES_TAB_FLAG_KEY, '1');
+      }
+    } catch {
+      // Ignore storage / dockview failures
+    }
  
     api.onDidLayoutChange(() => persistLayout());
 
@@ -316,6 +354,7 @@ export const DockLayout = memo(function DockLayout() {
  
   return (
     <div className="dock-root" ref={rootRef}>
+      <NotesSync />
       <DockviewReact
         className="dockview-theme-dark dockview-theme-unity"
         components={DOCK_COMPONENTS}
@@ -327,5 +366,3 @@ export const DockLayout = memo(function DockLayout() {
     </div>
   );
 });
- 
- 

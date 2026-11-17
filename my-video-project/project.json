@@ -2,7 +2,7 @@
   "name": "my-video-project",
   "version": "1.0",
   "schemaVersion": 1,
-  "lastModified": 1794298869294,
+  "lastModified": 1794451837960,
   "resolution": {
     "width": 1920,
     "height": 1080
@@ -18,7 +18,19 @@
       "locked": false,
       "visible": true,
       "volume": 1,
-      "fx": [],
+      "fx": [
+        {
+          "id": "f2275b28-952c-45e2-bc3b-44d05fb572cb",
+          "format": "vst3",
+          "pluginPath": "C:\\Program Files\\Common Files\\VST3\\OTT.vst3",
+          "classId": "5854535654666f547474000000000000",
+          "name": "OTT",
+          "vendor": "",
+          "bypass": false,
+          "stateFile": "fx/f2275b28-952c-45e2-bc3b-44d05fb572cb.bin",
+          "stateHash": "e079a3c6a43727ee9dd0bc0a"
+        }
+      ],
       "fxBypassAll": false
     },
     {
@@ -267,7 +279,7 @@
       "active": true,
       "parentId": null,
       "trackId": "track-2",
-      "startTime": 19.424999999999997,
+      "startTime": 17.51150995069934,
       "duration": 5,
       "type": "empty",
       "src": "",
