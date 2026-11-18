@@ -14,7 +14,21 @@
  *    - Move: pointer delta along screen axis -> world delta & parent-local delta
  *    - Rotate: angle swept around screen origin -> degrees with facing sign
  *    - Scale: distance ratio along screen axis -> scale factor
+ *    - Body drag: pointer ray intersected with the layer's z-plane -> x / y
+ * 4. Layer classification: which drawn entities are a 3D Layer, a Flat Layer
+ *    or a Mesh Layer (see CONTEXT.md), so every caller agrees on eligibility.
  */
+
+import {
+  isCameraEntity,
+  isVideoEntity,
+  isAudioEntity,
+  isTransitionClipEntity,
+  isScriptComponent,
+} from './ecs.js';
+import { is3DShape } from './geometry3d.js';
+import { clipPolygonToCamera } from './warp3d.js';
+import { mat4Multiply } from './camera3d.js';
 
 export const GIZMO_COLORS = {
   x: '#f87171',      // Red (X axis / pitch)
@@ -25,6 +39,71 @@ export const GIZMO_COLORS = {
 };
 
 export const DEFAULT_HANDLE_LENGTH = 80; // Fixed pixels on screen
+
+// ─── Layer classification ───────────────────────────────────────────────────
+
+/** A drawn layer with no thickness: Video, Text, Script, 2D Shape. */
+export const LAYER_KIND_FLAT = 'flat';
+/** A drawn layer whose Shape is a 3D primitive (cube, cylinder, pyramid, sphere). */
+export const LAYER_KIND_MESH = 'mesh';
+
+/**
+ * What kind of drawn layer an entity is, regardless of whether 3D mode is on.
+ *
+ * - 'mesh': a Shape whose shapeType is a 3D primitive.
+ * - 'flat': Video, Text, a 2D Shape, or an enabled Script (Canvas / React /
+ *   MonoBehaviour).
+ * - null:   not a drawn layer - Camera, Audio, Subtitle, Transition and empty
+ *   parents (Transform only) have no rectangle to put a gizmo on.
+ *
+ * @param {object} entity
+ * @returns {'mesh'|'flat'|null}
+ */
+export function getDrawnLayerKind(entity) {
+  if (!entity) return null;
+  if (isCameraEntity(entity) || isTransitionClipEntity(entity)) return null;
+
+  const comps = entity.components || [];
+
+  const shape = comps.find((c) => c.type === 'ShapeRenderer');
+  if (shape) return is3DShape(shape.shapeType) ? LAYER_KIND_MESH : LAYER_KIND_FLAT;
+
+  if (isVideoEntity(entity)) return LAYER_KIND_FLAT;
+  if (isAudioEntity(entity)) return null;
+
+  if (comps.some((c) => c.type === 'TextRenderer')) return LAYER_KIND_FLAT;
+  if (comps.some((c) => isScriptComponent(c) && c.enabled !== false)) return LAYER_KIND_FLAT;
+
+  return null;
+}
+
+/**
+ * The kind of 3D Layer an entity is, or null when it is not one: the entity
+ * must be a drawn layer AND have 3D mode (`is3D`) on.
+ *
+ * @param {object} entity
+ * @param {boolean} is3D - the layer's 3D mode flag (resolved Transform value)
+ * @returns {'mesh'|'flat'|null}
+ */
+export function get3DLayerKind(entity, is3D) {
+  if (!is3D) return null;
+  return getDrawnLayerKind(entity);
+}
+
+/** True for a 3D Layer with no thickness (Video, Text, Script, 2D Shape). */
+export const isFlatLayer = (entity, is3D) => get3DLayerKind(entity, is3D) === LAYER_KIND_FLAT;
+
+/** True for a 3D Layer whose Shape is a 3D primitive. */
+export const isMeshLayer = (entity, is3D) => get3DLayerKind(entity, is3D) === LAYER_KIND_MESH;
+
+/**
+ * Whether a selected entity gets the 3D axis gizmo (instead of the 2D one):
+ * every 3D Layer, Mesh or Flat. Layers with 3D mode off keep the 2D gizmo, and
+ * Camera, Audio, Subtitle, Transition and empty parents never get one.
+ */
+export function has3DGizmo(entity, is3D) {
+  return get3DLayerKind(entity, is3D) !== null;
+}
 
 /**
  * Normalizes a 3D vector.
@@ -107,6 +186,9 @@ export function projectCameraPoint(camPt, focalLength, viewport, near = 1) {
  * @param {{ width: number, height: number }} options.viewport - Viewport dimensions
  * @param {number} [options.handleLength=80] - Desired screen length of axes in px
  * @param {number} [options.near=1] - Near clip plane distance
+ * @param {boolean} [options.flat=false] - A Flat Layer has no thickness, so it gets no Z-scale handle
+ * @param {{x:number,y:number,z:number}|null} [options.pivot=null] - Layer pivot in layer-local px.
+ *   When given, the gizmo origin sits on the pivot instead of the layer centre.
  * @returns {object} Complete gizmo geometry ready for rendering and picking
  */
 export function buildGizmo3DGeometry({
@@ -117,13 +199,23 @@ export function buildGizmo3DGeometry({
   viewport = { width: 1920, height: 1080 },
   handleLength = DEFAULT_HANDLE_LENGTH,
   near = 1,
+  flat = false,
+  pivot = null,
 }) {
   if (!camMatrix || camMatrix.length < 16) {
     return { visible: false, behindCamera: true };
   }
 
-  // Camera-space origin of the layer
-  const camOrigin = [camMatrix[12], camMatrix[13], camMatrix[14]];
+  // Camera-space origin of the gizmo: the layer's local origin, moved onto the
+  // pivot when one is given (camMatrix maps layer-local px to camera space).
+  const pvx = pivot?.x ?? 0;
+  const pvy = pivot?.y ?? 0;
+  const pvz = pivot?.z ?? 0;
+  const camOrigin = [
+    camMatrix[12] + camMatrix[0] * pvx + camMatrix[4] * pvy + camMatrix[8] * pvz,
+    camMatrix[13] + camMatrix[1] * pvx + camMatrix[5] * pvy + camMatrix[9] * pvz,
+    camMatrix[14] + camMatrix[2] * pvx + camMatrix[6] * pvy + camMatrix[10] * pvz,
+  ];
   const originZ = camOrigin[2];
 
   // If origin is behind or at the near plane, the layer is not visible
@@ -221,7 +313,10 @@ export function buildGizmo3DGeometry({
       clipped,
     };
 
-    scaleCubes[key] = { x: screenTip.x, y: screenTip.y, depthZ: def.unitCam[2] };
+    // A Flat Layer has no thickness: no Z-scale handle.
+    if (!(flat && key === 'z')) {
+      scaleCubes[key] = { x: screenTip.x, y: screenTip.y, depthZ: def.unitCam[2] };
+    }
   }
 
   // Build the 3 rotation rings
@@ -303,9 +398,76 @@ export function buildGizmo3DGeometry({
     scaleFactor,
     dist3D,
     handleLength: safeHandleLength,
+    flat: Boolean(flat),
     axes,
     rings,
     scaleCubes,
+  };
+}
+
+/**
+ * Gizmo geometry for a projected layer (the `projectedTransform` the render
+ * pipeline attaches to each 3D item). The one place that knows how a layer's
+ * projection maps onto the gizmo, so the SVG overlay and the drag solvers
+ * always read the same geometry.
+ *
+ * A Flat Layer gets no Z-scale handle and its gizmo origin sits on its pivot
+ * (rotation and scale happen around the pivot). A Mesh Layer keeps its origin
+ * at the layer centre, as before.
+ *
+ * @param {object} proj - projectedTransform from camera3d.js project3DLayer
+ * @param {{ width: number, height: number }} viewport
+ * @param {{ flat?: boolean, handleLength?: number }} [options]
+ */
+export function buildLayerGizmo3DGeometry(proj, viewport, { flat = false, handleLength = DEFAULT_HANDLE_LENGTH } = {}) {
+  if (!proj) return { visible: false, behindCamera: true };
+  return buildGizmo3DGeometry({
+    camMatrix: proj.camMatrix,
+    viewMatrix: proj.viewMatrix,
+    modelMatrix: proj.modelMatrix,
+    focalLength: proj.focalLength,
+    viewport,
+    near: proj.nearPlane || 1,
+    handleLength,
+    flat,
+    pivot: flat ? proj.pivotPx || null : null,
+  });
+}
+
+/**
+ * The selection outline of a 3D layer: its Layer Box projected through the
+ * camera, as a polygon in frame px. This is the same quad the preview's CSS
+ * matrix3d and the exporter's warp draw, so the outline matches the rendered
+ * layer under perspective. A box that straddles the near plane is clipped to it
+ * rather than stretched.
+ *
+ * @param {object} proj - projectedTransform from camera3d.js project3DLayer
+ * @param {{ width: number, height: number }} [viewport]
+ * @returns {{ visible: boolean, points: Array<{x:number,y:number}> }}
+ */
+export function buildLayerBoxOutline(proj, viewport) {
+  const quad = proj?.quad;
+  if (!quad?.camCorners || quad.camCorners.length < 3) return { visible: false, points: [] };
+
+  const near = quad.near ?? proj.nearPlane ?? 1;
+  const far = quad.far ?? Infinity;
+  const focal = quad.focalLength ?? proj.focalLength;
+  const vpW = viewport?.width || quad.viewport?.width || 1920;
+  const vpH = viewport?.height || quad.viewport?.height || 1080;
+
+  const poly = clipPolygonToCamera(
+    quad.camCorners.map((c) => ({ x: c.x, y: c.y, z: c.z, u: 0, v: 0 })),
+    near,
+    far
+  );
+  if (poly.length < 3) return { visible: false, points: [] };
+
+  return {
+    visible: true,
+    points: poly.map((p) => ({
+      x: (p.x * focal) / p.z + vpW / 2,
+      y: (p.y * focal) / p.z + vpH / 2,
+    })),
   };
 }
 
@@ -392,12 +554,13 @@ export function pickGizmo3DHandle(geometry, tool, pointerX, pointerY, tolerance 
       return 'scale-center';
     }
 
-    // 2. Check axis scale cubes
+    // 2. Check axis scale cubes (a Flat Layer has no Z-scale cube)
     let closestHandle = null;
     let closestDist = tolerance;
 
     for (const key of ['x', 'y', 'z']) {
       const cube = scaleCubes[key];
+      if (!cube) continue;
       const d = Math.hypot(pointerX - cube.x, pointerY - cube.y);
       if (d < closestDist) {
         closestDist = d;
@@ -408,6 +571,7 @@ export function pickGizmo3DHandle(geometry, tool, pointerX, pointerY, tolerance 
     // 3. Check stems if cubes weren't hit directly
     if (!closestHandle) {
       for (const key of ['x', 'y', 'z']) {
+        if (!scaleCubes[key]) continue;
         const axis = axes[key];
         const d = distToSegment(pointerX, pointerY, origin.x, origin.y, axis.tip.x, axis.tip.y);
         if (d < closestDist) {
@@ -539,10 +703,17 @@ export function solveScale3D({
   geometry,
   startScale = { scaleX: 1, scaleY: 1, scaleZ: 1 },
   shiftKey = false,
+  flat = false,
 }) {
   const sx = startScale.scaleX ?? 1;
   const sy = startScale.scaleY ?? 1;
   const sz = startScale.scaleZ ?? 1;
+
+  // A Flat Layer has no thickness, so its scaleZ is never touched: there is no
+  // Z-scale handle, and a uniform scale only grows X and Y.
+  if (flat && handle === 'scale-z') {
+    return { ratio: 1, isUniform: false, nextScale: { scaleX: sx, scaleY: sy, scaleZ: sz } };
+  }
 
   if (handle === 'scale-center') {
     const dx = currentPointer.x - startPointer.x;
@@ -557,7 +728,7 @@ export function solveScale3D({
       nextScale: {
         scaleX: Math.max(0.01, sx * ratio),
         scaleY: Math.max(0.01, sy * ratio),
-        scaleZ: Math.max(0.01, sz * ratio),
+        scaleZ: flat ? sz : Math.max(0.01, sz * ratio),
       },
     };
   }
@@ -593,7 +764,7 @@ export function solveScale3D({
       nextScale: {
         scaleX: Math.max(0.01, sx * ratio),
         scaleY: Math.max(0.01, sy * ratio),
-        scaleZ: Math.max(0.01, sz * ratio),
+        scaleZ: flat ? sz : Math.max(0.01, sz * ratio),
       },
     };
   }
@@ -608,4 +779,122 @@ export function solveScale3D({
     isUniform: false,
     nextScale,
   };
+}
+
+// ─── Body drag on the layer's z-plane ───────────────────────────────────────
+
+/** Rays within this fraction of parallel to the plane count as edge-on (~1.1 degrees). */
+export const BODY_DRAG_EDGE_ON_EPSILON = 0.02;
+
+/** Most a single frame may move the layer, in the parent's px. Guards against jumps near edge-on. */
+export const DEFAULT_BODY_DRAG_MAX_STEP = 1000;
+
+/** Inverse of an affine 4x4 (column-major, last row 0 0 0 1), or null when singular. */
+function invertAffine(m) {
+  if (!m || m.length < 16) return null;
+  const a00 = m[0], a10 = m[1], a20 = m[2];
+  const a01 = m[4], a11 = m[5], a21 = m[6];
+  const a02 = m[8], a12 = m[9], a22 = m[10];
+  const det = a00 * (a11 * a22 - a12 * a21) - a01 * (a10 * a22 - a12 * a20) + a02 * (a10 * a21 - a11 * a20);
+  if (Math.abs(det) < 1e-12) return null;
+  const e0 = mat3InvertVector(m, [1, 0, 0]);
+  const e1 = mat3InvertVector(m, [0, 1, 0]);
+  const e2 = mat3InvertVector(m, [0, 0, 1]);
+  const t = mat3InvertVector(m, [m[12], m[13], m[14]]);
+  return [
+    e0.x, e0.y, e0.z, 0,
+    e1.x, e1.y, e1.z, 0,
+    e2.x, e2.y, e2.z, 0,
+    -t.x, -t.y, -t.z, 1,
+  ];
+}
+
+/**
+ * Solves a body drag of a 3D Layer: the pointer ray is intersected with the
+ * plane of the layer's current z, in the parent's space, and the layer follows
+ * the hit point. Only x and y change; z is left exactly as it was, so the layer
+ * stays under the cursor even when it is far from the camera.
+ *
+ * Frames that cannot be solved are ignored and the last valid position is kept:
+ * a ray (start or current) that is nearly parallel to the plane (camera looking
+ * at it edge-on), or that meets the plane behind the camera. A cap on how far a
+ * single frame may move the layer guards against jumps just short of edge-on.
+ *
+ * @param {object} options
+ * @param {{x:number,y:number}} options.startPointer - Pointer at drag start, frame px
+ * @param {{x:number,y:number}} options.currentPointer - Pointer now, frame px
+ * @param {{x:number,y:number,z:number}} options.startPose - Layer local position at drag start
+ * @param {{x:number,y:number}} [options.lastPose] - Last position this solver returned (default: startPose)
+ * @param {number[]} options.viewMatrix - 4x4 camera view matrix (world -> camera)
+ * @param {number} options.focalLength - Camera focal length in px
+ * @param {{width:number,height:number}} options.viewport
+ * @param {number[]|null} [options.parentMatrix] - Parent's 4x4 world matrix (local -> world)
+ * @param {number} [options.maxStep] - Per-frame movement cap in parent px
+ * @returns {{x:number,y:number,z:number,ignored:boolean,capped:boolean}}
+ */
+export function solveBodyDrag3D({
+  startPointer,
+  currentPointer,
+  startPose,
+  lastPose = null,
+  viewMatrix,
+  focalLength,
+  viewport = { width: 1920, height: 1080 },
+  parentMatrix = null,
+  maxStep = DEFAULT_BODY_DRAG_MAX_STEP,
+}) {
+  const z0 = startPose?.z ?? 0;
+  const keep = lastPose || startPose || { x: 0, y: 0 };
+  const held = { x: keep.x ?? 0, y: keep.y ?? 0, z: z0, ignored: true, capped: false };
+
+  const invView = invertAffine(viewMatrix);
+  if (!invView || !(focalLength > 0)) return held;
+
+  // Camera space -> the parent's local space.
+  let camToLocal = invView;
+  if (parentMatrix && parentMatrix.length >= 16) {
+    const invParent = invertAffine(parentMatrix);
+    if (!invParent) return held;
+    camToLocal = mat4Multiply(invParent, invView);
+  }
+
+  const vpW = viewport?.width || 1920;
+  const vpH = viewport?.height || 1080;
+  const m = camToLocal;
+  const origin = [m[12], m[13], m[14]];
+
+  const hitPlane = (pointer) => {
+    const cx = (pointer.x - vpW / 2) / focalLength;
+    const cy = (pointer.y - vpH / 2) / focalLength;
+    const dir = [
+      m[0] * cx + m[4] * cy + m[8],
+      m[1] * cx + m[5] * cy + m[9],
+      m[2] * cx + m[6] * cy + m[10],
+    ];
+    const len = Math.hypot(dir[0], dir[1], dir[2]);
+    if (len < 1e-9 || Math.abs(dir[2]) / len < BODY_DRAG_EDGE_ON_EPSILON) return null;
+    const t = (z0 - origin[2]) / dir[2];
+    if (!(t > 0)) return null;
+    return { x: origin[0] + t * dir[0], y: origin[1] + t * dir[1] };
+  };
+
+  const startHit = hitPlane(startPointer);
+  const currentHit = hitPlane(currentPointer);
+  if (!startHit || !currentHit) return held;
+
+  let nextX = (startPose.x ?? 0) + (currentHit.x - startHit.x);
+  let nextY = (startPose.y ?? 0) + (currentHit.y - startHit.y);
+
+  let capped = false;
+  const stepX = nextX - held.x;
+  const stepY = nextY - held.y;
+  const step = Math.hypot(stepX, stepY);
+  if (step > maxStep) {
+    const k = maxStep / step;
+    nextX = held.x + stepX * k;
+    nextY = held.y + stepY * k;
+    capped = true;
+  }
+
+  return { x: nextX, y: nextY, z: z0, ignored: false, capped };
 }

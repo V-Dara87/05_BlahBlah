@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import {
-  buildGizmo3DGeometry,
+  buildLayerGizmo3DGeometry,
+  buildLayerBoxOutline,
   GIZMO_COLORS,
 } from '../../engine/gizmo3d.js';
 import './gizmo3d.css';
@@ -18,6 +19,9 @@ import './gizmo3d.css';
  * @param {number} props.width - Frame width in px
  * @param {number} props.height - Frame height in px
  * @param {number} [props.zIndex] - CSS z-index
+ * @param {boolean} [props.flat=false] - Flat Layer (no thickness): hides the Z-scale handle
+ *   and puts the origin on the layer's pivot
+ * @param {boolean} [props.showLayerBox=false] - Draw the projected Layer Box as the selection outline
  * @param {Function} [props.onHandlePointerDown] - (handleName, pointerEvent) => void
  */
 export function Gizmo3D({
@@ -28,6 +32,8 @@ export function Gizmo3D({
   width = 1920,
   height = 1080,
   zIndex = 1050,
+  flat = false,
+  showLayerBox = false,
   onHandlePointerDown,
 }) {
   const [internalHover, setInternalHover] = useState(null);
@@ -35,16 +41,13 @@ export function Gizmo3D({
 
   const geom = useMemo(() => {
     if (!projectedTransform || projectedTransform.inFrontOfCamera === false) return null;
-    return buildGizmo3DGeometry({
-      camMatrix: projectedTransform.camMatrix,
-      viewMatrix: projectedTransform.viewMatrix,
-      modelMatrix: projectedTransform.modelMatrix,
-      focalLength: projectedTransform.focalLength,
-      viewport: { width, height },
-      near: projectedTransform.nearPlane || 1,
-      handleLength: 80,
-    });
-  }, [projectedTransform, width, height]);
+    return buildLayerGizmo3DGeometry(projectedTransform, { width, height }, { flat, handleLength: 80 });
+  }, [projectedTransform, width, height, flat]);
+
+  const outline = useMemo(() => {
+    if (!showLayerBox) return null;
+    return buildLayerBoxOutline(projectedTransform, { width, height });
+  }, [showLayerBox, projectedTransform, width, height]);
 
   if (!geom || !geom.visible) return null;
 
@@ -98,6 +101,14 @@ export function Gizmo3D({
         zIndex,
       }}
     >
+      {/* ── 0. SELECTION OUTLINE: the Layer Box projected through the camera ── */}
+      {outline?.visible && (
+        <polygon
+          points={outline.points.map((pt) => `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`).join(' ')}
+          className="gizmo3d-layer-box"
+        />
+      )}
+
       {/* ── 1. MOVE TOOL (3 Axis Arrows) ── */}
       {activeTool === 'move' &&
         axisKeys.map((key) => {
@@ -187,6 +198,8 @@ export function Gizmo3D({
           {axisKeys.map((key) => {
             const axis = axes[key];
             const cube = scaleCubes[key];
+            // A Flat Layer has no thickness, so it has no Z-scale handle.
+            if (!cube) return null;
             const handleName = `scale-${key}`;
             const isActive = activeHandle === handleName;
             const isHovered = currentHover === handleName;

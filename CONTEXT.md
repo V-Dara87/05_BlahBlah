@@ -1,45 +1,27 @@
 # BlahBlah
 
-A browser/desktop motion and video editor where layers are placed in a 3D scene and rendered through a camera.
+A video and animation editor. This glossary holds the project's own terms.
 
 ## Language
 
-### Cameras
+### VST3 Inserts
 
-**Project Camera**:
-The camera authored on the timeline. It decides what the preview and the export show, and it is saved with the project.
-_Avoid_: Main camera, scene camera, real camera
+**Insert**:
+One effect placed on a track's signal path.
+_Avoid_: Slot, FX, VST
 
-**Target Offset**:
-The aiming direction of a Project Camera, stored as a vector relative to the camera's own position.
-_Avoid_: Target, look-at point, POI position, absolute target
+**Insert Chain**:
+The ordered list of Inserts on a track.
+_Avoid_: FX chain, rack
 
-**Camera View**:
-The preview that shows exactly what the Project Camera sees, matching the final export.
-_Avoid_: Preview window, canvas output
+**Plugin**:
+A VST3 effect found by scanning and available to become an Insert.
+_Avoid_: VST, VSTi
 
-**Demo Camera**:
-A temporary look-around camera used only inside the Scene View. It is never saved, never exported, and never appears on the timeline.
-_Avoid_: Editor camera, free camera, viewport camera
+**Wet Bounce**:
+The cached audio of a track after it has passed through its Insert Chain; preview and export play this instead of the track's source audio.
+_Avoid_: Render, freeze, bake
 
-**Match Project Camera**:
-A one-time action that moves the Demo Camera to the Project Camera's view at the current playhead time. It does not keep following afterwards.
-_Avoid_: Sync camera, follow camera, lock to camera
-
-### Scene View
-
-**Scene View**:
-The preview tab that shows the scene seen through the Demo Camera, with helper overlays, so the author can check where layers really are.
-_Avoid_: 3D view, 3D preview, scene3d
-
-**Overlays**:
-The helper drawings in the Scene View: Ground Grid, layer wireframes, Camera Frustum and axes.
-_Avoid_: Gizmos, helpers, debug layer
-
-**Camera Frustum**:
-The pyramid drawn in the Scene View that shows the Project Camera's field of view and where it looks.
-_Avoid_: Camera cone, view box
-
-**Ground Grid**:
-The reference plane at Y = 0 in world space, drawn in the Scene View and fading out with distance.
-_Avoid_: Floor grid, bottom mesh
+**VST Host**:
+The separate process that scans for Plugins, runs Insert Chains and shows Plugin editors.
+_Avoid_: Sidecar, spike

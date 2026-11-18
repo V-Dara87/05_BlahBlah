@@ -50,6 +50,7 @@ export function SceneView3D({
   autoKeyEnabled = false,
   gizmoTool = 'move',
   onGizmo3DPointerDown,
+  onBodyDrag3DPointerDown,
   showGroundGrid = true,
 }) {
   const containerRef = useRef(null);
@@ -455,6 +456,9 @@ export function SceneView3D({
           handleMoveGizmoPointerDown={handleMoveGizmoPointerDown}
           handleRotateGizmoPointerDown={handleRotateGizmoPointerDown}
           handleScaleGizmoPointerDown={handleScaleGizmoPointerDown}
+          gizmoTool={gizmoTool}
+          onGizmo3DPointerDown={onGizmo3DPointerDown}
+          onBodyDrag3DPointerDown={onBodyDrag3DPointerDown}
           transitionPlan={transitionPlan}
           preloadItems={[]}
         />
@@ -479,6 +483,7 @@ export function SceneView3D({
           autoKeyEnabled={autoKeyEnabled}
           gizmoTool={gizmoTool}
           onGizmo3DPointerDown={onGizmo3DPointerDown}
+          onBodyDrag3DPointerDown={onBodyDrag3DPointerDown}
         />
       </div>
 

@@ -4,7 +4,7 @@ import { getCompiledReactComponent, detectScriptKind, extractScriptProps } from 
 import { resolveScriptProps } from '../../engine/referenceTypes';
 import { resolveTextRendererText, cssFontFamily, DEFAULT_TEXT_FONT_SIZE, DEFAULT_TEXT_FONT_COLOR, DEFAULT_TEXT_FONT_FAMILY, DEFAULT_TEXT_FONT_WEIGHT } from '../../engine/textRenderer';
 import { isScriptComponent, isVideoEntity, isAudioEntity } from '../../engine/ecs';
-import { is3DShape } from '../../engine/geometry3d';
+import { has3DGizmo } from '../../engine/gizmo3d';
 import { Move, RotateCw, Maximize2 } from 'lucide-react';
 import { loadKeybindSettings, normalizeKeyEvent } from '../../services/keybindSettings';
 import { computeActiveEntitiesAtTime, buildActiveEntityIndex, resolveTransitionFramePlan, getTransitionAudioWindows } from '../../engine/renderPipeline';
@@ -312,6 +312,7 @@ export function EntityRenderer({
     handleRotateGizmoPointerDown,
     handleScaleGizmoPointerDown,
     handleGizmo3DPointerDown,
+    handleBodyDrag3DPointerDown,
   } = useGizmoDrag({
     entities,
     onUpdateEntity,
@@ -330,9 +331,10 @@ export function EntityRenderer({
     () => computedEntities.find((c) => c.entity.id === selectedEntityId),
     [computedEntities, selectedEntityId]
   );
-  const is3DShapeSelected = Boolean(
-    selectedItem?.is3D &&
-    selectedItem.entity?.components?.some((c) => c.type === 'ShapeRenderer' && is3DShape(c.shapeType))
+  // The selected layer gets the 3D axis gizmo (and W / E / R tool switching)
+  // instead of the 2D one. See has3DGizmo in engine/gizmo3d.js.
+  const has3DGizmoSelected = Boolean(
+    selectedItem && has3DGizmo(selectedItem.entity, selectedItem.is3D)
   );
 
   const handleUpdateCameraTargetOffset = (newOffX, newOffY, newOffZ) => {
@@ -395,7 +397,7 @@ export function EntityRenderer({
         document.activeElement === containerRef.current ||
         isPreviewFocused
       );
-      if (!hasFocus || !is3DShapeSelected) return;
+      if (!hasFocus || !has3DGizmoSelected) return;
 
       const binding = normalizeKeyEvent(e);
       if (!binding) return;
@@ -426,7 +428,7 @@ export function EntityRenderer({
 
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [is3DShapeSelected, isPreviewFocused]);
+  }, [has3DGizmoSelected, isPreviewFocused]);
  
   const toggleFullscreen = () => {
     if (!containerRef.current) return;
@@ -502,6 +504,7 @@ export function EntityRenderer({
               autoKeyEnabled={autoKeyEnabled}
               gizmoTool={gizmoTool}
               onGizmo3DPointerDown={handleGizmo3DPointerDown}
+              onBodyDrag3DPointerDown={handleBodyDrag3DPointerDown}
               showGroundGrid={activeCamera?.showGrid ?? true}
             />
           </div>
@@ -510,7 +513,7 @@ export function EntityRenderer({
         {/* ── NORMAL / EXTENDED PREVIEW MODE ── */}
         {previewMode !== 'scene3d' && (<>
         {/* Floating 3D Transform Tool Switch (Move / Rotate / Scale) */}
-        {is3DShapeSelected && (
+        {has3DGizmoSelected && (
           <div className="preview-gizmo3d-tools" title="3D Transform Tool (W: Move, E: Rotate, R: Scale)">
             <button
               type="button"
@@ -624,6 +627,9 @@ export function EntityRenderer({
             handleMoveGizmoPointerDown={handleMoveGizmoPointerDown}
             handleRotateGizmoPointerDown={handleRotateGizmoPointerDown}
             handleScaleGizmoPointerDown={handleScaleGizmoPointerDown}
+            gizmoTool={gizmoTool}
+            onGizmo3DPointerDown={handleGizmo3DPointerDown}
+            onBodyDrag3DPointerDown={handleBodyDrag3DPointerDown}
             transitionPlan={transitionPlan}
             preloadItems={upcomingMedia.video}
           />
@@ -651,6 +657,7 @@ export function EntityRenderer({
             autoKeyEnabled={autoKeyEnabled}
             gizmoTool={gizmoTool}
             onGizmo3DPointerDown={handleGizmo3DPointerDown}
+            onBodyDrag3DPointerDown={handleBodyDrag3DPointerDown}
           />
 
           {/* Marks drawn for notes. Preview-only annotation layer: export and frame

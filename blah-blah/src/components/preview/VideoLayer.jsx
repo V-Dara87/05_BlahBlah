@@ -2,6 +2,8 @@ import { Fragment } from 'react';
 import { EntityErrorBoundary } from '../entity/EntityErrorBoundary';
 import { getSharedGLTransitionRenderer } from '../../engine/glTransitions';
 import { TransitionBlendCanvas } from './TransitionBlendCanvas';
+import { Gizmo3D } from './Gizmo3D';
+import { get3DLayerKind } from '../../engine/gizmo3d';
 import './video-layer.css';
  
 /**
@@ -31,6 +33,12 @@ export function VideoLayer({
   handleMoveGizmoPointerDown,
   handleRotateGizmoPointerDown,
   handleScaleGizmoPointerDown,
+  // 3D gizmo (Move / Rotate / Scale axes) for a selected video with 3D mode on.
+  gizmoTool = 'move',
+  active3DHandle = null,
+  onGizmo3DPointerDown,
+  // Body drag of a selected 3D video: moves on the plane of its own z (x/y only).
+  onBodyDrag3DPointerDown,
   // TransitionClip plan from EntityRenderer (see renderPipeline.js
   // resolveTransitionFramePlan + the blends built there). Empty for projects
   // with no transition clips, in which case this component renders exactly
@@ -148,7 +156,13 @@ export function VideoLayer({
           // video clip only becomes directly draggable once it's
           // already the selected entity.
           if (isSelected && onUpdateEntity) {
-            handleMoveGizmoPointerDown(e, entity, transform, localTransform);
+            // A 3D video moves on the plane of its own z, like every 3D Layer;
+            // with 3D mode off it keeps the 2D screen-space move.
+            if (is3D && get3DLayerKind(entity, item.is3D) && onBodyDrag3DPointerDown) {
+              onBodyDrag3DPointerDown(e, entity, item);
+            } else {
+              handleMoveGizmoPointerDown(e, entity, transform, localTransform);
+            }
           }
         }}
       >
@@ -242,6 +256,26 @@ export function VideoLayer({
         </EntityErrorBoundary>
       </div>
  
+      {/* 3D Transform Gizmo for a selected video with 3D mode on. Replaces the 2D
+          outline below: its outline is the projected Layer Box, and the video is a
+          Flat Layer (no thickness), so there is no Z-scale handle. */}
+      {isSelected && onUpdateEntity && is3D && proj && (
+        <Gizmo3D
+          key={`${entity.id}-gizmo-3d`}
+          projectedTransform={proj}
+          activeTool={gizmoTool}
+          activeHandle={active3DHandle}
+          width={safeResWidth}
+          height={safeResHeight}
+          flat
+          showLayerBox
+          zIndex={Math.max(1000 + 100 + layerZIndexOf(item), (proj.zIndex ?? 0) + 50)}
+          onHandlePointerDown={(handle, e) => {
+            onGizmo3DPointerDown?.(e, entity, item, handle, gizmoTool);
+          }}
+        />
+      )}
+
       {/* Selection outline + rotate/scale gizmo for the selected video
           clip — same .preview-selection-gizmo overlay the overlay-items
           layer uses, and for the same reason: it's a SIBLING of
@@ -263,7 +297,7 @@ export function VideoLayer({
           own resolution (baseWidth/baseHeight = safeResWidth/Height)
           since a video clip's "base size" at Scale=1 is the whole frame,
           not a per-entity authored width/height. */}
-      {isSelected && onUpdateEntity && (
+      {isSelected && onUpdateEntity && !is3D && (
         <div
           className="preview-selection-gizmo"
           style={{

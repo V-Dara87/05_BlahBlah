@@ -9,6 +9,16 @@
   user-select: none;
 }
 
+/* Selection outline: the projected Layer Box of a 3D layer */
+.gizmo3d-layer-box {
+  fill: rgba(56, 189, 248, 0.06);
+  stroke: #38bdf8;
+  stroke-width: calc(1.5px / var(--view-scale, 1));
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
 /* Base handle paths */
 .gizmo3d-stem,
 .gizmo3d-ring,

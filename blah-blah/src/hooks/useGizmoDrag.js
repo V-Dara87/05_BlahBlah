@@ -1,5 +1,5 @@
 import { trackKeyFor, getFieldKeyframes, setKeyframe } from '../engine/keyframes';
-import { buildGizmo3DGeometry, solveMove3D, solveRotate3D, solveScale3D } from '../engine/gizmo3d.js';
+import { buildLayerGizmo3DGeometry, isFlatLayer, solveBodyDrag3D, solveMove3D, solveRotate3D, solveScale3D } from '../engine/gizmo3d.js';
 import { mat4Translation, mat4RotationZ, mat4Scaling, mat4Multiply } from '../engine/camera3d.js';
 import '../components/preview/gizmo.css';
 
@@ -527,12 +527,9 @@ export function useGizmoDrag({
     });
   };
  
-  const handleGizmo3DPointerDown = (e, entity, item, handle, tool = 'move') => {
-    if (!onUpdateEntity) return;
-    e.stopPropagation();
-    e.preventDefault();
-    onSelectEntity(entity.id);
-
+  // Shared start-of-drag state for the 3D gizmo handlers: the screen -> project
+  // pixel mapping, the layer's local pose at drag start, and its parent's matrix.
+  const build3DDragContext = (e, entity, item) => {
     const frameEl = canvasFrameRef.current;
     const doc = frameEl?.ownerDocument || (typeof document !== 'undefined' ? document : null);
 
@@ -591,15 +588,80 @@ export function useGizmoDrag({
       }
     }
 
+    return { doc, getScale, startProj, compItem, proj, startPose, parentMatrix };
+  };
+
+  // Body drag of a selected 3D Layer: the layer follows the pointer on the plane
+  // of its current z (parent space), so only x and y change. See solveBodyDrag3D.
+  const handleBodyDrag3DPointerDown = (e, entity, item) => {
+    if (!onUpdateEntity) return;
+    e.stopPropagation();
+    e.preventDefault();
+    onSelectEntity(entity.id);
+
+    const { doc, getScale, startProj, proj, startPose, parentMatrix } = build3DDragContext(e, entity, item);
+    if (!proj?.viewMatrix || !proj.focalLength) return;
+
+    const feedback = createDragFeedback(doc, 'move');
+
+    gizmoDragRef.current = {
+      mode: 'body3d',
+      entityId: entity.id,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startProj,
+      startPose,
+      lastPose: { x: startPose.x, y: startPose.y },
+      viewMatrix: proj.viewMatrix,
+      focalLength: proj.focalLength,
+      parentMatrix,
+    };
+
+    bindDrag('body3d', feedback, (moveEvent, drag) => {
+      const s = getScale() || 1;
+      const currProj = {
+        x: drag.startProj.x + (moveEvent.clientX - drag.startClientX) / s,
+        y: drag.startProj.y + (moveEvent.clientY - drag.startClientY) / s,
+      };
+
+      const res = solveBodyDrag3D({
+        startPointer: drag.startProj,
+        currentPointer: currProj,
+        startPose: drag.startPose,
+        lastPose: drag.lastPose,
+        viewMatrix: drag.viewMatrix,
+        focalLength: drag.focalLength,
+        viewport: { width: safeResWidth, height: safeResHeight },
+        parentMatrix: drag.parentMatrix,
+      });
+
+      // An unsolvable frame (edge-on view) keeps the last valid position.
+      if (res.ignored) return;
+
+      drag.lastPose = { x: res.x, y: res.y };
+      // z is deliberately not written: body drag never changes depth.
+      updateSelectedTransform(drag.entityId, { x: res.x, y: res.y });
+      feedback.readout(
+        `X ${Math.round(res.x)}  Y ${Math.round(res.y)}  Z ${Math.round(res.z)}`,
+        moveEvent.clientX,
+        moveEvent.clientY
+      );
+    });
+  };
+
+  const handleGizmo3DPointerDown = (e, entity, item, handle, tool = 'move') => {
+    if (!onUpdateEntity) return;
+    e.stopPropagation();
+    e.preventDefault();
+    onSelectEntity(entity.id);
+
+    const { doc, getScale, startProj, compItem, proj, startPose, parentMatrix } = build3DDragContext(e, entity, item);
+
+    // A Flat Layer (video, ...) has no Z-scale handle and pivots about its
+    // pivot point; the solvers must read the same geometry the overlay draws.
+    const flat = isFlatLayer(entity, compItem?.is3D);
     const geometry = proj
-      ? buildGizmo3DGeometry({
-          camMatrix: proj.camMatrix,
-          viewMatrix: proj.viewMatrix,
-          modelMatrix: proj.modelMatrix,
-          focalLength: proj.focalLength,
-          viewport: { width: safeResWidth, height: safeResHeight },
-          near: proj.nearPlane || 1,
-        })
+      ? buildLayerGizmo3DGeometry(proj, { width: safeResWidth, height: safeResHeight }, { flat })
       : null;
 
     const effectiveTool =
@@ -614,6 +676,7 @@ export function useGizmoDrag({
       entityId: entity.id,
       handle,
       tool: effectiveTool,
+      flat,
       startClientX: e.clientX,
       startClientY: e.clientY,
       startProj,
@@ -680,13 +743,16 @@ export function useGizmoDrag({
             scaleZ: drag.startPose.scaleZ,
           },
           shiftKey: moveEvent.shiftKey,
+          flat: drag.flat,
         });
 
         const { nextScale } = scaleRes;
+        // A Flat Layer's scaleZ is left alone so auto-key never records a
+        // depth value the author did not touch.
         updateSelectedTransform(drag.entityId, {
           scaleX: nextScale.scaleX,
           scaleY: nextScale.scaleY,
-          scaleZ: nextScale.scaleZ,
+          ...(drag.flat ? null : { scaleZ: nextScale.scaleZ }),
         });
 
         if (scaleRes.isUniform) {
@@ -705,5 +771,6 @@ export function useGizmoDrag({
     handleRotateGizmoPointerDown,
     handleScaleGizmoPointerDown,
     handleGizmo3DPointerDown,
+    handleBodyDrag3DPointerDown,
   };
 }

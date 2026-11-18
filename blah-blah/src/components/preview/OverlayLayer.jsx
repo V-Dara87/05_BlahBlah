@@ -5,6 +5,7 @@ import { resolveTextRendererText, cssFontFamily, DEFAULT_TEXT_FONT_SIZE, DEFAULT
 import { isScriptComponent } from '../../engine/ecs';
 import { findScriptDef } from '../../engine/scriptLookup';
 import { is3DShape, drawShape3D } from '../../engine/geometry3d';
+import { get3DLayerKind } from '../../engine/gizmo3d';
 import { EntityErrorBoundary } from '../entity/EntityErrorBoundary';
 import { ScriptGizmoOverlay } from './ScriptGizmoOverlay';
 import { Gizmo3D } from './Gizmo3D';
@@ -134,6 +135,7 @@ export function OverlayLayer({
   gizmoTool = 'move',
   onGizmo3DPointerDown,
   active3DHandle = null,
+  onBodyDrag3DPointerDown,
 }) {
   return items.map((item) => {
     const { entity, transform, localTransform } = item;
@@ -216,6 +218,9 @@ export function OverlayLayer({
     // crossing the near plane does not mean the shape is gone — its faces are
     // clipped individually.
     const meshOn3DLayer = Boolean(shapeComp && is3DShape(shapeComp.shapeType) && is3D);
+    // Which 3D gizmo this layer gets, if any: 'mesh' or 'flat' (Text, Script,
+    // 2D Shape), null for anything not eligible (it keeps the 2D gizmo).
+    const gizmoKind3D = is3D && proj ? get3DLayerKind(entity, item.is3D) : null;
     if (is3D && proj && !proj.inFrontOfCamera && !meshOn3DLayer) return null;
     // A mesh layer past the near plane still draws (its faces are clipped
     // individually), but its transformed div does not: the matrix would be
@@ -277,7 +282,13 @@ export function OverlayLayer({
           // second press-drag on an already-selected clip moves it —
           // avoids fighting with the plain-click-to-select gesture.
           if (isSelected && onUpdateEntity) {
-            handleMoveGizmoPointerDown(e, entity, transform, localTransform);
+            // Every 3D Layer (Mesh or Flat) moves on the plane of its own z;
+            // only a layer with 3D mode off keeps the 2D screen-space move.
+            if (gizmoKind3D && onBodyDrag3DPointerDown) {
+              onBodyDrag3DPointerDown(e, entity, item);
+            } else {
+              handleMoveGizmoPointerDown(e, entity, transform, localTransform);
+            }
           }
         }}
       >
@@ -425,8 +436,10 @@ export function OverlayLayer({
         />
       )}
 
-      {/* 3D Transform Gizmo (Move / Rotate / Scale) for selected 3D shape entity */}
-      {isSelected && onUpdateEntity && meshOn3DLayer && proj && (
+      {/* 3D Transform Gizmo (Move / Rotate / Scale) for a selected 3D Layer. A Flat
+          Layer (Text, Script, 2D Shape) has no thickness: no Z-scale handle, and
+          its outline is the projected Layer Box instead of the 2D rectangle. */}
+      {isSelected && onUpdateEntity && gizmoKind3D && proj && (
         <Gizmo3D
           key={`${entity.id}-gizmo-3d`}
           projectedTransform={proj}
@@ -434,6 +447,8 @@ export function OverlayLayer({
           activeHandle={active3DHandle}
           width={safeResWidth}
           height={safeResHeight}
+          flat={gizmoKind3D === 'flat'}
+          showLayerBox={gizmoKind3D === 'flat'}
           zIndex={Math.max(1000 + 100 + layerZIndexOf(item), (proj.zIndex ?? 0) + 50)}
           onHandlePointerDown={(handle, e) => {
             onGizmo3DPointerDown?.(e, entity, item, handle, gizmoTool);
@@ -456,7 +471,7 @@ export function OverlayLayer({
           place. Kept in the same z-index band as the content div
           (right after it, translate(-50%,-50%) centered the same
           way) so it still visually tracks the clip 1:1. */}
-      {isSelected && onUpdateEntity && showLayerDiv && !meshOn3DLayer && (
+      {isSelected && onUpdateEntity && showLayerDiv && !gizmoKind3D && (
         <div
           key={`${entity.id}-gizmo`}
           className={`preview-selection-gizmo${isFullFrameGizmo ? ' is-full-frame' : ''}`}
