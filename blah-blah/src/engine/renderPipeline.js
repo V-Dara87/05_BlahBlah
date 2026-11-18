@@ -579,6 +579,7 @@ export function computeActiveEntitiesAtTime({
       transitionState,
       is3D,
       layerBox,
+      pivotBase: pivotBaseOf(local.entity),
       projectedTransform,
     });
   }

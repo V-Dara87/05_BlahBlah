@@ -166,3 +166,34 @@
   pointer-events: all;
   cursor: pointer;
 }
+
+/* Interactive 3D Target Reticle */
+.scene-target-reticle {
+  pointer-events: all;
+  cursor: crosshair;
+  transition: transform 0.05s ease-out;
+}
+
+.scene-target-reticle:hover .scene-cam-target-ring {
+  stroke: #fb7185;
+  stroke-width: 2.2;
+  fill: rgba(251, 113, 133, 0.28);
+}
+
+.scene-target-reticle:hover .scene-cam-target-cross {
+  stroke: #fb7185;
+  stroke-width: 2.2;
+}
+
+.scene-target-reticle.is-dragging {
+  cursor: grabbing;
+}
+
+/* Project frame outline (what the normal preview and the export show) */
+.scene-frame-outline {
+  fill: none;
+  stroke: rgba(248, 250, 252, 0.55);
+  stroke-width: 1.5;
+  stroke-dasharray: 6, 4;
+  pointer-events: none;
+}

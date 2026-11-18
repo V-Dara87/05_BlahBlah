@@ -398,3 +398,14 @@ test('Camera3D - autoOrient towardsPOI aims a parented layer at the target in wo
   // And it must actually aim at the target, not straight ahead.
   assert.ok(Math.abs(direct.rotationY) > 5, 'the layer should yaw toward the off-axis target');
 });
+
+test('Camera3D - Target Offset decouples translation from orientation', () => {
+  const cam = createDefaultCamera({ position: { x: 100, y: 200, z: -500 }, targetOffset: { x: 0, y: 0, z: 1200 } });
+  assert.deepEqual(cam.targetOffset, { x: 0, y: 0, z: 1200 });
+  assert.deepEqual(cam.target, { x: 100, y: 200, z: 700 });
+
+  // Legacy target migration
+  const legacyCam = createDefaultCamera({ position: { x: 50, y: 50, z: -800 }, target: { x: 50, y: 50, z: 200 } });
+  assert.deepEqual(legacyCam.targetOffset, { x: 0, y: 0, z: 1000 });
+  assert.deepEqual(legacyCam.target, { x: 50, y: 50, z: 200 });
+});

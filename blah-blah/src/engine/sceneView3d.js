@@ -1,4 +1,5 @@
-import { mat4LookAt, getFocalLength, orbitCamera } from './camera3d.js';
+import { mat4LookAt, getFocalLength, orbitCamera, project3DLayer, buildLayerMatrix, createDefaultCamera } from './camera3d.js';
+import { getPivotBase } from './layerBox.js';
 
 /**
  * 3D Scene View Engine - Projection, Navigation, Camera Frustum & Wireframes.
@@ -29,12 +30,13 @@ export function buildSceneViewCamera(orbitState = {}, viewport = { width: 1920, 
   const elevation = Math.max(-89.9, Math.min(89.9, orbitState.elevation ?? 25));
   const fov = orbitState.fov ?? 50;
   const zoom = orbitState.zoom ?? 1.0;
+  const roll = orbitState.roll ?? 0;
 
   const W = viewport.width || 1920;
   const H = viewport.height || 1080;
 
   const eye = orbitCamera(target, distance, azimuth, elevation);
-  const mView = mat4LookAt(eye, target, 0);
+  const mView = mat4LookAt(eye, target, (roll * Math.PI) / 180);
   const focalLength = getFocalLength(H, fov) * zoom;
 
   // Basis vectors in world space:
@@ -52,6 +54,7 @@ export function buildSceneViewCamera(orbitState = {}, viewport = { width: 1920, 
     elevation,
     fov,
     zoom,
+    roll,
     mView,
     focalLength,
     viewport: { width: W, height: H },
@@ -59,6 +62,53 @@ export function buildSceneViewCamera(orbitState = {}, viewport = { width: 1920, 
     down,
     up,
     forward,
+  };
+}
+
+/**
+ * "Match Project Camera": the Demo Camera state that looks through the same lens
+ * as the given Project Camera (or the default camera when there is none).
+ *
+ * The Demo Camera is orbit-based, so the Project Camera's position + Target
+ * Offset (ADR 0001) is converted into target / distance / azimuth / elevation.
+ * Distance and elevation are clamped to the Demo Camera's own limits, so a
+ * Project Camera outside them (closer than 100 px, farther than 25000 px, or
+ * looking within 0.1 deg of straight up/down) is matched as closely as allowed.
+ */
+export function orbitStateFromCamera(camera) {
+  const cam = camera || createDefaultCamera();
+  const eye = cam.position || { x: 0, y: 0, z: -1000 };
+  const target = cam.target || {
+    x: eye.x + (cam.targetOffset?.x ?? 0),
+    y: eye.y + (cam.targetOffset?.y ?? 0),
+    z: eye.z + (cam.targetOffset?.z ?? 1000),
+  };
+
+  const dx = eye.x - target.x;
+  const dy = eye.y - target.y;
+  const dz = eye.z - target.z;
+  const len = Math.hypot(dx, dy, dz);
+
+  let distance = len;
+  let azimuth = 0;
+  let elevation = 0;
+  if (len < 1e-6) {
+    // Eye on top of its target (no usable aim): look along +Z like the default camera.
+    distance = 1000;
+  } else {
+    // Inverse of orbitCamera(): eye = target + d * (cos(el) sin(az), -sin(el), -cos(el) cos(az))
+    elevation = (Math.asin(Math.max(-1, Math.min(1, -dy / len))) * 180) / Math.PI;
+    azimuth = Math.hypot(dx, dz) < 1e-9 ? 0 : (Math.atan2(dx, -dz) * 180) / Math.PI;
+  }
+
+  return {
+    target: { x: target.x, y: target.y, z: target.z },
+    distance: Math.max(100, Math.min(25000, distance)),
+    azimuth,
+    elevation: Math.max(-89.9, Math.min(89.9, elevation)),
+    fov: cam.fov || 50,
+    zoom: cam.zoom || 1.0,
+    roll: cam.roll ?? 0,
   };
 }
 
@@ -243,7 +293,9 @@ export function buildEntitiesWireframes(computedEntities = [], sceneCam, selecte
   const result = [];
 
   for (const item of computedEntities) {
-    const { entity, is3D, projectedTransform, transform } = item;
+    const { entity, projectedTransform, transform } = item;
+    // Scene View projection marks every layer is3D; keep the original flag for styling.
+    const is3D = item.wasOriginally3D ?? item.is3D;
     const isSelected = entity.id === selectedEntityId;
 
     // Use entity model matrix if available, or build basic planar quad
@@ -308,4 +360,71 @@ export function buildEntitiesWireframes(computedEntities = [], sceneCam, selecte
 
   // Sort by depth from back to front
   return result.sort((a, b) => b.depthZ - a.depthZ);
+}
+
+/**
+ * Projects timeline entities for rendering real visuals in 3D Scene View.
+ * 3D layers retain their 3D transform.
+ * 2D layers are projected as planar cards situated at Z = 0 in world coordinates.
+ */
+export function projectEntitiesForSceneView(computedEntities = [], sceneCam, viewport) {
+  const vp = viewport || sceneCam.viewport || { width: 1920, height: 1080 };
+  const cameraProxy = {
+    position: sceneCam.eye,
+    target: sceneCam.target,
+    roll: sceneCam.roll ?? 0,
+    fov: sceneCam.fov,
+    zoom: sceneCam.zoom,
+  };
+
+  return computedEntities.map((item) => {
+    const isOriginally3D = Boolean(item.is3D);
+    const effTransform = isOriginally3D
+      ? { ...item.localTransform, is3D: true, autoOrient: item.transform?.autoOrient }
+      : {
+          ...item.transform,
+          x: item.transform?.x ?? 0,
+          y: item.transform?.y ?? 0,
+          z: item.transform?.z ?? 0,
+          rotationX: 0,
+          rotationY: 0,
+          rotationZ: item.transform?.rotation ?? 0,
+          scaleX: item.transform?.scaleX ?? 1,
+          scaleY: item.transform?.scaleY ?? 1,
+          scaleZ: 1,
+          is3D: true,
+        };
+
+    // Pivot base must be the same one the pipeline used, otherwise a pivoted layer
+    // lands somewhere else than it does in the real preview / export.
+    const pivotBase =
+      item.pivotBase ||
+      item.projectedTransform?.pivotBase ||
+      getPivotBase(item.entity, { frameWidth: vp.width, frameHeight: vp.height });
+
+    // 3D layers: reuse the pipeline's world matrix (includes the parent chain and
+    // autoOrient resolved against the real project camera). 2D layers: build it
+    // from the world 2D transform with the correct pivot base.
+    const modelMatrix = isOriginally3D && item.projectedTransform?.modelMatrix
+      ? item.projectedTransform.modelMatrix
+      : buildLayerMatrix(effTransform, null, pivotBase);
+
+    const proj = project3DLayer(
+      effTransform,
+      cameraProxy,
+      vp,
+      {
+        box: item.layerBox,
+        pivotBase,
+        modelMatrix,
+      }
+    );
+
+    return {
+      ...item,
+      wasOriginally3D: isOriginally3D,
+      is3D: true,
+      projectedTransform: proj,
+    };
+  });
 }

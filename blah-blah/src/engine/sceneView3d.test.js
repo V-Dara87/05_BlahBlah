@@ -6,6 +6,7 @@ import {
   projectSceneSegment,
   buildCameraFrustumGeometry,
   buildEntitiesWireframes,
+  projectEntitiesForSceneView,
   SCENE_VIEW_PRESETS,
 } from './sceneView3d.js';
 
@@ -55,4 +56,27 @@ test('SceneView3D - buildEntitiesWireframes generates bounding segments', () => 
   assert.equal(wireframes.length, 1);
   assert.equal(wireframes[0].isSelected, true);
   assert.ok(wireframes[0].segments.length > 0, 'Entity should have projected wireframe segments');
+});
+
+test('SceneView3D - projectEntitiesForSceneView projects both 2D and 3D layers with matrix3d', () => {
+  const sceneCam = buildSceneViewCamera(SCENE_VIEW_PRESETS.perspective, { width: 1920, height: 1080 });
+  const mockEntities = [
+    {
+      entity: { id: 'layer-2d', name: 'Text 2D', components: [] },
+      transform: { x: 0, y: 0, z: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+      is3D: false,
+    },
+    {
+      entity: { id: 'layer-3d', name: 'Card 3D', components: [] },
+      localTransform: { x: 100, y: -50, z: 200, rotationX: 10, rotationY: 20, rotationZ: 0, scaleX: 1, scaleY: 1, scaleZ: 1 },
+      is3D: true,
+    },
+  ];
+
+  const projected = projectEntitiesForSceneView(mockEntities, sceneCam, { width: 1920, height: 1080 });
+  assert.equal(projected.length, 2);
+  assert.equal(projected[0].is3D, true);
+  assert.ok(projected[0].projectedTransform.cssTransform.includes('matrix3d'));
+  assert.equal(projected[1].is3D, true);
+  assert.ok(projected[1].projectedTransform.cssTransform.includes('matrix3d'));
 });

@@ -145,17 +145,26 @@ export function mat4LookAt(eye, target, rollRad = 0) {
   let refDx = 0;
   let refDy = 1;
   let refDz = 0;
-  if (Math.abs(fy) > 0.9999) {
-    refDx = 0;
-    refDy = 0;
-    refDz = fy > 0 ? -1 : 1;
-  }
 
   // Right = cross(refDown, forward)
   let rx = refDy * fz - refDz * fy;
   let ry = refDz * fx - refDx * fz;
   let rz = refDx * fy - refDy * fx;
   let rlen = Math.hypot(rx, ry, rz);
+  if (rlen < 1e-6) {
+    // Looking exactly straight up/down: world-down is parallel to forward, so
+    // use the Z axis as the reference instead. This is only for the exactly
+    // vertical case; switching earlier (it used to switch at |forward.y| >
+    // 0.9999, about 89.2 deg of pitch) made the picture roll by the camera's
+    // azimuth as soon as the pitch crossed that threshold.
+    refDx = 0;
+    refDy = 0;
+    refDz = fy > 0 ? -1 : 1;
+    rx = refDy * fz - refDz * fy;
+    ry = refDz * fx - refDx * fz;
+    rz = refDx * fy - refDy * fx;
+    rlen = Math.hypot(rx, ry, rz);
+  }
   if (rlen < 1e-6) {
     rx = 1; ry = 0; rz = 0;
   } else {
@@ -223,12 +232,29 @@ export function mat4ToCSS(m) {
 // ─── Camera Configuration & Utilities ────────────────────────────────────────
 
 export function createDefaultCamera(overrides = {}) {
+  const pos = { x: 0, y: 0, z: -1000, ...(overrides.position || {}) };
+  let targetOffset = { x: 0, y: 0, z: 1000, ...(overrides.targetOffset || {}) };
+  if (overrides.target && !overrides.targetOffset) {
+    targetOffset = {
+      x: overrides.target.x - pos.x,
+      y: overrides.target.y - pos.y,
+      z: overrides.target.z - pos.z,
+    };
+  }
+  const tgt = overrides.target || {
+    x: pos.x + targetOffset.x,
+    y: pos.y + targetOffset.y,
+    z: pos.z + targetOffset.z,
+  };
+
   return {
     type: 'Camera',
     // Position of the camera in 3D world space
-    position: { x: 0, y: 0, z: -1000, ...(overrides.position || {}) },
-    // Point of Interest (Target) the camera looks at
-    target: { x: 0, y: 0, z: 0, ...(overrides.target || {}) },
+    position: pos,
+    // Relative target offset from camera position
+    targetOffset,
+    // Point of Interest (Target in world space) the camera looks at
+    target: tgt,
     // Camera roll angle in degrees
     roll: overrides.roll ?? 0,
     // Field of view in degrees (50 deg is a standard ~50mm lens)
@@ -285,22 +311,46 @@ export function findActiveCamera(activeEntities = [], tracks = [], worldMap = ne
       const posX = camComp.positionX ?? camComp.position?.x ?? 0;
       const posY = camComp.positionY ?? camComp.position?.y ?? 0;
       const posZ = camComp.positionZ ?? camComp.position?.z ?? -1000;
-      const tgtX = camComp.targetX ?? camComp.target?.x ?? 0;
-      const tgtY = camComp.targetY ?? camComp.target?.y ?? 0;
-      const tgtZ = camComp.targetZ ?? camComp.target?.z ?? 0;
-      // Roll is authored on the Camera component only. Falling back to the
-      // entity's Transform rotation meant any camera whose `roll` was never set
-      // silently picked up a value that also drives parenting and 2D layout.
+
+      // Resolve targetOffset with fallback/migration from legacy target
+      let offX = camComp.targetOffsetX ?? camComp.targetOffset?.x;
+      let offY = camComp.targetOffsetY ?? camComp.targetOffset?.y;
+      let offZ = camComp.targetOffsetZ ?? camComp.targetOffset?.z;
+
+      if (offX === undefined || offY === undefined || offZ === undefined) {
+        const legacyX = camComp.targetX ?? camComp.target?.x;
+        const legacyY = camComp.targetY ?? camComp.target?.y;
+        const legacyZ = camComp.targetZ ?? camComp.target?.z;
+        if (legacyX !== undefined || legacyY !== undefined || legacyZ !== undefined) {
+          offX = (legacyX ?? 0) - posX;
+          offY = (legacyY ?? 0) - posY;
+          offZ = (legacyZ ?? 0) - posZ;
+        } else {
+          offX = 0;
+          offY = 0;
+          offZ = 1000;
+        }
+      }
+
+      const worldEyeX = (camWorld?.x ?? 0) + posX;
+      const worldEyeY = (camWorld?.y ?? 0) + posY;
+      const worldEyeZ = (camWorld?.z ?? 0) + posZ;
+
+      const tgtX = worldEyeX + offX;
+      const tgtY = worldEyeY + offY;
+      const tgtZ = worldEyeZ + offZ;
+
       const roll = camComp.roll ?? 0;
 
       return {
         ...camComp,
         entityId: entity.id,
         position: {
-          x: (camWorld?.x ?? 0) + posX,
-          y: (camWorld?.y ?? 0) + posY,
-          z: (camWorld?.z ?? 0) + posZ,
+          x: worldEyeX,
+          y: worldEyeY,
+          z: worldEyeZ,
         },
+        targetOffset: { x: offX, y: offY, z: offZ },
         target: { x: tgtX, y: tgtY, z: tgtZ },
         roll,
         fov: camComp.fov ?? 50,
@@ -469,7 +519,11 @@ export function project3DLayer(layerTransform, camera, viewport, options = {}) {
   }
 
   // 3. Build Layer World Matrix
-  const mModel = buildLayerMatrix(effectiveTransform, parentMatrix, pivotBase);
+  // A caller that already has the layer's world matrix (the Scene View reuses the
+  // pipeline's, so parent chain / autoOrient match the real render) can pass it in.
+  const mModel = Array.isArray(opts.modelMatrix) && opts.modelMatrix.length >= 16
+    ? opts.modelMatrix
+    : buildLayerMatrix(effectiveTransform, parentMatrix, pivotBase);
 
   // 4. Transform to Camera Space: mCam = mView * mModel
   const mCam = mat4Multiply(mView, mModel);

@@ -335,6 +335,37 @@ export function EntityRenderer({
     selectedItem.entity?.components?.some((c) => c.type === 'ShapeRenderer' && is3DShape(c.shapeType))
   );
 
+  const handleUpdateCameraTargetOffset = (newOffX, newOffY, newOffZ) => {
+    if (!activeCamera?.entityId || !onUpdateEntity) return;
+
+    const targetEntity = entities.find((e) => e.id === activeCamera.entityId);
+    if (!targetEntity) return;
+
+    const camComp = targetEntity.components?.find((c) => c.type === 'Camera');
+    if (!camComp) return;
+
+    const posX = camComp.positionX ?? camComp.position?.x ?? 0;
+    const posY = camComp.positionY ?? camComp.position?.y ?? 0;
+    const posZ = camComp.positionZ ?? camComp.position?.z ?? -1000;
+
+    const updatedComponents = targetEntity.components.map((c) => {
+      if (c.type !== 'Camera') return c;
+      return {
+        ...c,
+        targetOffsetX: newOffX,
+        targetOffsetY: newOffY,
+        targetOffsetZ: newOffZ,
+        targetOffset: { x: newOffX, y: newOffY, z: newOffZ },
+        targetX: posX + newOffX,
+        targetY: posY + newOffY,
+        targetZ: posZ + newOffZ,
+        target: { x: posX + newOffX, y: posY + newOffY, z: posZ + newOffZ },
+      };
+    });
+
+    onUpdateEntity(targetEntity.id, { components: updatedComponents });
+  };
+
   const handleExportActualFrame = async () => {
     await captureAndExportScreenPng({
       time: currentTime,
@@ -447,10 +478,30 @@ export function EntityRenderer({
             <SceneView3D
               activeCamera={activeCamera}
               computedEntities={computedEntities}
+              entities={entities}
+              tracks={tracks}
+              scripts={scripts}
+              mediaAssets={mediaAssets}
+              currentTime={currentTime}
+              fps={fps}
+              isPlaying={isPlaying}
               selectedEntityId={selectedEntityId}
               onSelectEntity={onSelectEntity}
+              onUpdateEntity={onUpdateEntity}
+              onUpdateCameraTargetOffset={handleUpdateCameraTargetOffset}
               safeResWidth={safeResWidth}
               safeResHeight={safeResHeight}
+              frameScale={frameScale}
+              videoRefs={videoRefs}
+              canvasContainerRefs={canvasContainerRefs}
+              layerZIndexOf={layerZIndexOf}
+              handleMoveGizmoPointerDown={handleMoveGizmoPointerDown}
+              handleRotateGizmoPointerDown={handleRotateGizmoPointerDown}
+              handleScaleGizmoPointerDown={handleScaleGizmoPointerDown}
+              transitionPlan={transitionPlan}
+              autoKeyEnabled={autoKeyEnabled}
+              gizmoTool={gizmoTool}
+              onGizmo3DPointerDown={handleGizmo3DPointerDown}
               showGroundGrid={activeCamera?.showGrid ?? true}
             />
           </div>

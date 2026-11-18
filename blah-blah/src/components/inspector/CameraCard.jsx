@@ -91,9 +91,29 @@ export function CameraCard({
   const posY = resolved?.positionY ?? resolved?.position?.y ?? 0;
   const posZ = resolved?.positionZ ?? resolved?.position?.z ?? -1000;
 
-  const tgtX = resolved?.targetX ?? resolved?.target?.x ?? 0;
-  const tgtY = resolved?.targetY ?? resolved?.target?.y ?? 0;
-  const tgtZ = resolved?.targetZ ?? resolved?.target?.z ?? 0;
+  // Resolve targetOffset relative to camera position
+  let offX = resolved?.targetOffsetX ?? resolved?.targetOffset?.x;
+  let offY = resolved?.targetOffsetY ?? resolved?.targetOffset?.y;
+  let offZ = resolved?.targetOffsetZ ?? resolved?.targetOffset?.z;
+
+  if (offX === undefined || offY === undefined || offZ === undefined) {
+    const legX = resolved?.targetX ?? resolved?.target?.x;
+    const legY = resolved?.targetY ?? resolved?.target?.y;
+    const legZ = resolved?.targetZ ?? resolved?.target?.z;
+    if (legX !== undefined || legY !== undefined || legZ !== undefined) {
+      offX = (legX ?? 0) - posX;
+      offY = (legY ?? 0) - posY;
+      offZ = (legZ ?? 0) - posZ;
+    } else {
+      offX = 0;
+      offY = 0;
+      offZ = 1000;
+    }
+  }
+
+  const tgtX = posX + offX;
+  const tgtY = posY + offY;
+  const tgtZ = posZ + offZ;
 
   const fov = resolved?.fov ?? 50;
   const zoom = resolved?.zoom ?? 1.0;
@@ -105,66 +125,34 @@ export function CameraCard({
   const showGrid = resolved?.showGrid ?? cameraComp?.showGrid ?? false;
 
   const updateCameraField = (fieldName, value) => {
-    let deltaX = 0;
-    let deltaY = 0;
-    let deltaZ = 0;
-    if (fieldName === 'positionX') deltaX = value - posX;
-    else if (fieldName === 'positionY') deltaY = value - posY;
-    else if (fieldName === 'positionZ') deltaZ = value - posZ;
-    const isPosition = fieldName === 'positionX' || fieldName === 'positionY' || fieldName === 'positionZ';
-
     if (tryWriteKeyframe) {
-      let entitySnapshot = selectedEntity;
-      let kfsSnapshot = selectedEntity.keyframes;
-      let hasKfs = false;
-
-      const newPosKfs = tryWriteKeyframe(entitySnapshot, 'Camera', fieldName, value);
-      if (newPosKfs) {
-        kfsSnapshot = newPosKfs;
-        entitySnapshot = { ...entitySnapshot, keyframes: kfsSnapshot };
-        hasKfs = true;
-
-        if (isPosition) {
-          if (fieldName === 'positionX') {
-            const newTgtKfs = tryWriteKeyframe(entitySnapshot, 'Camera', 'targetX', tgtX + deltaX);
-            if (newTgtKfs) kfsSnapshot = newTgtKfs;
-          } else if (fieldName === 'positionY') {
-            const newTgtKfs = tryWriteKeyframe(entitySnapshot, 'Camera', 'targetY', tgtY + deltaY);
-            if (newTgtKfs) kfsSnapshot = newTgtKfs;
-          } else if (fieldName === 'positionZ') {
-            const newTgtKfs = tryWriteKeyframe(entitySnapshot, 'Camera', 'targetZ', tgtZ + deltaZ);
-            if (newTgtKfs) kfsSnapshot = newTgtKfs;
-          }
-        }
-      }
-
-      if (hasKfs) {
-        onUpdateEntity(selectedEntity.id, { keyframes: kfsSnapshot });
+      const newKfs = tryWriteKeyframe(selectedEntity, 'Camera', fieldName, value);
+      if (newKfs) {
+        onUpdateEntity(selectedEntity.id, { keyframes: newKfs });
         return;
       }
     }
 
     const patch = { [fieldName]: value };
-    // Also sync nested objects for complete compatibility
-    // When position shifts, translate target together so the camera moves through space rather than pivoting towards a stationary target
+    // Synchronize nested position/targetOffset objects
     if (fieldName === 'positionX') {
       patch.position = { ...(cameraComp.position || {}), x: value, y: posY, z: posZ };
-      patch.targetX = tgtX + deltaX;
-      patch.target = { ...(cameraComp.target || {}), x: tgtX + deltaX, y: tgtY, z: tgtZ };
+      patch.target = { x: value + offX, y: posY + offY, z: posZ + offZ };
     } else if (fieldName === 'positionY') {
       patch.position = { ...(cameraComp.position || {}), x: posX, y: value, z: posZ };
-      patch.targetY = tgtY + deltaY;
-      patch.target = { ...(cameraComp.target || {}), x: tgtX, y: tgtY + deltaY, z: tgtZ };
+      patch.target = { x: posX + offX, y: value + offY, z: posZ + offZ };
     } else if (fieldName === 'positionZ') {
       patch.position = { ...(cameraComp.position || {}), x: posX, y: posY, z: value };
-      patch.targetZ = tgtZ + deltaZ;
-      patch.target = { ...(cameraComp.target || {}), x: tgtX, y: tgtY, z: tgtZ + deltaZ };
-    } else if (fieldName === 'targetX') {
-      patch.target = { ...(cameraComp.target || {}), x: value, y: tgtY, z: tgtZ };
-    } else if (fieldName === 'targetY') {
-      patch.target = { ...(cameraComp.target || {}), x: tgtX, y: value, z: tgtZ };
-    } else if (fieldName === 'targetZ') {
-      patch.target = { ...(cameraComp.target || {}), x: tgtX, y: tgtY, z: value };
+      patch.target = { x: posX + offX, y: posY + offY, z: value + offZ };
+    } else if (fieldName === 'targetOffsetX') {
+      patch.targetOffset = { ...(cameraComp.targetOffset || {}), x: value, y: offY, z: offZ };
+      patch.target = { x: posX + value, y: posY + offY, z: posZ + offZ };
+    } else if (fieldName === 'targetOffsetY') {
+      patch.targetOffset = { ...(cameraComp.targetOffset || {}), x: offX, y: value, z: offZ };
+      patch.target = { x: posX + offX, y: posY + value, z: posZ + offZ };
+    } else if (fieldName === 'targetOffsetZ') {
+      patch.targetOffset = { ...(cameraComp.targetOffset || {}), x: offX, y: offY, z: value };
+      patch.target = { x: posX + offX, y: posY + offY, z: posZ + value };
     }
 
     updateComponent('Camera', patch);
@@ -176,6 +164,10 @@ export function CameraCard({
       positionY: 0,
       positionZ: -1000,
       position: { x: 0, y: 0, z: -1000 },
+      targetOffsetX: 0,
+      targetOffsetY: 0,
+      targetOffsetZ: 1000,
+      targetOffset: { x: 0, y: 0, z: 1000 },
       targetX: 0,
       targetY: 0,
       targetZ: 0,
@@ -187,11 +179,25 @@ export function CameraCard({
     });
   };
 
-  const handleAimAtCenter = () => {
+  const handleResetForward = () => {
     updateComponent('Camera', {
-      targetX: 0,
-      targetY: 0,
-      targetZ: 0,
+      targetOffsetX: 0,
+      targetOffsetY: 0,
+      targetOffsetZ: 1000,
+      targetOffset: { x: 0, y: 0, z: 1000 },
+      target: { x: posX, y: posY, z: posZ + 1000 },
+    });
+  };
+
+  const handleAimAtCenter = () => {
+    const newOffX = -posX;
+    const newOffY = -posY;
+    const newOffZ = -posZ;
+    updateComponent('Camera', {
+      targetOffsetX: newOffX,
+      targetOffsetY: newOffY,
+      targetOffsetZ: newOffZ,
+      targetOffset: { x: newOffX, y: newOffY, z: newOffZ },
       target: { x: 0, y: 0, z: 0 },
     });
   };
@@ -199,8 +205,8 @@ export function CameraCard({
   const posField = { name: 'Position', type: 'object', defaultVal: { positionX: 0, positionY: 0, positionZ: -1000 } };
   const posValues = { positionX: posX, positionY: posY, positionZ: posZ };
 
-  const tgtField = { name: 'Target', type: 'object', defaultVal: { targetX: 0, targetY: 0, targetZ: 0 } };
-  const tgtValues = { targetX: tgtX, targetY: tgtY, targetZ: tgtZ };
+  const tgtField = { name: 'Target Offset', type: 'object', defaultVal: { targetOffsetX: 0, targetOffsetY: 0, targetOffsetZ: 1000 } };
+  const tgtValues = { targetOffsetX: offX, targetOffsetY: offY, targetOffsetZ: offZ };
 
   return (
     <div className="inspector-card">
@@ -282,7 +288,7 @@ export function CameraCard({
             </div>
           </FieldContextRow>
 
-          {/* Point of Interest / Target (X, Y, Z) */}
+          {/* Target Offset (dx, dy, dz relative to camera position) */}
           <FieldContextRow
             field={tgtField}
             value={tgtValues}
@@ -290,32 +296,32 @@ export function CameraCard({
               Object.entries(patch).forEach(([k, v]) => updateCameraField(k, v));
             }}
           >
-            <span className="row-label" title="Point of Interest (Look-At Target)">Target</span>
+            <span className="row-label" title="Target Offset from camera position (dx, dy, dz)">Target Offset</span>
             <div className="drag-number-group">
               <DragNumber
                 label="X"
                 labelColor="#f87171"
-                value={tgtX}
+                value={offX}
                 step={1}
-                onChange={(v) => updateCameraField('targetX', v)}
+                onChange={(v) => updateCameraField('targetOffsetX', v)}
               />
               <DragNumber
                 label="Y"
                 labelColor="#4ade80"
-                value={tgtY}
+                value={offY}
                 step={1}
-                onChange={(v) => updateCameraField('targetY', v)}
+                onChange={(v) => updateCameraField('targetOffsetY', v)}
               />
               <DragNumber
                 label="Z"
                 labelColor="#60a5fa"
-                value={tgtZ}
+                value={offZ}
                 step={1}
-                onChange={(v) => updateCameraField('targetZ', v)}
+                onChange={(v) => updateCameraField('targetOffsetZ', v)}
               />
               <CameraVectorKeyframeButton
-                label="Target"
-                fields={['targetX', 'targetY', 'targetZ']}
+                label="Target Offset"
+                fields={['targetOffsetX', 'targetOffsetY', 'targetOffsetZ']}
                 values={tgtValues}
                 selectedEntity={selectedEntity}
                 currentTime={currentTime}
@@ -436,6 +442,16 @@ export function CameraCard({
 
           {/* Quick Actions */}
           <div style={{ marginTop: '8px', display: 'flex', gap: '6px' }}>
+            <button
+              type="button"
+              className="unity-btn unity-btn-secondary"
+              style={{ flex: 1, fontSize: '11px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+              onClick={handleResetForward}
+              title="Reset target offset forward along Z axis (0, 0, 1000)"
+            >
+              <RotateCcw size={11} />
+              <span>Reset Forward</span>
+            </button>
             <button
               type="button"
               className="unity-btn unity-btn-secondary"

@@ -1,27 +1,55 @@
 import { useState, useRef, useLayoutEffect, useEffect, useMemo, useCallback } from 'react';
-import { Camera, Compass, RotateCcw, HelpCircle, Grid } from 'lucide-react';
+import { Camera, RotateCcw, HelpCircle, Grid } from 'lucide-react';
 import {
   buildSceneViewCamera,
   buildCameraFrustumGeometry,
   buildEntitiesWireframes,
+  orbitStateFromCamera,
+  projectEntitiesForSceneView,
   projectSceneSegment,
   projectScenePoint,
   SCENE_VIEW_PRESETS,
 } from '../../engine/sceneView3d.js';
 import { drawGroundGrid } from '../../engine/groundGrid3d.js';
+import { isVideoEntity, isAudioEntity } from '../../engine/ecs.js';
+import { VideoLayer } from './VideoLayer.jsx';
+import { OverlayLayer } from './OverlayLayer.jsx';
 import './scene-view-3d.css';
 
 /**
- * 3D Scene View component — free-fly viewport for inspecting the 3D space,
- * camera frustum, layer positions, and ground grid.
+ * 3D Scene View component — the Demo Camera viewport for inspecting the 3D space,
+ * camera frustum, real visual layers and the interactive target reticle.
+ *
+ * Layer poses come from the Project Camera (`computedEntities`); only the view
+ * is taken from the Demo Camera (`orbit`), which is never saved or exported and
+ * stays active during playback. "Match Camera" snaps it to the Project Camera once.
  */
 export function SceneView3D({
   activeCamera,
   computedEntities = [],
+  entities = [],
+  tracks = [],
+  scripts = [],
+  mediaAssets = [],
+  currentTime = 0,
+  fps = 30,
+  isPlaying = false,
   selectedEntityId = null,
   onSelectEntity,
+  onUpdateEntity,
+  onUpdateCameraTargetOffset,
   safeResWidth = 1920,
   safeResHeight = 1080,
+  videoRefs,
+  canvasContainerRefs,
+  layerZIndexOf = () => 0,
+  handleMoveGizmoPointerDown,
+  handleRotateGizmoPointerDown,
+  handleScaleGizmoPointerDown,
+  transitionPlan,
+  autoKeyEnabled = false,
+  gizmoTool = 'move',
+  onGizmo3DPointerDown,
   showGroundGrid = true,
 }) {
   const containerRef = useRef(null);
@@ -35,11 +63,42 @@ export function SceneView3D({
     elevation: 25,
     fov: 50,
     zoom: 1.0,
+    roll: 0,
   });
+
+  // The project frame (safeResWidth x safeResHeight) is laid out at its real pixel
+  // size and scaled uniformly into the panel, exactly like the normal preview does
+  // with its frameScale. Everything inside the stage (layers, grid, wireframes) then
+  // shares one coordinate system, so nothing can drift apart when the panel resizes.
+  const [stageFit, setStageFit] = useState({ scale: 1, offsetX: 0, offsetY: 0, width: 0, height: 0 });
 
   const [activePreset, setActivePreset] = useState('perspective');
   const [gridEnabled, setGridEnabled] = useState(showGroundGrid);
   const [showHelp, setShowHelp] = useState(false);
+  const [isDraggingTarget, setIsDraggingTarget] = useState(false);
+
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    if (!el) return undefined;
+    const measure = () => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      // A hidden dock tab reports 0x0: keep the last good fit instead of collapsing.
+      if (w <= 0 || h <= 0) return;
+      const scale = Math.min(w / safeResWidth, h / safeResHeight);
+      const offsetX = (w - safeResWidth * scale) / 2;
+      const offsetY = (h - safeResHeight * scale) / 2;
+      setStageFit((prev) =>
+        prev.scale === scale && prev.offsetX === offsetX && prev.offsetY === offsetY && prev.width === w && prev.height === h
+          ? prev
+          : { scale, offsetX, offsetY, width: w, height: h }
+      );
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [safeResWidth, safeResHeight]);
 
   // Sync prop changes for gridEnabled if activeCamera toggles it
   useEffect(() => {
@@ -52,38 +111,63 @@ export function SceneView3D({
     return buildSceneViewCamera(orbit, { width: safeResWidth, height: safeResHeight });
   }, [orbit, safeResWidth, safeResHeight]);
 
-  // Redraw Ground Grid onto canvas whenever scene camera or viewport changes
+  // Project entities through Scene View camera to show actual content in 3D
+  const sceneProjectedEntities = useMemo(() => {
+    return projectEntitiesForSceneView(computedEntities, sceneCam, {
+      width: safeResWidth,
+      height: safeResHeight,
+    });
+  }, [computedEntities, sceneCam, safeResWidth, safeResHeight]);
+
+  const sceneVideoItems = useMemo(
+    () => sceneProjectedEntities.filter(({ entity }) => isVideoEntity(entity)),
+    [sceneProjectedEntities]
+  );
+
+  const sceneOverlayItems = useMemo(
+    () => sceneProjectedEntities.filter(({ entity }) => !isVideoEntity(entity) && !isAudioEntity(entity)),
+    [sceneProjectedEntities]
+  );
+
+  // Redraw Ground Grid whenever the Demo Camera or the panel changes. The canvas covers
+  // the whole panel, and is drawn in stage (project-frame) coordinates so the grid lines
+  // up with the layers and wireframes.
   useLayoutEffect(() => {
     const cvs = canvasRef.current;
     if (!cvs) return;
     const ctx = cvs.getContext('2d');
     if (!ctx) return;
 
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, cvs.width, cvs.height);
 
     if (gridEnabled) {
+      ctx.setTransform(stageFit.scale, 0, 0, stageFit.scale, stageFit.offsetX, stageFit.offsetY);
       drawGroundGrid(ctx, {
         position: sceneCam.eye,
         target: sceneCam.target,
-        roll: 0,
+        roll: sceneCam.roll,
         fov: sceneCam.fov,
         zoom: sceneCam.zoom,
       }, { width: safeResWidth, height: safeResHeight }, {
         gridExtent: 4000,
         fadeDistance: 4500,
       });
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
     }
-  }, [sceneCam, safeResWidth, safeResHeight, gridEnabled]);
+  }, [sceneCam, stageFit, safeResWidth, safeResHeight, gridEnabled]);
 
-  // Drag interaction refs
+  // Drag interaction refs for Viewport Orbit / Pan / Target Reticle
   const dragRef = useRef({
     isDragging: false,
-    mode: null, // 'orbit' | 'pan'
+    mode: null, // 'orbit' | 'pan' | 'target'
     startX: 0,
     startY: 0,
     startAzimuth: 0,
     startElevation: 0,
     startTarget: { x: 0, y: 0, z: 0 },
+    startOffset: { x: 0, y: 0, z: 1000 },
+    targetDepth: 1000,
   });
 
   const handlePointerDown = (e) => {
@@ -114,11 +198,31 @@ export function SceneView3D({
     setActivePreset(null);
   };
 
+  // Interactive 3D Target Reticle pointer down
+  const handleTargetReticlePointerDown = (e, tgtDepth) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const curOffset = activeCamera?.targetOffset || { x: 0, y: 0, z: 1000 };
+
+    dragRef.current = {
+      isDragging: true,
+      mode: 'target',
+      startX: e.clientX,
+      startY: e.clientY,
+      startOffset: { ...curOffset },
+      targetDepth: tgtDepth || orbit.distance,
+    };
+
+    setIsDraggingTarget(true);
+  };
+
   const handlePointerMove = useCallback((e) => {
     if (!dragRef.current.isDragging) return;
 
-    const dx = e.clientX - dragRef.current.startX;
-    const dy = e.clientY - dragRef.current.startY;
+    const scale = stageFit.scale > 0 ? stageFit.scale : 1;
+    const dx = (e.clientX - dragRef.current.startX) / scale;
+    const dy = (e.clientY - dragRef.current.startY) / scale;
 
     if (dragRef.current.mode === 'orbit') {
       const sensitivity = 0.35;
@@ -131,7 +235,6 @@ export function SceneView3D({
         elevation: nextElevation,
       }));
     } else if (dragRef.current.mode === 'pan') {
-      // Pan along scene camera's right and up vectors in world space
       const factor = (orbit.distance / 1200) * 1.5;
       const rx = sceneCam.right.x;
       const ry = sceneCam.right.y;
@@ -151,11 +254,32 @@ export function SceneView3D({
           z: dragRef.current.startTarget.z + rz * deltaX + uz * deltaY,
         },
       }));
+    } else if (dragRef.current.mode === 'target') {
+      // Map screen delta to world displacement at target's depth
+      const s = sceneCam.focalLength / Math.max(10, dragRef.current.targetDepth);
+      const worldRightDelta = dx / s;
+      const worldUpDelta = -dy / s;
+
+      let worldDeltaX = sceneCam.right.x * worldRightDelta + sceneCam.up.x * worldUpDelta;
+      let worldDeltaY = sceneCam.right.y * worldRightDelta + sceneCam.up.y * worldUpDelta;
+      let worldDeltaZ = sceneCam.right.z * worldRightDelta + sceneCam.up.z * worldUpDelta;
+
+      if (e.shiftKey) {
+        // Holding Shift constrains target movement to the horizontal ground plane (XZ)
+        worldDeltaY = 0;
+      }
+
+      const nextOffX = Math.round(dragRef.current.startOffset.x + worldDeltaX);
+      const nextOffY = Math.round(dragRef.current.startOffset.y + worldDeltaY);
+      const nextOffZ = Math.round(dragRef.current.startOffset.z + worldDeltaZ);
+
+      onUpdateCameraTargetOffset?.(nextOffX, nextOffY, nextOffZ);
     }
-  }, [orbit.distance, sceneCam.right, sceneCam.up]);
+  }, [orbit.distance, sceneCam, stageFit.scale, onUpdateCameraTargetOffset]);
 
   const handlePointerUp = useCallback(() => {
     dragRef.current.isDragging = false;
+    setIsDraggingTarget(false);
   }, []);
 
   const handleWheel = (e) => {
@@ -199,7 +323,7 @@ export function SceneView3D({
           curTarget.y += sceneCam.right.y * step;
           curTarget.z += sceneCam.right.z * step;
         } else if (key === 'Q') {
-          curTarget.y -= step; // Up / Down in world Y
+          curTarget.y -= step;
         } else if (key === 'E') {
           curTarget.y += step;
         }
@@ -227,7 +351,18 @@ export function SceneView3D({
       elevation: p.elevation,
       distance: p.distance,
       target: { ...p.target },
+      fov: 50,
+      zoom: 1.0,
+      roll: 0,
     }));
+  };
+
+  // One-time snap of the Demo Camera to the Project Camera at the current time.
+  // It does not follow afterwards. With it matched, the Scene View's 3D layers must
+  // sit exactly where the normal preview draws them.
+  const matchProjectCamera = () => {
+    setActivePreset(null);
+    setOrbit(orbitStateFromCamera(activeCamera));
   };
 
   // Frustum geometry
@@ -237,8 +372,8 @@ export function SceneView3D({
 
   // Entities wireframes
   const wireframes = useMemo(() => {
-    return buildEntitiesWireframes(computedEntities, sceneCam, selectedEntityId);
-  }, [computedEntities, sceneCam, selectedEntityId]);
+    return buildEntitiesWireframes(sceneProjectedEntities, sceneCam, selectedEntityId);
+  }, [sceneProjectedEntities, sceneCam, selectedEntityId]);
 
   // World Origin Axes (Tripod at (0, 0, 0))
   const originAxes = useMemo(() => {
@@ -262,11 +397,11 @@ export function SceneView3D({
       onKeyDown={handleKeyDown}
       onContextMenu={(e) => e.preventDefault()}
     >
-      {/* 1. Ground Grid Canvas */}
+      {/* 1. Ground Grid Canvas (whole panel, drawn in stage coordinates) */}
       <canvas
         ref={canvasRef}
-        width={safeResWidth}
-        height={safeResHeight}
+        width={Math.max(1, Math.round(stageFit.width))}
+        height={Math.max(1, Math.round(stageFit.height))}
         style={{
           position: 'absolute',
           left: 0,
@@ -277,12 +412,94 @@ export function SceneView3D({
         }}
       />
 
-      {/* 2. SVG Overlay for Camera Frustum, Entities, and Markers */}
+      {/* Stage: the project frame at its real pixel size, scaled uniformly into the
+          panel (same idea as the normal preview's frameScale). Layers, wireframes,
+          frustum and axes all live in this one coordinate system. */}
+      <div
+        className="scene-view-stage"
+        style={{
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          width: `${safeResWidth}px`,
+          height: `${safeResHeight}px`,
+          transform: `translate(${stageFit.offsetX}px, ${stageFit.offsetY}px) scale(${stageFit.scale})`,
+          transformOrigin: 'top left',
+          pointerEvents: 'none',
+          '--view-scale': stageFit.scale,
+        }}
+      >
+      {/* 2. Real Visual Entities Stage (videos, text, shapes, scripts projected in 3D) */}
+      <div
+        className="scene-view-entities-viewport"
+        style={{
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          width: `${safeResWidth}px`,
+          height: `${safeResHeight}px`,
+          pointerEvents: 'none',
+        }}
+      >
+        <VideoLayer
+          items={sceneVideoItems}
+          selectedEntityId={selectedEntityId}
+          onSelectEntity={onSelectEntity}
+          onUpdateEntity={onUpdateEntity}
+          videoRefs={videoRefs}
+          isPlaying={isPlaying}
+          currentTime={currentTime}
+          safeResWidth={safeResWidth}
+          safeResHeight={safeResHeight}
+          layerZIndexOf={layerZIndexOf}
+          handleMoveGizmoPointerDown={handleMoveGizmoPointerDown}
+          handleRotateGizmoPointerDown={handleRotateGizmoPointerDown}
+          handleScaleGizmoPointerDown={handleScaleGizmoPointerDown}
+          transitionPlan={transitionPlan}
+          preloadItems={[]}
+        />
+
+        <OverlayLayer
+          items={sceneOverlayItems}
+          selectedEntityId={selectedEntityId}
+          onSelectEntity={onSelectEntity}
+          onUpdateEntity={onUpdateEntity}
+          entities={entities}
+          scripts={scripts}
+          mediaAssets={mediaAssets}
+          currentTime={currentTime}
+          fps={fps}
+          safeResWidth={safeResWidth}
+          safeResHeight={safeResHeight}
+          layerZIndexOf={layerZIndexOf}
+          canvasContainerRefs={canvasContainerRefs}
+          handleMoveGizmoPointerDown={handleMoveGizmoPointerDown}
+          handleRotateGizmoPointerDown={handleRotateGizmoPointerDown}
+          handleScaleGizmoPointerDown={handleScaleGizmoPointerDown}
+          autoKeyEnabled={autoKeyEnabled}
+          gizmoTool={gizmoTool}
+          onGizmo3DPointerDown={onGizmo3DPointerDown}
+        />
+      </div>
+
+      {/* 3. SVG Overlay for Camera Frustum, Target Reticle, and Entity Markers */}
       <svg
         className="scene-view-3d-svg"
+        width={safeResWidth}
+        height={safeResHeight}
         viewBox={`0 0 ${safeResWidth} ${safeResHeight}`}
-        preserveAspectRatio="none"
+        style={{ width: `${safeResWidth}px`, height: `${safeResHeight}px`, overflow: 'visible' }}
       >
+        {/* Project frame: what the normal preview and the export show */}
+        <rect
+          x={0}
+          y={0}
+          width={safeResWidth}
+          height={safeResHeight}
+          className="scene-frame-outline"
+          vectorEffect="non-scaling-stroke"
+        />
+
         {/* World Origin Axes Tripod */}
         {originAxes.x && (
           <line
@@ -353,15 +570,27 @@ export function SceneView3D({
               />
             ))}
 
-            {/* Camera Target Crosshair */}
+            {/* Interactive 3D Target Reticle */}
             {frustumGeom.targetProj?.visible && (
               <g
+                className={`scene-target-reticle ${isDraggingTarget ? 'is-dragging' : ''}`}
                 transform={`translate(${frustumGeom.targetProj.x}, ${frustumGeom.targetProj.y})`}
-                title={`Target: (${Math.round(frustumGeom.target.x)}, ${Math.round(frustumGeom.target.y)}, ${Math.round(frustumGeom.target.z)})`}
+                onPointerDown={(e) => handleTargetReticlePointerDown(e, frustumGeom.targetProj.zc)}
               >
-                <circle r={6} className="scene-cam-target-ring" />
-                <line x1={-9} y1={0} x2={9} y2={0} className="scene-cam-target-cross" />
-                <line x1={0} y1={-9} x2={0} y2={9} className="scene-cam-target-cross" />
+                <circle r={14} className="scene-cam-target-ring" />
+                <circle r={4} fill="#f43f5e" />
+                <line x1={-18} y1={0} x2={18} y2={0} className="scene-cam-target-cross" />
+                <line x1={0} y1={-18} x2={0} y2={18} className="scene-cam-target-cross" />
+                <text
+                  x={22}
+                  y={4}
+                  fill="#fda4af"
+                  fontSize={11}
+                  fontWeight={600}
+                  className="scene-entity-tag"
+                >
+                  Target Offset ({Math.round(activeCamera?.targetOffset?.x ?? 0)}, {Math.round(activeCamera?.targetOffset?.y ?? 0)}, {Math.round(activeCamera?.targetOffset?.z ?? 1000)})
+                </text>
               </g>
             )}
 
@@ -388,7 +617,7 @@ export function SceneView3D({
           </g>
         )}
 
-        {/* 3D Entities Wireframes & Labels */}
+        {/* 3D Entities Wireframes & Labels on top of actual visuals */}
         {wireframes.map((wf) => (
           <g key={wf.id} className="scene-entity-group" onClick={() => onSelectEntity?.(wf.id)}>
             {wf.segments.map((seg, i) => (
@@ -414,8 +643,9 @@ export function SceneView3D({
           </g>
         ))}
       </svg>
+      </div>
 
-      {/* 3. Top-left Toolbar: Presets & Grid Toggle */}
+      {/* 4. Top-left Toolbar: Presets, Match Camera, and Grid */}
       <div className="scene-view-toolbar">
         <span style={{ fontSize: '11px', fontWeight: 600, color: '#38bdf8', paddingRight: '4px' }}>
           3D Scene View
@@ -480,6 +710,16 @@ export function SceneView3D({
 
         <button
           type="button"
+          className="scene-view-tool-btn"
+          onClick={matchProjectCamera}
+          title="Match Project Camera: snap this view to the project camera once (does not follow)"
+        >
+          <Camera size={12} />
+          <span>Match Camera</span>
+        </button>
+
+        <button
+          type="button"
           className={`scene-view-tool-btn ${showHelp ? 'active' : ''}`}
           onClick={() => setShowHelp((h) => !h)}
           title="Navigation Controls Help"
@@ -488,7 +728,7 @@ export function SceneView3D({
         </button>
       </div>
 
-      {/* 4. Bottom-left Navigation Controls Hint */}
+      {/* 5. Bottom-left Navigation Controls Hint */}
       {showHelp && (
         <div className="scene-view-help-badge">
           <div className="scene-view-help-item">
@@ -498,6 +738,10 @@ export function SceneView3D({
           <div className="scene-view-help-item">
             <span className="scene-view-help-key">Right-drag / Shift+Middle</span>
             <span>Pan</span>
+          </div>
+          <div className="scene-view-help-item">
+            <span className="scene-view-help-key">Drag Reticle (Shift: level)</span>
+            <span>Aim Target</span>
           </div>
           <div className="scene-view-help-item">
             <span className="scene-view-help-key">Scroll</span>
