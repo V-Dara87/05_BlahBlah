@@ -83,6 +83,50 @@ export function handleToControlPoint(a, b, which, time, value) {
   return { x: round3(x), y: round3(y) };
 }
 
+/**
+ * Linked ("mirrored") handles, Spine style. The two handles that hang off one
+ * keyframe live in DIFFERENT segments (the one arriving is the previous key's
+ * cp2, the one leaving is this key's cp1). When the user drags one, this returns
+ * the control point the OTHER one must take so that it sits exactly opposite:
+ * same distance, opposite direction, measured in real (seconds, value) space
+ * from the shared keyframe. Both handles therefore lie on one straight line
+ * through the key, which is what makes the curve pass through it smoothly.
+ *
+ *   a, b    the segment that owns the handle to be moved (a -> b)
+ *   which   'out' (a.cp1, anchored on a) or 'in' (a.cp2, anchored on b)
+ *   anchor  the shared keyframe { time, value } (a for 'out', b for 'in')
+ *   handle  where the dragged handle now is { time, value }
+ *
+ * The neighbouring segment can be shorter, or have a smaller value change, than
+ * the dragged one, so the mirrored handle may not fit inside the limits a control
+ * point has (x 0..1, y within CP_Y_MIN..CP_Y_MAX). Instead of clamping each axis
+ * on its own (which would bend the line), both components are scaled by the same
+ * factor, so the handles stay collinear and only get shorter. On an axis that
+ * cannot be derived (zero time span / flat segment) the handle keeps its
+ * current number, same as handleToControlPoint.
+ */
+export function linkedHandleControlPoint(a, b, which, anchor, handle) {
+  const span = b.time - a.time;
+  const dv = b.value - a.value;
+  // Offset of the opposite handle from the shared key.
+  const ot = anchor.time - handle.time;
+  const ov = anchor.value - handle.value;
+
+  let s = 1;
+  // How far the mirrored handle reaches into its segment along time.
+  const along = (which === 'out' ? 1 : -1) * ot;
+  if (span > EPS && along > span) s = span / along;
+  if (Math.abs(dv) > EPS) {
+    const base = which === 'out' ? 0 : 1; // y of the control point at the anchor
+    const c = ov / dv;                    // y change per unit of scale
+    if (Math.abs(c) > EPS) {
+      const limit = c > 0 ? CP_Y_MAX : CP_Y_MIN;
+      s = Math.min(s, (limit - base) / c);
+    }
+  }
+  return handleToControlPoint(a, b, which, anchor.time + s * ot, anchor.value + s * ov);
+}
+
 /** Snap a control point to a grid (the Curves tab uses 0.05 on Shift). */
 export function snapControlPoint(cp, step = 0.05) {
   return {
@@ -158,6 +202,48 @@ export function shiftKeyframeValues(entity, keyframeIds, deltaV) {
     next[trackKey] = nextByField;
   }
   return next;
+}
+
+const sameValue = (a, b) =>
+  (typeof a === 'number' && typeof b === 'number' ? Math.abs(a - b) <= 1e-9 : a === b);
+
+/**
+ * Clean up keyframes that do nothing, for the listed fields of one component
+ * track. Playback is unchanged by every removal:
+ *   - a key in the middle of a hold (same value as the key before AND after it)
+ *     is dropped; the two ends of the hold stay;
+ *   - a field that never changes value is not really animated. If that value is
+ *     the same as the one stored on the component (`staticValueOf(fieldName)`),
+ *     all its keys go and the stored value takes over; otherwise one key stays
+ *     so the keyed value keeps winning.
+ * Returns the new `keyframes` object (the same object when nothing changed) and
+ * the ids that were removed.
+ */
+export function removeUnusedKeyframes(entity, trackKey, fieldNames, staticValueOf = () => undefined) {
+  const all = entity?.keyframes || {};
+  const byField = all[trackKey];
+  const removedIds = new Set();
+  if (!byField) return { keyframes: all, removedIds };
+
+  const nextByField = { ...byField };
+  for (const name of fieldNames) {
+    const list = byField[name];
+    if (!Array.isArray(list) || list.length === 0) continue;
+    let kept = list.filter((k, i) => (
+      i === 0 || i === list.length - 1
+      || !(sameValue(k.value, list[i - 1].value) && sameValue(k.value, list[i + 1].value))
+    ));
+    if (kept.every((k) => sameValue(k.value, kept[0].value))) {
+      const stored = staticValueOf(name);
+      kept = stored !== undefined && sameValue(stored, kept[0].value) ? [] : kept.slice(0, 1);
+    }
+    if (kept.length === list.length) continue;
+    const keptIds = new Set(kept.map((k) => k.id));
+    for (const k of list) if (!keptIds.has(k.id)) removedIds.add(k.id);
+    nextByField[name] = kept;
+  }
+  if (removedIds.size === 0) return { keyframes: all, removedIds };
+  return { keyframes: { ...all, [trackKey]: nextByField }, removedIds };
 }
 
 /**

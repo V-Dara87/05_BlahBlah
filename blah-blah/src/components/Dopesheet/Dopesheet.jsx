@@ -7,7 +7,7 @@ import {
   Undo2, Redo2, Scissors, Trash2, Copy, Magnet,
   Activity, ClipboardPaste, Plus, Navigation, CornerDownRight,
   ArrowLeftRight, Clock, FastForward, Camera,
-  List, TrendingUp, Maximize2,
+  List, TrendingUp, Maximize2, Eraser,
 } from 'lucide-react';
 import {
   TRANSFORM_FIELD_GROUPS, TEXT_RENDERER_FIELDS,
@@ -19,9 +19,12 @@ import {
   removeKeyframesByIds, moveKeyframesDelta,
   QUICK_CURVE_PRESETS, setKeyframeCurve, evaluateField, setKeyframeValue,
 } from '../../engine/keyframes';
-import { isNumericCurve, curveId, curveColorAt } from '../../engine/keyframeGraph';
+import {
+  isNumericCurve, curveId, curveColorAt, removeUnusedKeyframes,
+} from '../../engine/keyframeGraph';
 import { DopesheetValueCell, hasDopesheetValueCell } from './DopesheetValueCell';
 import { GraphView } from './GraphView';
+import { KeyframePresetMenu } from './KeyframePresetMenu';
 import { buildTransformItems, buildFieldItems } from './dopesheetTree';
 import { formatTimecode } from '../../utils/timeFormat';
 import { useEditorActions } from '../../dock/EditorContext';
@@ -168,7 +171,7 @@ export const Dopesheet = memo(function Dopesheet({
   const [resizingLabels, setResizingLabels] = useState(false);
   const keybinds = useMemo(() => loadKeybindSettings(), []);
   const [showOnlyKeyframed, setShowOnlyKeyframed] = useState(false);
-  const [snapToKeyframe, setSnapToKeyframe] = useState(false);
+  const [snapToKeyframe, setSnapToKeyframe] = useState(true);
 
   // 'dopesheet' = diamonds on lanes, 'graph' = editable value curves.
   const [viewMode, setViewMode] = useState('dopesheet');
@@ -177,6 +180,9 @@ export const Dopesheet = memo(function Dopesheet({
   const [graphNormalized, setGraphNormalized] = useState(true);
   // Graph: only draw the curves that contain a selected keyframe.
   const [graphSelectedOnly, setGraphSelectedOnly] = useState(false);
+  // Graph: dragging a bezier handle also moves the one on the other side of the key
+  // (mirrored through it, like Spine) so the curve stays smooth at that keyframe.
+  const [graphLinkHandles, setGraphLinkHandles] = useState(false);
   const [hiddenCurves, setHiddenCurves] = useState(() => new Set());
   // Parameter row picked in the property tree (a curveId). While set, ONLY that
   // parameter is shown: its curve in Graph, its keyframes in the Dopesheet.
@@ -236,6 +242,9 @@ export const Dopesheet = memo(function Dopesheet({
           ? buildTransformItems(TRANSFORM_FIELD_GROUPS)
           : buildFieldItems(fieldSchemaForComponent(component, scripts));
 
+        // Every parameter of the component, before the Keyframed Only filter hides some.
+        const allFields = items.map((i) => i.field);
+
         if (showOnlyKeyframed) {
           items = items.filter(
             ({ field }) => getFieldKeyframes(selectedEntity, trackKey, field.name).length > 0,
@@ -248,10 +257,32 @@ export const Dopesheet = memo(function Dopesheet({
           label: groupLabel(component, scripts),
           items,
           fields: items.map((i) => i.field),
+          allFields,
         };
       })
       .filter((g) => g.fields.length > 0);
   }, [selectedEntity, scripts, showOnlyKeyframed]);
+
+  // Component + parameter ORDER of the selected clip, exactly as listed above but
+  // without the Keyframed Only filter. The keyframe presets use it to save (where
+  // each parameter sits) and to apply (which component / parameter is which).
+  const presetTargets = useMemo(() => {
+    if (!selectedEntity) return [];
+    return selectedEntity.components
+      .filter((c) => c.type !== 'AudioSource' && c.type !== 'VideoRenderer')
+      .map((component) => {
+        const items = component.type === 'Transform'
+          ? buildTransformItems(TRANSFORM_FIELD_GROUPS)
+          : buildFieldItems(fieldSchemaForComponent(component, scripts));
+        return {
+          trackKey: trackKeyFor(component),
+          type: component.type,
+          label: groupLabel(component, scripts),
+          fields: items.map(({ field, label }) => ({ ...field, label: label || field.label || field.name })),
+        };
+      })
+      .filter((g) => g.fields.length > 0);
+  }, [selectedEntity, scripts]);
 
   const toggleGroup = (trackKey) => {
     setCollapsedGroups((prev) => ({ ...prev, [trackKey]: !prev[trackKey] }));
@@ -525,6 +556,52 @@ export const Dopesheet = memo(function Dopesheet({
       }
     }
     onUpdateEntity(selectedEntity.id, patch);
+  };
+
+  /**
+   * "Key All" on a component row: put a keyframe at the playhead on EVERY
+   * parameter of that component, using each one's current value (so nothing
+   * jumps). Parameters that already have a key at this time are left alone.
+   */
+  const handleKeyAllInGroup = (group) => {
+    if (!selectedEntity) return;
+    const time = snapToFrame(localTime);
+    let keyframes = selectedEntity.keyframes || {};
+    let changed = false;
+    group.allFields.forEach((field) => {
+      const existing = getFieldKeyframes(selectedEntity, group.trackKey, field.name);
+      if (existing.some((k) => Math.abs(k.time - time) < 1e-4)) return;
+      const value = readFieldValue(group, field);
+      if (value === undefined) return;
+      keyframes = setKeyframe({ ...selectedEntity, keyframes }, group.trackKey, field.name, time, value);
+      changed = true;
+    });
+    if (changed) onUpdateEntity(selectedEntity.id, { keyframes });
+  };
+
+  /**
+   * "Clean" on a component row: delete keyframes that do nothing (see
+   * removeUnusedKeyframes) — typically the parameters you keyed with Key All
+   * but never actually animated.
+   */
+  const handleCleanUnusedInGroup = (group) => {
+    if (!selectedEntity) return;
+    const comp = group.component;
+    const staticValueOf = (name) => {
+      const stored = isScriptComponent(comp) ? comp.props?.[name] : comp?.[name];
+      return stored !== undefined ? stored : group.allFields.find((f) => f.name === name)?.defaultVal;
+    };
+    const { keyframes, removedIds } = removeUnusedKeyframes(
+      selectedEntity, group.trackKey, group.allFields.map((f) => f.name), staticValueOf,
+    );
+    if (removedIds.size === 0) return;
+    onUpdateEntity(selectedEntity.id, { keyframes });
+    setSelectedKeyIds((prev) => {
+      const next = new Set(prev);
+      removedIds.forEach((id) => next.delete(id));
+      return next;
+    });
+    if (selectedKeyId && removedIds.has(selectedKeyId)) setSelectedKeyId(null);
   };
 
   /** One parameter row in the label column: ◆ + the value control (name inside it). */
@@ -1388,6 +1465,18 @@ export const Dopesheet = memo(function Dopesheet({
           </button>
         </div>
 
+        <div className="dopesheet-toolbar-group">
+          <KeyframePresetMenu
+            entity={selectedEntity}
+            targets={presetTargets}
+            selectedKeyIds={
+              selectedKeyIds.size > 0 || !selectedKeyId ? selectedKeyIds : new Set([selectedKeyId])
+            }
+            applyTime={snapToFrame(localTime)}
+            onCommitKeyframes={handleGraphCommit}
+          />
+        </div>
+
         {isGraph && (
           <div className="dopesheet-toolbar-group">
             <button
@@ -1411,6 +1500,13 @@ export const Dopesheet = memo(function Dopesheet({
               onClick={() => setGraphSelectedOnly((v) => !v)}
             >
               <span>Selected Only</span>
+            </button>
+            <button
+              className={`dopesheet-tool-btn ${graphLinkHandles ? 'active' : ''}`}
+              title="Link handles: moving one bezier handle of a keyframe mirrors the handle on its other side, so the curve stays smooth through the key"
+              onClick={() => setGraphLinkHandles((v) => !v)}
+            >
+              <span>Link Handles</span>
             </button>
           </div>
         )}
@@ -1574,6 +1670,25 @@ export const Dopesheet = memo(function Dopesheet({
                     </span>
                     <span className="group-icon"><Icon size={12} /></span>
                     <span className="group-name">{group.label}</span>
+                    <span
+                      style={{ marginLeft: 'auto', display: 'flex', gap: 2, flexShrink: 0 }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        className="dopesheet-tool-btn-icon"
+                        title={`Key all: add a keyframe at the playhead on every ${group.label} parameter`}
+                        onClick={() => handleKeyAllInGroup(group)}
+                      >
+                        <Plus size={12} />
+                      </button>
+                      <button
+                        className="dopesheet-tool-btn-icon"
+                        title={`Clean: delete ${group.label} keyframes that do nothing (parameters that never change, and repeated values inside a hold)`}
+                        onClick={() => handleCleanUnusedInGroup(group)}
+                      >
+                        <Eraser size={12} />
+                      </button>
+                    </span>
                   </div>
                   {isOpen && group.items.map(({ field, label }) => renderLabelLeaf(group, field, label))}
                 </div>
@@ -1646,6 +1761,7 @@ export const Dopesheet = memo(function Dopesheet({
                   contentWidth={laneWidth}
                   fitToken={fitToken}
                   autoFitOnCurveChange={!graphSelectedOnly}
+                  linkHandles={graphLinkHandles}
                   snapToFrame={snapToFrame}
                   onSelectKeys={updateSelectedKeyIds}
                   onCommitKeyframes={handleGraphCommit}

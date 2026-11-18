@@ -1,12 +1,20 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { placeInViewport } from '../../utils/viewportPlacement';
 import './context-menu.css';
+
+const VIEWPORT_MARGIN = 6;
  
 /**
  * ContextMenu — shared shell for every right-click menu in the app
  * (Project panel, Timeline clips, and any future one).
  *
  * Centralizes what used to be re-implemented per menu:
+ *  - ANY menu, however long, stays fully reachable: it is pushed back inside
+ *    the window near an edge, and when it is taller than the window it is
+ *    capped to the window height and scrolls inside itself (see
+ *    utils/viewportPlacement.js). Every right-click menu must go through this
+ *    shell so that holds app-wide; do not hand-roll a `position: fixed` menu.
  *  - portal to document.body + `fixed` positioning clamped inside the
  *    viewport (same approach as FontFamilyPicker's popover), so a menu
  *    opened near a panel edge never gets cut off or overlaps outside the
@@ -31,6 +39,8 @@ const stopBubble = (e) => e.stopPropagation();
 export function ContextMenu({ x, y, onClose, children, className = '', minWidth = 160 }) {
   const menuRef = useRef(null);
   const [coords, setCoords] = useState(null);
+  // True when the menu is taller than the window: it then scrolls inside itself.
+  const [scrollable, setScrollable] = useState(false);
   // 'entering' -> 'open' (next frame, so the enter transition actually
   // runs instead of the element appearing already at its final state) ->
   // 'closing' (set by requestClose, then unmounts after the transition).
@@ -40,31 +50,51 @@ export function ContextMenu({ x, y, onClose, children, className = '', minWidth 
     setPhase((p) => (p === 'closing' ? p : 'closing'));
   };
  
-  // Clamp the requested (x, y) inside the viewport once the menu's real
-  // size is known, same idea as the font picker popover: prefer opening
-  // at the click point, flip up/left near an edge rather than spilling
-  // off-screen or getting clipped by an ancestor's overflow.
-  useLayoutEffect(() => {
+  // Place the menu inside the viewport once its real size is known: open at
+  // the click point, push back inside near an edge, and when it is taller than
+  // the window cap it (max-height) and let it scroll. offsetWidth / scrollHeight
+  // are used because, unlike getBoundingClientRect, they ignore the open/close
+  // scale transform.
+  const place = useCallback(() => {
     const el = menuRef.current;
     if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const margin = 6;
-    let left = x;
-    let top = y;
-    if (left + rect.width + margin > window.innerWidth) {
-      left = Math.max(margin, window.innerWidth - rect.width - margin);
-    }
-    if (top + rect.height + margin > window.innerHeight) {
-      top = Math.max(margin, window.innerHeight - rect.height - margin);
-    }
-    setCoords({ left, top });
+    const next = placeInViewport({
+      x,
+      y,
+      width: el.offsetWidth,
+      height: el.scrollHeight,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      margin: VIEWPORT_MARGIN,
+    });
+    setCoords((prev) => (prev && prev.left === next.left && prev.top === next.top ? prev : { left: next.left, top: next.top }));
+    setScrollable(next.scrollable);
+  }, [x, y]);
+
+  useLayoutEffect(() => {
+    place();
     // Flip to 'open' on the next frame so the CSS transition (opacity +
     // transform) animates from the 'entering' state instead of snapping
     // straight to final values.
     const raf = requestAnimationFrame(() => setPhase((p) => (p === 'entering' ? 'open' : p)));
     return () => cancelAnimationFrame(raf);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [x, y]);
+  }, [place]);
+
+  // Keep it inside the window when the window is resized or the menu's own
+  // content changes size (items appearing, a submenu opening, fonts loading).
+  useEffect(() => {
+    const el = menuRef.current;
+    window.addEventListener('resize', place);
+    let ro = null;
+    if (el && typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(place);
+      ro.observe(el);
+    }
+    return () => {
+      window.removeEventListener('resize', place);
+      if (ro) ro.disconnect();
+    };
+  }, [place]);
  
   useEffect(() => {
     const onPointerDown = (e) => {
@@ -103,6 +133,11 @@ export function ContextMenu({ x, y, onClose, children, className = '', minWidth 
         left: coords?.left ?? x,
         top: coords?.top ?? y,
         minWidth,
+        maxHeight: Math.max(120, window.innerHeight - VIEWPORT_MARGIN * 2),
+        // Only when it has to: an always-on overflow would clip menus that
+        // draw a submenu outside their own box.
+        overflowY: scrollable ? 'auto' : undefined,
+        overscrollBehavior: 'contain',
         visibility: coords ? 'visible' : 'hidden',
       }}
       onContextMenu={(e) => e.preventDefault()}

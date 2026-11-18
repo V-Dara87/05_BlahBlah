@@ -4,7 +4,7 @@ import {
   DEFAULT_CP1, DEFAULT_CP2,
 } from '../../engine/keyframes';
 import {
-  segmentHandles, handleToControlPoint, snapControlPoint, sampleSegment,
+  segmentHandles, handleToControlPoint, linkedHandleControlPoint, snapControlPoint, sampleSegment,
   curveExtent, shiftKeyframeValues, niceStep, stepDecimals,
 } from '../../engine/keyframeGraph';
 import { readCssValue, subscribeThemeChanges } from '../../services/themeSettings';
@@ -16,7 +16,9 @@ import { readCssValue, subscribeThemeChanges } from '../../services/themeSetting
  * parameter's value on Y. You can
  *   - drag keyframe points in time AND value (all selected keys move together),
  *   - drag the two bezier handles of a selected key to reshape the easing of the
- *     segment next to it (the same cp1/cp2 the Curves tab edits),
+ *     segment next to it (the same cp1/cp2 the Curves tab edits). With
+ *     `linkHandles` on (Spine style) the handle on the other side of the key
+ *     moves too, mirrored through the key so the curve stays smooth there,
  *   - box-select keys, click empty space to clear + seek, double-click a curve to
  *     add a key, right-click a key for the Dopesheet's key menu.
  * View: Ctrl+wheel zooms time (shared with the Dopesheet), plain wheel zooms
@@ -128,6 +130,7 @@ export function GraphView({
   contentWidth,
   fitToken,
   autoFitOnCurveChange = true,
+  linkHandles = false,
   snapToFrame,
   onSelectKeys,
   onCommitKeyframes,
@@ -158,7 +161,7 @@ export function GraphView({
   const latest = useRef(null);
   latest.current = {
     entity, model, view, size, scrollLeft, pixelsPerSecond, normalized, selectedKeyIds,
-    snapToFrame, clipDuration,
+    snapToFrame, clipDuration, linkHandles,
     cb: { onSelectKeys, onCommitKeyframes, onSeekLocal, onAddKey, onKeyContextMenu, onKeyActivated, onZoomTime },
   };
 
@@ -384,13 +387,32 @@ export function GraphView({
     const { fromDisp } = makeMap(m.lo, m.span, L.normalized);
     setDragging({ kind: 'handle', keyId: a.id, which: hit.which });
 
+    // Linked handles: the key both handles hang off, and the neighbouring segment
+    // that owns the opposite one (previous segment for an 'out' drag, next for 'in').
+    // It is missing on the first / last key, where there is nothing to mirror.
+    const sharedIdx = hit.which === 'out' ? hit.index : hit.index + 1;
+    const anchor = m.kfs[sharedIdx];
+    const oppWhich = hit.which === 'out' ? 'in' : 'out';
+    const oppA = hit.which === 'out' ? m.kfs[sharedIdx - 1] : m.kfs[sharedIdx];
+    const oppB = hit.which === 'out' ? m.kfs[sharedIdx] : m.kfs[sharedIdx + 1];
+    const linked = Boolean(L.linkHandles && anchor && oppA && oppB);
+
     const onMove = (ev) => {
       const p = localPoint(ev);
       let cp = handleToControlPoint(a, b, hit.which, tOf(p.x), fromDisp(dOf(p.y)));
       if (ev.shiftKey) cp = snapControlPoint(cp);
       const cp1 = hit.which === 'out' ? cp : (a.cp1 || DEFAULT_CP1);
       const cp2 = hit.which === 'in' ? cp : (a.cp2 || DEFAULT_CP2);
-      scheduleCommit(setKeyframeCurve(initial, m.trackKey, m.fieldName, a.id, cp1, cp2));
+      let next = setKeyframeCurve(initial, m.trackKey, m.fieldName, a.id, cp1, cp2);
+      if (linked) {
+        // Mirror from where the handle really ended up (after clamping / snapping).
+        const dragged = segmentHandles({ ...a, cp1, cp2 }, b)[hit.which];
+        const ocp = linkedHandleControlPoint(oppA, oppB, oppWhich, anchor, dragged);
+        const o1 = oppWhich === 'out' ? ocp : (oppA.cp1 || DEFAULT_CP1);
+        const o2 = oppWhich === 'in' ? ocp : (oppA.cp2 || DEFAULT_CP2);
+        next = setKeyframeCurve({ ...initial, keyframes: next }, m.trackKey, m.fieldName, oppA.id, o1, o2);
+      }
+      scheduleCommit(next);
     };
     trackWindowDrag(onMove, () => {
       flushPending();
@@ -802,15 +824,6 @@ export function GraphView({
           onDoubleClick={handleDoubleClick}
           onContextMenu={handleContextMenu}
         />
-        {model.length === 0 && (
-          <div className="dopesheet-graph-empty">
-            <strong>Nothing to graph yet</strong>
-            <span>
-              Keyframe a number (position, scale, opacity, a script prop…) and its curve shows up here.
-              Colour, checkbox and dropdown values can&apos;t be drawn as curves.
-            </span>
-          </div>
-        )}
       </div>
     </div>
   );

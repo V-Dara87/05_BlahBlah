@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { setKeyframe, setKeyframeCurve, getFieldKeyframes, evaluateField, DEFAULT_CP1, DEFAULT_CP2 } from './keyframes.js';
 import {
   CP_Y_MIN, CP_Y_MAX, curveId, curveColorAt, CURVE_PALETTE, isNumericCurve,
-  segmentHandles, handleToControlPoint, snapControlPoint, sampleSegment,
-  curveExtent, shiftKeyframeValues, niceStep, stepDecimals,
+  segmentHandles, handleToControlPoint, linkedHandleControlPoint, snapControlPoint, sampleSegment,
+  curveExtent, shiftKeyframeValues, niceStep, stepDecimals, removeUnusedKeyframes,
 } from './keyframeGraph.js';
 
 const kf = (time, value, extra = {}) => ({ id: `k${time}`, time, value, ...extra });
@@ -159,4 +159,97 @@ test('stepDecimals', () => {
 test('default control points are unchanged (guards the engine contract this relies on)', () => {
   assert.deepEqual(DEFAULT_CP1, { x: 0.25, y: 0.25 });
   assert.deepEqual(DEFAULT_CP2, { x: 0.75, y: 0.75 });
+});
+// --- linked (mirrored) handles -------------------------------------------------
+// Shared key b = (2, 10). Segment a -> b arrives at it (a = (0, 0)), segment
+// b -> c leaves it (c = (6, -10)).
+
+test('linkedHandleControlPoint: dragging the OUT handle mirrors the IN handle through the key', () => {
+  const a = kf(0, 0); const b = kf(2, 10);
+  // out handle of b dropped at (3, 15): offset (+1, +5) from b
+  const cp2 = linkedHandleControlPoint(a, b, 'in', { time: 2, value: 10 }, { time: 3, value: 15 });
+  // in handle must sit at offset (-1, -5): (1, 5) => x 0.5, y 0.5
+  near(cp2.x, 0.5, 1e-3); near(cp2.y, 0.5, 1e-3);
+  const h = segmentHandles({ ...a, cp2 }, b).in;
+  near(h.time, 1, 2e-3); near(h.value, 5, 2e-2);
+});
+
+test('linkedHandleControlPoint: dragging the IN handle mirrors the OUT handle through the key', () => {
+  const b = kf(2, 10); const c = kf(6, -10);
+  // in handle of b dropped at (1, 5): offset (-1, -5) from b
+  const cp1 = linkedHandleControlPoint(b, c, 'out', { time: 2, value: 10 }, { time: 1, value: 5 });
+  // out handle must sit at (3, 15): x 1/4, y 5 / -20
+  near(cp1.x, 0.25, 1e-3); near(cp1.y, -0.25, 1e-3);
+});
+
+test('linkedHandleControlPoint: both handles end up collinear with the key', () => {
+  const a = kf(0, 0); const b = kf(2, 10); const c = kf(6, -10);
+  const drag = { time: 3.2, value: 17 }; // out handle of b
+  const cp2 = linkedHandleControlPoint(a, b, 'in', b, drag);
+  const inH = segmentHandles({ ...a, cp2 }, b).in;
+  const slopeOut = (drag.value - b.value) / (drag.time - b.time);
+  const slopeIn = (b.value - inH.value) / (b.time - inH.time);
+  near(slopeOut, slopeIn, 0.05);
+  assert.ok(inH.time < b.time && drag.time > b.time);
+});
+
+test('linkedHandleControlPoint: a short neighbouring segment scales the handle instead of bending it', () => {
+  const a = kf(0, 0); const b = kf(2, 10);
+  // out handle at offset (+4, +8); the in segment is only 2s long
+  const cp2 = linkedHandleControlPoint(a, b, 'in', b, { time: 6, value: 18 });
+  near(cp2.x, 0, 1e-3);                     // reaches the previous key's time
+  near(cp2.y, 0.6, 1e-3);                   // value offset halved too (-4 of 10)
+});
+
+test('linkedHandleControlPoint: overshoot limit scales both axes together', () => {
+  const a = kf(0, 0); const b = kf(2, 10);
+  // out handle at offset (+0.2, +30): mirrored y would be -2 (limit is CP_Y_MIN)
+  const cp2 = linkedHandleControlPoint(a, b, 'in', b, { time: 2.2, value: 40 });
+  assert.equal(cp2.y, CP_Y_MIN);
+  near(cp2.x, 0.95, 1e-3);                  // x scaled by the same 0.5
+});
+
+test('linkedHandleControlPoint: a flat neighbouring segment keeps its y (no slope to match)', () => {
+  const a = kf(0, 10, { cp2: { x: 0.6, y: 0.9 } }); const b = kf(2, 10);
+  const cp2 = linkedHandleControlPoint(a, b, 'in', b, { time: 3, value: 15 });
+  near(cp2.x, 0.5, 1e-3);
+  assert.equal(cp2.y, 0.9);
+});
+
+// --- removeUnusedKeyframes -----------------------------------------------------
+const ent = (fields) => ({ keyframes: { Transform: fields } });
+
+test('removeUnusedKeyframes: drops the middle of a hold but keeps its ends', () => {
+  const e = ent({ x: [kf(0, 5), kf(1, 5), kf(2, 5), kf(3, 9)] });
+  const r = removeUnusedKeyframes(e, 'Transform', ['x']);
+  assert.deepEqual(r.keyframes.Transform.x.map((k) => k.time), [0, 2, 3]);
+  assert.deepEqual([...r.removedIds], ['k1']);
+});
+
+test('removeUnusedKeyframes: a real A-B-A move is untouched and nothing changes by reference', () => {
+  const e = ent({ x: [kf(0, 0), kf(1, 10), kf(2, 0)] });
+  const r = removeUnusedKeyframes(e, 'Transform', ['x']);
+  assert.equal(r.keyframes, e.keyframes);
+  assert.equal(r.removedIds.size, 0);
+});
+
+test('removeUnusedKeyframes: a constant field equal to the stored value loses all keys', () => {
+  const e = ent({ rotation: [kf(0, 0), kf(2, 0)], x: [kf(0, 0), kf(2, 50)] });
+  const r = removeUnusedKeyframes(e, 'Transform', ['rotation', 'x'], (n) => (n === 'rotation' ? 0 : -1));
+  assert.deepEqual(r.keyframes.Transform.rotation, []);
+  assert.equal(r.keyframes.Transform.x.length, 2);
+});
+
+test('removeUnusedKeyframes: a constant field that differs from the stored value keeps one key', () => {
+  const e = ent({ scale: [kf(0, 2), kf(1, 2), kf(2, 2)] });
+  const r = removeUnusedKeyframes(e, 'Transform', ['scale'], () => 1);
+  assert.deepEqual(r.keyframes.Transform.scale.map((k) => k.value), [2]);
+  assert.equal(evaluateField(r, 'Transform', 'scale', 1.5), 2);
+});
+
+test('removeUnusedKeyframes: only touches the listed fields and works for held (non-number) values', () => {
+  const e = ent({ color: [kf(0, '#fff'), kf(1, '#fff'), kf(2, '#fff'), kf(3, '#000')], y: [kf(0, 1), kf(1, 1)] });
+  const r = removeUnusedKeyframes(e, 'Transform', ['color']);
+  assert.deepEqual(r.keyframes.Transform.color.map((k) => k.time), [0, 2, 3]);
+  assert.equal(r.keyframes.Transform.y.length, 2);
 });
