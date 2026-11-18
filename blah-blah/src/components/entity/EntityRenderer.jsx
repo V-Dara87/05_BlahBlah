@@ -21,6 +21,8 @@ const NO_UPCOMING_MEDIA = Object.freeze({ video: Object.freeze([]), audio: Objec
 import { OverlayLayer } from '../preview/OverlayLayer';
 import { NoteDrawCanvas, NoteDrawToolbar } from '../notes/NoteDraw';
 import { PlaybackTransportBar } from '../preview/PlaybackTransportBar';
+import { SceneView3D } from '../preview/SceneView3D';
+import { GridOverlay } from '../preview/GridOverlay';
 import { captureAndExportScreenPng } from '../../services/frameSnapshot';
 import './entity-renderer.css';
  
@@ -204,6 +206,9 @@ export function EntityRenderer({
       computedEntities.filter(({ entity }) => !isVideoEntity(entity) && !isAudioEntity(entity)),
     [computedEntities]
   );
+
+  // Extract the active camera from computedEntities (attached by renderPipeline)
+  const activeCamera = computedEntities.activeCamera ?? null;
  
   // TransitionClips — the SAME resolver export uses (renderPipeline.js
   // resolveTransitionFramePlan), so what plays here and what exports cannot
@@ -436,6 +441,23 @@ export function EntityRenderer({
           if (e.target === e.currentTarget) onSelectEntity(null);
         }}
       >
+        {/* ── 3D SCENE VIEW MODE ── */}
+        {previewMode === 'scene3d' && (
+          <div style={{ position: 'absolute', inset: 0 }}>
+            <SceneView3D
+              activeCamera={activeCamera}
+              computedEntities={computedEntities}
+              selectedEntityId={selectedEntityId}
+              onSelectEntity={onSelectEntity}
+              safeResWidth={safeResWidth}
+              safeResHeight={safeResHeight}
+              showGroundGrid={activeCamera?.showGrid ?? true}
+            />
+          </div>
+        )}
+
+        {/* ── NORMAL / EXTENDED PREVIEW MODE ── */}
+        {previewMode !== 'scene3d' && (<>
         {/* Floating 3D Transform Tool Switch (Move / Rotate / Scale) */}
         {is3DShapeSelected && (
           <div className="preview-gizmo3d-tools" title="3D Transform Tool (W: Move, E: Rotate, R: Scale)">
@@ -583,10 +605,21 @@ export function EntityRenderer({
           {/* Marks drawn for notes. Preview-only annotation layer: export and frame
               capture never draw it. Same project-pixel space as the entities. */}
           <NoteDrawCanvas width={safeResWidth} height={safeResHeight} currentTime={currentTime} />
- 
+
+          {/* Ground Grid overlay — renders Y=0 ground plane through the active camera when showGrid is on */}
+          {activeCamera?.showGrid && (
+            <GridOverlay
+              camera={activeCamera}
+              width={safeResWidth}
+              height={safeResHeight}
+              zIndex={1}
+            />
+          )}
+
           </div>
- 
+
         </div>
+        </>)}
       </div>
  
       {/* Bottom Transport Bar */}

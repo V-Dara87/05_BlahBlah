@@ -582,6 +582,7 @@ export function computeActiveEntitiesAtTime({
       projectedTransform,
     });
   }
+  output.activeCamera = activeCamera;
   return output;
 }
  

@@ -1,0 +1,168 @@
+.scene-view-3d-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  user-select: none;
+  background-color: #0b0f17;
+  outline: none;
+}
+
+.scene-view-3d-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* Preset & Navigation Toolbar */
+.scene-view-toolbar {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(51, 65, 85, 0.7);
+  border-radius: 6px;
+  padding: 3px 6px;
+  z-index: 20;
+}
+
+.scene-view-tool-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.scene-view-tool-btn:hover {
+  background: rgba(51, 65, 85, 0.6);
+  color: #f1f5f9;
+}
+
+.scene-view-tool-btn.active {
+  background: #38bdf8;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.scene-view-help-badge {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(51, 65, 85, 0.6);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 11px;
+  color: #94a3b8;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.scene-view-help-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.scene-view-help-key {
+  background: rgba(30, 41, 59, 0.9);
+  border: 1px solid rgba(71, 85, 105, 0.5);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 10px;
+  color: #e2e8f0;
+}
+
+/* Frustum, Target, and Entity SVG element styling */
+.scene-cam-frustum-line {
+  stroke: #c084fc;
+  stroke-width: 1.5;
+  stroke-dasharray: 4, 3;
+}
+
+.scene-cam-frustum-base {
+  stroke: #a855f7;
+  stroke-width: 1.8;
+  fill: rgba(168, 85, 247, 0.04);
+}
+
+.scene-cam-sight-line {
+  stroke: #e879f9;
+  stroke-width: 1.2;
+  stroke-dasharray: 3, 3;
+}
+
+.scene-cam-target-cross {
+  stroke: #f43f5e;
+  stroke-width: 1.8;
+}
+
+.scene-cam-target-ring {
+  stroke: #f43f5e;
+  stroke-width: 1.5;
+  fill: rgba(244, 63, 94, 0.15);
+}
+
+.scene-entity-wireframe {
+  stroke: #38bdf8;
+  stroke-width: 1.4;
+  fill: rgba(56, 189, 248, 0.04);
+  transition: stroke 0.15s ease;
+  pointer-events: visibleStroke;
+  cursor: pointer;
+}
+
+.scene-entity-wireframe.is-selected {
+  stroke: #facc15;
+  stroke-width: 2.2;
+  fill: rgba(250, 204, 21, 0.08);
+}
+
+.scene-entity-wireframe:hover {
+  stroke: #7dd3fc;
+}
+
+.scene-entity-tag {
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 500;
+  fill: #cbd5e1;
+  pointer-events: all;
+  cursor: pointer;
+  paint-order: stroke;
+  stroke: rgba(15, 23, 42, 0.9);
+  stroke-width: 3px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.scene-entity-tag.is-selected {
+  fill: #fef08a;
+  font-weight: 700;
+}
+
+.scene-camera-marker {
+  pointer-events: all;
+  cursor: pointer;
+}

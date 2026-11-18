@@ -237,6 +237,8 @@ export function createDefaultCamera(overrides = {}) {
     zoom: overrides.zoom ?? 1.0,
     // Whether this camera is actively controlling the viewport
     enabled: overrides.enabled !== false,
+    // Whether ground plane grid (Y=0) is shown
+    showGrid: overrides.showGrid ?? false,
   };
 }
 
@@ -303,6 +305,7 @@ export function findActiveCamera(activeEntities = [], tracks = [], worldMap = ne
         roll,
         fov: camComp.fov ?? 50,
         zoom: camComp.zoom ?? 1.0,
+        showGrid: camComp.showGrid ?? false,
       };
     }
   }

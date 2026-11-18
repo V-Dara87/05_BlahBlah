@@ -102,23 +102,72 @@ export function CameraCard({
   // which is also used for parenting/2D layout — so it could not be authored
   // from here without moving the camera's position semantics too.
   const roll = resolved?.roll ?? 0;
+  const showGrid = resolved?.showGrid ?? cameraComp?.showGrid ?? false;
 
   const updateCameraField = (fieldName, value) => {
-    const newKfs = tryWriteKeyframe ? tryWriteKeyframe(selectedEntity, 'Camera', fieldName, value) : null;
-    if (newKfs) {
-      onUpdateEntity(selectedEntity.id, { keyframes: newKfs });
-    } else {
-      const patch = { [fieldName]: value };
-      // Also sync nested objects for complete compatibility
-      if (fieldName === 'positionX') patch.position = { ...(cameraComp.position || {}), x: value, y: posY, z: posZ };
-      else if (fieldName === 'positionY') patch.position = { ...(cameraComp.position || {}), x: posX, y: value, z: posZ };
-      else if (fieldName === 'positionZ') patch.position = { ...(cameraComp.position || {}), x: posX, y: posY, z: value };
-      else if (fieldName === 'targetX') patch.target = { ...(cameraComp.target || {}), x: value, y: tgtY, z: tgtZ };
-      else if (fieldName === 'targetY') patch.target = { ...(cameraComp.target || {}), x: tgtX, y: value, z: tgtZ };
-      else if (fieldName === 'targetZ') patch.target = { ...(cameraComp.target || {}), x: tgtX, y: tgtY, z: value };
+    let deltaX = 0;
+    let deltaY = 0;
+    let deltaZ = 0;
+    if (fieldName === 'positionX') deltaX = value - posX;
+    else if (fieldName === 'positionY') deltaY = value - posY;
+    else if (fieldName === 'positionZ') deltaZ = value - posZ;
+    const isPosition = fieldName === 'positionX' || fieldName === 'positionY' || fieldName === 'positionZ';
 
-      updateComponent('Camera', patch);
+    if (tryWriteKeyframe) {
+      let entitySnapshot = selectedEntity;
+      let kfsSnapshot = selectedEntity.keyframes;
+      let hasKfs = false;
+
+      const newPosKfs = tryWriteKeyframe(entitySnapshot, 'Camera', fieldName, value);
+      if (newPosKfs) {
+        kfsSnapshot = newPosKfs;
+        entitySnapshot = { ...entitySnapshot, keyframes: kfsSnapshot };
+        hasKfs = true;
+
+        if (isPosition) {
+          if (fieldName === 'positionX') {
+            const newTgtKfs = tryWriteKeyframe(entitySnapshot, 'Camera', 'targetX', tgtX + deltaX);
+            if (newTgtKfs) kfsSnapshot = newTgtKfs;
+          } else if (fieldName === 'positionY') {
+            const newTgtKfs = tryWriteKeyframe(entitySnapshot, 'Camera', 'targetY', tgtY + deltaY);
+            if (newTgtKfs) kfsSnapshot = newTgtKfs;
+          } else if (fieldName === 'positionZ') {
+            const newTgtKfs = tryWriteKeyframe(entitySnapshot, 'Camera', 'targetZ', tgtZ + deltaZ);
+            if (newTgtKfs) kfsSnapshot = newTgtKfs;
+          }
+        }
+      }
+
+      if (hasKfs) {
+        onUpdateEntity(selectedEntity.id, { keyframes: kfsSnapshot });
+        return;
+      }
     }
+
+    const patch = { [fieldName]: value };
+    // Also sync nested objects for complete compatibility
+    // When position shifts, translate target together so the camera moves through space rather than pivoting towards a stationary target
+    if (fieldName === 'positionX') {
+      patch.position = { ...(cameraComp.position || {}), x: value, y: posY, z: posZ };
+      patch.targetX = tgtX + deltaX;
+      patch.target = { ...(cameraComp.target || {}), x: tgtX + deltaX, y: tgtY, z: tgtZ };
+    } else if (fieldName === 'positionY') {
+      patch.position = { ...(cameraComp.position || {}), x: posX, y: value, z: posZ };
+      patch.targetY = tgtY + deltaY;
+      patch.target = { ...(cameraComp.target || {}), x: tgtX, y: tgtY + deltaY, z: tgtZ };
+    } else if (fieldName === 'positionZ') {
+      patch.position = { ...(cameraComp.position || {}), x: posX, y: posY, z: value };
+      patch.targetZ = tgtZ + deltaZ;
+      patch.target = { ...(cameraComp.target || {}), x: tgtX, y: tgtY, z: tgtZ + deltaZ };
+    } else if (fieldName === 'targetX') {
+      patch.target = { ...(cameraComp.target || {}), x: value, y: tgtY, z: tgtZ };
+    } else if (fieldName === 'targetY') {
+      patch.target = { ...(cameraComp.target || {}), x: tgtX, y: value, z: tgtZ };
+    } else if (fieldName === 'targetZ') {
+      patch.target = { ...(cameraComp.target || {}), x: tgtX, y: tgtY, z: value };
+    }
+
+    updateComponent('Camera', patch);
   };
 
   const handleResetCamera = () => {
@@ -134,6 +183,7 @@ export function CameraCard({
       fov: 50,
       zoom: 1.0,
       roll: 0,
+      showGrid: false,
     });
   };
 
@@ -347,6 +397,20 @@ export function CameraCard({
                 onChange={(e) => updateCameraField('roll', parseFloat(e.target.value))}
               />
             </div>
+          </div>
+
+          {/* Ground Grid (Y=0) */}
+          <div className="inspector-row">
+            <span className="row-label" title="Show Ground Grid (Y=0 world plane)">Ground Grid</span>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '11px', color: '#cbd5e1' }}>
+              <input
+                type="checkbox"
+                checked={Boolean(showGrid)}
+                onChange={(e) => updateComponent('Camera', { showGrid: e.target.checked })}
+                style={{ cursor: 'pointer', accentColor: '#38bdf8' }}
+              />
+              <span>Show Ground Grid (Y=0)</span>
+            </label>
           </div>
 
           {/* Lens Presets */}

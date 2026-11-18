@@ -10,6 +10,7 @@ import {
   Crop,
   Expand,
   Camera,
+  Box,
 } from 'lucide-react';
 import { formatSimpleTime } from '../../utils/timeFormat';
 import './playback-transport-bar.css';
@@ -83,6 +84,17 @@ export function PlaybackTransportBar({
             <Camera size={15} />
           </button>
         )}
+        <button
+          className={`ctrl-icon-btn ${previewMode === 'scene3d' ? 'active' : ''}`}
+          title={
+            previewMode === 'scene3d'
+              ? '3D Scene View active: Click to return to Camera Preview'
+              : '3D Scene View: Inspect 3D space, camera frustum, ground grid, and orbit freely'
+          }
+          onClick={() => setPreviewMode((m) => (m === 'scene3d' ? 'normal' : 'scene3d'))}
+        >
+          <Box size={15} />
+        </button>
         <button
           className={`ctrl-icon-btn ${previewMode === 'extended' ? 'active' : ''}`}
           title={
